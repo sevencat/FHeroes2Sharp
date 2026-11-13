@@ -39,7 +39,7 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/fheroes2/gui/ui_window.cpp`（`fheroes2::StandardWindow`） | `FHeroes2.UI.Dialogs.StandardWindow` + `StandardWindowChrome` | 边框来自 `SURDRBKG.ICN`（横）与 `WINLOSE.ICN`（竖 + 四角），内部铺 `STONEBAK.ICN`；角块 22、可重复边框起点 43、接缝 10、底纹让位 22；阴影只挂在左/下 16 px（`TotalArea` 比窗口宽 16）；4 个用例与 C++ 逐字节相同（`tools/scripts/CompareWindowWithReference.ps1`） |
 | `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装；消息框走的是 `BUYBUILD.ICN`（见上两行） |
 | `ICN::getAnimatedIcnIndex()`（`src/fheroes2/agg/icn.cpp`）+ `Game::DelayType::MAIN_MENU_DELAY`（`game_delays.cpp`） | `FHeroes2.Assets.Icn.IcnAnimation` | 帧表按场景声明（起始帧 + 帧数 + 每帧时长），计时同 `fheroes2::TimeDelay`：整帧才前进、长停顿跳帧不补播 |
-| `src/fheroes2/gui/ui_button.cpp`（`Button` / `ButtonSprite`） | `FHeroes2.UI.Widgets.Button` + `ButtonState` | 三帧精灵 + 状态机，`Area` 取 released 的包围盒 = ICN 里的 `OffsetX/OffsetY`，缺帧回退 |
+| `src/fheroes2/gui/ui_button.cpp`（`Button` / `ButtonSprite` / `ButtonBase` / `ButtonGroup`） | `FHeroes2.UI.Widgets.Button` + `ButtonState` / `ButtonBase` + `ButtonSprite` + `ButtonGroup` + `Dialogs.DialogButton` | 主菜单招牌 = `Button`（三帧精灵 + hover 状态机，`Area` 取 released 的包围盒 = ICN 的 `OffsetX/OffsetY`，缺帧回退）；对话框按钮 = `ButtonSprite`（released/pressed/可选 disabled，禁用时过 `PAL::DARKENING`）+ `ButtonGroup`（按下与松开都在区内才算点击、按住只点亮按下所在的按钮、OK/Enter 与 CANCEL/Escape 热键、单个 OK/CANCEL 两个热键都能关）；自动摆位与文字按钮工厂待设置对话框时移植 |
 | `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装 |
 | `Translation::gettext()` + `Settings::getGameLanguage()` | `FHeroes2.App.Localization.GameText` | 一个语言一个实例；英文 = msgid，`zh_CN` = `.mo`；`--lang` / `F2` 切换 |
 | `LocalEvent` 的鼠标坐标换算（窗口 → 逻辑像素） | `PresentationViewport.TryToLogical` | 整数倍 + 黑边；黑边上的点返回 `false` |

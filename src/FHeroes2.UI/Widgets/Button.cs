@@ -22,6 +22,12 @@ namespace FHeroes2.UI.Widgets;
 /// hover/pressed sprites fall back to <see cref="Released"/>, so a table with only one frame still
 /// works.
 /// </para>
+/// <para>
+/// This type is the sign of the main menu: the reference implements its hover look inline in
+/// <c>Game::MainMenu()</c>, which is why a third sprite sits between the released and the pressed
+/// one here. Dialog buttons are <see cref="ButtonSprite"/> and <see cref="ButtonGroup"/> instead -
+/// they know a pressed and a disabled look but no hover, like <c>fheroes2::ButtonBase</c>.
+/// </para>
 /// </remarks>
 public sealed class Button
 {

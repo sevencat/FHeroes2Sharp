@@ -8,7 +8,7 @@
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.MessageBox`）、界面流转 | Core, Assets, Rendering, Game |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox`）、界面流转 | Core, Assets, Rendering, Game |
 | `FHeroes2.App` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
@@ -111,6 +111,34 @@ MainMenuScene            右键按在招牌或门上时创建，松开就丢弃�
 所以对话框只是一个每帧重画的对象。切片、列宽、最小高度全部来自 C++ 的算术，
 因此一像素都不需要猜：`FrameBoxTests` / `MessageBoxTests` 固定了 640×480 下的
 `198,205 244×70` 与 `159,141 305×180` 这些数。
+
+## 对话框按钮：`ui_button.cpp`
+
+设置、确认这类对话框底部的按钮走另一套控件（`fheroes2::ButtonBase` / `ButtonSprite` /
+`ButtonGroup`），主菜单招牌用的 `Widgets.Button` 是另一回事：那块逻辑在参考实现里写在
+`game_mainmenu.cpp` 里（悬停换 `+1` 帧、按下换 `+2` 帧），所以端口保留了一个带 hover 状态的
+`Button`。
+
+```
+Widgets.ButtonBase     偏移 + 两块命中区（released / pressed）；Press()/Release() 在禁用时不生效；
+                       禁用外观 = released 过 PAL::DARKENING（PaletteId.Darkening），按精灵缓存
+        ↓
+Widgets.ButtonSprite   released + pressed + 可选 disabled 精灵；setSprite 后重算命中区
+        ↓
+Widgets.ButtonGroup    按钮 ↔ Dialogs.DialogButton 返回值：MouseClickLeft 规则（按下与松开都在区内
+                       才算点击）、按住时只照亮"按下发生在它身上"的那个按钮、两个热键
+```
+
+输入模型和对话框本身一样是「每帧重画」的：`SetCursor(Point?)` + `SetLeftButton(bool)` 收事件，
+`Draw(PixelBuffer)` 出门。参考实现的 `LocalEvent` 轮询、长按（`MOUSE_LONG_PRESS`）与
+`ActionObject` 观察者都没移植，所以 `processEvents()` 被拆成
+`SetCursor` / `SetLeftButton` / `ProcessHotKey` 三个返回值明确的入口；`ButtonGroupTests` 钉住了
+「按下在 A、松手在 B 不算点击」「拖到邻居不会点亮它」「单个 OK/CANCEL 按钮两个热键都能关」
+这些语义。
+
+版式（`ButtonGroup( area, Dialog::OK | Dialog::CANCEL )` 那种自动摆位）依赖 `ui_button.cpp` 里
+把文字画到按钮上的工厂函数，等设置对话框时一起移植，现在由调用方按自己的美术坐标摆放。
+
 
 ## 错误处理
 

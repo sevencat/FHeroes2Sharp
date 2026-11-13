@@ -534,6 +534,34 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
   `BinaryWriter.Write` 于是只写进 1 个字节（产出 125 字节的坏文件，脚本却打印了正确长度）——
   MISC 的坑位记录里留了这一条。
 
+### M2 验证记录（对话框按钮框架）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx
+    → Core 159 / Assets 120 / UI 70，全部通过
+      （UI 新增 25 条：ButtonSpriteTests 12 + ButtonGroupTests 13）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
+  → match  the rendered menu is identical to the baseline
+```
+
+* `ButtonBase` / `ButtonSprite` / `ButtonGroup` 是 `ui_button.cpp` 的对话框按钮：两块命中区
+  （released / pressed）跟着 ICN 里的 `OffsetX/OffsetY` 走，禁用外观是 released 过
+  `PaletteId.Darkening` 并按精灵缓存（`PAL::PaletteType::DARKENING`）。
+* 点击规则与 `LocalEvent::MouseClickLeft( area )` 一致：按下与松开都必须落在区内。测试里三条
+  用例分别钉住「都在区内 → 返回值」「松手在外 → `None`」「按下在外 → `None`」，
+  另有一条确认拖到邻居不会点亮它（`isMouseLeftButtonPressedAndHeldInArea` 用的是按下位置）。
+* 热键走 `ButtonHotKey.Okay` / `ButtonHotKey.Cancel`：YES/OK 答 Okay、NO/CANCEL 答 Cancel；
+  只有一个 OK 或 CANCEL 的组两个键都答（`Game::HotKeyCloseWindow()`），而只有一个 YES 的组
+  Cancel 返回 `None` —— 与参考实现的判断顺序相同，参考实现在这条分支里也不检查按钮是否禁用。
+* `DrawShadow` 直接把 released 精灵交给 `ImageOps.AddGradientShadow`：测试用一块 6×6 全不透明
+  的精灵（带 transform 层）断言按钮左上角外的像素过表 5、左下角旁过表 2，方向 -5/+5 与
+  `drawShadow()` 相同；没有 transform 层的精灵不投影子（与 `addGradientShadow` 的早退一致）。
+* 这套控件还没有调用方：设置对话框（点主菜单的门）要等 `ui_button.cpp` 的文字按钮工厂与
+  `ButtonGroup( area, Dialog::OK | Dialog::CANCEL )` 的自动摆位一起移植，和 `StandardWindow`
+  一样先作为可测试的构件放着。
+
+
 ## 后续里程碑
 
 见 [PLAN.md](PLAN.md)。M1 的条目已全部完成，并且已经用**原版 C++ 实现**对拍过
