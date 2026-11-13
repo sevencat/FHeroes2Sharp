@@ -155,7 +155,8 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
 | 右键提示框（`BUYBUILD.ICN` 消息框） | ✅ | `UI.Dialogs.FrameBoxChrome` + `FrameBox` + `MessageBox`：六块列拼装（顶 99 + 中段 35×n + 底 81），文字区 244 宽、最小 70 高；标题 yellow / 正文 normal 折行居中；`MainMenuScene.SetRightButton` 按住创建、松开丢弃，画在状态栏之后（ADR-024） |
 | 对话框影像原语（渐变阴影 / 抖动过渡） | ✅ | `ImageOps` 新增 partial 文件：`ApplyTransform`（按 16 张重着色表转换一块矩形）、`AddGradientShadow`（沿精灵轮廓投 2–5 号表的渐变阴影，斜率取整同 `std::round`）、`AddGradientShadowForArea`（矩形左边与下边的 16 px 阴影带）、`CreateDitheringTransition`（周期逐次翻倍的棋盘过渡，奇数尺寸的一半右移一格照抄）；8 个用例与 C++ 参考实现逐字节相同（`CompareEffectsWithReference.ps1`） |
-| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框还缺 `StandardWindow` 与按钮组，见 ADR-024） |
+| 标准对话框窗口（`StandardWindow`） | ✅ | `UI.Dialogs.StandardWindowChrome`（`SURDRBKG.ICN` / `WINLOSE.ICN` / `STONEBAK.ICN` 第 0 帧）+ `StandardWindow`：四角 22 px、可重复边框起点 43 px（横边框从 `43+16` 取像素）、接缝 10 px、底纹从 22 px 起铺；`Create` / `CreateCentered` 给出 `ActiveArea` / `WindowArea` / `TotalArea`（阴影只挂左/下 16 px）；4 个用例与 C++ 参考实现逐字节相同（`CompareWindowWithReference.ps1`），尚未接线到对话框（ADR-024） |
+| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框只缺按钮组，`StandardWindow` 已就绪，见 ADR-024） |
 
 ### M2 验证记录（对话框影像原语）
 
@@ -175,6 +176,28 @@ pwsh tools/scripts/CompareEffectsWithReference.ps1
   单层源不出阴影、阴影越靠近轮廓越强（4 号表比 5 号表深）、过渡里奇数尺寸的一半位移、透明源像素不覆盖目标。
 * 一个实现细节：C++ 用指针走 `CreateDitheringTransition`，移植改成「左右/上下两个索引各自前进」，
   但奇偶分支的 `--`/`++` 与 `patternPoint` 的计算一字未改——这正是逐字节相同的原因。
+
+### M2 验证记录（标准对话框窗口）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  tests/FHeroes2.UI.Tests         → 45 passed / 0 failed（新增 9 条：StandardWindowTests）
+pwsh tools/scripts/BuildReferenceTool.ps1    → 参考导出器编译通过（新增 window 子命令）
+pwsh tools/scripts/CompareWindowWithReference.ps1
+  → Files: 4 of 4 are byte for byte identical
+```
+
+* `window` 的 4 个用例：332×232 普通窗口、283×189 奇数尺寸窗口、332×232 纯边框（无底纹）、
+  552×432 宽窗口（横向边框要重复一次）。画布是同一条公式填充，两侧共享的数据只有
+  `SURDRBKG.ICN` / `WINLOSE.ICN` / `STONEBAK.ICN` 的第 0 帧；任何坐标错位都会立刻失败。
+* 参考侧 `renderStandardWindow()` 是把 `ui_window.cpp` 的 `render()` 逐行抄进导出器的
+  （只把 `_windowArea` / `_hasBackground` 换成参数），所以它验证的是「移植是否忠实」，
+  而不是「两份 C# 是否互相一致」。
+* `StandardWindowTests` 补的是对拍覆盖不到的部分：`Create` 的几何（`TotalArea` 只比窗口多左/下 16 px
+  的非对称）、`CreateCentered` 的奇数余量留右下、缺任一归档返回 `null`、四角 / 两条竖边 / 两条横边 /
+  底纹各自的来源、角部接缝确实同时含边框与底纹两种像素、无底纹时内部一个像素都不动、
+  窗口起点在画布外时按裁剪绘制。
+* 仍未接线：没有任何对话框创建它（设置对话框缺的是按钮组，见 ADR-024）。
 
 
 

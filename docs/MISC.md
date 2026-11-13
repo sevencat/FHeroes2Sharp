@@ -62,6 +62,7 @@ pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译�
 pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
 pwsh tools/scripts/CompareEffectsWithReference.ps1 # 对话框影像原语（阴影 / 抖动过渡）逐字节比对
+pwsh tools/scripts/CompareWindowWithReference.ps1  # 标准对话框窗口（边框 / 接缝 / 底纹 / 阴影）逐字节比对
 pwsh tools/scripts/VerifyMenuBaseline.ps1     # 主菜单像素基线（冻结动画 + 合成光标，退出码 0 = 一致）
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update   # 有意改了视觉后重建 tests/baselines/menu.png
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
@@ -152,12 +153,18 @@ pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
   | `fh2_reference til <AGG> <NAME.TIL> <OUT>` | `tiles <NAME.TIL> <OUT> --format bmp` | `<STEM>_000.bmp`、… |
   | `fh2_reference cursor <AGG> <NAME.BMP> <OUT> [bg]` | `cursor <NAME.BMP> <OUT> --format bmp --background <bg>` | `<STEM>.bmp` |
   | `fh2_reference effects <AGG> <OUT>` | `effects <OUT>` | `01-transform.bmp`、…（固定 8 个） |
+  | `fh2_reference window <AGG> <OUT>` | `window <OUT>` | `01-window.bmp`、…（固定 4 个） |
 
 * `effects` 对拍的是**对话框影像原语**而不是归档条目：两侧用同一组公式化输入（96×64 画布
   `(11x + 17y + 40) & 0xFF`、37×21 带变换层的精灵 `(29x + 7y + 3) & 0xFF`，每第五条对角线透明），
   各自调用 `ApplyTransform` / `addGradientShadow` / `addGradientShadowForArea` /
   `CreateDitheringTransition`，写出 8 个 8 bit BMP。`tests/FHeroes2.Core.Tests/ImageShadingTests.cs`
   只钉 C# 侧的行为，像素级的「和原版一模一样」由这个子命令保证。
+* `window` 对拍的是 `fheroes2::StandardWindow`：两侧都从归档里取 `SURDRBKG.ICN`、
+  `WINLOSE.ICN`、`STONEBAK.ICN` 的第 0 帧，画在同一张 640×480 的公式画布上（填充同上），
+  写 4 个 8 bit BMP——普通窗口、奇数尺寸窗口、`renderBackground = false` 的纯边框窗口，
+  以及宽到会重复横边框的窗口（552×432）。参考侧 `renderStandardWindow()` 直接照抄
+  `ui_window.cpp` 的坐标运算，因此这条比对同时钉住了角块、重复边框、抖动接缝、底纹铺贴与阴影。
 * 跑参考导出器时要把 MSYS2 的 `bin` 加进 `PATH`（它链接了 MSYS2 运行时）；照抄
   `BuildReferenceTool.ps1` 的做法即可，`CompareEffectsWithReference.ps1` 已经内置这一段：
   `$env:PATH = (Join-Path $MsysRoot 'bin') + ';' + $env:PATH`。少了这一步 exe 直接以

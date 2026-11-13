@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FHeroes2.Core\FHeroes2.Core.csproj" />
     <ProjectReference Include="..\..\src\FHeroes2.Assets\FHeroes2.Assets.csproj" />
+    <ProjectReference Include="..\..\src\FHeroes2.UI\FHeroes2.UI.csproj" />
   </ItemGroup>
 
 </Project>

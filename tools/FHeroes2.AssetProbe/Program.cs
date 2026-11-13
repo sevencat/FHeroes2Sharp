@@ -7,6 +7,7 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.UI.Dialogs;
 
 namespace FHeroes2.AssetProbe;
 
@@ -22,6 +23,7 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe tiles   &lt;NAME.TIL&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe cursor  &lt;NAME.BMP&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe effects &lt;output-dir&gt; [--palette &lt;NAME&gt;]
+///   FHeroes2.AssetProbe window  &lt;output-dir&gt; [--palette &lt;NAME&gt;]
 ///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;] [--ignore x,y,w,h]...
 /// </code>
 /// </summary>
@@ -53,6 +55,7 @@ internal static class Program
                 "tiles" => ExportTiles(arguments),
                 "cursor" => ExportCursor(arguments),
                 "effects" => ExportEffects(arguments),
+                "window" => ExportWindow(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -285,6 +288,55 @@ internal static class Program
         Console.WriteLine(
             $"Wrote 8 BMP files to '{Path.GetFullPath(outputDirectory)}' using palette '{arguments.PaletteName}'.");
         return 0;
+    }
+
+    /// <summary>
+    /// Renders a <see cref="StandardWindow"/> per case with the artwork of the archive.
+    /// </summary>
+    private static int ExportWindow(ProbeArguments arguments)
+    {
+        if (arguments.Positional.Count != 1)
+        {
+            throw new ArgumentException("'window' expects exactly one argument: <output-dir>.");
+        }
+
+        string outputDirectory = arguments.Positional[0];
+
+        using AssetArchive archive = OpenArchive(arguments);
+        Palette palette = LoadPalette(archive, arguments.PaletteName);
+
+        StandardWindowChrome? chrome = StandardWindowChrome.TryCreate(
+            ReadSprites(archive, StandardWindowChrome.HorizontalAssetName),
+            ReadSprites(archive, StandardWindowChrome.VerticalAssetName),
+            ReadSprites(archive, StandardWindowChrome.BackgroundAssetName));
+
+        if (chrome is null)
+        {
+            Console.Error.WriteLine("error: the window artwork is missing from the archive.");
+            return 3;
+        }
+
+        Directory.CreateDirectory(outputDirectory);
+
+        IReadOnlyList<(string Name, PixelBuffer Image)> images = WindowPreview.Render(chrome);
+
+        foreach ((string name, PixelBuffer image) in images)
+        {
+            string file = Path.Combine(outputDirectory, name);
+            File.WriteAllBytes(file, BmpWriter.EncodeIndexed(image, palette));
+            Console.WriteLine($"{name}\t{image.Width}x{image.Height}");
+        }
+
+        Console.WriteLine(
+            $"Wrote {images.Count} BMP files to '{Path.GetFullPath(outputDirectory)}' using palette '{arguments.PaletteName}'.");
+        return 0;
+    }
+
+    /// <summary>Decodes an ICN entry of the archive, or returns <see langword="null"/> when it is missing.</summary>
+    private static IReadOnlyList<Sprite>? ReadSprites(AssetArchive archive, string name)
+    {
+        byte[]? data = archive.TryRead(name);
+        return data is null ? null : IcnSpriteFile.Parse(data).Sprites;
     }
 
     /// <summary>
@@ -585,6 +637,7 @@ internal static class Program
         Console.WriteLine("  tiles   <NAME.TIL> <dir> [--palette <NAME>]           Exports tiles.");
         Console.WriteLine("  cursor  <NAME.BMP> <dir> [--palette <NAME>]           Exports one monochrome cursor.");
         Console.WriteLine("  effects <dir> [--palette <NAME>]                     Renders the dialog effects preview.");
+        Console.WriteLine("  window  <dir> [--palette <NAME>]                     Renders the standard dialog windows.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
         Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
         Console.WriteLine("                      bar shows a live FPS counter.");
