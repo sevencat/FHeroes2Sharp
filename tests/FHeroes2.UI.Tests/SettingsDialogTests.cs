@@ -121,6 +121,57 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void Chevrons_BracketTheValueInsideTheRow()
+    {
+        SettingsDialog dialog = CreateDialog(["Language"], out _);
+        Rect row = dialog.OptionArea(0);
+        Rect left = dialog.LeftChevron(0);
+        Rect right = dialog.RightChevron(0);
+
+        // "English" is seven glyphs of six pixels in the fake font.
+        const int valueWidth = 7 * 6;
+
+        Assert.Equal(row.Right - SettingsDialog.RowPadding - SettingsDialog.ChevronWidth, right.X);
+        Assert.Equal(right.X - SettingsDialog.ChevronGap - valueWidth - SettingsDialog.ChevronGap - SettingsDialog.ChevronWidth, left.X);
+        Assert.Equal(SettingsDialog.ChevronWidth, left.Width);
+        Assert.Equal(SettingsDialog.ChevronHeight, left.Height);
+        Assert.Equal(left.Y, right.Y);
+        Assert.Equal(row.Y + ((row.Height - SettingsDialog.ChevronHeight) / 2), left.Y);
+    }
+
+    [Fact]
+    public void Drawing_PaintsBothChevronsWithTheFontWhite()
+    {
+        SettingsDialog dialog = CreateDialog(["Language"], out _);
+
+        PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
+        dialog.Draw(target);
+
+        // The tip of '<' is on the left of its area, the tip of '>' on the right; the arms are
+        // ChevronWidth - 1 rows above and below the centre.
+        Rect left = dialog.LeftChevron(0);
+        int centreY = left.Y + (left.Height / 2);
+        Assert.Equal(SettingsDialog.ChevronColor, target[left.X, centreY]);
+        Assert.Equal(SettingsDialog.ChevronColor, target[left.Right - 1, centreY - (left.Width - 1)]);
+
+        Rect right = dialog.RightChevron(0);
+        Assert.Equal(SettingsDialog.ChevronColor, target[right.Right - 1, centreY]);
+        Assert.Equal(SettingsDialog.ChevronColor, target[right.X, centreY - (right.Width - 1)]);
+    }
+
+    [Fact]
+    public void NarrowRow_DropsTheChevrons()
+    {
+        SettingsDialog dialog = CreateDialog(["Language"], out _, width: 40);
+
+        Assert.True(dialog.LeftChevron(0).IsEmpty);
+        Assert.True(dialog.RightChevron(0).IsEmpty);
+
+        PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
+        dialog.Draw(target);
+    }
+
+    [Fact]
     public void Option_RejectsAnUnknownRow()
     {
         SettingsDialog dialog = CreateDialog(["Language"], out _);
@@ -130,16 +181,18 @@ public sealed class SettingsDialogTests
     }
 
     /// <summary>
-    /// Builds a dialog with a 200x120 content area, one row per label and a 60x25 OK button.
+    /// Builds a dialog with a content area of the given width, one row per label and a 60x25 OK
+    /// button.
     /// </summary>
-    private static SettingsDialog CreateDialog(string[] labels, out Rect okayArea)
+    private static SettingsDialog CreateDialog(string[] labels, out Rect okayArea, int width = 200)
     {
         IGlyphSource titleFont = new FakeGlyphSource(1);
         IGlyphSource optionFont = new FakeGlyphSource(2);
 
-        StandardWindow window = StandardWindow.Create(CreateChrome(), Content);
+        Rect content = new(Content.X, Content.Y, width, Content.Height);
+        StandardWindow window = StandardWindow.Create(CreateChrome(), content);
 
-        ButtonGroup buttons = ButtonGroup.CreateStandard(Content, DialogButton.Ok, new FixedArtwork());
+        ButtonGroup buttons = ButtonGroup.CreateStandard(content, DialogButton.Ok, new FixedArtwork());
 
         SettingsOption[] options = [.. labels.Select(label => new SettingsOption(label, ["English", "zh_CN"]))];
 

@@ -5,10 +5,11 @@ namespace FHeroes2.UI.Dialogs;
 /// </summary>
 /// <remarks>
 /// This is the port stand-in for an <c>OptionButtonGroup</c> row of the reference settings dialog:
-/// instead of laying out a group of arrow buttons, the dialog draws <c>&lt; value &gt;</c> and lets
-/// the caller move the selection, so the row needs no extra artwork and the selection logic is
-/// testable on its own. Moving past the last value wraps around to the first one, which is what a
-/// repeated press on the right hand arrow of the original does for short lists.
+/// instead of laying out a group of arrow buttons, the dialog draws the value with a chevron on
+/// each side and lets the caller move the selection, so the row needs no extra artwork and the
+/// selection logic is testable on its own. Moving past the last value wraps around to the first
+/// one, which is what a repeated press on the right hand arrow of the original does for short
+/// lists.
 /// </remarks>
 public sealed class SettingsOption
 {

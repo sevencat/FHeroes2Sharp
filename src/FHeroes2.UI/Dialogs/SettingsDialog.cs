@@ -15,8 +15,10 @@ namespace FHeroes2.UI.Dialogs;
 /// its rows from option button groups and checkboxes, applying every change immediately. The port
 /// starts with the subset the client can actually honour - the interface language - and applies it
 /// when the dialog closes with OK, so a Cancel (or <see cref="Cancel"/>) leaves the game as it was.
-/// Rows are drawn as <c>&lt; value &gt;</c>: pressing the left half of a row selects the previous
-/// value, the right half the next one.
+/// A row is a label on the left, its value on the right and a chevron on both sides: pressing the
+/// left half of a row selects the previous value, the right half the next one. The chevrons are
+/// drawn as pixel lines (<see cref="ChevronWidth"/>) because the <c>&lt;</c> and <c>&gt;</c> glyphs
+/// of <c>FONT.ICN</c> are three by four pixels and unreadable at that size.
 /// </para>
 /// <para>
 /// Input mirrors the rest of the port: the scene feeds <see cref="SetCursor"/> and
@@ -36,6 +38,25 @@ public sealed class SettingsDialog
 
     /// <summary>Horizontal margin of the labels and of the values.</summary>
     public const int RowPadding = 8;
+
+    /// <summary>
+    /// Width of the chevron that brackets a value, in logical pixels. The reference dialog uses
+    /// the arrow buttons of an <c>OptionButtonGroup</c>; the port has no artwork for them, so the
+    /// arrows are drawn as two pixel lines instead.
+    /// </summary>
+    public const int ChevronWidth = 4;
+
+    /// <summary>Height of a chevron: its two arms are 45 degrees, so it is <c>2 * width - 1</c>.</summary>
+    public const int ChevronHeight = (2 * ChevronWidth) - 1;
+
+    /// <summary>Gap between a chevron and the value it brackets, about one glyph of <c>FONT.ICN</c>.</summary>
+    public const int ChevronGap = 6;
+
+    /// <summary>
+    /// Colour of the chevrons: index <c>10</c> of <c>KB.PAL</c>, the brightest step of the grey
+    /// text ramp of <c>FONT.ICN</c>, i.e. the white the row text is drawn with.
+    /// </summary>
+    public const byte ChevronColor = 10;
 
     private readonly StandardWindow _window;
     private readonly ButtonGroup _buttons;
@@ -115,6 +136,46 @@ public sealed class SettingsDialog
     }
 
     /// <summary>
+    /// Area of the left chevron of row <paramref name="index"/>, i.e. the one that selects the
+    /// previous value; <see cref="Rect.Empty"/> when the row is too narrow to hold the value and
+    /// both chevrons.
+    /// </summary>
+    /// <param name="index">Zero based row index.</param>
+    /// <exception cref="ArgumentOutOfRangeException">There is no row at <paramref name="index"/>.</exception>
+    public Rect LeftChevron(int index)
+    {
+        Rect row = OptionArea(index);
+        if (!ChevronsFit(index))
+        {
+            return Rect.Empty;
+        }
+
+        int x = ValueX(index) - ChevronGap - ChevronWidth;
+
+        return new Rect(x, ChevronTop(row), ChevronWidth, ChevronHeight);
+    }
+
+    /// <summary>
+    /// Area of the right chevron of row <paramref name="index"/>, i.e. the one that selects the
+    /// next value; <see cref="Rect.Empty"/> when the row is too narrow to hold the value and both
+    /// chevrons.
+    /// </summary>
+    /// <param name="index">Zero based row index.</param>
+    /// <exception cref="ArgumentOutOfRangeException">There is no row at <paramref name="index"/>.</exception>
+    public Rect RightChevron(int index)
+    {
+        Rect row = OptionArea(index);
+        if (!ChevronsFit(index))
+        {
+            return Rect.Empty;
+        }
+
+        int x = row.Right - RowPadding - ChevronWidth;
+
+        return new Rect(x, ChevronTop(row), ChevronWidth, ChevronHeight);
+    }
+
+    /// <summary>
     /// Height a content area needs so that the title, the rows and a button of
     /// <paramref name="buttonHeight"/> pixels fit, which is what a caller centres the window with.
     /// </summary>
@@ -155,11 +216,19 @@ public sealed class SettingsDialog
             Rect row = OptionArea(index);
 
             GlyphText.DrawLine(_optionFont, target, new Point(row.X + RowPadding, row.Y), _options[index].Label);
+            GlyphText.DrawLine(_optionFont, target, new Point(ValueX(index), row.Y), _options[index].Value);
 
-            string value = $"< {_options[index].Value} >";
-            int valueWidth = GlyphText.Measure(_optionFont, value);
-            GlyphText.DrawLine(
-                _optionFont, target, new Point(row.Right - RowPadding - valueWidth, row.Y), value);
+            Rect left = LeftChevron(index);
+            if (!left.IsEmpty)
+            {
+                DrawChevron(target, left, pointingLeft: true);
+            }
+
+            Rect right = RightChevron(index);
+            if (!right.IsEmpty)
+            {
+                DrawChevron(target, right, pointingLeft: false);
+            }
         }
 
         _buttons.Draw(target);
@@ -221,6 +290,55 @@ public sealed class SettingsDialog
     /// <param name="hotKey">Hot key that was pressed.</param>
     /// <returns>Value of the button the key stands for, or <see cref="DialogButton.None"/>.</returns>
     public DialogButton ProcessHotKey(ButtonHotKey hotKey) => _buttons.ProcessHotKey(hotKey);
+
+    /// <summary>X of the value of row <paramref name="index"/>, right aligned inside the row.</summary>
+    private int ValueX(int index)
+    {
+        Rect row = OptionArea(index);
+        int right = row.Right - RowPadding;
+
+        if (ChevronsFit(index))
+        {
+            right -= ChevronWidth + ChevronGap;
+        }
+
+        return right - GlyphText.Measure(_optionFont, _options[index].Value);
+    }
+
+    /// <summary>
+    /// Whether the value and both chevrons fit between the paddings of row
+    /// <paramref name="index"/>. A narrow window keeps the value and drops the arrows, which is the
+    /// same degradation the caller gets from a clipped label.
+    /// </summary>
+    private bool ChevronsFit(int index)
+    {
+        Rect row = OptionArea(index);
+        int available = row.Width - (2 * RowPadding);
+        int needed = GlyphText.Measure(_optionFont, _options[index].Value) + (2 * (ChevronWidth + ChevronGap));
+
+        return available >= needed;
+    }
+
+    /// <summary>Y of a chevron: vertically centred on the row's line.</summary>
+    private static int ChevronTop(in Rect row) => row.Y + ((row.Height - ChevronHeight) / 2);
+
+    /// <summary>
+    /// Draws one chevron into <paramref name="area"/>: two 45 degree arms of
+    /// <see cref="ChevronWidth"/> pixels that meet at the tip, which is on the left for
+    /// <paramref name="pointingLeft"/> and on the right otherwise.
+    /// </summary>
+    private static void DrawChevron(PixelBuffer target, in Rect area, bool pointingLeft)
+    {
+        int centreY = area.Y + (area.Height / 2);
+
+        for (int step = 0; step < area.Width; ++step)
+        {
+            int x = pointingLeft ? area.X + step : area.Right - 1 - step;
+
+            target[x, centreY - step] = ChevronColor;
+            target[x, centreY + step] = ChevronColor;
+        }
+    }
 
     /// <summary>Index of the row under <paramref name="point"/>, or -1 when there is none.</summary>
     private int RowAt(Point? point)
