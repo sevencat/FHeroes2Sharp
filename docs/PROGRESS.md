@@ -46,7 +46,8 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 
 1. 诊断场景每帧整屏重绘（`InvalidateAll`）；脏矩形机制已实现但留到 M1 真正使用。
 2. `ITextRenderer` 目前只有「度量 + 后端名」；文本绘制方法在 M2 引入位图字体后端时统一。
-3. 未接入 `.mo` 本地化：诊断界面直接写死中英文字符串，回退规则为「字体支持 CJK 则中文，否则英文」。
+3. 诊断界面直接写死中英文字符串（回退规则：字体支持 CJK 则中文，否则英文）；`.mo` 读取与
+   `zh_CN` 语言包已在 M2 落地，界面接入要等主菜单实现。
 4. 未生成与 C++ 的 PCG32 黄金向量对比（需要构建参考二进制）；当前用性质测试 + 可复现性测试。
 5. 帧率在启动瞬间偏低（着色器/纹理首次创建），稳定后受垂直同步约束；`--smoke-frames` 的 FPS 不是基准。
 
@@ -113,6 +114,33 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
   已改成 255（见 `MISC.md` 坑位 10）。
 * 单色光标的摘要钉住 `ADVMBW01.BMP` / `SPELBW00.BMP`（图像层 + 变换层），任何像素码或调色板索引偏差都会失败；
   Pillow 读回导出的 BMP 时按 8 bit 索引解释，因此同时校验了文件头、调色板顺序与自下而上的行序。
+
+## M2 — 主菜单（进行中）
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `Assets.Localization.MoCatalog` | ✅ | GNU MO 读取（对齐 `Translation::MOFile`）：大小端、主版本校验、`\0` 分隔复数、空条目跳过、`context\|` 剥离；仅 UTF-8（ADR-016） |
+| `translations/zh_CN.po` | ✅ | 简体中文 95 条：主菜单、设置、语言选择、分辨率说明、快捷键；未翻译项回退英文 |
+| `tools/scripts/BuildTranslations.ps1` | ✅ | `msgfmt --check` 校验 + 安装到 `<data>/files/lang`；`-Cultures` / `-NoInstall` / `-MsgfmtPath` |
+| 主菜单界面（`ADVBORD` 边框、按钮、FNT 位图字体） | ⏳ | 未开始 |
+| 语言切换界面、BGM 播放 | ⏳ | 未开始 |
+
+### M2 验证记录（本地化部分）
+
+```
+pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN
+  → zh_CN  95 translated messages.  7,503 bytes  F:\game\fh2\files\lang\zh_CN.mo
+msgunfmt <mo>                          → 96 个 msgid 块（95 条 + 头部），与 .po 内容一致（独立校验）
+dotnet test FHeroes2Sharp.slnx         → Core 111 passed / Assets 57 passed / 0 failed
+```
+
+* `MoCatalogTests` 新增 13 个用例：大小端、复数拆分、上下文回退、空译文跳过、魔数 / 主版本 / 截断 /
+  无译文 / 非 UTF-8 字符集的拒绝、`FindCatalog` 的 `Data` 子目录父级探测，以及一条读取真实
+  `zh_CN.mo` 的集成用例（数据缺失时提前返回，遵循 ADR-010）；实测该用例确实读到了
+  `F:\game\fh2\files\lang\zh_CN.mo`（95 条，`Language=zh_CN`）。
+* 条目数会随翻译推进增长，测试只断言下限（`Count > 50`）与若干固定译文，补翻译不需要改测试。
+* `msgid` 与参考实现的英文原文逐字节一致（`Okay`、`New Game`、`combatMode|Manual` 等已由
+  `fheroes2/files/lang/de.po` 交叉核对），因此同一份 `.po` 将来可以被 C++ 侧复用。
 
 ## 后续里程碑
 

@@ -25,6 +25,8 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/engine/screen.h` | `PresentationViewport` + `MonoGamePresenter` | 整数倍 + 黑边 |
 | `DEBUG_LOG` / `ERROR_LOG` | `FHeroes2.Core.Diagnostics.GameLog` | 级别 + 环境变量 |
 | `src/fheroes2/gui/ui_font.h` | `FHeroes2.Rendering.Text.ITextRenderer` | TrueType 后端先行 |
+| `src/engine/translations.h/.cpp`（`Translation::MOFile`、`stripContext`、`getCharsetFromHeader`） | `FHeroes2.Assets.Localization.MoCatalog` | GNU MO 读取；按 `msgid` 查表，未命中回退英文；仅 UTF-8 目录（ADR-016） |
+| `files/lang/*.po` → `<data>/files/lang/*.mo` | `translations/*.po` + `tools/scripts/BuildTranslations.ps1` | `zh_CN.po` 当前 95 条（主菜单 / 设置 / 语言 / 快捷键 / 分辨率） |
 
 ## 计划中
 
@@ -33,7 +35,7 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/engine/image_tool.cpp`（图像缩放） | `ImageOps.Resize` | 未排期 |
 | `src/engine/h2d_file.h` | `Assets/H2D/H2DArchive` | M3 |
 | `src/engine/audio/*`、`82M` 解码 | `Assets/Audio/*` | M2/M7 |
-| `src/fheroes2/gui/ui_text.*`、`translations/*.mo` | `Assets/Localization` + `Rendering.Text` | M2 |
+| `src/fheroes2/gui/ui_text.*`（排版、CJK 断行） | `Rendering.Text` 布局层 | M2 |
 | `src/fheroes2/world/*`、`army`、`battle` | `FHeroes2.Game.*` | M3–M7 |
 | `src/engine/serialize.h` | `Game/Persistence/*`（自研 schema） | M8 |
 
@@ -149,6 +151,28 @@ height 行                       自下而上，每行按 4 字节对齐补零
   默认 14 个代表性条目的 1204 个 BMP 与本项目 `--format bmp` 的输出**逐字节相同**；`-All` 覆盖
   归档中 958 个 `.ICN` / `.TIL` / `.BMP` 条目，共 15,025 个 BMP 全部相同
   （文件头、调色板、行序、变换层合成全部命中）；流程见 `MISC.md`。
+
+### 语言包（GNU MO，`Translation::MOFile`）
+
+```
+uint32   magic            0x950412de（小端；大端文件按小端读得 0xde120495）
+uint16   major            必须为 0
+uint16   minor
+uint32   count            字符串对数量
+uint32   origTable        原始字符串表偏移，count × { uint32 length, uint32 offset }
+uint32   transTable       翻译字符串表偏移，布局同上
+uint32   hashSize, hashOffset                 （本项目忽略）
+...                       NUL 结尾的 msgid / msgstr 负载
+```
+
+* 头部条目（空 `msgid`）的 `msgstr` 存放元信息：`Language:`、`Content-Type: text/plain; charset=UTF-8`、
+  `Plural-Forms:`。字符集由 `getCharsetFromHeader()` 解析。
+* 复数形式写在同一个 `msgstr` 里，用 `\0` 分隔；引擎按语言硬编码的规则取第几个形式，本项目把序号交给
+  调用方（`Translate(id, pluralIndex)`），简体中文只声明 1 个形式。
+* 上下文：`msgid` 中的 `context|text` 前缀用于消歧，显示前由 `stripContext()` 去掉（未命中时也去掉，
+  因此缺失翻译总是显示英文原文而不带前缀）。
+* 实测：`translations/zh_CN.po` → `zh_CN.mo` 95 条 / 7,503 字节；`msgfmt --check` 通过，
+  `msgunfmt` 反编译得到 96 个 `msgid` 块（95 条 + 头部），与本项目 `MoCatalog` 的读取结果一致。
 
 ### 调色板转换表（`transformTable`）
 

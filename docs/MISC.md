@@ -61,6 +61,8 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译参考引擎导出器
 pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
+pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
+pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验简体中文语言包
 ```
 
 `compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
@@ -112,6 +114,35 @@ pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
 * 这项工作替代了原先「只能靠 Pillow 与摘要间接验证」的做法：文件头、调色板（含第 4 字节）、
   行序、变换层合成、RLE 解码全部被钉死。
 
+### 本地化（`.mo`）
+
+语言包沿用 fheroes2 的目录约定：`<data>/files/lang/<culture>.mo`（例如 `zh_CN.mo`）。
+仓库里只保存可 diff 的源文件 `translations/<culture>.po`，`.mo` 是构建产物，不入库。
+
+```powershell
+pwsh tools/scripts/BuildTranslations.ps1                  # 全部 .po：msgfmt --check 校验后安装
+pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN   # 只处理简体中文
+pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往数据目录写文件
+```
+
+* `msgfmt` 来自 GNU gettext。不在 `PATH` 时会依次探测 `D:\msys64\usr\bin`、`C:\msys64\usr\bin`，
+  也可用 `-MsgfmtPath` 指定。安装目录默认是 `-DataDirectory` → `FHEROES2_DATA` → `F:\game\fh2`。
+* `Assets.Localization.MoCatalog` 是 GNU MO 的读取实现，对照 `Translation::MOFile`
+  （`src/engine/translations.cpp`）：小端/大端魔数、主版本必须为 0、`msgstr` 用 `\0` 分隔复数形式、
+  空的 `msgid` / `msgstr` 跳过、`context|text` 的上下文前缀在显示前剥离。
+* **msgid 必须与参考实现的英文原文逐字节一致**（例如 `Okay`、`New Game`、`combatMode|Manual`），
+  否则查表失败并回退英文。新增条目时从 `src/fheroes2/**` 里的 `_()` 提取原文，并用
+  `files/lang/de.po` 这类完整目录交叉核对（历史上有一个坑：C++ 里字符串跨行拼接时，直接从源码行
+  截取会得到半截 msgid）。
+* 未翻译的条目**不写进 `.po`**，运行时回退英文——这正是 `Translation::gettext()` 的行为，
+  所以 95 条也可以是一个可用的语言包，覆盖范围逐步扩大即可。
+* 编码统一 `charset=UTF-8`。参考引擎按 8 bit 代码页（CP1251 等）+ 自带字形渲染，而本项目用
+  Unicode + TrueType，因此 `MoCatalog` 只接受 UTF-8/ASCII，其它字符集抛 `NotSupportedException`，
+  避免静默乱码。
+* 参考引擎本身**无法显示中文**：`fheroes2::SupportedLanguage`（`game_language.h`）没有中文，
+  `CodePage` 只有单字节码表，字体是 256 字形的位图字体。所以 `zh_CN.mo` 目前只服务本项目；
+  要让 C++ 版也用上，需要改 `SupportedLanguage`/`getCodePage()`、补 CJK 字体与断行，工作量在引擎侧。
+
 环境变量：
 
 | 变量 | 作用 |
@@ -143,6 +174,11 @@ pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
     差 256 个字节（每条目一个），阅读方（Pillow、Windows 图片查看器）并不关心这个字节。
 11. **参考导出器不会自动建目录**：`fheroes2::Save()` 直接交给 `SDL_SaveBMP`，目录不存在就失败。
     `CompareWithReference.ps1` 在调用前会 `New-Item -ItemType Directory`。
+12. **`msgfmt` 的统计信息会跟着系统语言变**：中文 Windows 上输出「95 条已翻译信息」，脚本里按
+    `translated message` 匹配会什么都抓不到。`BuildTranslations.ps1` 在调用期间把 `LC_ALL` 设成 `C`。
+    另外 `2>&1` 重定向出来的 stderr 是 `ErrorRecord`，取属性前要先 `[string]` 转换。
+13. **`msgfmt` / `msgunfmt` 能当独立校验器**：`msgunfmt <mo>` 能把 `.mo` 反编译回 `.po`，
+    条目数与译文都对得上就说明文件本身合法（与本项目 `MoCatalog` 的读取结果互相独立）。
 
 ## 目录与产物
 
@@ -150,7 +186,8 @@ pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
 | --- | --- |
 | `assets/fonts/` | 可再分发字体（SIL OFL）才会入库；当前为空，运行时回退系统字体 |
 | `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
-| `tools/scripts/` | 生成/校验脚本：调色板转换表、参考导出器编译、参考对拍 |
+| `tools/scripts/` | 生成/校验脚本：调色板转换表、参考导出器编译、参考对拍、语言包编译 |
+| `translations/` | 语言包源文件（`.po`，UTF-8）；`.mo` 编译产物装到数据目录，不入库 |
 | `tools-output/` | 截图、导出产物、编译出的参考导出器，已在 `.gitignore` 中忽略 |
 | `data/` | 本地游戏数据（若复制进仓库目录），已忽略 |
 

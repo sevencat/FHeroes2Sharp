@@ -21,6 +21,11 @@ C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，�
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
+**M2 进行中**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
+`translations/zh_CN.po` + `tools/scripts/BuildTranslations.ps1` 生成并安装
+`<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 95 条，
+未翻译项回退英文）。主菜单界面与语言切换仍待实现。
+
 ## 快速开始
 
 ```powershell
@@ -52,6 +57,10 @@ dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles too
 # 与原版 C++ 实现逐字节对拍（需要 MSYS2 UCRT64 的 g++ 与一份 fheroes2 源码，见 docs/MISC.md）
 pwsh tools/scripts/BuildReferenceTool.ps1
 pwsh tools/scripts/CompareWithReference.ps1
+
+# 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
+pwsh tools/scripts/BuildTranslations.ps1
+pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
 ```
 
 数据目录解析顺序：`--data` → 环境变量 `FHEROES2_DATA` → 可执行文件目录（及其 `Data` 子目录）
@@ -69,7 +78,8 @@ src/FHeroes2.Client.Desktop  MonoGame 宿主、SDL 呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
-tools/scripts            调色板表生成、参考导出器编译、参考对拍脚本
+tools/scripts            调色板表生成、参考导出器编译、参考对拍、语言包编译脚本
+translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 docs/                    计划、进度、决策与参考笔记
 ```
 
