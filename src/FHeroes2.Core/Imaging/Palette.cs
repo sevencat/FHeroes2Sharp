@@ -41,6 +41,16 @@ public sealed class Palette
     public static Palette FromRaw(ReadOnlySpan<byte> rawRgb) => new(rawRgb);
 
     /// <summary>
+    /// Returns the index of the darkest colour, the usual pick for a bar that has to stay readable
+    /// under light text. Luminance is weighted like the eye perceives it, and ties keep the lowest
+    /// index so the result is stable across calls.
+    /// </summary>
+    public byte FindDarkestIndex() => FindExtremeIndex(brightest: false);
+
+    /// <summary>Returns the index of the brightest colour, the counterpart of <see cref="FindDarkestIndex"/>.</summary>
+    public byte FindBrightestIndex() => FindExtremeIndex(brightest: true);
+
+    /// <summary>
     /// Loads a palette exactly the way <c>fheroes2::setGamePalette</c> does for <c>KB.PAL</c>:
     /// the file stores 6 bit VGA components (0..63) which are shifted left by two bits, and the
     /// color cycling entries are duplicated into their non-cycling slots (water 231..233/235 ->
@@ -80,6 +90,26 @@ public sealed class Palette
 
     private static void CopyColor(Palette palette, int source, int destination) =>
         palette._colors[destination] = palette._colors[source];
+
+    private byte FindExtremeIndex(bool brightest)
+    {
+        byte bestIndex = 0;
+        int bestScore = brightest ? -1 : int.MaxValue;
+
+        for (int index = 0; index < ColorCount; ++index)
+        {
+            RgbaColor color = _colors[index];
+            int score = (color.R * 299) + (color.G * 587) + (color.B * 114);
+
+            if (brightest ? score > bestScore : score < bestScore)
+            {
+                bestScore = score;
+                bestIndex = (byte)index;
+            }
+        }
+
+        return bestIndex;
+    }
 
     public void Load(ReadOnlySpan<byte> rawRgb)
     {

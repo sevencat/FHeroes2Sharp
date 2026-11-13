@@ -75,6 +75,41 @@ public sealed class ImagingTests
     }
 
     [Fact]
+    public void Palette_FindExtremeIndices_FollowLuminance()
+    {
+        byte[] raw = new byte[Palette.RawPaletteSize];
+        for (int index = 0; index < Palette.ColorCount; ++index)
+        {
+            raw[index * 3] = 40;
+            raw[(index * 3) + 1] = 40;
+            raw[(index * 3) + 2] = 40;
+        }
+
+        // A dark blue is darker than a medium grey even though the raw channel values suggest
+        // otherwise; the brightest entry is the white one, not the most saturated one.
+        raw[10 * 3] = 0;
+        raw[(10 * 3) + 1] = 0;
+        raw[(10 * 3) + 2] = 20;
+        raw[200 * 3] = 63;
+        raw[(200 * 3) + 1] = 63;
+        raw[(200 * 3) + 2] = 63;
+
+        Palette palette = Palette.FromGamePalette(raw);
+
+        Assert.Equal(10, palette.FindDarkestIndex());
+        Assert.Equal(200, palette.FindBrightestIndex());
+    }
+
+    [Fact]
+    public void Palette_FindExtremeIndices_KeepTheLowestIndexOfATie()
+    {
+        Palette palette = new(rawRgb: new byte[Palette.RawPaletteSize]);
+
+        Assert.Equal(0, palette.FindDarkestIndex());
+        Assert.Equal(0, palette.FindBrightestIndex());
+    }
+
+    [Fact]
     public void RgbaColor_PacksAsAbgr8888()
     {
         RgbaColor color = new(0x11, 0x22, 0x33, 0x44);

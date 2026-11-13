@@ -34,8 +34,10 @@ public sealed class GameFonts
         Small = small;
         Normal = normal;
         Yellow = yellow;
-        Description = description;
         SupportsCjk = normal.IsAvailable(ProbeCharacter);
+
+        // The overlay has one line for the fonts, so the CJK state belongs in the description.
+        Description = SupportsCjk ? $"{description} (CJK)" : $"{description} (no CJK)";
     }
 
     /// <summary><c>SMALFONT.ICN</c>: 8 pixel letters on an 11 pixel line.</summary>
@@ -84,8 +86,7 @@ public sealed class GameFonts
                 Wrap(yellow, cjkFace),
                 Describe(normal, small, cjkFace));
 
-            GameLog.Info(
-                $"Game fonts ready: {fonts.Description} (CJK: {(fonts.SupportsCjk ? "yes" : "no")}).");
+            GameLog.Info($"Game fonts ready: {fonts.Description}.");
 
             return fonts;
         }

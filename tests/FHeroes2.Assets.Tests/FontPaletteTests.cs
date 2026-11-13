@@ -22,6 +22,8 @@ public sealed class FontPaletteTests
         BitmapFont yellow = font.WithPalette(PaletteId.YellowFont);
 
         Assert.Equal(114, yellow.GetSprite(LetterA).Image[0, 0]);
+        Assert.Equal(PaletteId.YellowFont, yellow.Palette);
+        Assert.Equal(PaletteId.Standard, font.Palette);
 
         // The source font keeps its own pixels; the conversion happens on a copy.
         Assert.Equal(GreyTextPixel, font.GetSprite(LetterA).Image[0, 0]);

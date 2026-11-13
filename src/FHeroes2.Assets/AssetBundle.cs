@@ -77,6 +77,20 @@ public sealed class AssetBundle : IDisposable
         return _baseArchive.TryRead(fileName);
     }
 
+    /// <summary>
+    /// Reads and decodes an ICN file, the format every UI sprite table uses
+    /// (<c>HEROES.ICN</c>, <c>BTNSHNGL.ICN</c>, <c>FONT.ICN</c>, ...).
+    /// </summary>
+    /// <returns><see langword="null"/> when neither archive holds <paramref name="fileName"/>.</returns>
+    /// <exception cref="Core.Io.BinaryFormatException">The entry exists but is not a valid ICN file.</exception>
+    public Icn.IcnSpriteFile? TryReadIcn(string fileName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+
+        byte[]? data = TryRead(fileName);
+        return data is null ? null : Icn.IcnSpriteFile.Parse(data);
+    }
+
     public bool Contains(string fileName) =>
         (_expansionArchive?.Contains(fileName) ?? false) || _baseArchive.Contains(fileName);
 

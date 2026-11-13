@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | **M0** | 解决方案骨架；Core/Assets/Rendering 最小子集；SDL3 窗口 640×480 + 2x；SDL3_ttf 文本；AssetProbe；文档 | 构建 0 警告（warnings-as-errors）；测试全绿；`--smoke-frames` 可运行并出图 |
 | **M1** | 图像栈：ICN/TIL 解码、变换层（palette transform 6–13）、`Cursor`、PNG/BMP 导出、黄金图像测试 | 解码 `HEROES.ICN`/`GROUND32.TIL` 与 C++ 输出逐像素一致（抽样 20 个资源） |
-| **M2** | 主菜单：`ADVBORD.ICN` 边框、按钮、原版位图字体（`FONT.ICN`/`SMALFONT.ICN`）、TrueType 补位 CJK（`Sevencat.GlyphRaster`）、`.mo` 本地化、BGM 播放 | 可从数据目录启动到主菜单，中英文切换 |
+| **M2** | 主菜单：`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 招牌按钮、原版位图字体（`FONT.ICN`/`SMALFONT.ICN`）、TrueType 补位 CJK（`Sevencat.GlyphRaster`）、`.mo` 本地化、BGM 播放 | 可从数据目录启动到主菜单，中英文切换 |
 | **M3** | 新游戏/场景设置：地图尺寸、玩家数、种族、难度；H2D 场景列表 | 能创建新对局并进入冒险地图（占位渲染） |
 | **M4** | 冒险地图渲染：地形、物体、英雄/城镇精灵、滚动、小地图、路径 | 与参考实现同视角截图对齐（tile 级一致） |
 | **M5** | 回合与英雄：移动力、拾取资源、战斗触发、AI 基础 | 完整回合可循环，AI 可行动 |

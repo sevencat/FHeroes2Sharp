@@ -8,15 +8,16 @@ using FHeroes2.Rendering.Text;
 namespace FHeroes2.Client.Desktop.Scenes;
 
 /// <summary>
-/// Milestone M0 screen: exercises the whole pipeline (palette, indexed frame buffer, text) and
-/// shows the state of the port. It is replaced by the real main menu in M2.
+/// The engine diagnostics screen: palette strip, moving marker, font samples and the runtime state
+/// overlay. It is still reachable with <c>--scene diagnostics</c> and is the fallback of the client
+/// when the game data or the fonts are missing.
 /// </summary>
 /// <remarks>
 /// Besides the M0 diagnostics it draws the game fonts into the indexed frame buffer
 /// (<see cref="DrawFontSample"/>), which is the path the main menu uses: <c>FONT.ICN</c> for Latin
 /// text, a rasterized CJK face for everything else and a palette for the colour.
 /// </remarks>
-public sealed class DiagnosticsScene
+public sealed class DiagnosticsScene : IScene
 {
     private const int LineHeight = 14;
     private const int OverlayLeft = 12;
@@ -52,8 +53,8 @@ public sealed class DiagnosticsScene
         _text = text;
         _supportsCjk = supportsCjk;
         _fonts = fonts;
-        _backgroundIndex = FindPaletteIndex(frame.Palette, brightest: false);
-        _highlightIndex = FindPaletteIndex(frame.Palette, brightest: true);
+        _backgroundIndex = frame.Palette.FindDarkestIndex();
+        _highlightIndex = frame.Palette.FindBrightestIndex();
     }
 
     public void Update(double elapsedSeconds)
@@ -65,8 +66,10 @@ public sealed class DiagnosticsScene
     }
 
     /// <summary>Draws the indexed content of the scene into the frame buffer.</summary>
-    public void DrawFrame()
+    public void DrawFrame(in DiagnosticsState state)
     {
+        _ = state;
+
         PixelBuffer pixels = _frame.Pixels;
 
         // Background and a two row palette strip: proof that the palette reached the screen.
@@ -168,28 +171,6 @@ public sealed class DiagnosticsScene
         {
             WriteLine("Keys: ESC quits | F11 fullscreen | F12 screenshot", BottomHintTop, label);
         }
-    }
-
-    private static byte FindPaletteIndex(Palette palette, bool brightest)
-    {
-        ArgumentNullException.ThrowIfNull(palette);
-
-        byte bestIndex = 0;
-        int bestScore = brightest ? -1 : int.MaxValue;
-
-        for (int index = 0; index < Palette.ColorCount; ++index)
-        {
-            RgbaColor color = palette[index];
-            int score = (color.R * 299) + (color.G * 587) + (color.B * 114);
-
-            if (brightest ? score > bestScore : score < bestScore)
-            {
-                bestScore = score;
-                bestIndex = (byte)index;
-            }
-        }
-
-        return bestIndex;
     }
 
     private void WriteLine(string text, int y, in TextStyle style) =>

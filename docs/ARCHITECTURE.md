@@ -8,7 +8,7 @@
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件、界面流转 | Core, Rendering, Game |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button`）、界面流转 | Core, Rendering, Game |
 | `FHeroes2.Client.Desktop` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
@@ -26,13 +26,18 @@
       ↓
 脏区上传      SdlPresenter.Upload      uint[256] 查表（IndexedFrameConverter）→ SDL_UpdateTexture(脏矩形)
       ↓
-逻辑合成      640×480 目标纹理        帧 + 文本叠加（SDL3_ttf，1x 逻辑像素）
+逻辑合成      640×480 目标纹理        帧 + 可选文本叠加（只有诊断屏用 SDL3_ttf，1x 逻辑像素）
       ↓
 呈现          Nearest 采样 + 整数倍放大 + 居中黑边 → 窗口
 ```
 
 放大的数学在 `PresentationViewport.Compute` 中：窗口 ≥ 640×480 时取整数倍并居中；
-窗口更小时退化为等比缩放（浮点），保证不裁切。
+窗口更小时退化为等比缩放（浮点），保证不裁切；`TryToLogical` 是它的逆运算，
+鼠标坐标靠它从窗口空间回到 640×480（落在黑边上返回 `false`）。
+
+画面由 `Scenes.IScene` 描述：`DrawFrame(in DiagnosticsState)` 画索引内容（背景、招牌、文字），
+`DrawOverlay(in DiagnosticsState)` 画 GPU 覆盖层，`Update` 推进动画。`MainMenuScene` 的
+`DrawOverlay` 是空实现——它的文字全部是索引像素；`DiagnosticsScene` 反过来只用覆盖层显示状态。
 
 ## 组合根与生命周期
 
@@ -40,9 +45,12 @@
 
 ```
 Run()     → SDL_Init(Video) / TTF_Init()；打开 AssetBundle（失败则记错误、ExitCode=1、使用灰度调色板继续）
-            创建 SdlPresenter（窗口 + 渲染器 + 流式帧纹理 + 640×480 目标纹理）、SdlTextRenderer、DiagnosticsScene
-Loop()    → PollEvent（ESC 退出、F11 全屏、F12 截图、窗口关闭）、FrameTimer、场景动画、smoke 帧数控制
-Draw()    → 场景绘制 → 上传脏区 → 绑定目标纹理 → 帧纹理 1:1 → 文本 → 截图 → 放大呈现 → RenderPresent
+            创建 SdlPresenter（窗口 + 渲染器 + 流式帧纹理 + 640×480 目标纹理）、SdlTextRenderer
+            CreateScenes()：DiagnosticsScene 总是建好，--scene menu 时再建 MainMenuScene（缺资源则为 null）
+Loop()    → PollEvent（ESC 退出、F2 切语言、F11 全屏、F12 截图、鼠标移动/按键 → MainMenuScene、窗口关闭）、
+            FrameTimer、场景动画、smoke 帧数控制
+Draw()    → 组装 DiagnosticsState → 场景绘制 → 上传脏区 → 绑定目标纹理 → 帧纹理 1:1 → 覆盖层
+            → 截图 → 放大呈现 → RenderPresent
 Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF、SDL）
 ```
 
@@ -65,6 +73,17 @@ CJK 或 `U+00FF` 以上字符由 `Assets.Fonts.TrueTypeGlyphSource` 补位：`Se
 内嵌文泉驿微米黑）做光栅化，覆盖率经 `GlyphCoverageRamp` 量化到 `KB.PAL` 的灰阶（ADR-019）。
 两个 provider 都实现 `IGlyphSource`，`GlyphText` 负责唯一的布局实现：`Measure` / `DrawLine` /
 `DrawMultiline` / `WrapLines`，换行、居中、裁剪、尾随空格规则因此只有一份。
+UI 实际用的是 `Assets.Fonts.CompositeGlyphSource`：位图字体是 primary，决定
+`LineHeight`/`SpaceWidth`/拉丁字符，TrueType 只在 primary 不认识的码位上补字形，
+两边都不认识时退回位图的 `?`（ADR-021）。启动时由
+`Client.Desktop.Fonts.GameFonts.TryLoad(bundle)` 一次性装好 `Small`/`Normal`/`Yellow`
+三个字形源并把结果交给场景，所以绘制点只拿 `IGlyphSource`，不需要知道字符范围。
+绘制走索引路径：`GlyphText.DrawLine` 写进 `ScreenBuffer`，颜色由调色板决定，上屏时再按整数倍放大
+（ADR-003）；SDL_ttf 后端只剩诊断覆盖层（`SdlTextRenderer`）。
+主菜单（`MainMenuScene`）是这条路径的第一个真实用户：招牌取自 `BTNSHNGL.ICN`，底部 11 px 状态栏
+用 `GameFonts.Small` 画 `.mo` 译文与语言标记，中英文共用一张调色板。界面语言由
+`Client.Desktop.Localization.GameText` 提供（一个语言一个不可变实例，英文 = msgid 本身），
+`F2` 在可用语言间循环；字体没有 CJK 字形时只保留英文（ADR-022）。
 颜色不是第二套字形资源：原版只有一份 `FONT.ICN`，黄色/灰色文字是把它的索引过一遍
 `Core.Imaging.PaletteTable`（`PAL::GetPalette` 的 13 张重着色表）得到的。
 `BitmapFont.WithPalette(PaletteId.YellowFont)` 重着色位图字体，

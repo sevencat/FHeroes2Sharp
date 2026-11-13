@@ -4,6 +4,7 @@ using FHeroes2.Client.Desktop.Fonts;
 using FHeroes2.Client.Desktop.Graphics;
 using FHeroes2.Client.Desktop.Scenes;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
@@ -18,6 +19,9 @@ namespace FHeroes2.Client.Desktop;
 /// </summary>
 public sealed class GameHost : IDisposable
 {
+    /// <summary><c>SDL_BUTTON_LEFT</c>; only the left button drives the menu.</summary>
+    private const int LeftMouseButton = 1;
+
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
 
@@ -27,7 +31,9 @@ public sealed class GameHost : IDisposable
     private SdlPresenter? _presenter;
     private SdlTextRenderer? _text;
     private GameFonts? _fonts;
-    private DiagnosticsScene? _scene;
+    private IScene? _scene;
+    private MainMenuScene? _menu;
+    private DiagnosticsScene? _diagnostics;
     private bool _supportsCjk;
     private bool _sdlInitialised;
     private bool _ttfInitialised;
@@ -87,7 +93,7 @@ public sealed class GameHost : IDisposable
 
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
             CreateTextRenderer();
-            _scene = new DiagnosticsScene(_frame, _text, _supportsCjk, _fonts);
+            CreateScenes();
 
             GameLog.Info(
                 $"Presentation ready: {_presenter.OutputSize} output, x{_presenter.Viewport.Scale:0.##} scale, " +
@@ -177,6 +183,23 @@ public sealed class GameHost : IDisposable
                 case SDL.EventType.KeyDown when HandleKeyDown(evt.Key):
                     return false;
 
+                case SDL.EventType.MouseMotion:
+                    _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                    break;
+
+                case SDL.EventType.WindowMouseLeave:
+                    _menu?.SetCursor(null);
+                    break;
+
+                case SDL.EventType.MouseButtonDown:
+                case SDL.EventType.MouseButtonUp:
+                    if (HandleMouseButton(evt.Button))
+                    {
+                        return false;
+                    }
+
+                    break;
+
                 default:
                     break;
             }
@@ -193,6 +216,10 @@ public sealed class GameHost : IDisposable
             case SDL.Keycode.Escape:
                 return true;
 
+            case SDL.Keycode.F2 when !key.Repeat:
+                _menu?.NextLanguage();
+                return false;
+
             case SDL.Keycode.F11 when !key.Repeat:
                 _presenter?.ToggleFullscreen();
                 return false;
@@ -202,8 +229,53 @@ public sealed class GameHost : IDisposable
                 return false;
 
             default:
-                return false;
+                // SDL key codes of the letters are their ASCII values, so the hot keys of the
+                // original main menu (N, L, H, C, Q) can be forwarded as characters.
+                return _menu is not null
+                    && !key.Repeat
+                    && _menu.Select((char)key.Key) is { } hotKeyAction
+                    && HandleMenuAction(hotKeyAction);
         }
+    }
+
+    /// <summary>Handles a mouse button event; returns <see langword="true"/> when the client must stop.</summary>
+    private bool HandleMouseButton(in SDL.MouseButtonEvent button)
+    {
+        if (_menu is null || button.Button != LeftMouseButton)
+        {
+            return false;
+        }
+
+        _menu.SetCursor(ToLogical(button.X, button.Y));
+
+        return _menu.SetLeftButton(button.Down) is { } action && HandleMenuAction(action);
+    }
+
+    /// <summary>Reacts to the choice of a main menu sign; returns <see langword="true"/> to stop.</summary>
+    private bool HandleMenuAction(MainMenuAction action)
+    {
+        if (action != MainMenuAction.Quit)
+        {
+            // The other signs are wired up from M3 on; the scene already shows this in its status bar.
+            return false;
+        }
+
+        GameLog.Info("Quit selected, closing the client.");
+        _running = false;
+        return true;
+    }
+
+    /// <summary>Maps a window coordinate onto the 640x480 logical frame, or <see langword="null"/> outside it.</summary>
+    private Point? ToLogical(float x, float y)
+    {
+        if (_presenter is null)
+        {
+            return null;
+        }
+
+        Point output = new((int)MathF.Round(x), (int)MathF.Round(y));
+
+        return _presenter.Viewport.TryToLogical(output, out Point logical) ? logical : null;
     }
 
     private void Update(double elapsedSeconds)
@@ -225,12 +297,6 @@ public sealed class GameHost : IDisposable
             return;
         }
 
-        _scene.DrawFrame();
-        _presenter.Upload(_frame);
-
-        _presenter.BeginLogicalFrame();
-        _presenter.DrawFrameTexture();
-
         DiagnosticsState state = new(
             _assets?.DataDirectory,
             _assets?.BaseArchive.Count ?? 0,
@@ -242,12 +308,45 @@ public sealed class GameHost : IDisposable
             _timer.FramesPerSecond,
             _timer.FrameCount);
 
+        _scene.DrawFrame(state);
+        _presenter.Upload(_frame);
+
+        _presenter.BeginLogicalFrame();
+        _presenter.DrawFrameTexture();
+
         _text?.BeginFrame();
         _scene.DrawOverlay(state);
 
         CaptureScreenshot();
 
         _presenter.EndFrame();
+    }
+
+    /// <summary>
+    /// Creates the screens of this milestone and picks the start screen. The main menu is the
+    /// default; the diagnostics screen stays available for engine checks and as the fallback when
+    /// the artwork or the fonts are missing.
+    /// </summary>
+    private void CreateScenes()
+    {
+        _diagnostics = new DiagnosticsScene(_frame, _text, _supportsCjk, _fonts);
+
+        if (_options.Scene == SceneKind.Menu)
+        {
+            _menu = MainMenuScene.TryCreate(_frame, _assets, _fonts, _options.Language);
+
+            if (_menu is not null && _options.Cursor is { } cursor)
+            {
+                _menu.SetCursor(cursor);
+            }
+        }
+
+        _scene = _menu is not null ? _menu : _diagnostics;
+
+        GameLog.Info(_menu is null
+            ? "Starting on the diagnostics screen."
+            : $"Starting on the main menu (language '{_menu.Text.Culture}', " +
+              $"{_menu.Languages.Count} available).");
     }
 
     private void CaptureScreenshot()

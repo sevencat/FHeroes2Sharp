@@ -182,6 +182,15 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
     另外 `2>&1` 重定向出来的 stderr 是 `ErrorRecord`，取属性前要先 `[string]` 转换。
 13. **`msgfmt` / `msgunfmt` 能当独立校验器**：`msgunfmt <mo>` 能把 `.mo` 反编译回 `.po`，
     条目数与译文都对得上就说明文件本身合法（与本项目 `MoCatalog` 的读取结果互相独立）。
+14. **`HEROES.ICN` 在资料片里有第二份**：`heroes2x.agg` 的同名条目是 PoL 版主菜单（横幅写着
+    *The Price of Loyalty*，且带变换层）。`AssetBundle.TryRead` 优先取资料片，与 `AGG::GetICN`
+    一致，所以主菜单截图/像素基线必须注明数据版本；只有基础版数据时才是原版街景。
+15. **按钮表的状态帧不是「一张图缩放」**：`BTNSHNGL.ICN` 每块招牌 4 帧，released 从 **1** 开始
+    （0 是预备的禁用帧），悬停 `+1`、按下 `+2`；同一组帧的尺寸还可能差 1 px（HIGH SCORES 组是
+    80×75 / 80×76），所以位置只能看 ICN 头里的 `OffsetX/OffsetY`，不能假设同名精灵等大。
+16. **`Add-Type` 会锁住程序集**：在 PowerShell 里 `Add-Type -Path src\FHeroes2.Core\bin\...dll`
+    之后，下一次 `dotnet build` 会在拷贝 `FHeroes2.Core.dll` 时失败（MSB3027/MSB3021，提示文件被
+    `pwsh` 占用）。要么换一个进程做命令行验证，要么先关掉那个 shell 再构建。
 
 ## 目录与产物
 

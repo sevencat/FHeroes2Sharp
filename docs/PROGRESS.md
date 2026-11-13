@@ -138,8 +138,18 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `Assets.Fonts.TrueTypeGlyphSource` | ✅ | 实现 `IGlyphSource`：`Sevencat.GlyphRaster`（纯托管 + 内嵌 WenQuanYi Micro Hei）按 em 尺寸光栅化，覆盖率经 `GlyphCoverageRamp` 量化到 `KB.PAL` 灰阶；`OffsetY += Ascent` 对齐位图字体的原点；`ForLineHeight(font, 17)` 直接对齐原版行高；字形按字符缓存 |
 | `Assets.Fonts.GlyphText` | ✅ | 唯一的一份布局实现（`Measure` / `DrawLine` / `DrawMultiline` / `WrapLines`），`BitmapFont` 与 `TrueTypeGlyphSource` 共用；CJK 无空格段落按字符断行 |
 | `Core.Imaging.PaletteTable` / `PaletteId`（文字颜色） | ✅ | `PAL::GetPalette` 的 13 张 256 字节重着色表 + identity，`tools/scripts/GeneratePaletteTable.ps1` 从 C++ 源生成、`PaletteTableTests` 固定 SHA-256；`ImageOps.ApplyPalette` 负责应用；`BitmapFont.WithPalette` 与 `GlyphCoverageRamp.WithPalette` 让位图字体与 TrueType 用同一颜色（ADR-020） |
-| 主菜单界面（`ADVBORD` 边框、按钮） | ⏳ | 未开始 |
-| 语言切换界面、BGM 播放 | ⏳ | 未开始 |
+| `Assets.Fonts.CompositeGlyphSource` | ✅ | `IGlyphSource` 的复合实现：primary（原版位图字体）定 `LineHeight`/`SpaceWidth`，fallback（TrueType）只补 primary 不能表达的字符；`ForBitmapFont()` 自动把 primary 的调色板交给 CJK 梯度（ADR-021） |
+| `Client.Desktop.Fonts.GameFonts` | ✅ | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 并合成 `Small`/`Normal`/`Yellow` 三个字形源，暴露 `SupportsCjk` + `Description`；缺数据时返回 `null` 不抛异常 |
+| 主菜单界面（`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 招牌） | ✅ | `Scenes.MainMenuScene`：背景取 `HEROES.ICN`（资料片优先），五块招牌取 `BTNSHNGL.ICN` 的 1/5/9/13/17 帧（悬停 `+1`、按下 `+2`），位置直接来自 ICN 的 `OffsetX/OffsetY`；鼠标命中 + 释放判定 + `N/L/H/C/Q` 热键，`ESC` 退出（ADR-022） |
+| `UI.Widgets.Button` / `ButtonState` | ✅ | 三帧 `Sprite` + 状态机，`Area` = released 精灵包围盒，`Update(cursor, leftButtonDown)` 返回状态是否变化；缺帧回退到 released |
+| `Core.Geometry.PresentationViewport.TryToLogical` | ✅ | 窗口坐标 → 640×480 逻辑坐标（整数倍 + 黑边），黑边上返回 `false` |
+| `Core.Imaging.Palette.FindDarkestIndex/FindBrightestIndex` | ✅ | 状态栏底色与诊断场景的极值色查找，权重 `299/587/114`、并列取最小索引 |
+| `Assets.AssetBundle.TryReadIcn` | ✅ | ICN 装载的单一入口（`HEROES.ICN` / `BTNSHNGL.ICN` / `FONT.ICN` …），缺条目返回 `null` |
+| `Client.Desktop.Localization.GameText` | ✅ | 一个语言一个不可变实例：英文 = msgid，`zh_CN` = `<data>/files/lang/zh_CN.mo`；无 CJK 字形时自动退回英文 |
+| 状态栏（索引文字 + 语言标记 + FPS） | ✅ | 底部 11 px（一行 `SMALFONT.ICN`），左侧画悬停招牌的 `.mo` 译文、右侧画 `FPS \| 语言 (F2) \| vX.Y.Z`；`F2` 循环切换语言 |
+| `--scene` / `--lang` / `--cursor` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 让冒烟截图定格 hover 态 |
+| `SHNGANIM.ICN` 灯笼摆动动画 | ⏳ | 未开始（`MainMenuScene.Update` 为空实现） |
+| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面） |
 
 ### M2 验证记录（本地化部分）
 
@@ -180,7 +190,7 @@ dotnet test FHeroes2Sharp.slnx
 * 只做布局/绘制，不改字形：`modifyBaseNormalFont()` 的若干像素级修补（`$`、`%`、`&`、`-`、`\`、`|`、
   小写 `k`）与 `resizeCodePage()`/`generateAlphabet()` 的码页扩展尚未移植，属于主菜单拼接阶段的像素级对齐项。
 * 摘要（digest）只随测试输出打印、暂不断言：真实字形的逐像素结果还没有和 C++ 侧对拍过，
-  先用它做变化哨兵，等 `ADVBORD` 拼好主菜单后再固化为回归基线。
+  先用它做变化哨兵，等主菜单拼好（M2 已拼好，见下）后再固化为回归基线。
 
 ### M2 验证记录（TrueType 字体）
 
@@ -221,6 +231,79 @@ dotnet test FHeroes2Sharp.slnx
   否则二次映射会把像素清零（`BitmapFont_ConvertsAReusedGlyphOnlyOnce`）。
 * 变换层不参与重着色：`WithPalette` 保留 `Transform`（1 = 跳过），只改图像层，因此 TrueType 字形的
   「跳过透明像素」语义与位图字体一致。
+
+### M2 验证记录（复合字形与 UI 接线）
+
+```
+dotnet test FHeroes2Sharp.slnx
+  → Core 128 passed / Assets 105 passed / 0 failed（合计 233）
+dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot tools-output/fonts.png
+  → Game fonts ready: FONT.ICN + SMALFONT.ICN + WenQuanYi Micro Hei (CJK).
+    Presentation ready: 1280x960 output, x2 scale, logical 640x480.  91.0 FPS
+```
+
+* 截图里同一行 `英雄无敌 II  Hero Edition 12345` 画了两遍（`FONT.ICN` 过 `YELLOW_FONT` 与
+  未重着色的表），逐像素统计这两行的颜色：
+
+  ```
+  黄字行: 228,200,20 ×337 | 200,160,24 ×242 | 224,196,0 ×174 | 168,124,20 ×151
+  灰字行: 252,252,252 ×337 | 192,192,192 ×242 | 232,232,232 ×167 | 144,144,144 ×144
+  ```
+
+  两行的**像素档位计数完全相同**（337/242/…），只有索引不同：这正是「一份字形 + 一张
+  调色板表」的预期——英文来自 ICN、中文来自 TrueType，量化后的覆盖率档位数量必然一致。
+  黄色行落在 114–130 黄阶、灰色行落在 10–24 灰阶，与 ADR-020 的表一致。
+* `CompositeGlyphSourceTests` 12 个用例（其中 1 个读真实归档、需游戏数据）：度量只取位图字体
+  （小 4/11、正常 6/17，
+  `Fallback.LineHeight` 与之相同）、拉丁字符返回**同一个** ICN `Sprite` 实例（`Assert.Same`）、
+  CJK 走 fallback、空格/换行沿用位图字体的 advance、`U+E000` 这类两边都没有的码位落在位图
+  `?` 上、`ForBitmapFont` 让 CJK 继承 `YellowFont` 的 114–130 而默认灰阶仍是
+  `[25,21,16,12,10]`、显式 `ramp` 生效、空 provider 抛 `ArgumentNullException`；另有 1 个
+  真实归档用例（读出 `FONT.ICN` 的灰/黄两份、`'新'` 只在复合源里可用、`新游戏 New Game`
+  的笔位等于 `Measure` + 起点）。
+* `"英雄 A"` 的结束笔位严格等于 `起点 + Measure`，且 `Measure("英雄") > Measure("AA")`；
+  整行 17 px 高度内没有像素溢出到 y=17，说明 fallback 的字形原点（`OffsetY + Ascent`）与
+  位图字体落在同一基线。
+* 诊断覆盖层新增「游戏字体」一行，直接显示 `Description`，因此字体装载失败在画面上可见
+  （`GameFonts.TryLoad` 捕获 `BinaryFormatException` / `FileNotFoundException` 等并降级）。
+
+### M2 验证记录（主菜单）
+
+```
+dotnet build FHeroes2Sharp.slnx                       → 0 warning / 0 error
+dotnet test  FHeroes2Sharp.slnx                       → Core 136 / Assets 108 / UI 8 = 252 passed, 0 failed
+dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2\Data \
+    --smoke-frames 90 --screenshot tools-output/menu.png
+  → Text catalog 'F:\game\fh2\files\lang\zh_CN.mo' loaded: 95 entries, language 'zh_CN'.
+    Main menu ready: HEROES.ICN 640x480, 5 signs from BTNSHNGL.ICN, language 'zh_CN' (95 entries).
+    Starting on the main menu (language 'zh_CN', 2 available).
+    Presentation ready: 1280x960 output, x2 scale, logical 640x480.
+    Smoke mode finished after 90 frames (61.6 FPS)
+dotnet run … --smoke-frames 60 --cursor 230,210 --screenshot tools-output/menu-hover.png
+  → 71.1 FPS
+AssetProbe compare menu.png menu-hover.png
+  → 1563 of 307200 pixels differ, max channel delta 252, first at (221,190)
+    差异包围盒 (8,190)-(525,478)：招牌高亮 + 状态栏文字，其余像素逐字节相同
+```
+
+* 招牌位置完全来自 ICN 头（`BTNSHNGL.ICN` 的 sprite 1/5/9/13/17，四个帧一组）：
+  `482,176 81x113` / `195,180 80x77` / `408,107 80x76` / `303,137 76x43` / `0,425 86x44`，
+  `AssetBundleTests` 用真实归档把这张表钉住；菜单代码里没有第二套坐标常量。
+* 背景随数据版本变化：`heroes2x.agg` 里的 `HEROES.ICN` 是 PoL 版（横幅 *The Price of Loyalty*），
+  `AssetBundle` 优先取它（行为同 `AGG::GetICN`），所以截图是资料片样式；只有基础版数据时是原版街景。
+* 悬停把招牌换成第 `+1` 帧（更亮），状态栏左侧出现 `zh_CN.mo` 的译文（截图为「载入之前保存的游戏。」），
+  右侧是 `78 FPS | 简体中文 (F2) | v0.1.0`：一行 `SMALFONT.ICN` + 一个调色板索引，中英文同色。
+* 语言切换 `F2` 在 `en` / `zh_CN` 之间循环；字体没有 CJK 字形时 `MainMenuScene` 只保留英文，
+  避免把中文画成 `?`（`GameFonts.SupportsCjk` 决定）。
+* `ButtonTests` 8 个用例：`Area` 来自精灵锚点、半开边界命中、hover → press → 离开的状态迁移与
+  「没有变化就不算变化」的返回值、缺 hover/pressed 帧回退到 released、按下与悬停画不同帧、
+  变换层 `1` 保留目标像素（ICN 用这种方式表达按钮上的洞）。
+* `AssetBundleTests` 3 个用例：缺条目返回 `null`、真实 `HEROES.ICN`（1 张 640×480）与
+  `BTNSHNGL.ICN`（20 张，含上述五个锚点）、`TryReadIcn` 与 `IcnSpriteFile.Parse` 对同一入口逐字节一致。
+* Core 新增 4 个用例：`TryToLogical` 在整数倍下与 `ToOutput` 互逆、黑边与视口外返回 `false`、
+  空视口返回 `false`、`FindDarkestIndex` / `FindBrightestIndex` 的亮度权重与并列取最小索引。
+* 诊断屏仍可用：`--scene diagnostics` 走到原来的 M0 画面（文本路径未变，只是 `IScene.DrawFrame`
+  多了一个运行时快照参数）。
 
 ## 后续里程碑
 

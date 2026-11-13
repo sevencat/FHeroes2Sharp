@@ -37,4 +37,27 @@ public readonly record struct PresentationViewport(Rect Destination, float Scale
     /// <summary>Maps a logical (game pixel) coordinate to an output (window) coordinate.</summary>
     public Point ToOutput(Point logicalPoint) =>
         new(Destination.X + (int)MathF.Round(logicalPoint.X * Scale), Destination.Y + (int)MathF.Round(logicalPoint.Y * Scale));
+
+    /// <summary>
+    /// Maps an output (window) coordinate back onto the logical frame, the inverse of
+    /// <see cref="ToOutput"/> that input handling needs.
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> when the point lies in the letterbox area or the viewport is empty,
+    /// so a click on the black border never reaches a widget.
+    /// </returns>
+    public bool TryToLogical(Point outputPoint, out Point logicalPoint)
+    {
+        if (Scale <= 0.0f || Destination.IsEmpty || !Destination.Contains(outputPoint))
+        {
+            logicalPoint = default;
+            return false;
+        }
+
+        logicalPoint = new Point(
+            (int)MathF.Floor((outputPoint.X - Destination.X) / Scale),
+            (int)MathF.Floor((outputPoint.Y - Destination.Y) / Scale));
+
+        return true;
+    }
 }

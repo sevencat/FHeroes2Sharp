@@ -7,7 +7,7 @@ public static class BuildInfo
     public const string Version = "0.1.0";
 
     /// <summary>Milestone that is currently implemented.</summary>
-    public const string Milestone = "M0";
+    public const string Milestone = "M2";
 
     /// <summary>Reference C++ implementation the port is derived from.</summary>
     public const string ReferenceImplementation = "fheroes2 1.1.18 (commit 6c51acfdc)";

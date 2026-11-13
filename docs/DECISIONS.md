@@ -407,3 +407,97 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 * 颜色只能取原版表里的结果（不是任意调色板）；新增颜色类别需要同时改脚本与 `PaletteId`。
 * 渐变文字与「按 alpha 混合」（`ApplyAlpha`）仍缺；后者等半透明提示框时再移植。
 
+## ADR-021：中英混排用「复合字形源」——位图字体定度量，TrueType 只补位
+
+**背景**：ADR-018/019 分别定下了「原版 `FONT.ICN` 为主」与「TrueType 做 CJK 补充」，但两者
+各自实现 `IGlyphSource`，谁负责一段混排文本的布局、行高、空格宽度和「找不到字符时画什么」
+没有定论。参考实现的答案很直接：`interface_font.cpp` 的 `getTextWidth()` / `renderText()`
+里从来只有一套度量——位图字体决定 advance，遇到 `isValidValue()` 为假的字符才去调
+`fontTrueType` 取字形，而行高始终是 `getFontHeight(fontType)`（小 11 px / 正常 17 px）。
+换句话说 TrueType 在原版里是**字形提供者**，不是第二种字体。
+
+**决策**：
+
+1. 新增 `Assets.Fonts.CompositeGlyphSource`（实现 `IGlyphSource`）：构造时接收 primary 与
+   fallback 两个 provider。`LineHeight` / `SpaceWidth` **只**取自 primary，
+   `GetAdvance()` / `TryGetGlyph()` 按「primary 能表达就用 primary，否则问 fallback」分派，
+   两者都不能表达时返回 primary 的替代字形（位图 `?`），并让 `IsAvailable` 返回 `false`，
+   于是「测量」与「绘制」永远不会给出不一致的结论。
+2. `CompositeGlyphSource.ForBitmapFont(BitmapFont, TextFont, ramp = null)` 是标准组合方式：
+   内部调用 `TrueTypeGlyphSource.ForLineHeight(face, primary.LineHeight, ramp ??
+   GlyphCoverageRamp.Heroes2Text.WithPalette(primary.Palette))`。因为
+   `BitmapFont` 现在记录自己的 `Palette`（`WithPalette` 的产物，未重着色为
+   `PaletteId.Standard`），混排里的中文自动继承英文的颜色，调用方不必把调色板传两遍（ADR-020）。
+3. 客户端把加载收进 `Client.Desktop.Fonts.GameFonts`：`TryLoad(AssetBundle, TextFont?)`
+   读 `FONT.ICN` / `SMALFONT.ICN`，生成 `Small` / `Normal` / `Yellow` 三个 `IGlyphSource`
+   （`Yellow` = `FONT.ICN` 过 `PaletteId.YellowFont`），并暴露 `SupportsCjk`（探测 `'中'`）
+   与 `Description` 供诊断覆盖层显示。缺数据或缺字体时不抛异常，`TryLoad` 返回
+   `null`，客户端仍能显示 M0 覆盖层。
+4. 文本走索引路径：`DiagnosticsScene` 用 `GlyphText.DrawLine` 把示例行画进
+   `ScreenBuffer`，再由 `SdlPresenter` 按调色板上屏。SDL_ttf 只剩诊断覆盖层一项用途。
+
+**理由**：
+
+* 布局规则只有一份：`GlyphText` 从 `IGlyphSource` 读度量，复合源把「哪套度量算数」这件事
+  收在一个类里，不需要在每个绘制点判断字符范围。
+* 英文像素与 M1 完全一致：primary 命中时直接返回 ICN 的 `Sprite` 实例，不经过光栅化。
+* 颜色只有一条路：位图字体的调色板被 fallback 继承，黄色标题里的中文不会变成灰色。
+* 上屏路径统一为「索引 → 调色板 → 整数倍放大」，没有 RGB 纹理与索引帧缓冲两套像素语义。
+
+**代价 / 约束**：
+
+* 混合字体的行高永远是位图字体的行高（11/17 px）；要给 CJK 更大的字号必须换 primary，
+  或者显式传 `ramp` / 自建 `CompositeGlyphSource`。
+* `BitmapFont.Palette` 只记录「这份字形被哪张表转换过」，不是逐像素真值；手工改过像素的
+  字体会让记录失真（`Create(..., palette)` 允许显式声明）。
+* 两份 provider 的字形缓存各自独立，`ForBitmapFont` 每次调用都会新建一个
+  `TrueTypeGlyphSource`；组合件应当在启动时创建一次并复用。
+* 逐字符分派带来一次 `IsAvailable` 查询（`BitmapFont` 是数组边界检查，TrueType 侧是
+  `GlyphRaster` 的字符映射查询），对 640×480 的文本量可以忽略；如需极致性能可以在
+  `GlyphText` 层按「连续同源片段」批处理，目前未做。
+
+
+## ADR-022：主菜单由原版 ICN 拼装，界面文字全部走索引渲染
+
+**决策**：
+
+1. 主菜单不是「画一个对话框」，而是把原版资源拼起来：背景是 `HEROES.ICN`（单张 640×480，
+   `AssetBundle` 优先取资料片里的同名条目，行为与 `AGG::GetICN` 一致）；五块招牌取
+   `BTNSHNGL.ICN` 的第 1 / 5 / 9 / 13 / 17 帧，悬停 `+1`、按下 `+2`，与
+   `Game::MainMenu()` 传给 `fheroes2::Button` 的偏移完全相同。招牌的屏幕位置直接来自 ICN 头里的
+   `OffsetX/OffsetY`，代码里没有第二套坐标常量，也就不需要一张单独的「主菜单布局表」。
+2. 新增 `FHeroes2.UI.Widgets.Button`：三张 `Sprite`（released / hovered / pressed）+ 一个
+   `ButtonState` 状态机，`Area` 取 released 精灵的包围盒，`Update(cursor, leftButtonDown)`
+   返回「状态是否变化」，缺 hover/pressed 帧时回退到 released（只有一帧的表也能用）。
+3. 新增 `FHeroes2.Client.Desktop.Scenes.IScene`：`Update` / `DrawFrame(in DiagnosticsState)` /
+   `DrawOverlay(in DiagnosticsState)`。真实画面（`MainMenuScene`）只用前两个：文字全部画进
+   索引帧缓冲，`DrawOverlay` 留空；`DiagnosticsScene` 继续用 SDL_ttf 覆盖层，两条路径共存但互不影响。
+   `DiagnosticsState` 因此被提升为「宿主交给场景的运行时快照」（FPS、归档条目数、字体描述等）。
+4. 文字统一由 `Client.Desktop.Localization.GameText` 提供：一个语言一个不可变实例，英文直接用
+   msgid（`.mo` 缺失时也是英文），`zh_CN` 由 `<data>/files/lang/zh_CN.mo` 装入。主菜单用
+   `GameFonts.Small` 把 `.mo` 里的提示译文与语言标记画进状态栏，`F2` 循环切换语言。
+5. 鼠标坐标由 `PresentationViewport.TryToLogical` 反算（整数倍放大 + 黑边），落在黑边上返回
+   `false`，因此点击窗口边缘不会命中任何控件。SDL 事件在 `GameHost` 里翻译成
+   `SetCursor` / `SetLeftButton`，场景本身不依赖 SDL。
+6. 为了能回归验证「有内容可看」，客户端补了三个开关：`--scene menu|diagnostics`、
+   `--lang <culture>`、`--cursor x,y`（后者把人造光标放进逻辑坐标，冒烟截图即可定格 hover 态）。
+
+**理由**：
+
+* 布局、配色、像素全部来自原版资源，重写布局等于重新发明一遍美术，且很难与参考实现对齐。
+* 只有一套文字路径：`GlyphText` + `IGlyphSource`，中英混排同色（ADR-020/021），
+  不再出现「位图字体 + GPU 矢量文本」两种像素语义并存。
+* `GameText` 不可变，语言切换就是换实例，没有全局状态，也不需要在绘制时判断当前语言。
+* 交互逻辑（命中测试、按下/释放、热键）都放在场景里，`Button` 可单测，`GameHost` 只做事件翻译。
+
+**代价 / 约束**：
+
+* 状态栏是移植新增物：原版用右键弹窗显示提示，这里固定在底部 11 px（一行 `SMALFONT.ICN`），
+  会遮住背景最下面 11 行像素；`QUIT` 招牌（y=425..469）刚好不被覆盖。
+* 截图取决于数据版本：资料片存在时 `HEROES.ICN` 是 PoL 版（横幅写着 *The Price of Loyalty*），
+  做像素基线时必须注明源数据。
+* 语言列表目前硬编码为 `en` + `zh_CN`（`.mo` 存在才加入），没有 fheroes2 的多语言选择对话框；
+  `SHNGANIM.ICN` 的灯笼摆动动画也还没接（`MainMenuScene.Update` 是空实现）。
+* `Button` 只处理「按下与释放落在同一控件」这一种点击语义，没有拖拽取消、没有禁用态
+  （`BTNSHNGL` 的第 4 帧就是禁用用的，等 M3 用得着时再加）。
+

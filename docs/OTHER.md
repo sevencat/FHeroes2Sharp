@@ -19,10 +19,11 @@
 | Sevencat.GlyphRaster | 仓库 GPL-3.0；内嵌字体 Apache-2.0 / GPL-3.0 双许可 | 纯托管 TrueType 光栅化 + 内嵌文泉驿微米黑（ADR-019）。**该包由本项目作者维护，许可可按需调整，不构成分发阻塞** |
 | xunit / xunit.runner.visualstudio | Apache-2.0 | 测试 |
 
-## 已知限制（M0）
+## 已知限制（M2）
 
-* 只有诊断场景；没有主菜单、地图或战斗。
-* 没有音频、视频；本地化已有 `.mo` 读取与 `zh_CN` 语言包，但界面尚未接入（M2）。
+* 主菜单已上屏（`HEROES.ICN` + `BTNSHNGL.ICN` 招牌、鼠标悬停、`F2` 中英切换）；新游戏/读档/高分/致谢
+  四块招牌只更新状态栏提示，真正的画面从 M3 起实现；没有冒险地图与战斗。
+* 没有音频、视频；`BGM` 播放、`SHNGANIM.ICN` 灯笼动画、fheroes2 式的语言选择对话框尚未接入。
 * 无编辑器、无存档。
 * 未提供 NativeAOT / 裁剪发布配置（ADR-011）：代码已是反射自由且分析器全开，但 SDL3 原生库
   在 AOT 下的完整验证留到 M9。
@@ -36,7 +37,8 @@
    经 `BuildTranslations.ps1` 生成 `zh_CN.mo`；后续需要与 `ITextRenderer` 的布局配合（CJK 断行）。
 4. **存档兼容性**：目前决定不兼容 C++ 存档；若未来需要，可先做只读导入。
 5. **性能**：`Upload` 在整屏脏时每帧转换 30 万像素，M1 引入「场景级脏矩形 + 图集缓存」后再评估。
-6. **输入抽象**：键盘/鼠标事件目前直接在事件循环里处理（`SDL_PollEvent`），M2 需要接入 `UI` 层的输入路由（含长按、双击）。
+6. **输入抽象**：键盘/鼠标事件在事件循环里翻译（`SDL_PollEvent` → `MainMenuScene.SetCursor/SetLeftButton`），
+   主菜单已按需接好；真正需要「输入路由」时（多控件、对话框栈、长按/双击）再抽 `UI` 层路由。
 7. **NativeAOT**：M9 试用 `PublishAot=true` + `InvariantGlobalization=true`，重点验证 SDL3 / SDL3_ttf
    原生库的加载与 SDL 音频；同时评估 `dotnet publish -p:PublishSingleFile=true` 的裁剪体积收益。
 

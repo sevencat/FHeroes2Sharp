@@ -25,9 +25,17 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/fheroes2/gui/cursor.*` | `FHeroes2.Core.Imaging.CursorTheme` + `CursorLayout` | 主题枚举、图集选择（`SetThemes`）、热点偏移（`SetOffset`）、距离主题换算 |
 | `src/engine/screen.h` | `PresentationViewport` + `SdlPresenter` | 整数倍 + 黑边 |
 | `DEBUG_LOG` / `ERROR_LOG` | `FHeroes2.Core.Diagnostics.GameLog` | 级别 + 环境变量 |
-| `src/fheroes2/gui/ui_font.h` | `FHeroes2.Rendering.Text.ITextRenderer` | TrueType 后端先行 |
+| `src/fheroes2/gui/ui_font.h` | `FHeroes2.Rendering.Text.ITextRenderer` | TrueType 后端先行；界面文本已改走 `Assets.Fonts.IGlyphSource` |
+| `src/fheroes2/gui/interface_font.cpp`（`getTextWidth` / `renderText` 的「位图为主、TrueType 补位」） | `FHeroes2.Assets.Fonts.CompositeGlyphSource` | 度量只取位图字体，TrueType 只提供字形（ADR-021）；客户端装配在 `GameFonts` |
+| `src/fheroes2/agg/game_assets.cpp`（`getFont()` / `getIcon()` 的字体缓存） | `FHeroes2.Client.Desktop.Fonts.GameFonts` | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 与 `YELLOW_FONT` 副本 |
 | `src/engine/translations.h/.cpp`（`Translation::MOFile`、`stripContext`、`getCharsetFromHeader`） | `FHeroes2.Assets.Localization.MoCatalog` | GNU MO 读取；按 `msgid` 查表，未命中回退英文；仅 UTF-8 目录（ADR-016） |
 | `files/lang/*.po` → `<data>/files/lang/*.mo` | `translations/*.po` + `tools/scripts/BuildTranslations.ps1` | `zh_CN.po` 当前 95 条（主菜单 / 设置 / 语言 / 快捷键 / 分辨率） |
+| `src/fheroes2/game/game_mainmenu.cpp`（`Game::MainMenu`） | `FHeroes2.Client.Desktop.Scenes.MainMenuScene` | 背景 `HEROES.ICN`（资料片优先）、招牌 `BTNSHNGL.ICN` 1/5/9/13/17（悬停 `+1`、按下 `+2`）、热键 N/L/H/C/Q；灯笼动画 `SHNGANIM.ICN` 未接（ADR-022） |
+| `src/fheroes2/gui/ui_button.cpp`（`Button` / `ButtonSprite`） | `FHeroes2.UI.Widgets.Button` + `ButtonState` | 三帧精灵 + 状态机，`Area` 取 released 的包围盒 = ICN 里的 `OffsetX/OffsetY`，缺帧回退 |
+| `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装 |
+| `Translation::gettext()` + `Settings::getGameLanguage()` | `FHeroes2.Client.Desktop.Localization.GameText` | 一个语言一个实例；英文 = msgid，`zh_CN` = `.mo`；`--lang` / `F2` 切换 |
+| `LocalEvent` 的鼠标坐标换算（窗口 → 逻辑像素） | `PresentationViewport.TryToLogical` | 整数倍 + 黑边；黑边上的点返回 `false` |
+| `Display::render()` 的文字叠加 | `Scenes.IScene.DrawOverlay` | 只有诊断屏用（SDL3_ttf）；真实画面全部走索引字形 |
 
 ## 计划中
 

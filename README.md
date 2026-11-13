@@ -7,7 +7,8 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
   诊断文本使用 **SDL3_ttf**（FreeType，支持中文）。
 * 游戏界面文本：原版 `FONT.ICN` / `SMALFONT.ICN` 位图字体（`BitmapFont`）；CJK 等 ICN 表外的字符由
   `TrueTypeGlyphSource` 补位，光栅化用纯托管的 `Sevencat.GlyphRaster`（内嵌文泉驿微米黑，见 ADR-019），
-  两种字形共用同一套布局（`GlyphText`）。文字颜色不是第二套资源：白/黄/灰都是同一份字形过一遍
+  两种字形共用同一套布局（`GlyphText`），由 `CompositeGlyphSource` 分工：位图字体定行高/advance，
+  TrueType 只补 ICN 表没有的码位（ADR-021）。文字颜色不是第二套资源：白/黄/灰都是同一份字形过一遍
   `Core.Imaging.PaletteTable`（原版 `PAL::GetPalette` 的索引重映射表，ADR-020），所以中英文混排同色。
 * 分辨率：内部逻辑分辨率固定 **640×480**，按整数倍放大并加黑边（默认 2x = 1280×960）。
 * 策略：解析层对原版资源格式 **逐字节一致**，工程结构用现代 C# 分层重写。
@@ -21,16 +22,20 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（Core 128 + Assets 93 = 221 个测试）。
+以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 108 + UI 8 = 252 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
-**M2 进行中**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
+**M2 进行中（主菜单已可玩）**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
 `translations/zh_CN.po` + `tools/scripts/BuildTranslations.ps1` 生成并安装
 `<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 95 条，
 未翻译项回退英文）。文字颜色也已落地：`Core.Imaging.PaletteTable`（原版 13 张索引重映射表）+
 `BitmapFont.WithPalette` / `GlyphCoverageRamp.WithPalette`，白/黄/灰文字与 CJK 混排同色（ADR-020）。
-主菜单界面与语言切换仍待实现。
+界面文本接的是真实字体：`CompositeGlyphSource` 把 `FONT.ICN`/`SMALFONT.ICN` 与内嵌 CJK 字体合成，
+`GameFonts` 在启动时装载（ADR-021）。**主菜单已经上屏**：`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 五块招牌
+（悬停/按下由 `UI.Widgets.Button` 处理，鼠标命中靠 `PresentationViewport.TryToLogical`），
+底部 11 px 状态栏用 `SMALFONT.ICN` 画 `.mo` 译文与语言标记，`F2` 切换中英文（ADR-022）。
+待办：`SHNGANIM.ICN` 灯笼动画、语言选择对话框、BGM。
 
 ## 快速开始
 
@@ -42,8 +47,13 @@ dotnet test  FHeroes2Sharp.slnx
 # 运行客户端（自动探测数据目录，也可显式指定）
 dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2"
 
-# 渲染 40 帧后截图退出（CI / 回归用）
+# 主菜单默认上屏；按键：ESC 退出、F2 切换中英文、N/L/H/C/Q 选招牌、F11 全屏、F12 截图
+dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2" --lang zh_CN
+dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2" --scene diagnostics
+
+# 渲染 40 帧后截图退出（CI / 回归用）；--cursor 定格 hover 态
 dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
+dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --cursor 230,210 --screenshot hover.png
 
 # 资产归档检查
 dotnet run --project tools/FHeroes2.AssetProbe -- info

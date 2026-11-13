@@ -93,6 +93,45 @@ public sealed class GeometryTests
         Assert.Equal(new Rect(0, 0, 320, 240), viewport.Destination);
     }
 
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(639, 479)]
+    [InlineData(320, 240)]
+    [InlineData(1, 478)]
+    public void PresentationViewport_TryToLogical_InvertsIntegerScaling(int x, int y)
+    {
+        PresentationViewport viewport = PresentationViewport.Compute(
+            new Size(ScreenBufferDefaults.Width, ScreenBufferDefaults.Height),
+            new Size(1920, 1080));
+
+        Assert.True(viewport.TryToLogical(viewport.ToOutput(new Point(x, y)), out Point logical));
+        Assert.Equal(new Point(x, y), logical);
+    }
+
+    [Fact]
+    public void PresentationViewport_TryToLogical_RejectsTheLetterbox()
+    {
+        PresentationViewport viewport = PresentationViewport.Compute(
+            new Size(ScreenBufferDefaults.Width, ScreenBufferDefaults.Height),
+            new Size(1920, 1080));
+
+        // 1920x1080 gives integer scale 2 with a 60 pixel high letterbox above and below.
+        Assert.False(viewport.TryToLogical(new Point(960, 30), out Point top));
+        Assert.Equal(default, top);
+
+        Assert.False(viewport.TryToLogical(new Point(960, 1050), out _));
+        Assert.False(viewport.TryToLogical(new Point(300, 540), out _));
+
+        Assert.True(viewport.TryToLogical(new Point(320, 60), out Point corner));
+        Assert.Equal(new Point(0, 0), corner);
+    }
+
+    [Fact]
+    public void PresentationViewport_TryToLogical_RejectsAnEmptyViewport()
+    {
+        Assert.False(new PresentationViewport(Rect.Empty, 0.0f, false).TryToLogical(new Point(0, 0), out _));
+    }
+
     /// <summary>Local constants so the test does not depend on the imaging namespace.</summary>
     private static class ScreenBufferDefaults
     {
