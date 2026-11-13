@@ -720,3 +720,42 @@ ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
 * 没有行为变更，所以没有新增验证项：与图标那次一样，证据是构建、单元测试与
   `VerifyMenuBaseline.ps1` 三件套。
 
+## ADR-027：设置对话框先只做「语言」，选项在 OK 时才生效
+
+**背景**：主菜单左下角的门在原版里是 `dialog::openGameSettings()` 的入口。那个窗口有分辨率、
+音量、全屏、快捷方式、语言等十余组控件，其中分辨率/全屏要动 SDL 的窗口与缩放（`SdlPresenter`
+目前只在构造时接收这两个值），音量要接音频后端（M2 尚未接），所以一次补齐只会得到一堆画得像
+却不起作用的控件。
+
+**决策**：
+
+1. 先移植**一个**真正会生效的选项：界面语言（`GameText` 已经有 `zh_CN` / `en` 两个实例，
+   主菜单的 `F2` 也在切换它）。窗口尺寸由字体与按钮高度推导（`SettingsDialog.GetRequiredHeight`），
+   加行不用改版面代码。
+2. 选项行不做箭头的 `OptionButtonGroup`，而是画成 `< 值 >`：按下与松开落在同一行的左半格退一格、
+   右半格进一格，出界循环。参考实现的箭头是 `ICN::BUTTON_SMALL_*` 之类的美术，端口还没有这批
+   贴图；文字方案不依赖额外资源，也让「值」可以直接是中文。
+3. 选项在 **OK / Enter** 时一次性应用，Escape 丢弃。参考实现是「改一下就立刻生效」，但语言一改
+   窗口里的文字就得换语言，而语言的切换在端口里是「换一个 `GameText` 实例」，中途换会让对话框
+   自己的一半文字是旧语言——延迟到关闭时应用是更小的偏离。
+4. 对话框的 OK 按钮用 `SYSTEM.ICN` 的第 1、2 帧。参考实现的 `ICN::UNIFORM_GOOD_OKAY_BUTTON`
+   是**运行时生成**的（`EMPTY_GOOD_BUTTON` + `BUTTON_GOOD_FONT_RELEASED` 文字），而那套按钮专用
+   字体表（`BUTTON_*_FONT_*`，行高 15）还没移植；`SYSTEM.ICN` 那两帧正是参考实现
+   `useOriginalResources()` 分支用的同一张图，所以外观仍然是原版按钮。
+5. 模态框归 `MainMenuScene` 持有（`Settings` / `OpenSettings()`），不新建 `IScene`：参考实现
+   也是 `Game::MainMenu()` 里的一个模态循环，且这样门的光晕、招牌状态、右键提示都不必跨场景保存。
+6. 新增 `--open-settings`：模态对话框的截图需要真实鼠标才能点开，命令行开关把它变成可复现的
+   smoke 运行（与 `--cursor` / `--right-button` 同一思路）。
+
+**后果**：
+
+* 界面语言从「F2 盲切」变成「看得见当前值、能选的语言」；设置窗口、按钮、文字都是原版资源。
+* 分辨率/全屏/音量仍然没有入口。它们需要 `SdlPresenter` 支持运行时切换与音频后端，属于 M8
+  （「存档/设置」）的范围，`SettingsDialog` 只要再加几行就能接上。
+* 文字按钮的标签仍缺 `BUTTON_*_FONT_*` 字体；`ButtonArtwork` 已经把拉伸与闪光做完，补字体表
+  即可生成与 `UNIFORM_GOOD_OKAY_BUTTON` 等价的按钮。
+* 证据：UI 108 条测试（新增 38 条：`ButtonArtworkTests` 12、`DialogButtonLayoutTests` 7、
+  `DialogTemplate` 9、`SettingsDialogTests` 10）、Core 167 条（新增 8 条 `SpriteOpsTests`），
+  `menu.png` 仍逐像素相同；`--open-settings` 截出的 640×480 画面里对话框区域（348×133）有
+  42,679 个像素与纯菜单不同，区域外只差 1 个像素。
+

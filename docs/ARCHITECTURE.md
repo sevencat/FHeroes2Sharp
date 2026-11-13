@@ -136,8 +136,21 @@ Widgets.ButtonGroup    按钮 ↔ Dialogs.DialogButton 返回值：MouseClickLef
 「按下在 A、松手在 B 不算点击」「拖到邻居不会点亮它」「单个 OK/CANCEL 按钮两个热键都能关」
 这些语义。
 
-版式（`ButtonGroup( area, Dialog::OK | Dialog::CANCEL )` 那种自动摆位）依赖 `ui_button.cpp` 里
-把文字画到按钮上的工厂函数，等设置对话框时一起移植，现在由调用方按自己的美术坐标摆放。
+版式与美术：`ButtonGroup.CreateStandard( area, DialogButton.Ok | DialogButton.Cancel,
+artwork )` 是 `ButtonGroup( area, types )` 的自动摆位（一对按钮左右各留四分之一空白，
+单个按钮居中贴底），美术由调用方以 `IDialogButtonArtworkSource` 注入，所以 UI 层不认 ICN 编号，
+测试用一块纯色精灵就能钉住坐标。文字按钮的精灵侧
+（`Widgets.ButtonArtwork`：`resizeButton()` 的三等分/五等分拉伸、`addButtonShine()` 的像素表、
+`makeTransparentBackground()`）已经移植并用合成精灵逐像素固定；标签部分要
+`BUTTON_GOOD_FONT_RELEASED` 这类按钮专用字体表，尚未移植，所以当前对话框的 OK 直接用
+`SYSTEM.ICN` 的第 1/2 帧。
+
+设置对话框 `Dialogs.SettingsDialog` 是这些构件的第一个调用方：一个 `StandardWindow`、一行一个
+`SettingsOption`（`< 值 >`，点左半格/右半格换值）、底部 `CreateStandard` 摆出的 OK。它是模态的，
+归主菜单持有（`MainMenuScene.Settings`），点街景左下角的门时创建，Escape 取消、OK/Enter 应用
+（ADR-027）。`ImageOps` 为此补了四个写双层的原语（`Copy` / `FillSprite` / `SetPixel` /
+`DrawLine`），它们写颜色时把 transform 字节清 0，因此拼装出来的精灵可以直接交给
+`BlitSprite`。
 
 
 ## 错误处理

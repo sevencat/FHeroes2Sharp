@@ -368,6 +368,11 @@ public sealed class GameHost : IDisposable
             {
                 _menu.AnimationEnabled = !_options.FreezeAnimation;
 
+                if (_options.OpenSettings)
+                {
+                    _menu.OpenSettings();
+                }
+
                 if (_options.Cursor is { } cursor)
                 {
                     _menu.SetCursor(cursor);

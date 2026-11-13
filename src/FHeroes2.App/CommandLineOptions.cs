@@ -60,6 +60,13 @@ public sealed class CommandLineOptions
     /// </summary>
     public bool FreezeAnimation { get; private set; }
 
+    /// <summary>
+    /// Opens the settings dialog of the main menu at start up (<c>--open-settings</c>). A click on
+    /// the menu door does the same; the flag exists because a screenshot of a modal dialog otherwise
+    /// needs a real mouse.
+    /// </summary>
+    public bool OpenSettings { get; private set; }
+
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
 
@@ -158,6 +165,10 @@ public sealed class CommandLineOptions
                     options.FreezeAnimation = true;
                     break;
 
+                case "--open-settings":
+                    options.OpenSettings = true;
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -195,6 +206,7 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames.");
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
+        Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
         Console.WriteLine("  --help              Shows this help.");
     }

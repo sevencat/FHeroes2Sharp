@@ -117,6 +117,18 @@ FHeroes2.AssetProbe compare tools-output/baseline/menu.png tests/baselines/menu.
 hover 态也没有门光；想复现门光就把 `--cursor` 放进那个矩形（例如 `100,280`）。
 基线文件本身的来历与更新规矩写在 `tests/baselines/README.md`。
 
+模态对话框（设置窗口）只能靠点击打开，所以另有一个开关把它直接放到屏幕上：
+
+```powershell
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --lang en --cursor 620,100 `
+    --open-settings --freeze-animation --smoke-frames 20 `
+    --screenshot tools-output/settings-en.png --screenshot-frame 10
+```
+
+窗口内容区 300×85 居中（`SettingsDialog.GetRequiredHeight` 由标题、行高与按钮高度算出），
+加上 16 px 边框与左下 16 px 阴影后正好盖住 `138,181 348×133`；这张图与 `menu.png` 的差异
+应当只出现在这个矩形里。
+
 CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 → 编译 → `dotnet test`）在任何
 机器上都能跑，`menu-baseline` 调这个脚本。像素比对需要原版数据（不能入库），所以数据和 runner
 通过仓库变量接线：

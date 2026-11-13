@@ -562,7 +562,45 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
   一样先作为可测试的构件放着。
 
 
-## 后续里程碑
+### M2 验证记录（按钮美术、自动摆位与设置对话框）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx
+    → Core 167 / Assets 120 / UI 108，全部通过
+      （Core 新增 8：SpriteOpsTests；UI 新增 38：
+        ButtonArtworkTests 12 + DialogButtonLayoutTests 7 +
+        DialogButtonTemplateTests 9 + SettingsDialogTests 10）
+pwsh tools/scripts/VerifyMenuBaseline.ps1  → match（menu.png 逐像素相同）
+FHeroes2Sharp.exe --data F:\game\fh2 --lang en --cursor 620,100
+    --open-settings --freeze-animation --smoke-frames 20
+    --screenshot tools-output\settings-en.png --screenshot-frame 10
+    → Settings dialog opened: language 'en', 2 available, content 300x85
+    → 与 menu.png 比较：对话框区域（138,181 348x133）42,679 像素不同，
+      区域外 1 像素（状态栏以外）
+```
+
+* `ButtonArtwork` 是 `ui_button.cpp` 里生成按钮的那一半：`resizeButton()` 的五支（只变宽、只变高、
+  两个方向都变小、变高变窄、两个方向都变大）、`addButtonShine()` 的坐标表与
+  `makeTransparentBackground()`。测试用「每个像素写着自己坐标」的 9×10 精灵，把四条拉伸分支的
+  源像素映射逐点比对；变大的那支还要确认中空区填的是原图中心像素（`w*h/2-1-min(w,h)/2`）。
+* 闪光测试值得记一笔：右侧那条长斜线 `DrawLine( w-8,5 → w-10,7 )` 会**盖掉**先前写下的
+  `secondColor`，所以 `(w-8,5)` 最终是 `firstColor`；`(w-10,2)`/`(w-8,3)` 才是纯 `secondColor`。
+  第一版测试按「先写的赢」断言，三条用例一起红，正好证明了移植是按顺序执行的。
+* `ImageOps` 新增四个「写两层」的原语：`Copy`（三条 transform 规则）、`FillSprite`、
+  `SetPixel`、`DrawLine`（整数 Bresenham，`ns = major/2`）。`Core` 的 8 条用例分别钉住
+  「双层互拷」「源单层写 0」「目标单层只拷颜色」「裁剪」「越界忽略」「浅斜线每两步进一行」。
+* `ButtonGroup.CreateStandard` 摆出 `Dialog::OK | CANCEL` 那种一行：一对按钮的左右各留
+  `(area.width - w1 - w2)/4`，单个居中贴底；7 条用例覆盖四支 + 精灵锚点 + 「不支持的类型给空组」+
+  「点 OK 返回 Ok」。
+* 设置对话框（ADR-027）：`SettingsDialog` = `StandardWindow` + 标题 + 每行 `< 值 >` + 底部 OK。
+  `SettingsOption` 负责取值与循环，行命中要求按下与松开在同一行（与按钮同一规则）。10 条用例，
+  其中一条真的把 640×480 画出来，检查标题色、行文字色都落在窗口内容区里。
+* 接线：点主菜单左下角的门 → `MainMenuScene.OpenSettings()`；Escape 取消、Enter/OK 应用并把
+  语言写回 `GameText`；`--open-settings` 让模态框可截图。`SYSTEM.ICN` 第 1/2 帧是 OK 按钮，
+  参考实现在 `useOriginalResources()` 分支里用的就是这张图。
+
+
 
 见 [PLAN.md](PLAN.md)。M1 的条目已全部完成，并且已经用**原版 C++ 实现**对拍过
 （`tools/scripts/CompareWithReference.ps1`，默认 14 个条目 / 1204 个 BMP 逐字节相同）；

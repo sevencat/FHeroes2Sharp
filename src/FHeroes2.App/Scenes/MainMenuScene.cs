@@ -89,6 +89,24 @@ public sealed class MainMenuScene : IScene
     /// <summary>Tooltip text of the settings door, the msgid <c>Game::MainMenu()</c> passes.</summary>
     public const string DoorTooltipId = "Change language, resolution and settings of the game.";
 
+    /// <summary>Title of the settings dialog, the msgid of the reference window.</summary>
+    public const string SettingsTitleId = "Settings";
+
+    /// <summary>Label of the language row, the msgid of the reference settings dialog.</summary>
+    public const string SettingsLanguageId = "Language";
+
+    /// <summary>Width of the settings dialog content, close to the 288 pixel window of the reference.</summary>
+    public const int SettingsContentWidth = 300;
+
+    /// <summary><c>SDL_Keycode.ESCAPE</c>, which arrives as a character through the hot key path.</summary>
+    private const char EscapeCharacter = '\u001b';
+
+    /// <summary><c>SDL_Keycode.RETURN</c>.</summary>
+    private const char EnterCharacter = '\r';
+
+    /// <summary><c>SDL_Keycode.RETURN</c> as a line feed, for terminals and tests.</summary>
+    private const char LineFeedCharacter = '\n';
+
     private const int StatusBarPadding = 8;
 
     private const int StatusBarGap = 10;
@@ -117,13 +135,16 @@ public sealed class MainMenuScene : IScene
     private readonly IReadOnlyList<GameText> _languages;
     private readonly Rect _statusBar;
     private readonly byte _statusBarColor;
+    private readonly SettingsArtwork? _settingsArtwork;
 
     private int _languageIndex;
     private int _pressedButton = -1;
     private Point? _cursor;
     private bool _leftButtonDown;
+    private bool _doorPressed;
     private string? _status;
     private MessageBox? _tip;
+    private SettingsDialog? _settings;
 
     private MainMenuScene(
         ScreenBuffer frame,
@@ -135,7 +156,8 @@ public sealed class MainMenuScene : IScene
         Button[] buttons,
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
-        string? culture)
+        string? culture,
+        SettingsArtwork? settingsArtwork)
     {
         _frame = frame;
         _background = background;
@@ -146,6 +168,7 @@ public sealed class MainMenuScene : IScene
         _buttons = buttons;
         _fonts = fonts;
         _languages = languages;
+        _settingsArtwork = settingsArtwork;
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
         _languageIndex = IndexOfCulture(languages, culture);
@@ -217,7 +240,7 @@ public sealed class MainMenuScene : IScene
 
             MainMenuScene scene = new(
                 frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, fonts, languages,
-                culture);
+                culture, SettingsArtwork.TryCreate(assets));
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -293,6 +316,9 @@ public sealed class MainMenuScene : IScene
         // The tooltip is modal in the original: it sits on top of everything, including the signs.
         _tip?.Draw(pixels);
 
+        // The settings dialog is modal as well, so it is painted last.
+        _settings?.Draw(pixels);
+
         _frame.InvalidateAll();
     }
 
@@ -302,6 +328,13 @@ public sealed class MainMenuScene : IScene
     /// <summary>Sets the cursor position in logical pixels, or <see langword="null"/> when it left.</summary>
     public void SetCursor(Point? cursor)
     {
+        // The settings dialog owns the cursor while it is open.
+        if (_settings is not null)
+        {
+            _settings.SetCursor(cursor);
+            return;
+        }
+
         // The open tooltip freezes the menu: the reference sits inside the dialog loop, so no hover
         // state - and no door light - changes until the box is gone.
         if (_tip is not null)
@@ -326,6 +359,18 @@ public sealed class MainMenuScene : IScene
     {
         _leftButtonDown = down;
 
+        // The settings dialog owns the mouse while it is open; clicking its OK button applies the
+        // changes, everything else stays inside the dialog.
+        if (_settings is not null)
+        {
+            if (_settings.SetLeftButton(down) == DialogButton.Ok)
+            {
+                ApplySettings();
+            }
+
+            return null;
+        }
+
         // While the tooltip is up the reference engine sits inside showStandardTextMessage() and
         // never sees the left button, so a click cannot pick a sign. The button state itself is
         // still tracked, otherwise a press that happened before the tooltip opened would stick.
@@ -340,6 +385,22 @@ public sealed class MainMenuScene : IScene
         if (down)
         {
             _pressedButton = IndexAt(_cursor);
+
+            // The door is not a sign: it opens the settings dialog, the way the reference treats the
+            // bottom left corner of the street scene.
+            _doorPressed = _pressedButton < 0 && (_door?.IsHovered(_cursor) ?? false);
+            return null;
+        }
+
+        if (_doorPressed)
+        {
+            _doorPressed = false;
+
+            if (_door?.IsHovered(_cursor) == true)
+            {
+                OpenSettings();
+            }
+
             return null;
         }
 
@@ -364,11 +425,23 @@ public sealed class MainMenuScene : IScene
     /// the button is down.
     /// </summary>
     /// <param name="down">Whether the right mouse button is currently held.</param>
-    public void SetRightButton(bool down) => _tip = down ? CreateTip() : null;
+    public void SetRightButton(bool down) => _tip = down && _settings is null ? CreateTip() : null;
 
     /// <summary>Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>).</summary>
     public MainMenuAction? Select(char hotKey)
     {
+        // While the settings dialog is open the keyboard belongs to it: Escape closes it without
+        // applying, Enter is the OK hot key.
+        if (_settings is not null)
+        {
+            return hotKey switch
+            {
+                EscapeCharacter => CloseSettings(),
+                EnterCharacter or LineFeedCharacter => ConfirmSettings(),
+                _ => null,
+            };
+        }
+
         // A hot key is swallowed by the open tooltip, like every key press inside the dialog loop.
         if (_tip is not null)
         {
@@ -396,6 +469,94 @@ public sealed class MainMenuScene : IScene
             {
                 return Choose(entry);
             }
+        }
+
+        return null;
+    }
+
+    /// <summary>The open settings dialog, or <see langword="null"/> when the door has not been used.</summary>
+    public SettingsDialog? Settings => _settings;
+
+    /// <summary>
+    /// Opens the settings dialog on top of the menu, which is what a click on the door of the street
+    /// scene does in <c>Game::MainMenu()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The window is sized from the fonts and from the height of the OK button, then centred, so the
+    /// dialog grows by itself when rows are added. Nothing is opened when the archive lacks the
+    /// window or button artwork.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the dialog is now open.</returns>
+    public bool OpenSettings()
+    {
+        if (_settingsArtwork is null || _settings is not null)
+        {
+            return false;
+        }
+
+        string title = Text.Get(SettingsTitleId);
+        IGlyphSource titleFont = _fonts.Yellow;
+        IGlyphSource optionFont = _fonts.Normal;
+
+        int titleHeight = GlyphText.WrapLines(titleFont, title, SettingsContentWidth).Count * titleFont.LineHeight;
+        int contentHeight = SettingsDialog.GetRequiredHeight(
+            titleHeight, optionFont.LineHeight, 1, _settingsArtwork.OkayHeight);
+
+        StandardWindow window = StandardWindow.CreateCentered(
+            _settingsArtwork.Chrome, new Size(SettingsContentWidth, contentHeight), true, _frame.Size);
+
+        ButtonGroup buttons = ButtonGroup.CreateStandard(window.ActiveArea, DialogButton.Ok, _settingsArtwork);
+
+        SettingsOption language = new(
+            Text.Get(SettingsLanguageId),
+            [.. _languages.Select(available => available.NativeName)],
+            _languageIndex);
+
+        _settings = new SettingsDialog(window, buttons, titleFont, optionFont, title, [language]);
+
+        GameLog.Info(
+            $"Settings dialog opened: language '{Text.Culture}', {_languages.Count} available, " +
+            $"content {SettingsContentWidth}x{contentHeight}.");
+
+        return true;
+    }
+
+    /// <summary>Switches to the language at <paramref name="index"/> and returns it.</summary>
+    /// <param name="index">Index into <see cref="Languages"/>; out of range values are clamped.</param>
+    public GameText SetLanguage(int index)
+    {
+        _languageIndex = Math.Clamp(index, 0, _languages.Count - 1);
+        return Text;
+    }
+
+    /// <summary>Applies the open dialog and closes it, the OK button and Enter.</summary>
+    private void ApplySettings()
+    {
+        if (_settings is { OptionCount: 1 } dialog)
+        {
+            SetLanguage(dialog.Option(0).SelectedIndex);
+        }
+
+        _settings = null;
+        GameLog.Info($"Settings applied: interface language '{Text.Culture}'.");
+    }
+
+    /// <summary>Closes the open dialog without applying, the Escape key and CANCEL of the reference.</summary>
+    private MainMenuAction? CloseSettings()
+    {
+        _settings?.Cancel();
+        _settings = null;
+        GameLog.Info("Settings dialog closed without changes.");
+
+        return null;
+    }
+
+    /// <summary>Answers Enter through the button row, so the hot key rule stays the reference one.</summary>
+    private MainMenuAction? ConfirmSettings()
+    {
+        if (_settings?.ProcessHotKey(ButtonHotKey.Okay) == DialogButton.Ok)
+        {
+            ApplySettings();
         }
 
         return null;
