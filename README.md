@@ -24,7 +24,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 120 + UI 8 = 264 个测试）。
+以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 120 + UI 16 = 272 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
@@ -37,13 +37,14 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 `GameFonts` 在启动时装载（ADR-021）。**主菜单已经上屏**：`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 五块招牌
 （悬停/按下由 `UI.Widgets.Button` 处理，鼠标命中靠 `PresentationViewport.TryToLogical`），
 底部 11 px 状态栏用 `SMALFONT.ICN` 画 `.mo` 译文与语言标记，`F2` 切换中英文（ADR-022）。
-灯笼光晕也已接上：`SHNGANIM.ICN` 第 0 帧做灯体、第 1…39 帧每 250 ms 换帧（`Assets.Icn.IcnAnimation`）。
+灯笼光晕也已接上：`SHNGANIM.ICN` 第 0 帧做灯体、第 1…39 帧每 250 ms 换帧（`Assets.Icn.IcnAnimation`）；
+左下角的设置门在光标扫过时发光（`UI.Widgets.DoorHighlight`，画的是同一张表第 18 帧的下半部分）。
 像素回归有了基线门禁：`tests/baselines/menu.png` 入库，`tools/scripts/VerifyMenuBaseline.ps1`
 用「冻结动画 + 人造光标」渲染一帧后逐像素比对（状态栏的 FPS/版本号由 `compare --ignore` 排除，ADR-023）。
 CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这个脚本做像素门禁：托管 runner 没有游戏数据，
 只校验基线文件本身（PNG 魔数 + 640×480），像素比对留给装了数据的自建 runner（仓库变量
 `FHEROES2_RUNNER` + `FHEROES2_DATA`）。
-待办：语言选择对话框、BGM、设置入口。
+待办：语言选择对话框、BGM、设置对话框（门已经会发光，点它还没反应）。
 
 ## 快速开始
 

@@ -8,7 +8,7 @@
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button`）、界面流转 | Core, Rendering, Game |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.DoorHighlight`）、界面流转 | Core, Rendering, Game |
 | `FHeroes2.Client.Desktop` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。

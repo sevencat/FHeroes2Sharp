@@ -5,7 +5,7 @@
 
 | 文件 | 内容 | 尺寸 | 生成方式 |
 | --- | --- | --- | --- |
-| `menu.png` | 主菜单首屏：背景 + 灯体 + 光晕第 1 帧 + 五块招牌（未悬停） | 640×480 | `pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update` |
+| `menu.png` | 主菜单首屏：背景 + 灯体 + 光晕第 1 帧 + 五块招牌（未悬停、门未点亮） | 640×480 | `pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -38,7 +38,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16 # 容忍少量像素漂�
 ## 为什么逐字节一致是可达的
 
 * `--freeze-animation`：灯笼光晕固定在第 1 帧，不再跟挂钟走（见 `PROGRESS.md` 的灯笼光晕记录）。
-* `--cursor 620,100`：给出人造光标后宿主忽略真实指针事件，物理鼠标不会把招牌点亮。
+* `--cursor 620,100`：给出人造光标后宿主忽略真实指针事件，物理鼠标不会把招牌点亮。这个点也在
+  设置门的命中区（`63,202 108×160`）之外，所以基线里不会出现门光——门光要用悬停帧单独验证。
 * 渲染本身是确定性的：同一份数据 + 同一份代码，连续两次运行得到的 `menu.png` 逐字节相同
   （实测两次都是 `identical`）。
 

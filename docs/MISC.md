@@ -108,6 +108,8 @@ FHeroes2.AssetProbe compare tools-output/baseline/menu.png tests/baselines/menu.
 
 三个「必须同时给」的开关：`--freeze-animation`（光晕不跟挂钟）、`--cursor`（人造光标，物理鼠标
 不会点亮招牌）、`--ignore 0,469,640,11`（状态栏的 FPS / 版本号）。少任何一个，基线都会随机失败。
+默认坐标 `620,100` 不只避开招牌，也避开设置门的命中区（`63,202 108×160`），所以基线里既没有
+hover 态也没有门光；想复现门光就把 `--cursor` 放进那个矩形（例如 `100,280`）。
 基线文件本身的来历与更新规矩写在 `tests/baselines/README.md`。
 
 CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 → 编译 → `dotnet test`）在任何
@@ -254,6 +256,11 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
     `$bytes[18] -shl 8` 得到 **0**（不是 512），于是 640×480 被解析成 128×224 却毫无报错。
     移位前先 `[int]` 展开，或用「循环左移 8 位再 `-bor`」的写法（`VerifyMenuBaseline.ps1`
     的 `Read-BigEndianInt32` 就是后者）。
+23. **主菜单「门」的光不是独立美术**：它是 `SHNGANIM` 第 18 帧（同一张表也在做光晕动画）套
+    `NO_CYCLE` 调色板后、只留 `y ≥ 55` 的那一块，命中区 `63,202 108×160` 与发光像素并不重合。
+    拿错帧、忘了裁剪或忘了套调色板都「看起来仍在发光」，因为光晕本身也画同一块区域；判对错
+    只能与未悬停的同一帧逐像素 diff——门光那一笔实测 **499 像素**，全部落在 `48,238 136×125`
+    之内且全部变亮（`PROGRESS.md` 的「设置门悬停发光」记录）。
 
 ## 目录与产物
 

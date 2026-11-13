@@ -486,9 +486,17 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 7. `SHNGANIM.ICN` 的灯笼光晕由新增的 `FHeroes2.Assets.Icn.IcnAnimation` 播放：第 0 帧是熄灯状态的
    灯体，先画一次；第 1…39 帧每 250 ms 换一帧（`Game::DelayType::MAIN_MENU_DELAY`），循环 9.75 s，
    与 `ICN::getAnimatedIcnIndex()` 里灯笼那条 `1 + frame % 39` 完全等价。绘制顺序是
-   「背景 → 灯体 → 光晕 → 招牌 → 状态栏」，与 `Game::MainMenu()` 相同，所以光晕不可能盖住招牌。
+   「背景 → 灯体 → 光晕 → 门光 → 招牌 → 状态栏」，与 `Game::MainMenu()` 相同，所以光晕与门光
+   都不可能盖住招牌。
    `IcnAnimation` 不复制像素，每一帧仍按自己的 ICN 锚点绘制；计时按 `fheroes2::TimeDelay` 的语义
    累加（整帧才前进、长停顿只跳帧不补播），场景把 `Update(elapsed)` 换算成 `TimeSpan` 交给它。
+8. 设置门的悬停发光是 `FHeroes2.UI.Widgets.DoorHighlight`：光源不是独立美术，而是 `SHNGANIM.ICN`
+   第 18 帧套 `PaletteId.NoCycle`（`fheroes2::ApplyPalette( highlightDoor, 8 )`）后、只取
+   `y ≥ 55`（`doorOffsetY = 55 * scale + offsetY`）的那一半，画在光晕之上、招牌之下。命中区是
+   `settingsArea` 的 `63,202 108×160`，与发光像素不重合；参考实现只在 250 ms 的动画节拍里重画这一笔，
+   这里每帧都画（场景本来就从背景重铺），于是「移开就灭」不依赖动画时钟、
+   `--freeze-animation` 下的悬停截图也是确定的。命中判定、裁剪与调色板都封在 widget 里，
+   `DoorHighlightTests` 钉住 18 / 55 / 63,202 / 108×160 这四个数与 transform 层语义。
 
 **理由**：
 
@@ -513,7 +521,10 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
   （139×131 @ 46,176），第 1…39 帧是光晕（统一 136×180 @ 48,183），所以必须是两层；
   光晕这一层的帧间差异在 8–942 像素之间（整屏 640×480 = 307200 像素的 0.003%–0.3%），
   也就是说动画很轻微，肉眼要靠连续播放才看得出来。
-* fheroes2 用鼠标扫过左下角的「门」让门发光来提示设置入口，这条交互与设置对话框一起留给后续里程碑。
+* 设置门只会发光，点它还没有反应：设置对话框（语言 / 分辨率 / 音效，参考实现是
+  `Dialog::GameSettings()`）还没接，命中区目前只驱动 `DoorHighlight`。门光与光晕共用 `SHNGANIM`
+  第 18 帧，所以它是「同一张精灵的下半部分 + 静态调色板」而不是新美术；这套数据里 `NO_CYCLE`
+  对那一帧恰好是恒等映射（去掉与加上逐像素无差），保留只为与参考实现逐字一致。
 * `Button` 只处理「按下与释放落在同一控件」这一种点击语义，没有拖拽取消、没有禁用态
   （`BTNSHNGL` 的第 4 帧就是禁用用的，等 M3 用得着时再加）。
 
@@ -533,6 +544,8 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
    放进 xunit 会让测试进程加载原生库并与窗口/时钟耦合；脚本保持「跑真程序」这一点不变。
 3. 渲染必须完全可复现，因此固定三个开关：`--freeze-animation`（光晕冻在第 1 帧）、
    `--cursor 620,100`（人造光标屏蔽真实指针）、`--screenshot-frame 30 --smoke-frames 90`。
+   这个坐标同时避开五块招牌和设置门的命中区（`63,202 108×160`，ADR-022 第 8 条），所以基线里
+   既没有 hover 态也没有门光——门光的行为靠单独渲染悬停帧来验证（见 `PROGRESS.md` 的记录）。
 4. 状态栏排除在比对之外：`AssetProbe compare` 新增 `--ignore x,y,w,h`（可重复），
    基线用 `--ignore 0,469,640,11`（底部 11 px 的 `FPS | 语言 | 版本`）。
 5. 缺数据的机器上脚本打印 `skip` 并以 **0** 退出（与 ADR-010 一致），`-RequireData` 才把缺数据

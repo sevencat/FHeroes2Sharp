@@ -29,6 +29,11 @@ namespace FHeroes2.Client.Desktop.Scenes;
 /// status bar at the bottom is a port addition: the original shows tooltips on right click, and
 /// the M0 GPU text overlay has to be retired (ADR-022).
 /// </para>
+/// <para>
+/// Hovering the door in the bottom left corner lights it up (<see cref="DoorHighlight"/>): the part
+/// of sprite 18 of <c>SHNGANIM.ICN</c> that sits below the lantern, which is how
+/// <c>Game::MainMenu()</c> points at the settings entrance.
+/// </para>
 /// </remarks>
 public sealed class MainMenuScene : IScene
 {
@@ -91,6 +96,7 @@ public sealed class MainMenuScene : IScene
     private readonly Sprite _background;
     private readonly Sprite? _lanternBase;
     private readonly IcnAnimation? _lantern;
+    private readonly DoorHighlight? _door;
     private readonly Button[] _buttons;
     private readonly GameFonts _fonts;
     private readonly IReadOnlyList<GameText> _languages;
@@ -108,6 +114,7 @@ public sealed class MainMenuScene : IScene
         Sprite background,
         Sprite? lanternBase,
         IcnAnimation? lantern,
+        DoorHighlight? door,
         Button[] buttons,
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
@@ -117,6 +124,7 @@ public sealed class MainMenuScene : IScene
         _background = background;
         _lanternBase = lanternBase;
         _lantern = lantern;
+        _door = door;
         _buttons = buttons;
         _fonts = fonts;
         _languages = languages;
@@ -182,12 +190,14 @@ public sealed class MainMenuScene : IScene
                     signs.Sprites[released + 2]);
             }
 
-            (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(assets);
+            IcnSpriteFile? lanternFile = assets.TryReadIcn(AnimationAssetName);
+            (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(lanternFile);
+            DoorHighlight? door = CreateDoor(lanternFile);
 
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
             MainMenuScene scene = new(
-                frame, background.Sprites[0], lanternBase, lantern, buttons, fonts, languages, culture);
+                frame, background.Sprites[0], lanternBase, lantern, door, buttons, fonts, languages, culture);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -196,6 +206,7 @@ public sealed class MainMenuScene : IScene
                     ? "no lantern animation, "
                     : $"lantern glow {LanternFrameCount} frames every " +
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
+                (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -226,9 +237,9 @@ public sealed class MainMenuScene : IScene
     }
 
     /// <summary>
-    /// Draws the background, the lantern, the signs in their current state and the status bar, in
-    /// the order of <c>Game::MainMenu()</c>: the glow goes below the signs so that a lit pixel can
-    /// never repaint a sign.
+    /// Draws the background, the lantern, the lit door, the signs in their current state and the
+    /// status bar, in the order of <c>Game::MainMenu()</c>: the glow and the door light go below the
+    /// signs so that a lit pixel can never repaint a sign.
     /// </summary>
     public void DrawFrame(in DiagnosticsState state)
     {
@@ -245,6 +256,11 @@ public sealed class MainMenuScene : IScene
         {
             ImageOps.BlitSprite(pixels, _lantern.Current);
         }
+
+        // Every frame, not once per lantern tick like the reference: the scene is recomposed from
+        // the background anyway, and keeping the light out of the animation clock is what makes a
+        // --freeze-animation screenshot of the lit door reproducible.
+        _door?.Draw(pixels, _cursor);
 
         foreach (Button button in _buttons)
         {
@@ -342,9 +358,11 @@ public sealed class MainMenuScene : IScene
     /// Loads the lantern: sprite 0 is drawn once and the following 39 sprites are the glow that
     /// flickers. The menu works without it, so missing artwork only costs the animation.
     /// </summary>
-    private static (Sprite? Base, IcnAnimation? Animation) CreateLantern(AssetBundle assets)
+    /// <param name="file">
+    /// <c>SHNGANIM.ICN</c>, read once by the caller because the door light comes from the same table.
+    /// </param>
+    private static (Sprite? Base, IcnAnimation? Animation) CreateLantern(IcnSpriteFile? file)
     {
-        IcnSpriteFile? file = assets.TryReadIcn(AnimationAssetName);
         int required = LanternFirstFrame + LanternFrameCount;
 
         if (file is null || file.Count < required)
@@ -358,6 +376,32 @@ public sealed class MainMenuScene : IScene
         return (
             file.Sprites[LanternBaseFrame],
             IcnAnimation.FromFile(file, LanternFirstFrame, LanternFrameCount, LanternFrameDuration));
+    }
+
+    /// <summary>
+    /// Loads the light of the settings door: sprite 18 of the same table, recoloured so that it does
+    /// not cycle. The menu works without it, so missing artwork only costs the highlight.
+    /// </summary>
+    private static DoorHighlight? CreateDoor(IcnSpriteFile? file)
+    {
+        if (file is null || file.Count <= DoorHighlight.HighlightFrame)
+        {
+            GameLog.Warn(
+                $"'{AnimationAssetName}' has {file?.Count ?? 0} sprites instead of " +
+                $"{DoorHighlight.HighlightFrame + 1}; the settings door will not light up.");
+            return null;
+        }
+
+        Sprite frame = file.Sprites[DoorHighlight.HighlightFrame];
+        if (frame.Height <= DoorHighlight.SourceOffsetY)
+        {
+            GameLog.Warn(
+                $"Sprite {DoorHighlight.HighlightFrame} of '{AnimationAssetName}' is " +
+                $"{frame.Width}x{frame.Height}; the settings door will not light up.");
+            return null;
+        }
+
+        return new DoorHighlight(DoorHighlight.CreateHighlight(frame));
     }
 
     private static IReadOnlyList<GameText> SelectLanguages(IReadOnlyList<GameText> languages, GameFonts fonts)

@@ -30,7 +30,8 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/fheroes2/agg/game_assets.cpp`（`getFont()` / `getIcon()` 的字体缓存） | `FHeroes2.Client.Desktop.Fonts.GameFonts` | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 与 `YELLOW_FONT` 副本 |
 | `src/engine/translations.h/.cpp`（`Translation::MOFile`、`stripContext`、`getCharsetFromHeader`） | `FHeroes2.Assets.Localization.MoCatalog` | GNU MO 读取；按 `msgid` 查表，未命中回退英文；仅 UTF-8 目录（ADR-016） |
 | `files/lang/*.po` → `<data>/files/lang/*.mo` | `translations/*.po` + `tools/scripts/BuildTranslations.ps1` | `zh_CN.po` 当前 95 条（主菜单 / 设置 / 语言 / 快捷键 / 分辨率） |
-| `src/fheroes2/game/game_mainmenu.cpp`（`Game::MainMenu`） | `FHeroes2.Client.Desktop.Scenes.MainMenuScene` | 背景 `HEROES.ICN`（资料片优先）、招牌 `BTNSHNGL.ICN` 1/5/9/13/17（悬停 `+1`、按下 `+2`）、热键 N/L/H/C/Q、灯笼光晕 `SHNGANIM.ICN`（第 0 帧灯体 + 第 1…39 帧闪烁）；门上的设置提示光效未移植（ADR-022） |
+| `src/fheroes2/game/game_mainmenu.cpp`（`Game::MainMenu`） | `FHeroes2.Client.Desktop.Scenes.MainMenuScene` | 背景 `HEROES.ICN`（资料片优先）、招牌 `BTNSHNGL.ICN` 1/5/9/13/17（悬停 `+1`、按下 `+2`）、热键 N/L/H/C/Q、灯笼光晕 `SHNGANIM.ICN`（第 0 帧灯体 + 第 1…39 帧闪烁） |
+| `Game::MainMenu()` 的 `highlightDoor` / `settingsArea`（同上文件） | `FHeroes2.UI.Widgets.DoorHighlight` | `SHNGANIM` 第 18 帧套 `PAL::NO_CYCLE`（枚举值 8）后只取 `y ≥ 55`（`doorOffsetY`）的下半部分；命中区 `63,202 108×160`；每帧重画（参考实现挂在 250 ms 的动画节拍上），点门后的设置对话框仍未移植 |
 | `ICN::getAnimatedIcnIndex()`（`src/fheroes2/agg/icn.cpp`）+ `Game::DelayType::MAIN_MENU_DELAY`（`game_delays.cpp`） | `FHeroes2.Assets.Icn.IcnAnimation` | 帧表按场景声明（起始帧 + 帧数 + 每帧时长），计时同 `fheroes2::TimeDelay`：整帧才前进、长停顿跳帧不补播 |
 | `src/fheroes2/gui/ui_button.cpp`（`Button` / `ButtonSprite`） | `FHeroes2.UI.Widgets.Button` + `ButtonState` | 三帧精灵 + 状态机，`Area` 取 released 的包围盒 = ICN 里的 `OffsetX/OffsetY`，缺帧回退 |
 | `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装 |

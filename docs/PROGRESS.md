@@ -149,7 +149,8 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | 状态栏（索引文字 + 语言标记 + FPS） | ✅ | 底部 11 px（一行 `SMALFONT.ICN`），左侧画悬停招牌的 `.mo` 译文、右侧画 `FPS \| 语言 (F2) \| vX.Y.Z`；`F2` 循环切换语言 |
 | `--scene` / `--lang` / `--cursor` / `--screenshot-frame` / `--freeze-animation` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 把人造光标放进逻辑坐标（真实鼠标移动 / 移出被忽略，hover 态不会被物理指针清掉）；`--screenshot-frame n` 选抓图帧，`--freeze-animation` 把灯笼冻在第 1 帧 |
 | `Assets.Icn.IcnAnimation` | ✅ | ICN 帧区间循环播放器（对齐 `ICN::getAnimatedIcnIndex` 的帧表 + `fheroes2::TimeDelay` 的计时）：起始帧 + 帧数 + 每帧时长，整帧才前进、长停顿跳帧不补播、越界/非正时长抛异常 |
-| `SHNGANIM.ICN` 灯笼光晕动画 | ✅ | 第 0 帧灯体先画一次，第 1…39 帧每 250 ms 换帧（9.75 s 一圈），顺序「背景 → 灯体 → 光晕 → 招牌 → 状态栏」同 `Game::MainMenu()`（ADR-022） |
+| `SHNGANIM.ICN` 灯笼光晕动画 | ✅ | 第 0 帧灯体先画一次，第 1…39 帧每 250 ms 换帧（9.75 s 一圈），顺序「背景 → 灯体 → 光晕 → 门光 → 招牌 → 状态栏」同 `Game::MainMenu()`（ADR-022） |
+| 设置门悬停发光 | ✅ | `UI.Widgets.DoorHighlight`：光标进入 `settingsArea`（63,202 108×160）就把 `SHNGANIM.ICN` 第 18 帧套 `PaletteId.NoCycle` 后只画 `y ≥ 55` 的下半部分（`doorOffsetY`），画在光晕之上、招牌之下；命中区不等于发光像素，缺帧/太矮只警告不建门（ADR-022） |
 | `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
 | `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
 | 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面） |
@@ -344,6 +345,39 @@ AssetProbe compare menu.png menu-hover.png
   `SHNGANIM` 用例（数据缺失时提前返回，遵循 ADR-010）。
 * `--cursor` 的语义顺带修了：真实鼠标移动 / 移出窗口会把 hover 清掉，导致 hover 截图时有时无；
   现在 `--cursor` 一旦给出，宿主就忽略真实指针事件（ADR-022 第 6 条）。
+
+### M2 验证记录（设置门悬停发光）
+
+```
+dotnet build -warnaserror                              → 0 warning / 0 error
+dotnet test  --no-build                                → Core 136 / Assets 120 / UI 16 = 272 passed, 0 failed
+dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2 --scene menu --lang en \
+    --cursor 100,280 --freeze-animation --screenshot-frame 30 --smoke-frames 90 \
+    --screenshot tools-output/door/hover.png
+  → Main menu ready: …, settings door lights up on hover, language 'en' (0 entries)
+AssetProbe compare hover.png tests/baselines/menu.png --ignore 0,469,640,11
+  → 499 of 307200 pixels differ, max channel delta 124, first at (115,241)
+```
+
+* 门光与参考实现同源：`Game::MainMenu()` 里 `highlightDoor = Assets::getImage( ICN::SHNGANIM, 18 )`
+  + `ApplyPalette( highlightDoor, 8 )`，只在 `le.isMouseCursorPosInArea( settingsArea )` 为真时从
+  `y = 55 * scale + offsetY` 起 blit 到精灵底部；`settingsArea` 是 `63,202,108,160`。
+  `DoorHighlightTests` 把这四个数（18 / 55 / 63,202 / 108×160）全部钉住。
+* 悬停帧与入库基线的差异只有 **499 像素**：用 Pillow 逐像素核对后 bbox = `(87,241)-(122,362)`，
+  完全落在门光的裁剪区 `48,238 136×125` 之内，且 499 像素**全部变亮**（平均 +33.6 亮度）。
+  招牌、灯笼本体、状态栏一个像素都没动，说明光只落在门上。
+* 命中区边界逐点验过（同一套渲染参数，与基线比）：`63,202` 与 `100,280` → 499 像素差（亮）；
+  `62,202`、`63,201`、`171,300`、`100,363`、`620,100` → `identical`。右/下边界是开区间
+  （`Rect.Contains` 语义），与 C++ 的 `isMouseCursorPosInArea` 一致。
+* 光晕本身也在画同一块区域，门光只是叠在它上面，所以帧号错位不会「多亮一块」：冻结在第 1 帧再比，
+  差值就是「第 18 帧 vs 第 1 帧」落在门上的那部分——参考实现同样是先画当前动画帧、再画门光。
+* `PaletteId.NoCycle` 在本数据集上是**无操作**：临时跳过调色板再渲染一帧，与套上调色板的悬停帧
+  比对为 `0` 像素差（`SHNGANIM` 第 18 帧没用到循环色）。保留它是为了与
+  `ApplyPalette( highlightDoor, 8 )` 逐字对齐，别的数据版本里那一帧可能带循环色。
+* 参考实现只在 250 ms 的动画节拍里重画门光，端口在每帧的 `DrawFrame` 里画：场景本来就从背景重铺，
+  所以不会出现「移开后残留门光」；顺带让 `--freeze-animation` 的悬停截图也是确定的（冻结动画不影响门光）。
+* 未接的部分：点门没有反应。设置对话框（语言 / 分辨率 / 音效，参考实现是 `Dialog::GameSettings()`）
+  属于后续里程碑，门现在只负责「提示入口存在」。
 
 ### M2 验证记录（像素基线门禁）
 
