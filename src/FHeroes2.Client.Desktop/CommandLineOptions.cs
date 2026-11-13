@@ -9,7 +9,8 @@ namespace FHeroes2.Client.Desktop;
 /// <code>
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
-///                 [--freeze-animation] [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
+///                 [--cursor &lt;x,y&gt;] [--right-button] [--freeze-animation]
+///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
 /// </summary>
 public sealed class CommandLineOptions
@@ -37,6 +38,13 @@ public sealed class CommandLineOptions
     /// the captured hover does not depend on where the physical pointer happens to be.
     /// </summary>
     public Point? Cursor { get; private set; }
+
+    /// <summary>
+    /// Pretends the right mouse button is held down at the position of <c>--cursor</c>. The
+    /// tooltips of the main menu only exist while the button is pressed, so this is what makes a
+    /// screenshot of one possible; it has no effect without <c>--cursor</c>.
+    /// </summary>
+    public bool RightButton { get; private set; }
 
     /// <summary>Window scale factor applied to the 640x480 logical resolution.</summary>
     public int WindowScale { get; private set; } = 2;
@@ -100,6 +108,10 @@ public sealed class CommandLineOptions
 
                 case "--cursor":
                     options.Cursor = ParsePoint(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
+                case "--right-button":
+                    options.RightButton = true;
                     break;
 
                 case "--scale":
@@ -174,6 +186,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --cursor <x,y>      Puts the cursor at a logical pixel, e.g. to screenshot a hover.");
         Console.WriteLine("                      The position is synthetic: real mouse motion is ignored, so the");
         Console.WriteLine("                      hover state survives the physical pointer leaving the window.");
+        Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
+        Console.WriteLine("                      of the sign under it (the original shows it only while pressed).");
         Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2).");
         Console.WriteLine("  --fullscreen        Starts in borderless fullscreen mode.");
         Console.WriteLine("  --smoke-frames <n>  Renders n frames and exits (used by CI / smoke tests).");

@@ -584,3 +584,58 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 * 脚本依赖 Windows + PowerShell 与本地 Debug 输出路径（`bin/Debug/net10.0/FHeroes2Sharp.exe`）。
   Linux 上的 runner 需要 `pwsh` 且路径/程序集名一致，否则先 `dotnet build` 再手搓那两条命令。
 
+## ADR-024：右键提示用原版消息框（`BUYBUILD.ICN` 六块拼装）
+
+**背景**：M2 的主菜单已经能点亮设置门（ADR-022），但鼠标右键什么也不做——而参考实现里
+右键招牌/门会弹出「标题 + 说明」的消息框（`Game::MainMenu()` 的 `showStandardTextMessage(
+_( "New Game" ), _( "Start a single or multi-player game." ), Dialog::ZERO )`）。这是端口里
+第一个真正的对话框，也是设置对话框将来的地基：`Dialog::GameSettings()` 的每个子窗口都建立在
+同一套边框与文本版式上。
+
+**决策**：
+
+1. 边框用 `BUYBUILD.ICN` 的六块精灵拼，不用 `ADVBORD.ICN` 九宫格。参考实现的
+   `Dialog::FrameBox` 就是前者（`ResizableFrameBox( boxAreaWidthPx, height, -1, buttons )`），
+   `DrawBorder()`/`ADVBORD` 属于另一支（更大的窗口），继续留在「未移植」。
+2. 版式照 `dialog_box.cpp` 抄算术，包括不对称：顶 99 px（左列第 4 帧）+ 中段 + 底 81 px
+   （第 6 帧）；中段把第 5/1 帧**从第 10 行起切 35 行**重复；文字区固定 244 宽、最小 70 高
+   （两块切片）；`showButtons` 先把 40 px 的按钮行加进高度再数切片。
+3. 列宽取每列三块的最大值（左 161、右 145），于是窗口 288 宽、画出来的画面却是 305/306 宽，
+   接缝落在 `x = 320`（逻辑分辨率正中）。这种「不居中」是原版的样子，不修正。
+4. `Dialogs.MessageBox` 只实现 `Dialog::ZERO` 分支：没有按钮组、没有 dialog elements。
+   框高 = 标题行数×行高 + 10 +（正文行数×行高 + 10），标题用 `normalYellow`、正文用
+   `normalWhite`，都按 244 px 折行**居中**（`Text::draw( x, y, maxWidth, output )` 的语义）。
+5. 对话框不碰输入。参考实现在 `showMessage()` 里跑阻塞事件循环；端口里一帧只画一次，
+   于是改成「场景决定谁存在」：`MainMenuScene.SetRightButton( down )` 在按下时创建、松开时丢弃，
+   对话框只是一个每帧重画的普通对象（与 ADR-022 第 8 条的思路一致）。
+6. 右键语义以「按住」为界（`le.isMouseRightButtonPressed()`）：提示框只存在于按住期间；
+   左键、热键都不影响它，这与参考实现的 `else if ( !le.isMouseRightButtonPressed() ) break;` 等价。
+7. 不往像素基线里新增东西：`menu.png` 用 `--cursor 620,100` 且不按键，所以提示框不出现，
+   基线仍是逐字节相等。要抓提示框的图，用新开关 `--cursor x,y --right-button`——它是和
+   `--cursor` 同一类的**测试钩子**（无 `--cursor` 时无效），产物留在 `tools-output/` 不入库。
+8. `FHeroes2.UI` 新增对 `FHeroes2.Assets` 的项目引用，因为 `MessageBox` 要 `IGlyphSource` /
+   `GlyphText`。这与 PLAN 的 `Core ← Assets ← Rendering ← UI` 方向一致，只是补上了原本没接的箭头。
+
+**理由**：
+
+* 拼装而不是缩放：`BUYBUILD` 的列是 35 px 重复图案，照切片拼出来与原版逐像素一致；
+  若改用「拉伸整张图」，边角的宝石与卷轴纹样会糊掉，也无法与参考实现对照。
+* 版式写成常量 + 纯函数（`FrameBox.Create`），几何可以用单元测试钉死：640×480 下
+  `Area = (198,205,244,70)`、`FrameArea = (159,141,305,180)`、`height=140 → 3 块切片`。
+  这样以后接设置对话框，改动边框行为会立刻被测试抓住。
+* 把「谁创建对话框」交给场景，端口就不需要把事件循环嵌进 UI 组件里：`MessageBox` 没有
+  时间、没有输入、没有全局状态，只有「画一次」。
+* 复用 `GlyphText` 而不是再写一套折行：提示框的中文与英文、位图字形与 TrueType 补位都走
+  同一条布局路径，颜色由 `PaletteTable` 决定（ADR-020/021）。
+
+**代价 / 约束**：
+
+* 只有无按钮的消息框。带 OK/Cancel 的窗口需要 `ButtonGroup` 与按钮精灵定位（`renderButton` 的
+  padding 规则），设置/语言选择/分辨率对话框仍未移植——它们大多还依赖 `StandardWindow`
+  （`SURDRBKG` 拉伸 + 抖动过渡 + 背景压暗），那是下一块工作。
+* `FrameBox` 目前只有「好」界面的一份：`BUYBUILE.ICN`（邪恶界面）会用到 `Settings` 的
+  界面类型开关，等 M8 的设置持久化一起做。
+* 提示框的文案取自 `.mo`，中文长句（如门的说明）在 244 px 内折成两行——与参考实现的折行
+  规则相同，但中文按字符断行的位置可能与 C++ 用语料实测出来的位置不同（没有逐句对拍）。
+* `--right-button` 是测试钩子，不是玩法：真实运行时提示框仍然只由物理右键按住驱动。
+

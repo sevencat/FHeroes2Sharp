@@ -19,8 +19,11 @@ namespace FHeroes2.Client.Desktop;
 /// </summary>
 public sealed class GameHost : IDisposable
 {
-    /// <summary><c>SDL_BUTTON_LEFT</c>; only the left button drives the menu.</summary>
+    /// <summary><c>SDL_BUTTON_LEFT</c>; picks a sign of the menu.</summary>
     private const int LeftMouseButton = 1;
+
+    /// <summary><c>SDL_BUTTON_RIGHT</c>; shows the tooltip of the sign under it while held.</summary>
+    private const int RightMouseButton = 3;
 
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
@@ -253,7 +256,7 @@ public sealed class GameHost : IDisposable
     /// <summary>Handles a mouse button event; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleMouseButton(in SDL.MouseButtonEvent button)
     {
-        if (_menu is null || button.Button != LeftMouseButton)
+        if (_menu is null)
         {
             return false;
         }
@@ -263,7 +266,18 @@ public sealed class GameHost : IDisposable
             _menu.SetCursor(ToLogical(button.X, button.Y));
         }
 
-        return _menu.SetLeftButton(button.Down) is { } action && HandleMenuAction(action);
+        switch (button.Button)
+        {
+            case RightMouseButton:
+                _menu.SetRightButton(button.Down);
+                return false;
+
+            case LeftMouseButton:
+                return _menu.SetLeftButton(button.Down) is { } action && HandleMenuAction(action);
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>Reacts to the choice of a main menu sign; returns <see langword="true"/> to stop.</summary>
@@ -357,6 +371,13 @@ public sealed class GameHost : IDisposable
                 if (_options.Cursor is { } cursor)
                 {
                     _menu.SetCursor(cursor);
+
+                    // A screenshot of a tooltip needs the right button held: the message box of the
+                    // original exists only while it is pressed.
+                    if (_options.RightButton)
+                    {
+                        _menu.SetRightButton(true);
+                    }
                 }
             }
         }

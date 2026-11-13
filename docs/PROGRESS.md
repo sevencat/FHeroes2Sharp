@@ -147,13 +147,14 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `Assets.AssetBundle.TryReadIcn` | ✅ | ICN 装载的单一入口（`HEROES.ICN` / `BTNSHNGL.ICN` / `FONT.ICN` …），缺条目返回 `null` |
 | `Client.Desktop.Localization.GameText` | ✅ | 一个语言一个不可变实例：英文 = msgid，`zh_CN` = `<data>/files/lang/zh_CN.mo`；无 CJK 字形时自动退回英文 |
 | 状态栏（索引文字 + 语言标记 + FPS） | ✅ | 底部 11 px（一行 `SMALFONT.ICN`），左侧画悬停招牌的 `.mo` 译文、右侧画 `FPS \| 语言 (F2) \| vX.Y.Z`；`F2` 循环切换语言 |
-| `--scene` / `--lang` / `--cursor` / `--screenshot-frame` / `--freeze-animation` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 把人造光标放进逻辑坐标（真实鼠标移动 / 移出被忽略，hover 态不会被物理指针清掉）；`--screenshot-frame n` 选抓图帧，`--freeze-animation` 把灯笼冻在第 1 帧 |
+| `--scene` / `--lang` / `--cursor` / `--right-button` / `--screenshot-frame` / `--freeze-animation` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 把人造光标放进逻辑坐标（真实鼠标移动 / 移出被忽略，hover 态不会被物理指针清掉）；`--right-button` 在人造光标处按住右键，用来看/抓提示框；`--screenshot-frame n` 选抓图帧，`--freeze-animation` 把灯笼冻在第 1 帧 |
 | `Assets.Icn.IcnAnimation` | ✅ | ICN 帧区间循环播放器（对齐 `ICN::getAnimatedIcnIndex` 的帧表 + `fheroes2::TimeDelay` 的计时）：起始帧 + 帧数 + 每帧时长，整帧才前进、长停顿跳帧不补播、越界/非正时长抛异常 |
 | `SHNGANIM.ICN` 灯笼光晕动画 | ✅ | 第 0 帧灯体先画一次，第 1…39 帧每 250 ms 换帧（9.75 s 一圈），顺序「背景 → 灯体 → 光晕 → 门光 → 招牌 → 状态栏」同 `Game::MainMenu()`（ADR-022） |
 | 设置门悬停发光 | ✅ | `UI.Widgets.DoorHighlight`：光标进入 `settingsArea`（63,202 108×160）就把 `SHNGANIM.ICN` 第 18 帧套 `PaletteId.NoCycle` 后只画 `y ≥ 55` 的下半部分（`doorOffsetY`），画在光晕之上、招牌之下；命中区不等于发光像素，缺帧/太矮只警告不建门（ADR-022） |
 | `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
 | `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
-| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面） |
+| 右键提示框（`BUYBUILD.ICN` 消息框） | ✅ | `UI.Dialogs.FrameBoxChrome` + `FrameBox` + `MessageBox`：六块列拼装（顶 99 + 中段 35×n + 底 81），文字区 244 宽、最小 70 高；标题 yellow / 正文 normal 折行居中；`MainMenuScene.SetRightButton` 按住创建、松开丢弃，画在状态栏之后（ADR-024） |
+| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框还缺 `StandardWindow` 与按钮组，见 ADR-024） |
 
 ### M2 验证记录（本地化部分）
 
@@ -434,6 +435,29 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Baseline tools-output/preflight/BTNSH
 * 没有游戏数据的机器上脚本 `skip` 并以 0 退出（与 ADR-010 的「缺数据提前返回」同一策略），
   自建 runner 用 `-RequireData` 把 skip 变成失败。仓库当前没有托管 CI，这一步是「可被 CI 直接
   调用的门禁命令」，不是某个具体 pipeline 的 yml。
+
+### M2 验证记录（右键提示框）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx              → Core 136 / Assets 120 / UI 36，全部通过
+                                               （UI 新增 20 条：几何 14 + 版式 6）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
+  → match  the rendered menu is identical to the baseline（7040 pixels ignored）
+客户端 --cursor 520,230 --right-button --freeze-animation --screenshot tools-output/tip/new-game.png
+  → 消息框 159,141 305×180：标题「新游戏」、正文「开始单人游戏或多人游戏。」
+客户端 --cursor 100,300 --right-button --freeze-animation --screenshot tools-output/tip/door.png
+  → 「游戏设置」/「更改游戏的语言、分辨率与设置。」
+```
+
+* 与同坐标但不带 `--right-button` 的截图相减：`y < 469` 的差异矩形**恰好**是 `159,141 305×180`
+  ——正是 `FrameBox.FrameArea`——其余像素（含 `620,100` 附近、招牌、灯笼）一个都没变；
+  另外两帧完全相同、只有状态栏 FPS 数字不同，说明提示框的渲染是确定性的。
+* `FrameBoxTests` 钉住参考实现的算术：`height=70 → 0 切片`、`71 → 1×1`、`140 → 3×70`、
+  `showButtons` 先加 40、`Area` 最小 70 高、`Origin.Y = ( 480 − 中段 ) / 2 − 99`；
+  `Draw` 的用例逐像素验证「中段从源图第 10 行开始切」以及接缝落在 `x = 320`。
+* `MessageBoxTests` 用「实心字形 + 固定度量」的假字形源，可以直接断言标题在文字区第 10 行、
+  正文在标题下 25 行、两者都居中于 244 px 宽——不需要游戏数据也不需要真字体。
 
 ## 后续里程碑
 

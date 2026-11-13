@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
+    <ProjectReference Include="..\FHeroes2.Assets\FHeroes2.Assets.csproj" />
     <ProjectReference Include="..\FHeroes2.Rendering\FHeroes2.Rendering.csproj" />
     <ProjectReference Include="..\FHeroes2.Game\FHeroes2.Game.csproj" />
   </ItemGroup>

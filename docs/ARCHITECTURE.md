@@ -8,7 +8,7 @@
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.DoorHighlight`）、界面流转 | Core, Rendering, Game |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.MessageBox`）、界面流转 | Core, Assets, Rendering, Game |
 | `FHeroes2.Client.Desktop` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
@@ -89,6 +89,28 @@ UI 实际用的是 `Assets.Fonts.CompositeGlyphSource`：位图字体是 primary
 `BitmapFont.WithPalette(PaletteId.YellowFont)` 重着色位图字体，
 `GlyphCoverageRamp.WithPalette(...)` 把同一张表套到覆盖率梯度上，于是混排里的中文与英文同色（ADR-020）。
 若最终字体不含 CJK，诊断文本自动切换为英文。
+
+## 对话框：`BUYBUILD.ICN` 消息框
+
+M2 的右键提示框是第一个真正的对话框，它由三个类型拼出来（ADR-024）：
+
+```
+Dialogs.FrameBoxChrome   BUYBUILD.ICN 的六块（右列 0/1/2，左列 4/5/6）+ 每列最大宽度
+        ↓
+Dialogs.FrameBox         版式 = Dialog::ResizableFrameBox：99 px 顶 + 35 px 中段切片 × n + 81 px 底；
+                         给出 Area（244 宽的文字区，最小 70 高）与 FrameArea（含画了哪些像素）
+        ↓
+Dialogs.MessageBox       版式 = getDialogHeight() + showMessage(..., Dialog::ZERO)：
+                         yellow 标题 + normal 正文，都按 244 px 折行居中，标题上/正文上各留 10 px
+        ↓
+MainMenuScene            右键按在招牌或门上时创建，松开就丢弃；画在状态栏之后（模态）
+```
+
+`FrameBox` 与 `MessageBox` 不碰输入：谁在什么时候创建它们由场景决定，这与参考实现
+「对话框自己跑事件循环」的差别是**故意**的——端口里一帧只画一次、没有阻塞式循环，
+所以对话框只是一个每帧重画的对象。切片、列宽、最小高度全部来自 C++ 的算术，
+因此一像素都不需要猜：`FrameBoxTests` / `MessageBoxTests` 固定了 640×480 下的
+`198,205 244×70` 与 `159,141 305×180` 这些数。
 
 ## 错误处理
 

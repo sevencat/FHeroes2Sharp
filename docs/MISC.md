@@ -261,6 +261,13 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
     拿错帧、忘了裁剪或忘了套调色板都「看起来仍在发光」，因为光晕本身也画同一块区域；判对错
     只能与未悬停的同一帧逐像素 diff——门光那一笔实测 **499 像素**，全部落在 `48,238 136×125`
     之内且全部变亮（`PROGRESS.md` 的「设置门悬停发光」记录）。
+24. **消息框的「中段」是切片而不是缩放**：`BUYBUILD.ICN` 的左右两列各三块，中段每次都从
+    源图 **第 10 行**起切 35 行重复（`Blit( middle, 0, 10, ... )`），高度不够 70 px 时一块都不切、
+    但仍按 70 px 画。另有两处容易「顺手修正」的坑：左列 161 px 比右列 145 px 宽 1，所以
+    画面 305/306 px 宽而窗口是 288 px，接缝在 `x = 320`；`BlitSprite` 的 `destinationOffset`
+    还要减去源矩形的原点（`FrameBox.Draw` 里那行注释），否则切片会整体位移。
+    `FrameBoxTests` / `MessageBoxTests` 把这些数钉死（ADR-024）。
+
 
 ## 目录与产物
 

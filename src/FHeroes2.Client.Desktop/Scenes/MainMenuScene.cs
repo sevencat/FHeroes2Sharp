@@ -7,13 +7,15 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.Client.Desktop.Scenes;
 
 /// <summary>
 /// The main menu of Heroes II: the street scene of <c>HEROES.ICN</c>, the five hanging signs of
-/// <c>BTNSHNGL.ICN</c> on top of it and a one line status bar drawn with the game fonts.
+/// <c>BTNSHNGL.ICN</c> on top of it, a one line status bar drawn with the game fonts and the message
+/// box the original shows while the right mouse button is held.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -33,6 +35,12 @@ namespace FHeroes2.Client.Desktop.Scenes;
 /// Hovering the door in the bottom left corner lights it up (<see cref="DoorHighlight"/>): the part
 /// of sprite 18 of <c>SHNGANIM.ICN</c> that sits below the lantern, which is how
 /// <c>Game::MainMenu()</c> points at the settings entrance.
+/// </para>
+/// <para>
+/// Holding the right mouse button over a sign or over the door shows the message box of
+/// <c>showStandardTextMessage( ..., Dialog::ZERO )</c> (<see cref="SetRightButton"/>); releasing it
+/// removes the box again, so the tooltip never outlives the button the way it does not in the
+/// original either.
 /// </para>
 /// </remarks>
 public sealed class MainMenuScene : IScene
@@ -75,6 +83,12 @@ public sealed class MainMenuScene : IScene
     /// <summary>Height of the status bar, which is exactly one line of <c>SMALFONT.ICN</c>.</summary>
     public const int StatusBarHeight = 11;
 
+    /// <summary>Tooltip title of the settings door, the msgid <c>Game::MainMenu()</c> passes.</summary>
+    public const string DoorLabelId = "Game Settings";
+
+    /// <summary>Tooltip text of the settings door, the msgid <c>Game::MainMenu()</c> passes.</summary>
+    public const string DoorTooltipId = "Change language, resolution and settings of the game.";
+
     private const int StatusBarPadding = 8;
 
     private const int StatusBarGap = 10;
@@ -97,6 +111,7 @@ public sealed class MainMenuScene : IScene
     private readonly Sprite? _lanternBase;
     private readonly IcnAnimation? _lantern;
     private readonly DoorHighlight? _door;
+    private readonly FrameBoxChrome? _messageChrome;
     private readonly Button[] _buttons;
     private readonly GameFonts _fonts;
     private readonly IReadOnlyList<GameText> _languages;
@@ -108,6 +123,7 @@ public sealed class MainMenuScene : IScene
     private Point? _cursor;
     private bool _leftButtonDown;
     private string? _status;
+    private MessageBox? _tip;
 
     private MainMenuScene(
         ScreenBuffer frame,
@@ -115,6 +131,7 @@ public sealed class MainMenuScene : IScene
         Sprite? lanternBase,
         IcnAnimation? lantern,
         DoorHighlight? door,
+        FrameBoxChrome? messageChrome,
         Button[] buttons,
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
@@ -125,6 +142,7 @@ public sealed class MainMenuScene : IScene
         _lanternBase = lanternBase;
         _lantern = lantern;
         _door = door;
+        _messageChrome = messageChrome;
         _buttons = buttons;
         _fonts = fonts;
         _languages = languages;
@@ -193,11 +211,13 @@ public sealed class MainMenuScene : IScene
             IcnSpriteFile? lanternFile = assets.TryReadIcn(AnimationAssetName);
             (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(lanternFile);
             DoorHighlight? door = CreateDoor(lanternFile);
+            FrameBoxChrome? messageChrome = CreateMessageChrome(assets);
 
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
             MainMenuScene scene = new(
-                frame, background.Sprites[0], lanternBase, lantern, door, buttons, fonts, languages, culture);
+                frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, fonts, languages,
+                culture);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -207,6 +227,7 @@ public sealed class MainMenuScene : IScene
                     : $"lantern glow {LanternFrameCount} frames every " +
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
+                (messageChrome is null ? "no tooltips, " : "right click tooltips, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -269,6 +290,9 @@ public sealed class MainMenuScene : IScene
 
         DrawStatusBar(pixels, state);
 
+        // The tooltip is modal in the original: it sits on top of everything, including the signs.
+        _tip?.Draw(pixels);
+
         _frame.InvalidateAll();
     }
 
@@ -278,6 +302,13 @@ public sealed class MainMenuScene : IScene
     /// <summary>Sets the cursor position in logical pixels, or <see langword="null"/> when it left.</summary>
     public void SetCursor(Point? cursor)
     {
+        // The open tooltip freezes the menu: the reference sits inside the dialog loop, so no hover
+        // state - and no door light - changes until the box is gone.
+        if (_tip is not null)
+        {
+            return;
+        }
+
         if (_cursor == cursor)
         {
             return;
@@ -294,6 +325,16 @@ public sealed class MainMenuScene : IScene
     public MainMenuAction? SetLeftButton(bool down)
     {
         _leftButtonDown = down;
+
+        // While the tooltip is up the reference engine sits inside showStandardTextMessage() and
+        // never sees the left button, so a click cannot pick a sign. The button state itself is
+        // still tracked, otherwise a press that happened before the tooltip opened would stick.
+        if (_tip is not null)
+        {
+            _pressedButton = -1;
+            return null;
+        }
+
         UpdateButtonStates();
 
         if (down)
@@ -313,9 +354,27 @@ public sealed class MainMenuScene : IScene
         return Choose(Menu[released]);
     }
 
+    /// <summary>Whether a tooltip message is on screen, i.e. the right mouse button is held over a sign.</summary>
+    public MessageBox? Tip => _tip;
+
+    /// <summary>
+    /// Tracks the right mouse button of the original tooltips: pressing it over a sign (or over the
+    /// settings door) opens the message box of that area, releasing it closes the box again, exactly
+    /// like <c>Game::MainMenu()</c> calls <c>showStandardTextMessage( ..., Dialog::ZERO )</c> while
+    /// the button is down.
+    /// </summary>
+    /// <param name="down">Whether the right mouse button is currently held.</param>
+    public void SetRightButton(bool down) => _tip = down ? CreateTip() : null;
+
     /// <summary>Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>).</summary>
     public MainMenuAction? Select(char hotKey)
     {
+        // A hot key is swallowed by the open tooltip, like every key press inside the dialog loop.
+        if (_tip is not null)
+        {
+            return null;
+        }
+
         MainMenuAction? action = char.ToUpperInvariant(hotKey) switch
         {
             'N' => MainMenuAction.NewGame,
@@ -402,6 +461,58 @@ public sealed class MainMenuScene : IScene
         }
 
         return new DoorHighlight(DoorHighlight.CreateHighlight(frame));
+    }
+
+    /// <summary>
+    /// Loads the pieces of the message frame. The menu works without them, so missing artwork only
+    /// costs the right click tooltips.
+    /// </summary>
+    private static FrameBoxChrome? CreateMessageChrome(AssetBundle assets)
+    {
+        IcnSpriteFile? file = assets.TryReadIcn(FrameBoxChrome.AssetName);
+        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(file?.Sprites);
+
+        if (chrome is null)
+        {
+            GameLog.Warn(
+                $"'{FrameBoxChrome.AssetName}' is missing or has fewer than " +
+                $"{FrameBoxChrome.RequiredSpriteCount} sprites; the menu will not show tooltips.");
+        }
+
+        return chrome;
+    }
+
+    /// <summary>
+    /// Builds the message box the reference shows while the right mouse button is held: the sign
+    /// under the cursor wins over the settings door, and nothing else produces a tooltip.
+    /// </summary>
+    private MessageBox? CreateTip()
+    {
+        if (_messageChrome is null)
+        {
+            return null;
+        }
+
+        string header;
+        string body;
+
+        int index = IndexAt(_cursor);
+        if (index >= 0)
+        {
+            header = Text.Get(Menu[index].LabelId);
+            body = Text.Get(Menu[index].TooltipId);
+        }
+        else if (_cursor is { } cursor && DoorHighlight.HoverArea.Contains(cursor))
+        {
+            header = Text.Get(DoorLabelId);
+            body = Text.Get(DoorTooltipId);
+        }
+        else
+        {
+            return null;
+        }
+
+        return MessageBox.Create(header, body, _messageChrome, _fonts.Yellow, _fonts.Normal);
     }
 
     private static IReadOnlyList<GameText> SelectLanguages(IReadOnlyList<GameText> languages, GameFonts fonts)
