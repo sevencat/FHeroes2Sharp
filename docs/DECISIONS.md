@@ -639,3 +639,54 @@ _( "New Game" ), _( "Start a single or multi-player game." ), Dialog::ZERO )`）
   规则相同，但中文按字符断行的位置可能与 C++ 用语料实测出来的位置不同（没有逐句对拍）。
 * `--right-button` 是测试钩子，不是玩法：真实运行时提示框仍然只由物理右键按住驱动。
 
+
+## ADR-025：先只支持 Windows x64；程序图标由一份 `assets/logo.ico` 驱动
+
+**背景**：客户端一直是「能编就能跑」，`Directory.Packages.props` 里的 SDL3 原生包给
+win-x64/arm64、linux-x64/arm64、osx-x64/arm64 都带了二进制，于是看起来哪儿都能跑。实际上
+窗口创建、`SDL_SetWindowIcon`、像素基线脚本 `VerifyMenuBaseline.ps1` 全都只在 Windows 上验证过，
+后面要接的对话框、输入法、存档路径也会继续贴着 Win32 语义走。同时项目有了美术资源
+（`assets/logo.png`），它需要同时出现在两个地方：Explorer 里 exe 的图标，以及运行时的
+标题栏 / 任务栏图标。
+
+**决策**：
+
+1. 只有客户端项目固定 `RuntimeIdentifier=win-x64`；配合
+   `AppendRuntimeIdentifierToOutputPath=false`，输出目录仍是 `bin/Debug/net10.0`，
+   `VerifyMenuBaseline.ps1` 里的 `FHeroes2Sharp.exe` 路径不变。Core / Assets / Rendering /
+   Game / UI / AssetProbe / 测试项目不设 RID，保持可移植（它们不碰窗口）。
+2. `Program.Main` 先做平台检查：非 Windows 或 32 位进程打印一行说明并以 1 退出；
+   `Program.cs` 里加 `[assembly: SupportedOSPlatform("windows")]`，让 CA1416 按 Windows 目标
+   分析平台 API（与 `net10.0-windows` 目标效果相同，但不用换 TFM）。
+3. 图标只有一个源：`assets/logo.png`（640×640）经 `tools/scripts/GenerateAppIcon.ps1` 生成
+   `assets/logo.ico`（16/24/32/48/64 为 32 位 DIB，128/256 为 PNG）。同一个文件既是 csproj 的
+   `<ApplicationIcon>`（编进 exe 的 Win32 资源），又是 `LogicalName=logo.ico` 的
+   `EmbeddedResource`。
+4. 运行时由 `Graphics.WindowIcon` 读嵌入资源：`Core.Imaging.IcoFile` 解成 `PngImage`，64 px
+   那张作为 100% 图标，128/256 用 `SDL_AddSurfaceAlternateImage` 注册为高 DPI 备选，最后
+   `SDL_SetWindowIcon`。像素缓冲与 surface 活到 `SdlPresenter.Dispose`（在 `SDL_DestroyWindow`
+   之后释放），因为 `SDL_CreateSurfaceFrom` 不复制像素。
+5. `IcoFile` 只认 PNG 与未压缩 24/32 位 DIB；调色板位图、RLE 压缩、光标文件（type 2）一律抛
+   `BinaryFormatException`，不猜也不静默降级。
+
+**理由**：
+
+* 收口比假装跨平台便宜：RID 一写，`dotnet run` 必定拿到配套的原生 DLL，`dotnet publish` 只会
+  产出 win-x64；将来要放开时删两行属性、再补 Linux/macOS 的图标路径即可。
+* 图标「一份文件两个消费者」：Explorer 与 SDL 看到同一份像素，不会出现「exe 是新图标、任务栏还是
+  旧的」这种只在截图里才发现的偏差；换美术也只剩「跑一次脚本」。
+* 小尺寸用 DIB 而不是 PNG 是为了兼容性（部分外壳程序只认 DIB 或只认 256 的 PNG），而
+  `IcoFileTests` 用内存里现搭的 ICO 把 DIB 的两页高度、自下而上的行序、4 字节行对齐、AND 掩码
+  与「32 位 alpha 全零则改用掩码」逐条钉死，改坏了立刻红。
+* 图标编进程序集：发布目录里没有「图标丢了」这种状态，也不需要往输出目录复制素材。
+
+**代价 / 约束**：
+
+* Windows 之外现在不是「没测试」而是「明确拒绝」：`--help` 都不给，直接退出码 1。
+* `IcoFile` 不是 fheroes2 的移植（原版把图标编进资源，运行时不需要解析 ICO），所以
+  `REFERENCE.md` 里没有对应行；它只与 `PngReader` 和生成脚本互相约束。
+* 源图是 24 位（没有 alpha），四角不透明。换成带透明边的美术时脚本与解码器都已支持，但要重跑
+  `GenerateAppIcon.ps1` 并提交新的 `.ico`。
+* 图标没有像素门禁：`VerifyMenuBaseline.ps1` 只比对 640×480 的逻辑画面。窗口图标属于 Win32 层，
+  能拿到的证据只有「`ExtractAssociatedIcon` 取得出图标」与日志里的 `Window icon set`。
+

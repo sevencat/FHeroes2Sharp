@@ -156,6 +156,10 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | 右键提示框（`BUYBUILD.ICN` 消息框） | ✅ | `UI.Dialogs.FrameBoxChrome` + `FrameBox` + `MessageBox`：六块列拼装（顶 99 + 中段 35×n + 底 81），文字区 244 宽、最小 70 高；标题 yellow / 正文 normal 折行居中；`MainMenuScene.SetRightButton` 按住创建、松开丢弃，画在状态栏之后（ADR-024） |
 | 对话框影像原语（渐变阴影 / 抖动过渡） | ✅ | `ImageOps` 新增 partial 文件：`ApplyTransform`（按 16 张重着色表转换一块矩形）、`AddGradientShadow`（沿精灵轮廓投 2–5 号表的渐变阴影，斜率取整同 `std::round`）、`AddGradientShadowForArea`（矩形左边与下边的 16 px 阴影带）、`CreateDitheringTransition`（周期逐次翻倍的棋盘过渡，奇数尺寸的一半右移一格照抄）；8 个用例与 C++ 参考实现逐字节相同（`CompareEffectsWithReference.ps1`） |
 | 标准对话框窗口（`StandardWindow`） | ✅ | `UI.Dialogs.StandardWindowChrome`（`SURDRBKG.ICN` / `WINLOSE.ICN` / `STONEBAK.ICN` 第 0 帧）+ `StandardWindow`：四角 22 px、可重复边框起点 43 px（横边框从 `43+16` 取像素）、接缝 10 px、底纹从 22 px 起铺；`Create` / `CreateCentered` 给出 `ActiveArea` / `WindowArea` / `TotalArea`（阴影只挂左/下 16 px）；4 个用例与 C++ 参考实现逐字节相同（`CompareWindowWithReference.ps1`），尚未接线到对话框（ADR-024） |
+| `Core.Imaging.IcoFile` | ✅ | Windows 图标（`.ico`）读取：`ICONDIR` / `ICONDIRENTRY`（0 = 256）、PNG 条目、未压缩 24/32 位 DIB（两页高度、自下而上行序、4 字节行对齐、AND 掩码、32 位 alpha 全零时回退到掩码），`Largest` / `Closest` 选择；14 个用例（`IcoFileTests`） |
+| `assets/logo.ico` + `tools/scripts/GenerateAppIcon.ps1` | ✅ | 从 `assets/logo.png` 生成 7 张图（16/24/32/48/64 位图 + 128/256 PNG，240,361 字节）；同一份文件既是 exe 的 `<ApplicationIcon>` 又是嵌入资源（ADR-025） |
+| `Graphics.WindowIcon` + `SdlPresenter` 接线 | ✅ | 读嵌入的 `logo.ico` → `SDL_CreateSurfaceFrom`（64 px 为主图、128/256 为高 DPI 备选，`SDL_AddSurfaceAlternateImage`）→ `SDL_SetWindowIcon`；surface 与像素缓冲在 `SDL_DestroyWindow` 之后才释放 |
+| 仅 Windows x64 | ✅ | 客户端 `RuntimeIdentifier=win-x64`（不进输出路径，基线脚本路径不变）、`[assembly: SupportedOSPlatform("windows")]`、`Main` 首行平台检查；工具与测试项目不设 RID（ADR-025） |
 | 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框只缺按钮组，`StandardWindow` 已就绪，见 ADR-024） |
 
 ### M2 验证记录（对话框影像原语）
@@ -501,6 +505,34 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
   `Draw` 的用例逐像素验证「中段从源图第 10 行开始切」以及接缝落在 `x = 320`。
 * `MessageBoxTests` 用「实心字形 + 固定度量」的假字形源，可以直接断言标题在文字区第 10 行、
   正文在标题下 25 行、两者都居中于 244 px 宽——不需要游戏数据也不需要真字体。
+
+### M2 验证记录（程序图标与 win-x64 收口）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx              → Core 159 / Assets 120 / UI 45，全部通过
+                                               （Core 新增 14 条：IcoFileTests）
+pwsh tools/scripts/GenerateAppIcon.ps1        → 7 张图（16/24/32/48/64 位图 + 128/256 PNG）
+                                               240,361 字节；assets/logo.ico
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -DataDirectory F:\game\fh2
+  → match  the rendered menu is identical to the baseline（7040 pixels ignored）
+客户端 --smoke-frames 10 --cursor 620,100 --freeze-animation --screenshot tools-output/icon-smoke.png
+  → [INFO] Window icon set (3 embedded image(s))；退出码 0，截图 640×480
+[System.Drawing.Icon]::ExtractAssociatedIcon(bin/Debug/net10.0/FHeroes2Sharp.exe)
+  → 32×32，中心像素 #CEA750，确认图标资源已经编进 exe
+```
+
+* 生成的 `.ico` 用两条互不相干的路径读过一遍：Windows 自己的 `System.Drawing.Icon` 能打开
+  （32×32 与 128×128），我们的 `IcoFile` 也能解出 16/24/32/48/64/128/256 七张，且每张中心像素
+  alpha = 255（不透明，任务栏不会显示空白）。
+* `Window icon set (3 …)` 的「3」是 64 px 主图 + 128/256 两个高 DPI 备选；SDL 的
+  `SDL_SetWindowIcon` 文档要求先 `SDL_AddSurfaceAlternateImage` 再设置，顺序就是代码里的顺序。
+* 输出路径没有因为 RID 改变（`bin/Debug/net10.0/FHeroes2Sharp.exe` 仍在原地），所以
+  `VerifyMenuBaseline.ps1` 与 CI 的 `menu-baseline` job 都不需要改；`menu.png` 依然逐像素相同，
+  说明这条接线只影响 Win32 窗口层，逻辑画面一个像素都没动。
+* 生成脚本第一版把 `$stream.ToArray()` 直接 `return`，PowerShell 把它展开成 `object[]`，
+  `BinaryWriter.Write` 于是只写进 1 个字节（产出 125 字节的坏文件，脚本却打印了正确长度）——
+  MISC 的坑位记录里留了这一条。
 
 ## 后续里程碑
 

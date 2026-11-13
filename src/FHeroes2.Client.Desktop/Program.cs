@@ -1,7 +1,13 @@
+using System.Runtime.Versioning;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Agg;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Io;
+
+// The client is Windows x64 only for now (docs/DECISIONS.md ADR-025): the project pins the
+// win-x64 runtime identifier, and declaring the platform here lets the platform-compatibility
+// analyzer check the SDL and Win32 interop the same way a net10.0-windows target would.
+[assembly: SupportedOSPlatform("windows")]
 
 namespace FHeroes2.Client.Desktop;
 
@@ -10,6 +16,15 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess)
+        {
+            Console.Error.WriteLine(
+                $"{BuildInfo.DisplayName} currently supports Windows x64 only " +
+                $"(this process is {Environment.OSVersion.Platform} " +
+                $"{(Environment.Is64BitProcess ? "64" : "32")} bit).");
+            return 1;
+        }
+
         CommandLineOptions options;
         try
         {

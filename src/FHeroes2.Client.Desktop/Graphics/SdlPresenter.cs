@@ -25,6 +25,7 @@ internal sealed class SdlPresenter : IScreenPresenter
     private readonly IntPtr _frameTexture;
     private readonly IntPtr _logicalTarget;
     private readonly uint[] _conversionBuffer;
+    private readonly WindowIcon? _windowIcon;
 
     private uint[] _lookup;
     private PresentationViewport _viewport;
@@ -82,6 +83,10 @@ internal sealed class SdlPresenter : IScreenPresenter
 
         _conversionBuffer = new uint[logicalSize.Area];
         _lookup = IndexedFrameConverter.BuildLookup(new Palette());
+
+        // The window is still hidden here, so the icon is already in place when it appears.
+        _windowIcon = WindowIcon.TryLoad();
+        _windowIcon?.Apply(_window);
 
         if (fullscreen && !SDL.SetWindowFullscreen(_window, true))
         {
@@ -308,5 +313,9 @@ internal sealed class SdlPresenter : IScreenPresenter
         {
             SDL.DestroyWindow(_window);
         }
+
+        // SDL keeps referencing the icon surfaces while the window exists, so they are released
+        // only after the window is gone.
+        _windowIcon?.Dispose();
     }
 }

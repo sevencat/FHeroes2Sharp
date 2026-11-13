@@ -174,6 +174,7 @@ public sealed class CommandLineOptions
     {
         Console.WriteLine($"{BuildInfo.DisplayName} — desktop client");
         Console.WriteLine($"Reference implementation: {BuildInfo.ReferenceImplementation}");
+        Console.WriteLine("Platform: Windows x64 only (docs/DECISIONS.md ADR-025).");
         Console.WriteLine();
         Console.WriteLine("Usage: FHeroes2Sharp [options]");
         Console.WriteLine();

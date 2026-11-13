@@ -9,6 +9,18 @@
     <TieredPGO>true</TieredPGO>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+
+    <!-- Windows x64 only for now (docs/DECISIONS.md ADR-025): the native SDL3 / SDL3_ttf binaries
+         are resolved per runtime identifier, and the window + taskbar icon code is only exercised
+         there. The identifier is kept out of the output path so that
+         tools/scripts/VerifyMenuBaseline.ps1 keeps finding bin/Debug/net10.0/FHeroes2Sharp.exe. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+
+    <!-- One file, two consumers: Explorer reads it as the Win32 icon resource of the executable and
+         SdlPresenter embeds the same bytes to build the window icon (SDL_SetWindowIcon). Regenerate
+         it with tools/scripts/GenerateAppIcon.ps1 after changing assets/logo.png. -->
+    <ApplicationIcon>..\..\assets\logo.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -30,6 +42,13 @@
   <!-- Bundled, redistributable fonts only (SIL OFL). Game assets are never copied. -->
   <ItemGroup>
     <None Include="..\..\assets\fonts\**\*.*" Link="assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The window icon travels inside the assembly: SdlPresenter reads it through
+       WindowIcon, so a published folder stays a single executable plus the native SDL libraries
+       and nothing has to be found next to it. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\assets\logo.ico" LogicalName="logo.ico" />
   </ItemGroup>
 
 </Project>

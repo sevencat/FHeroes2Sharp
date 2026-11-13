@@ -10,6 +10,8 @@
 | 字体 | SDL3-CS.Native.TTF 3.3.0（SDL3_ttf / FreeType，仅诊断文本）+ Sevencat.GlyphRaster 0.1.5（纯托管 TrueType 光栅化，内嵌文泉驿微米黑 4.35 MB） |
 | 测试 | xunit 2.9.3 + xunit.runner.visualstudio 3.1.5 + Microsoft.NET.Test.Sdk 18.12.0 |
 | 包管理 | 集中版本（`Directory.Packages.props`，`ManagePackageVersionsCentrally`） |
+| 平台 | **仅 Windows x64**：客户端项目固定 `RuntimeIdentifier=win-x64`（`AppendRuntimeIdentifierToOutputPath=false`，输出仍在 `bin/Debug/net10.0`），`Program.Main` 拒绝非 Windows / 32 位进程（ADR-025）；工具与测试项目不设 RID |
+| 程序图标 | `assets/logo.ico`（`tools/scripts/GenerateAppIcon.ps1` 由 `assets/logo.png` 生成）；既是 csproj 的 `<ApplicationIcon>`，又是 `LogicalName=logo.ico` 的嵌入资源 |
 | AOT / 裁剪 | 已开启 `IsAotCompatible` + `IL2xxx`/`IL3xxx`（警告即错误）；**不提供** `PublishAot` 发布（ADR-011） |
 
 所有 csproj 均手写，不使用内容管线；SDL3 / SDL3_ttf 的原生 DLL 由 NuGet 按 RID 拷贝到输出目录。
@@ -68,6 +70,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update   # 有意改了视觉后重�
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验简体中文语言包
 pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生成 PaletteTable.cs
+pwsh tools/scripts/GenerateAppIcon.ps1        # 从 assets/logo.png 重新生成 assets/logo.ico（程序图标 + 窗口图标）
 ```
 
 `compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
@@ -286,6 +289,15 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
     画面 305/306 px 宽而窗口是 288 px，接缝在 `x = 320`；`BlitSprite` 的 `destinationOffset`
     还要减去源矩形的原点（`FrameBox.Draw` 里那行注释），否则切片会整体位移。
     `FrameBoxTests` / `MessageBoxTests` 把这些数钉死（ADR-024）。
+25. **PowerShell 函数「返回数组」会被展开成 `object[]`**：`GenerateAppIcon.ps1` 第一版写
+    `return $stream.ToArray()`，调用方拿到的是 `object[]`，`$writer.Write($entry.Bytes)` 于是
+    解析到 `Write(byte)`，每张图只写进 1 个字节——ICO 表头 118 字节 + 7 字节负载，文件 125 字节，
+    而脚本自己打印的 `Length` 却是正确的总长。写法改成「把 `MemoryStream` 传进函数」，
+    调用方 `$stream.ToArray()`，就没有展开这回事了。
+26. **`assets/logo.ico` 里 16/24/32/48/64 是 32 位位图、128/256 是 PNG**：小尺寸用 DIB 是为了让
+    任何 Windows 版本都能读（Vista 起才支持 PNG 条目，且部分老外壳程序只认 256 的 PNG）。
+    位图的 `biHeight` 是**图标高度的两倍**（颜色行 + AND 掩码行），颜色行自下而上、每行按 4 字节
+    对齐，掩码为零表示不透明。`IcoFile` 的测试逐条钉住这些规则（`IcoFileTests`）。
 
 
 ## 目录与产物
@@ -293,8 +305,10 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 | 路径 | 说明 |
 | --- | --- |
 | `assets/fonts/` | 可再分发字体（SIL OFL）才会入库；当前为空，运行时回退系统字体 |
+| `assets/logo.png` / `assets/logo.ico` | 程序图标源图与生成物（16/24/32/48/64 位图 + 128/256 PNG）；`.ico` 既作 exe 图标也作为嵌入资源给窗口用 |
+| `assets/banner.jpg` / `assets/author.jpg` | README 用的横幅与作者图，只出现在文档里，不参与构建 |
 | `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
-| `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、参考导出器编译、参考对拍、语言包编译、主菜单像素基线 |
+| `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、程序图标、参考导出器编译、参考对拍、语言包编译、主菜单像素基线 |
 | `tests/baselines/` | **入库**的回归基线 PNG（`menu.png` 等），来历与更新规矩见其中的 `README.md` |
 | `.github/workflows/` | CI（`ci.yml`）：`build` job 编译 + 测试，`menu-baseline` job 跑像素基线脚本 |
 | `translations/` | 语言包源文件（`.po`，UTF-8）；`.mo` 编译产物装到数据目录，不入库 |

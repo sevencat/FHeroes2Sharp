@@ -1,9 +1,17 @@
 # FHeroes2Sharp
 
+<p align="center">
+  <img src="assets/banner.jpg" alt="FHeroes2Sharp — 用 C# / .NET 重写《魔法门之英雄无敌 II》引擎" width="896">
+</p>
+
 [![CI](https://github.com/sevencat/FHeroes2Sharp/actions/workflows/ci.yml/badge.svg)](https://github.com/sevencat/FHeroes2Sharp/actions/workflows/ci.yml)
 
 C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植自
 [fheroes2](https://github.com/ihhub/fheroes2)（C++，GPLv2）。
+
+* 平台：**仅 Windows x64**（Win10/11）。客户端项目固定 `win-x64` 运行时标识符，原生 SDL3 /
+  SDL3_ttf 按它解析，非 Windows 或 32 位进程启动时直接报错退出（ADR-025）；
+  exe 图标与窗口图标来自同一份 `assets/logo.ico`（`AssetProbe` 等工具不受此限制）。
 
 * 目标框架：**.NET 10**（`net10.0`），渲染后端 **SDL3 3.4（SDL3-CS 绑定）**，
   诊断文本使用 **SDL3_ttf**（FreeType，支持中文）。
@@ -24,7 +32,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 120 + UI 36 = 292 个测试）。
+以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 159 + Assets 120 + UI 45 = 324 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
@@ -96,6 +104,9 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update      # 有意改了视觉后�
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
+
+# 程序图标：assets/logo.png → assets/logo.ico（exe 图标 + 窗口图标共用这一份）
+pwsh tools/scripts/GenerateAppIcon.ps1
 ```
 
 数据目录解析顺序：`--data` → 环境变量 `FHEROES2_DATA` → 可执行文件目录（及其 `Data` 子目录）
@@ -113,9 +124,10 @@ src/FHeroes2.Client.Desktop  SDL3 宿主、呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
-tools/scripts            调色板表生成、参考导出器编译、参考对拍、语言包编译、主菜单像素基线脚本
+tools/scripts            调色板表生成、程序图标生成、参考导出器编译、参考对拍、语言包编译、主菜单像素基线脚本
 tests/baselines          入库的回归基线 PNG（menu.png + 说明），像素门禁的期望图像
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
+assets/                  logo.png / logo.ico（图标源图与生成物）、banner.jpg、author.jpg、可再分发字体
 docs/                    计划、进度、决策与参考笔记
 ```
 
@@ -131,6 +143,16 @@ docs/                    计划、进度、决策与参考笔记
 * [docs/REFERENCE.md](docs/REFERENCE.md) — C++ 源码对照表（文件/类 → C# 类型）
 * [docs/MISC.md](docs/MISC.md) — 构建约定、坑位记录、数据依赖测试说明
 * [docs/OTHER.md](docs/OTHER.md) — 许可、资源归属、后续想法
+
+## 作者
+
+<p align="left">
+  <img src="assets/author.jpg" alt="作者 sevencat" width="160">
+</p>
+
+[sevencat](https://github.com/sevencat) 发起并维护本项目：负责 C# 侧的分层设计、与原版
+fheroes2 逐字节对拍的工具链，以及每个里程碑的落地。移植参考实现为 GPLv2 的
+[fheroes2](https://github.com/ihhub/fheroes2)，欢迎 issue 与 PR。
 
 ## 许可
 
