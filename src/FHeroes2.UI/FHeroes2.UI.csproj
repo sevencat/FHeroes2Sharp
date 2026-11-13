@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>FHeroes2.UI</RootNamespace>
+    <AssemblyName>FHeroes2.UI</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
+    <ProjectReference Include="..\FHeroes2.Rendering\FHeroes2.Rendering.csproj" />
+    <ProjectReference Include="..\FHeroes2.Game\FHeroes2.Game.csproj" />
+  </ItemGroup>
+
+</Project>

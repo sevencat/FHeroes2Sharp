@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>FHeroes2.Client.Desktop</RootNamespace>
+    <AssemblyName>FHeroes2Sharp</AssemblyName>
+    <RollForward>Major</RollForward>
+    <TieredPGO>true</TieredPGO>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.DesktopGL" />
+    <PackageReference Include="FontStashSharp.MonoGame" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
+    <ProjectReference Include="..\FHeroes2.Assets\FHeroes2.Assets.csproj" />
+    <ProjectReference Include="..\FHeroes2.Rendering\FHeroes2.Rendering.csproj" />
+    <ProjectReference Include="..\FHeroes2.Game\FHeroes2.Game.csproj" />
+    <ProjectReference Include="..\FHeroes2.UI\FHeroes2.UI.csproj" />
+  </ItemGroup>
+
+  <!-- Bundled, redistributable fonts only (SIL OFL). Game assets are never copied. -->
+  <ItemGroup>
+    <None Include="..\..\assets\fonts\**\*.*" Link="assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,33 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+*.user
+*.suo
+*.cache
+*.log
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# MonoGame content pipeline leftovers (we do not use MGCB, kept for safety)
+*.mgcontent
+*.mgcontent.raw
+Content/bin/
+Content/obj/
+
+# Local game data / assets are NEVER committed (proprietary HoMM II files)
+data/
+!assets/fonts/*.ttf
+!assets/fonts/README.md
+
+# Golden image / diff output produced by the AssetProbe and visual tests
+tools-output/
+TestResults/
+*.trx
+*.coverage
+coverage*.xml

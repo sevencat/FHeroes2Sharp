@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FHeroes2.Assets/FHeroes2.Assets.csproj" />
+    <Project Path="src/FHeroes2.Client.Desktop/FHeroes2.Client.Desktop.csproj" />
+    <Project Path="src/FHeroes2.Core/FHeroes2.Core.csproj" />
+    <Project Path="src/FHeroes2.Game/FHeroes2.Game.csproj" />
+    <Project Path="src/FHeroes2.Rendering/FHeroes2.Rendering.csproj" />
+    <Project Path="src/FHeroes2.UI/FHeroes2.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FHeroes2.Assets.Tests/FHeroes2.Assets.Tests.csproj" />
+    <Project Path="tests/FHeroes2.Core.Tests/FHeroes2.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/FHeroes2.AssetProbe/FHeroes2.AssetProbe.csproj" />
+  </Folder>
+</Solution>

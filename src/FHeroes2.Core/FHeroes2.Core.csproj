@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>FHeroes2.Core</RootNamespace>
+    <AssemblyName>FHeroes2.Core</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FHeroes2.Core.Tests" />
+    <InternalsVisibleTo Include="FHeroes2.Assets.Tests" />
+    <InternalsVisibleTo Include="FHeroes2.AssetProbe" />
+  </ItemGroup>
+
+</Project>

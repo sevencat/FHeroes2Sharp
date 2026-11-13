@@ -1,0 +1,43 @@
+<Project>
+
+  <!--
+    Shared build settings for every project in the solution.
+    See docs/MISC.md for the rationale behind each switch.
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <!-- NativeAOT / trimming readiness. Publishing with NativeAOT is NOT a supported target yet
+       (see docs/DECISIONS.md ADR-011); the analyzers are enabled anyway so that new code stays
+       free of reflection and the eventual switch stays cheap. Test projects are excluded. -->
+  <PropertyGroup Condition="!$(MSBuildProjectName.EndsWith('.Tests'))">
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <!-- Method names with underscores are used by xunit test display names. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1707;CA1720;CA5394</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>FHeroes2Sharp</Product>
+    <Company>FHeroes2Sharp contributors</Company>
+    <Copyright>Copyright (C) 2026 FHeroes2Sharp contributors (GPLv2, derived from fheroes2)</Copyright>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>

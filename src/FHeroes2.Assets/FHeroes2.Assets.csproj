@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>FHeroes2.Assets</RootNamespace>
+    <AssemblyName>FHeroes2.Assets</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
+  </ItemGroup>
+
+</Project>
