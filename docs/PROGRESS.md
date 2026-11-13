@@ -151,7 +151,7 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `Assets.Icn.IcnAnimation` | ✅ | ICN 帧区间循环播放器（对齐 `ICN::getAnimatedIcnIndex` 的帧表 + `fheroes2::TimeDelay` 的计时）：起始帧 + 帧数 + 每帧时长，整帧才前进、长停顿跳帧不补播、越界/非正时长抛异常 |
 | `SHNGANIM.ICN` 灯笼光晕动画 | ✅ | 第 0 帧灯体先画一次，第 1…39 帧每 250 ms 换帧（9.75 s 一圈），顺序「背景 → 灯体 → 光晕 → 门光 → 招牌 → 状态栏」同 `Game::MainMenu()`（ADR-022） |
 | 设置门悬停发光 | ✅ | `UI.Widgets.DoorHighlight`：光标进入 `settingsArea`（63,202 108×160）就把 `SHNGANIM.ICN` 第 18 帧套 `PaletteId.NoCycle` 后只画 `y ≥ 55` 的下半部分（`doorOffsetY`），画在光晕之上、招牌之下；命中区不等于发光像素，缺帧/太矮只警告不建门（ADR-022） |
-| `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
+| `tests/baselines/{menu,settings}.png` + `tools/scripts/Verify{Menu,Settings}Baseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本（两份基线共用 `PixelBaseline.ps1` 的渲染/比对管线）：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；设置那一帧多一个 `--open-settings`，语言钉成 `en`；缺数据时 `skip` 退出 0（ADR-023、ADR-028） |
 | `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
 | 右键提示框（`BUYBUILD.ICN` 消息框） | ✅ | `UI.Dialogs.FrameBoxChrome` + `FrameBox` + `MessageBox`：六块列拼装（顶 99 + 中段 35×n + 底 81），文字区 244 宽、最小 70 高；标题 yellow / 正文 normal 折行居中；`MainMenuScene.SetRightButton` 按住创建、松开丢弃，画在状态栏之后（ADR-024） |
 | 对话框影像原语（渐变阴影 / 抖动过渡） | ✅ | `ImageOps` 新增 partial 文件：`ApplyTransform`（按 16 张重着色表转换一块矩形）、`AddGradientShadow`（沿精灵轮廓投 2–5 号表的渐变阴影，斜率取整同 `std::round`）、`AddGradientShadowForArea`（矩形左边与下边的 16 px 阴影带）、`CreateDitheringTransition`（周期逐次翻倍的棋盘过渡，奇数尺寸的一半右移一格照抄）；8 个用例与 C++ 参考实现逐字节相同（`CompareEffectsWithReference.ps1`） |
@@ -593,12 +593,45 @@ FHeroes2Sharp.exe --data F:\game\fh2 --lang en --cursor 620,100
 * `ButtonGroup.CreateStandard` 摆出 `Dialog::OK | CANCEL` 那种一行：一对按钮的左右各留
   `(area.width - w1 - w2)/4`，单个居中贴底；7 条用例覆盖四支 + 精灵锚点 + 「不支持的类型给空组」+
   「点 OK 返回 Ok」。
-* 设置对话框（ADR-027）：`SettingsDialog` = `StandardWindow` + 标题 + 每行 `< 值 >` + 底部 OK。
-  `SettingsOption` 负责取值与循环，行命中要求按下与松开在同一行（与按钮同一规则）。10 条用例，
-  其中一条真的把 640×480 画出来，检查标题色、行文字色都落在窗口内容区里。
+* 设置对话框（ADR-027）：`SettingsDialog` = `StandardWindow` + 标题 + 每行「标签 + 右对齐的值 +
+  两侧自绘箭头」+ 底部 OK。`SettingsOption` 负责取值与循环，行命中要求按下与松开在同一行
+  （与按钮同一规则）。13 条用例，其中一条真的把 640×480 画出来，检查标题色、行文字色都落在窗口
+  内容区里；两条钉箭头（几何 + 实际画出的像素），一条钉「行太窄就不画箭头」。
 * 接线：点主菜单左下角的门 → `MainMenuScene.OpenSettings()`；Escape 取消、Enter/OK 应用并把
   语言写回 `GameText`；`--open-settings` 让模态框可截图。`SYSTEM.ICN` 第 1/2 帧是 OK 按钮，
   参考实现在 `useOriginalResources()` 分支里用的就是这张图。
+
+
+### M2 验证记录（设置对话框像素基线）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  tests/FHeroes2.UI.Tests         → 111 passed / 0 failed
+                                               （新增 3 条：箭头几何 / 箭头像素 / 窄行不画箭头）
+pwsh tools/scripts/VerifyMenuBaseline.ps1    → match（menu.png 逐像素相同，拆脚本没动像素）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update
+  → update tests/baselines/settings.png（231,545 字节，sha256 AFBCFAE…00DE32）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 （连续两次）
+  → settings.png identical 640x480 7040 pixels ignored → match（退出码 0 / 0）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Baseline tests/baselines/menu.png
+  → 42680 of 307200 pixels differ → DIFF + diff/diff_menu.png（退出码 1）
+pwsh … -Baseline tests/baselines/menu.png -Tolerance 200000 → match（退出码 0）
+pwsh … -Baseline tools-output/nope.png        → error + 退出码 1（基线不存在）
+pwsh … -Baseline tools-output/settings-crop3.png（1050×435）→ error + 退出码 1（尺寸不对）
+```
+
+* 拆脚本是**不改行为**的重构：`VerifyMenuBaseline.ps1` 的参数、输出行与退出码一字未变，
+  数据目录查找 / build / 基线自检 / compare + 容差进了 `tools/scripts/PixelBaseline.ps1`
+  （ADR-028）。证据就是 `menu.png` 与重构前逐像素相同。
+* 第一版把值画成 `< English >`——用的是 `FONT.ICN` 自带的 `<` / `>`。截图放大三倍才看出来：
+  这两个字形只有 **3×4** 像素，行里只是两个小点。改成自绘像素线（宽 4、高 7、色号 10 =
+  `KB.PAL` 字体灰阶最亮的一级）后箭头清楚可读，而且与被括起来的值同色。
+* 同一次放大检查确认其余版面是对的：内容区 300×85、标题居中、OK 居中贴底、行距 `RowGap` 6、
+  左边距 `RowPadding` 8（+2 px 边框）——所以只改了箭头这一处。
+* 语言属于基线：`settings.png` 用 `en`（`--lang en`）；换 `zh_CN` 得到的是另一张图，另存而不是覆盖。
+* 与纯菜单的差异 42,680 个像素（状态栏已忽略）：其中 42,679 个落在窗口矩形
+  （138,181 348×133）里，只剩 1 个在矩形外（阴影取整的边缘）。把矩形外的四块区域全 `--ignore`
+  再比一次，仍然是这 42,679 个——所以「差异就在这张窗口上」是被测出来的，不是估的。
 
 
 

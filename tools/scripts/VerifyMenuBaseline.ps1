@@ -19,6 +19,9 @@
     The status bar is excluded (--ignore 0,469,640,11): it prints the live FPS counter and the
     version string, neither of which can be pinned.
 
+    Data lookup, build, baseline validation and the compare reporting live in PixelBaseline.ps1,
+    which VerifySettingsBaseline.ps1 shares.
+
 .EXAMPLE
     pwsh tools/scripts/VerifyMenuBaseline.ps1
 
@@ -68,99 +71,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'PixelBaseline.ps1')
+
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $appProject = Join-Path $root 'src/FHeroes2.App'
 $probeProject = Join-Path $root 'tools/FHeroes2.AssetProbe'
 # The client assembly is called FHeroes2Sharp (see AssemblyName in its csproj).
 $appExe = Join-Path $appProject 'bin/Debug/net10.0/FHeroes2Sharp.exe'
 $probeExe = Join-Path $probeProject 'bin/Debug/net10.0/FHeroes2.AssetProbe.exe'
-
-function Resolve-DataDirectory {
-    param([string] $Directory)
-
-    $candidates = @()
-    if ($Directory) {
-        $candidates += $Directory
-    }
-    elseif ($env:FHEROES2_DATA) {
-        $candidates += $env:FHEROES2_DATA
-    }
-
-    # Same development fallback as FHeroes2.Assets.AssetLocator.
-    $candidates += 'F:\game\fh2'
-
-    foreach ($candidate in $candidates) {
-        # The client wants the folder that contains 'Data' and 'files', which is what the
-        # environment variable and the fallback point at.
-        if (Test-Path -LiteralPath (Join-Path $candidate 'Data\Heroes2.agg')) {
-            return (Get-Item -LiteralPath $candidate).FullName
-        }
-
-        # A caller may pass the 'Data' folder itself.
-        if (Test-Path -LiteralPath (Join-Path $candidate 'Heroes2.agg')) {
-            return (Split-Path -Parent (Get-Item -LiteralPath $candidate).FullName)
-        }
-    }
-
-    return $null
-}
-
-function Invoke-Build {
-    param([string] $Project)
-
-    $output = & dotnet build $Project --nologo 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $output | Select-Object -Last 15 | ForEach-Object { Write-Host "        $_" }
-        throw "dotnet build '$Project' failed with exit code $LASTEXITCODE."
-    }
-}
-
-# PNG stores its integers big endian. -shl on a [byte] operand stays inside the byte width
-# (0x02 -shl 8 evaluates to 0), so every operand is widened before the shift.
-function Read-BigEndianInt32 {
-    param([byte[]] $Bytes, [int] $Offset)
-
-    $value = 0
-    for ($index = 0; $index -lt 4; $index++) {
-        $value = ($value -shl 8) -bor [int]$Bytes[$Offset + $index]
-    }
-
-    return $value
-}
-
-# The baseline is the artefact under test, so it is checked even when no game data exists: a
-# deleted or wrongly sized baseline has to fail on a machine that can only run the cheap part
-# (that is exactly what a hosted CI runner does).
-function Assert-PngBaseline {
-    param([string] $Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        Write-Host ("error  baseline '{0}' does not exist; run with -Update to create it." -f $Path)
-        exit 1
-    }
-
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    if ($bytes.Length -lt 24) {
-        Write-Host ("error  baseline '{0}' is not a PNG file ({1} bytes)." -f $Path, $bytes.Length)
-        exit 1
-    }
-
-    $signature = -join ($bytes[0..7] | ForEach-Object { $_.ToString('X2') })
-    $chunk = [System.Text.Encoding]::ASCII.GetString($bytes, 12, 4)
-    if ($signature -ne '89504E470D0A1A0A' -or $chunk -ne 'IHDR') {
-        Write-Host ("error  baseline '{0}' is not a PNG file." -f $Path)
-        exit 1
-    }
-
-    # The client renders on a fixed 640x480 logical surface; a baseline of another size can only
-    # be a mistake (for example a 2x screenshot).
-    $width = Read-BigEndianInt32 -Bytes $bytes -Offset 16
-    $height = Read-BigEndianInt32 -Bytes $bytes -Offset 20
-    if ($width -ne 640 -or $height -ne 480) {
-        Write-Host ("error  baseline '{0}' is {1}x{2}; the logical surface is 640x480." -f $Path, $width, $height)
-        exit 1
-    }
-}
 
 $Baseline = [System.IO.Path]::GetFullPath($Baseline)
 $WorkDirectory = [System.IO.Path]::GetFullPath($WorkDirectory)
@@ -194,9 +112,6 @@ foreach ($executable in @($appExe, $probeExe)) {
 New-Item -ItemType Directory -Force -Path $WorkDirectory | Out-Null
 
 $screenshot = Join-Path $WorkDirectory 'menu.png'
-if (Test-Path -LiteralPath $screenshot) {
-    Remove-Item -LiteralPath $screenshot
-}
 
 Write-Host "render menu        $data"
 
@@ -211,8 +126,7 @@ $appArguments = @(
     '--screenshot', $screenshot
 )
 
-$appOutput = @(& $appExe @appArguments 2>&1)
-$appExit = $LASTEXITCODE
+Invoke-PixelRender -Executable $appExe -Arguments $appArguments -ScreenshotPath $screenshot
 
 if ($Update) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Baseline) | Out-Null
@@ -223,40 +137,27 @@ if ($Update) {
     exit 0
 }
 
-$compareArguments = @('compare', $screenshot, $Baseline, '--diff', (Join-Path $WorkDirectory 'diff'))
-foreach ($area in $Ignore) {
-    $compareArguments += @('--ignore', $area)
+$compareArguments = @{
+    ProbeExecutable = $probeExe
+    Rendered        = $screenshot
+    Baseline        = $Baseline
+    DiffDirectory   = $WorkDirectory
+    Ignore          = $Ignore
 }
 
-$compareOutput = @(& $probeExe @compareArguments 2>&1)
-$compareExit = $LASTEXITCODE
-$compareText = $compareOutput -join [Environment]::NewLine
+$compare = Invoke-PixelCompare @compareArguments
 
 Write-Host ("verify {0}" -f $Baseline)
-foreach ($line in $compareOutput) {
+foreach ($line in $compare.Lines) {
     Write-Host "       $line"
 }
 
-if ($compareExit -eq 0) {
-    Write-Host 'match  the rendered menu is identical to the baseline'
-    exit 0
+$verdictArguments = @{
+    Compare       = $compare
+    Subject       = 'menu'
+    Baseline      = $Baseline
+    DiffDirectory = $WorkDirectory
+    Tolerance     = $Tolerance
 }
 
-if ($compareText -match '(\d+) of (\d+) pixels differ') {
-    $differing = [int]$Matches[1]
-    $total = [int]$Matches[2]
-
-    if ($differing -le $Tolerance) {
-        Write-Host ("match  {0} of {1} pixels differ, tolerance is {2}" -f $differing, $total, $Tolerance)
-        exit 0
-    }
-
-    Write-Host ("DIFF   {0} of {1} pixels differ, tolerance is {2}" -f $differing, $total, $Tolerance)
-}
-else {
-    Write-Host 'DIFF   the frames have different sizes (see the probe output above)'
-}
-
-Write-Host ("       diff image: {0}" -f (Join-Path $WorkDirectory 'diff/diff_menu.png'))
-Write-Host '       If the change is intended, run with -Update and note it in tests/baselines/README.md.'
-exit 1
+exit (Complete-PixelCompare @verdictArguments)

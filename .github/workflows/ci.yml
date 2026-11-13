@@ -64,11 +64,13 @@ jobs:
         with:
           global-json-file: global.json
 
+      # Both baselines run from one step: they share PixelBaseline.ps1 (data lookup, build, baseline
+      # self check, compare) and only differ in the flags that make their frame reproducible.
       # FHEROES2_DATA is a repository variable holding the data directory on the runner (for
       # example D:\game\fh2). Set FHEROES2_RUNNER to a self hosted runner label (for example
-      # 'fh2-data') as well; without both, the run degrades to the baseline file check that the
+      # 'fh2-data') as well; without both, the run degrades to the baseline file check that each
       # script performs before it looks for game data.
-      - name: Compare the rendered menu with tests/baselines/menu.png
+      - name: Compare the rendered frames with tests/baselines
         shell: pwsh
         env:
           FHEROES2_DATA: ${{ vars.FHEROES2_DATA }}
@@ -79,19 +81,29 @@ jobs:
             $splat.RequireData = $true   # a runner that claims to have data must not skip
           }
           else {
-            Write-Host '::notice::repository variable FHEROES2_DATA is not set; the render step is skipped and only the baseline file is validated.'
+            Write-Host '::notice::repository variable FHEROES2_DATA is not set; the render step is skipped and only the baseline files are validated.'
           }
 
-          ./tools/scripts/VerifyMenuBaseline.ps1 @splat
+          foreach ($script in @('VerifyMenuBaseline.ps1', 'VerifySettingsBaseline.ps1')) {
+            Write-Host "::group::$script"
+            ./tools/scripts/$script @splat
+            $code = $LASTEXITCODE
+            Write-Host '::endgroup::'
 
-      # The diff image is the only useful artifact of a pixel regression.
-      - name: Upload the diff image
+            if ($code -ne 0) {
+              exit $code
+            }
+          }
+
+      # The diff images are the only useful artifact of a pixel regression.
+      - name: Upload the diff images
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: menu-baseline-diff
+          name: pixel-baseline-diff
           path: |
             tools-output/baseline/menu.png
+            tools-output/baseline/settings.png
             tools-output/baseline/diff/
           if-no-files-found: ignore
           retention-days: 14

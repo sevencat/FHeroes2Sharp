@@ -146,11 +146,14 @@ artwork )` 是 `ButtonGroup( area, types )` 的自动摆位（一对按钮左右
 `SYSTEM.ICN` 的第 1/2 帧。
 
 设置对话框 `Dialogs.SettingsDialog` 是这些构件的第一个调用方：一个 `StandardWindow`、一行一个
-`SettingsOption`（`< 值 >`，点左半格/右半格换值）、底部 `CreateStandard` 摆出的 OK。它是模态的，
-归主菜单持有（`MainMenuScene.Settings`），点街景左下角的门时创建，Escape 取消、OK/Enter 应用
-（ADR-027）。`ImageOps` 为此补了四个写双层的原语（`Copy` / `FillSprite` / `SetPixel` /
-`DrawLine`），它们写颜色时把 transform 字节清 0，因此拼装出来的精灵可以直接交给
-`BlitSprite`。
+`SettingsOption`（左标签 + 右对齐的值 + 两侧自绘箭头，点左半格/右半格换值）、底部
+`CreateStandard` 摆出的 OK。箭头不是美术而是像素线（`ChevronWidth` 4、高 7、色号 10）：
+`FONT.ICN` 自带的 `<` / `>` 只有 3×4 像素，行里几乎读不出来，而 `OptionButtonGroup` 的箭头贴图
+还没移植。窗口本身是模态的，归主菜单持有（`MainMenuScene.Settings`），点街景左下角的门时创建，
+Escape 取消、OK/Enter 应用（ADR-027）。这一帧同时是入库的第二份像素基线
+（`tests/baselines/settings.png`，门禁见 ADR-028）。`ImageOps` 为此补了四个写双层的原语（`Copy` /
+`FillSprite` / `SetPixel` / `DrawLine`），它们写颜色时把 transform 字节清 0，因此拼装出来的精灵
+可以直接交给 `BlitSprite`。
 
 
 ## 错误处理

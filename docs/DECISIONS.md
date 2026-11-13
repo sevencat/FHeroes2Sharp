@@ -732,9 +732,11 @@ ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
 1. 先移植**一个**真正会生效的选项：界面语言（`GameText` 已经有 `zh_CN` / `en` 两个实例，
    主菜单的 `F2` 也在切换它）。窗口尺寸由字体与按钮高度推导（`SettingsDialog.GetRequiredHeight`），
    加行不用改版面代码。
-2. 选项行不做箭头的 `OptionButtonGroup`，而是画成 `< 值 >`：按下与松开落在同一行的左半格退一格、
-   右半格进一格，出界循环。参考实现的箭头是 `ICN::BUTTON_SMALL_*` 之类的美术，端口还没有这批
-   贴图；文字方案不依赖额外资源，也让「值」可以直接是中文。
+2. 选项行不做带箭头的 `OptionButtonGroup`，而是「标签 + 右对齐的值 + 两侧箭头」：按下与松开落在
+   同一行的左半格退一格、右半格进一格，出界循环。箭头是**自绘像素线**（宽 4、高 7、色号 10 =
+   `KB.PAL` 里字体灰阶最亮的一级）：参考实现的箭头是 `ICN::BUTTON_SMALL_*` 之类还没移植的美术，
+   而 `FONT.ICN` 自带的 `<` / `>` 只有 3×4 像素、缩在行里几乎读不出来（第一版就是拿这两个字形
+   画的，从截图里才发现画成了两个小点）。自绘线不依赖额外资源，也让「值」可以直接是中文。
 3. 选项在 **OK / Enter** 时一次性应用，Escape 丢弃。参考实现是「改一下就立刻生效」，但语言一改
    窗口里的文字就得换语言，而语言的切换在端口里是「换一个 `GameText` 实例」，中途换会让对话框
    自己的一半文字是旧语言——延迟到关闭时应用是更小的偏离。
@@ -754,8 +756,37 @@ ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
   （「存档/设置」）的范围，`SettingsDialog` 只要再加几行就能接上。
 * 文字按钮的标签仍缺 `BUTTON_*_FONT_*` 字体；`ButtonArtwork` 已经把拉伸与闪光做完，补字体表
   即可生成与 `UNIFORM_GOOD_OKAY_BUTTON` 等价的按钮。
-* 证据：UI 108 条测试（新增 38 条：`ButtonArtworkTests` 12、`DialogButtonLayoutTests` 7、
-  `DialogTemplate` 9、`SettingsDialogTests` 10）、Core 167 条（新增 8 条 `SpriteOpsTests`），
-  `menu.png` 仍逐像素相同；`--open-settings` 截出的 640×480 画面里对话框区域（348×133）有
-  42,679 个像素与纯菜单不同，区域外只差 1 个像素。
+* 证据：UI 111 条测试（新增 41 条：`ButtonArtworkTests` 12、`DialogButtonLayoutTests` 7、
+  `DialogButtonTemplateTests` 9、`SettingsDialogTests` 13）、Core 167 条（新增 8 条
+  `SpriteOpsTests`），`menu.png` 仍逐像素相同；设置对话框那一帧已单独入库成
+  `tests/baselines/settings.png`（ADR-028），与纯菜单相比 42,680 个像素不同，其中 42,679 个在
+  窗口矩形（348×133）内、1 个在矩形外的阴影边缘。
+
+## ADR-028：像素基线脚本共用一个管线，设置对话框单独入库一份基线
+
+**背景**：`VerifyMenuBaseline.ps1` 里八成代码（数据目录查找、`dotnet build`、基线自检、
+`AssetProbe compare` + 容差判定）与「菜单」无关。设置对话框落地后，仓库里多了一张值得钉死的
+画面（`--open-settings` 那一帧：窗口边框、标题、行文字、箭头、OK 按钮一次全在），照抄一份脚本
+等于把同一套退出码 / 容差 / 缺数据跳过策略维护两遍。
+
+**决策**：
+
+1. 抽出 `tools/scripts/PixelBaseline.ps1`（只定义函数，调用方 dot-source）：`Resolve-DataDirectory`、
+   `Invoke-Build`、`Read-BigEndianInt32`、`Assert-PngBaseline`、`Invoke-PixelRender`、
+   `Invoke-PixelCompare`、`Complete-PixelCompare`。两个 `Verify*Baseline.ps1` 只留参数块、
+   「渲染什么」与「忽略哪块区域」。
+2. 拆分**不改行为**：菜单脚本的参数、默认值、输出行（`render menu` / `match` / `DIFF` / `skip`）
+   与退出码保持原样，`menu.png` 依旧逐像素相同——纯重构不该动像素，这本身就由基线兜住。
+3. 设置基线用同一条命令行加 `--open-settings`，同样 `--freeze-animation --cursor 620,100
+   --ignore 0,469,640,11`；文件是 `tests/baselines/settings.png`，语言默认 `en` 并写进文档，
+   因为行里是界面文字，**语言属于基线**。
+4. CI 的 `menu-baseline` job 里加一个 step 跑第二份基线；job 名保持不变（分支保护与外部脚本
+   按名字引用它），文档里说明名字是历史原因。
+
+**后果**：
+
+* 再加一份基线（战场、城堡画面）只要 ~90 行脚本 + 一张 PNG，失败输出格式与 artifact 位置
+  也自动一致（`DIFF   N of M pixels differ, tolerance is T` + `diff/diff_<name>.png`）。
+* 设置基线拦得住窗口位置/尺寸、标题颜色、行距、箭头形状与按钮贴图的变化；它**不**拦语言内容
+  （换语言就是换基线），也不拦 hover / pressed 态（光标固定在窗口外）。
 

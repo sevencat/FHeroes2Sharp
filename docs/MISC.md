@@ -67,6 +67,8 @@ pwsh tools/scripts/CompareEffectsWithReference.ps1 # 对话框影像原语（阴
 pwsh tools/scripts/CompareWindowWithReference.ps1  # 标准对话框窗口（边框 / 接缝 / 底纹 / 阴影）逐字节比对
 pwsh tools/scripts/VerifyMenuBaseline.ps1     # 主菜单像素基线（冻结动画 + 合成光标，退出码 0 = 一致）
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update   # 有意改了视觉后重建 tests/baselines/menu.png
+pwsh tools/scripts/VerifySettingsBaseline.ps1       # 设置对话框像素基线（--open-settings 那一帧）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update # 重建 tests/baselines/settings.png
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验简体中文语言包
 pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生成 PaletteTable.cs
@@ -127,11 +129,24 @@ dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --lang en --cursor 6
 
 窗口内容区 300×85 居中（`SettingsDialog.GetRequiredHeight` 由标题、行高与按钮高度算出），
 加上 16 px 边框与左下 16 px 阴影后正好盖住 `138,181 348×133`；这张图与 `menu.png` 的差异
-应当只出现在这个矩形里。
+应当只出现在这个矩形里（实测 42,680 个像素，其中 42,679 个在矩形内、1 个在矩形外的阴影边缘）。
+
+这组开关已经沉淀成**第二份入库基线**：`tests/baselines/settings.png` +
+`tools/scripts/VerifySettingsBaseline.ps1`（`-Update` 重建、`-RequireData` 把缺数据当失败）。
+两个脚本共用 `tools/scripts/PixelBaseline.ps1`——数据目录查找、`dotnet build`、基线自检、
+`AssetProbe compare` 与容差判定只有一份代码，脚本自己只决定「哪些开关让这一帧可复现」和
+「哪块区域要忽略」。基线里的文字是界面文字，所以**语言是基线的一部分**（默认 `-Culture en`，
+换 `zh_CN` 应当另存而不是覆盖）。
+
+```powershell
+pwsh tools/scripts/VerifySettingsBaseline.ps1           # 0 = 逐像素一致；1 = 有差异（附差异图）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update   # 有意改了视觉后重建 settings.png
+```
 
 CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 → 编译 → `dotnet test`）在任何
-机器上都能跑，`menu-baseline` 调这个脚本。像素比对需要原版数据（不能入库），所以数据和 runner
-通过仓库变量接线：
+机器上都能跑，`menu-baseline` 依次跑两份基线（job 名是历史原因，它现在不只管菜单）。像素比对
+需要原版数据（不能入库），所以数据和 runner 通过仓库变量接线：
+
 
 | 仓库变量 | 作用 |
 | --- | --- |
@@ -141,7 +156,8 @@ CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 �
 托管 runner 上没有数据，脚本会在渲染**之前**先校验基线文件本身（PNG 魔数 + IHDR 必须是
 640×480），然后打印 `skip` 并以 0 退出——这样「基线被删掉/换错尺寸」在托管 runner 上也会失败，
 而真正的像素比对留给有数据的 runner。比对失败时 workflow 把 `tools-output/baseline/` 里的
-`menu.png` 与 `diff/diff_menu.png` 作为 artifact 上传。
+`menu.png` / `settings.png` 与 `diff/` 目录（`diff_menu.png` / `diff_settings.png`）作为
+artifact 上传。
 
 ### 参考引擎对拍（C++ ↔ C#）
 
