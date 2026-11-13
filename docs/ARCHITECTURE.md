@@ -5,7 +5,7 @@
 | 程序集 | 职责 | 允许依赖 |
 | --- | --- | --- |
 | `FHeroes2.Core` | 几何、随机数、二进制 IO、索引图像与调色板、精灵与变换层、重着色调色板表、PNG 导出/读回、BMP 导出、光标主题与热点、日志、计时、版本信息 | 无 |
-| `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵、TIL 图块与单色光标解码 | Core |
+| `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
 | `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button`）、界面流转 | Core, Rendering, Game |

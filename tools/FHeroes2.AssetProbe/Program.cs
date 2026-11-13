@@ -4,6 +4,7 @@ using FHeroes2.Assets.Cursor;
 using FHeroes2.Assets.Icn;
 using FHeroes2.Assets.Til;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 
@@ -20,7 +21,7 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe sprites &lt;NAME.ICN&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe tiles   &lt;NAME.TIL&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe cursor  &lt;NAME.BMP&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
-///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;]
+///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;] [--ignore x,y,w,h]...
 /// </code>
 /// </summary>
 internal static class Program
@@ -282,6 +283,8 @@ internal static class Program
 
     /// <summary>
     /// Compares two PNG files, or two directories of PNG files with matching names, pixel by pixel.
+    /// Areas listed with <c>--ignore</c> are skipped, which is how a screenshot with a live FPS
+    /// counter can still act as a pixel baseline.
     /// Returns 0 when everything matches and 3 when a size or a pixel differs, so the tool can gate a
     /// script that checks our decoder against the reference engine output.
     /// </summary>
@@ -295,6 +298,7 @@ internal static class Program
         string left = arguments.Positional[0];
         string right = arguments.Positional[1];
         string? diffDirectory = arguments.DiffDirectory;
+        IReadOnlyList<Rect> ignored = arguments.IgnoreAreas;
 
         if (diffDirectory is not null)
         {
@@ -303,7 +307,7 @@ internal static class Program
 
         if (Directory.Exists(left) && Directory.Exists(right))
         {
-            return CompareDirectories(left, right, diffDirectory);
+            return CompareDirectories(left, right, diffDirectory, ignored);
         }
 
         if (!File.Exists(left))
@@ -316,10 +320,11 @@ internal static class Program
             throw new FileNotFoundException($"'{right}' does not exist.");
         }
 
-        return CompareFiles(left, right, diffDirectory) ? 0 : 3;
+        return CompareFiles(left, right, diffDirectory, ignored) ? 0 : 3;
     }
 
-    private static int CompareDirectories(string left, string right, string? diffDirectory)
+    private static int CompareDirectories(
+        string left, string right, string? diffDirectory, IReadOnlyList<Rect> ignored)
     {
         Dictionary<string, string> counterparts = new(StringComparer.OrdinalIgnoreCase);
         foreach (string file in Directory.EnumerateFiles(right, "*.png", SearchOption.TopDirectoryOnly))
@@ -349,7 +354,7 @@ internal static class Program
                 Console.WriteLine($"{name}\tmissing\tnot found in '{right}'");
                 ++different;
             }
-            else if (CompareFiles(file, counterpart, diffDirectory))
+            else if (CompareFiles(file, counterpart, diffDirectory, ignored))
             {
                 ++identical;
             }
@@ -369,7 +374,8 @@ internal static class Program
         return different == 0 ? 0 : 3;
     }
 
-    private static bool CompareFiles(string leftPath, string rightPath, string? diffDirectory)
+    private static bool CompareFiles(
+        string leftPath, string rightPath, string? diffDirectory, IReadOnlyList<Rect> ignored)
     {
         PngImage left = ReadPng(leftPath);
         PngImage right = ReadPng(rightPath);
@@ -382,6 +388,7 @@ internal static class Program
         }
 
         int differing = 0;
+        int ignoredPixels = 0;
         int maxDelta = 0;
         int firstX = -1;
         int firstY = -1;
@@ -391,13 +398,25 @@ internal static class Program
         {
             for (int x = 0; x < left.Width; ++x)
             {
+                int target = ((y * left.Width) + x) * 4;
                 RgbaColor expected = left[x, y];
+
+                if (IsIgnored(ignored, x, y))
+                {
+                    ++ignoredPixels;
+
+                    // Keep the baseline pixel in the diff image so that the excluded area is obvious.
+                    diff[target] = expected.R;
+                    diff[target + 1] = expected.G;
+                    diff[target + 2] = expected.B;
+                    diff[target + 3] = expected.A;
+                    continue;
+                }
+
                 RgbaColor actual = right[x, y];
                 int delta = Math.Max(
                     Math.Max(Math.Abs(expected.R - actual.R), Math.Abs(expected.G - actual.G)),
                     Math.Max(Math.Abs(expected.B - actual.B), Math.Abs(expected.A - actual.A)));
-
-                int target = ((y * left.Width) + x) * 4;
 
                 if (delta == 0)
                 {
@@ -424,20 +443,36 @@ internal static class Program
             }
         }
 
+        string ignoredNote = ignoredPixels > 0 ? $"\t{ignoredPixels} pixels ignored" : string.Empty;
+
         if (differing == 0)
         {
-            Console.WriteLine($"{name}\tidentical\t{left.Width}x{left.Height}");
+            Console.WriteLine($"{name}\tidentical\t{left.Width}x{left.Height}{ignoredNote}");
             return true;
         }
 
         Console.WriteLine(
-            $"{name}\t{differing} of {left.Width * left.Height} pixels differ\tmax channel delta {maxDelta}\tfirst at {firstX},{firstY}");
+            $"{name}\t{differing} of {left.Width * left.Height} pixels differ\tmax channel delta {maxDelta}" +
+            $"\tfirst at {firstX},{firstY}{ignoredNote}");
 
         if (diffDirectory is not null)
         {
             string file = Path.Combine(diffDirectory, $"diff_{name}");
             File.WriteAllBytes(file, PngWriter.Encode(new PngImage(left.Width, left.Height, diff)));
             Console.WriteLine($"{name}\tdiff\t{Path.GetFileName(file)}");
+        }
+
+        return false;
+    }
+
+    private static bool IsIgnored(IReadOnlyList<Rect> ignored, int x, int y)
+    {
+        foreach (Rect area in ignored)
+        {
+            if (area.Contains(new Point(x, y)))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -516,7 +551,9 @@ internal static class Program
         Console.WriteLine("  sprites <NAME.ICN> <dir> [--palette <NAME>]           Exports sprites.");
         Console.WriteLine("  tiles   <NAME.TIL> <dir> [--palette <NAME>]           Exports tiles.");
         Console.WriteLine("  cursor  <NAME.BMP> <dir> [--palette <NAME>]           Exports one monochrome cursor.");
-        Console.WriteLine("  compare <left> <right> [--diff <dir>]                 Diffs PNG files or folders pixel by pixel.");
+        Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
+        Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
+        Console.WriteLine("                      bar shows a live FPS counter.");
         Console.WriteLine();
         Console.WriteLine("The palette defaults to KB.PAL, which is read from the same archive.");
         Console.WriteLine("--format png (default) or bmp selects the export format; PNG keeps transparent pixels,");

@@ -61,6 +61,8 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译参考引擎导出器
 pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
+pwsh tools/scripts/VerifyMenuBaseline.ps1     # 主菜单像素基线（冻结动画 + 合成光标，退出码 0 = 一致）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update   # 有意改了视觉后重建 tests/baselines/menu.png
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验简体中文语言包
 pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生成 PaletteTable.cs
@@ -68,7 +70,9 @@ pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生�
 
 `compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
 `--diff` 把差异像素标成品红写成 `diff_<name>.png`。退出码：`0` 全同、`3` 有差异、`1` 参数/IO 错误，
-方便在脚本里做门禁。第三方交叉验证的办法：用 Pillow 把导出图重新编码
+方便在脚本里做门禁。`--ignore x,y,w,h`（可重复）把一块矩形排除在比对之外，输出行尾会写
+`N pixels ignored`——这是截图能当基线的关键：状态栏的 FPS 与版本号是运行时值，必须排除。
+第三方交叉验证的办法：用 Pillow 把导出图重新编码
 （`Image.open(p).convert("RGBA").save(q)`，它会用自适应行滤波），再 `compare` 两个目录，
 结果应为全同——这能同时验证 `PngWriter` 的规范性与 `PngReader` 的行滤波/调色板展开实现。
 
@@ -81,6 +85,30 @@ pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生�
 
 BMP 的第三方交叉验证同理：`PIL.Image.open("x.bmp")` 只有在文件头、调色板与自下而上的行序都对时
 才会给出 `mode == "P"` 与正确的尺寸；`REFERENCE.md` 记录了实测数据（432 个图块 BMP 与 PNG 逐像素一致）。
+
+### 主菜单像素基线
+
+`tests/baselines/menu.png` 是入库的 640×480 基线（背景 + 灯体 + 光晕第 1 帧 + 五块招牌），
+`tools/scripts/VerifyMenuBaseline.ps1` 负责「渲染 → 比对 → 退出码」：
+
+```powershell
+pwsh tools/scripts/VerifyMenuBaseline.ps1              # 0 = 逐像素一致；1 = 有差异（附差异图路径）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update      # 有意改了视觉后重建基线
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData # 自建 runner：缺数据直接失败而不是 skip
+```
+
+脚本真正执行的客户端命令就是下面这条，手搓等价：
+
+```powershell
+dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2 --scene menu --lang en `
+    --cursor 620,100 --freeze-animation --screenshot-frame 30 --smoke-frames 90 `
+    --screenshot tools-output/baseline/menu.png
+FHeroes2.AssetProbe compare tools-output/baseline/menu.png tests/baselines/menu.png --ignore 0,469,640,11
+```
+
+三个「必须同时给」的开关：`--freeze-animation`（光晕不跟挂钟）、`--cursor`（人造光标，物理鼠标
+不会点亮招牌）、`--ignore 0,469,640,11`（状态栏的 FPS / 版本号）。少任何一个，基线都会随机失败。
+基线文件本身的来历与更新规矩写在 `tests/baselines/README.md`。
 
 ### 参考引擎对拍（C++ ↔ C#）
 
@@ -191,6 +219,23 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 16. **`Add-Type` 会锁住程序集**：在 PowerShell 里 `Add-Type -Path src\FHeroes2.Core\bin\...dll`
     之后，下一次 `dotnet build` 会在拷贝 `FHeroes2.Core.dll` 时失败（MSB3027/MSB3021，提示文件被
     `pwsh` 占用）。要么换一个进程做命令行验证，要么先关掉那个 shell 再构建。
+17. **ICN 里没有「动画」这件事**：ICN 头第 9 字节那个 `frames` 字段不参与动画，`fheroes2` 用的是
+    `ICN::getAnimatedIcnIndex()` 里几百行硬编码帧表（`SHNGANIM` = `1 + frame % 39`），每帧时长则来自
+    `Game::DelayType`（主菜单 250 ms）。所以「哪些精灵是一段动画、多久一帧」只能抄参考实现的表，
+    不能从文件里推导。
+18. **`SHNGANIM` 的第 0 帧不是「动画第一帧」**：它是熄灯灯体（139×131 @ 46,176），而第 1…39 帧是
+    统一 136×180 @ 48,183 的光晕层——尺寸、锚点都不同，所以必须画两次。光晕帧间差异只有
+    8–942 像素（整屏的 0.003%–0.3%），「没接上」和「接上了」在单张截图上几乎看不出来，
+    要比对就得用 `--screenshot-frame` 抓两个不同帧再 diff（第 1 帧 vs 第 11 帧差 615 像素）。
+19. **`--screenshot` 默认在第 30 帧抓图**：抓到动画第几帧取决于机器帧率（30 帧 ≈ 0.3 s，光晕在
+    第 1/2 帧之间摆动）。要做像素基线就加 `--freeze-animation`；`--cursor` 同理，给定后人造坐标
+    会屏蔽真实鼠标事件。
+20. **截图里的状态栏是运行时值**：右侧那行 `FPS | 语言 (F2) | vX.Y.Z` 会随帧率与 `VersionPrefix`
+    变化，逐像素比对必然对不上。`AssetProbe compare --ignore 0,469,640,11` 把它排除掉之后，
+    连续两次渲染的 `menu.png` 才是逐字节相同的（`VerifyMenuBaseline.ps1` 就是这么做的）。
+21. **`(Get-Content x).Count` 与 `Measure-Object -Line` 数出来的行号不一样**：后者**不计空行**，
+    脚本按它算插入位置会把代码插进函数体中间（表现为「脚本安静地什么都不做就 exit 0」）。
+    需要行号时用 `(Get-Content -LiteralPath x).Count`，或者干脆按唯一文本做锚点替换。
 
 ## 目录与产物
 
@@ -198,7 +243,8 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 | --- | --- |
 | `assets/fonts/` | 可再分发字体（SIL OFL）才会入库；当前为空，运行时回退系统字体 |
 | `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
-| `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、参考导出器编译、参考对拍、语言包编译 |
+| `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、参考导出器编译、参考对拍、语言包编译、主菜单像素基线 |
+| `tests/baselines/` | **入库**的回归基线 PNG（`menu.png` 等），来历与更新规矩见其中的 `README.md` |
 | `translations/` | 语言包源文件（`.po`，UTF-8）；`.mo` 编译产物装到数据目录，不入库 |
 | `tools-output/` | 截图、导出产物、编译出的参考导出器，已在 `.gitignore` 中忽略 |
 | `data/` | 本地游戏数据（若复制进仓库目录），已忽略 |

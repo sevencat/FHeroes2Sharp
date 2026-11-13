@@ -479,8 +479,16 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 5. 鼠标坐标由 `PresentationViewport.TryToLogical` 反算（整数倍放大 + 黑边），落在黑边上返回
    `false`，因此点击窗口边缘不会命中任何控件。SDL 事件在 `GameHost` 里翻译成
    `SetCursor` / `SetLeftButton`，场景本身不依赖 SDL。
-6. 为了能回归验证「有内容可看」，客户端补了三个开关：`--scene menu|diagnostics`、
-   `--lang <culture>`、`--cursor x,y`（后者把人造光标放进逻辑坐标，冒烟截图即可定格 hover 态）。
+6. 为了能回归验证「有内容可看」，客户端补了几个开关：`--scene menu|diagnostics`、
+   `--lang <culture>`、`--cursor x,y`（后者把人造光标放进逻辑坐标，冒烟截图即可定格 hover 态；
+   该坐标是「人造」的，宿主随即忽略真实鼠标移动与移出事件，否则物理指针离开窗口会把 hover 清掉）、
+   `--screenshot` / `--screenshot-frame n`（默认第 30 帧）与 `--freeze-animation`。
+7. `SHNGANIM.ICN` 的灯笼光晕由新增的 `FHeroes2.Assets.Icn.IcnAnimation` 播放：第 0 帧是熄灯状态的
+   灯体，先画一次；第 1…39 帧每 250 ms 换一帧（`Game::DelayType::MAIN_MENU_DELAY`），循环 9.75 s，
+   与 `ICN::getAnimatedIcnIndex()` 里灯笼那条 `1 + frame % 39` 完全等价。绘制顺序是
+   「背景 → 灯体 → 光晕 → 招牌 → 状态栏」，与 `Game::MainMenu()` 相同，所以光晕不可能盖住招牌。
+   `IcnAnimation` 不复制像素，每一帧仍按自己的 ICN 锚点绘制；计时按 `fheroes2::TimeDelay` 的语义
+   累加（整帧才前进、长停顿只跳帧不补播），场景把 `Update(elapsed)` 换算成 `TimeSpan` 交给它。
 
 **理由**：
 
@@ -489,15 +497,67 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
   不再出现「位图字体 + GPU 矢量文本」两种像素语义并存。
 * `GameText` 不可变，语言切换就是换实例，没有全局状态，也不需要在绘制时判断当前语言。
 * 交互逻辑（命中测试、按下/释放、热键）都放在场景里，`Button` 可单测，`GameHost` 只做事件翻译。
+* 帧表只移植场景真正用到的那一条：`icn.cpp` 的 `getAnimatedIcnIndex()` 是几百行硬编码 `switch`，
+  一次搬空既没法验证也用不上；`IcnAnimation` 接收「起始帧 + 帧数 + 每帧时长」，将来接新动画
+  （如 `MONSTER.ICN` 的站立帧）只需补一行调用。
 
 **代价 / 约束**：
 
 * 状态栏是移植新增物：原版用右键弹窗显示提示，这里固定在底部 11 px（一行 `SMALFONT.ICN`），
   会遮住背景最下面 11 行像素；`QUIT` 招牌（y=425..469）刚好不被覆盖。
 * 截图取决于数据版本：资料片存在时 `HEROES.ICN` 是 PoL 版（横幅写着 *The Price of Loyalty*），
-  做像素基线时必须注明源数据。
-* 语言列表目前硬编码为 `en` + `zh_CN`（`.mo` 存在才加入），没有 fheroes2 的多语言选择对话框；
-  `SHNGANIM.ICN` 的灯笼摆动动画也还没接（`MainMenuScene.Update` 是空实现）。
+  做像素基线时必须注明源数据（落地方式见 ADR-023 与 `tests/baselines/README.md`）。
+* 语言列表目前硬编码为 `en` + `zh_CN`（`.mo` 存在才加入），没有 fheroes2 的多语言选择对话框。
+* 动画由墙钟驱动：`--screenshot` 默认在第 30 帧抓图，抓到第几帧取决于机器帧率，做像素基线
+  必须同时加 `--freeze-animation`（把光晕冻结在第 1 帧）。`SHNGANIM` 第 0 帧是熄灯灯体
+  （139×131 @ 46,176），第 1…39 帧是光晕（统一 136×180 @ 48,183），所以必须是两层；
+  光晕这一层的帧间差异在 8–942 像素之间（整屏 640×480 = 307200 像素的 0.003%–0.3%），
+  也就是说动画很轻微，肉眼要靠连续播放才看得出来。
+* fheroes2 用鼠标扫过左下角的「门」让门发光来提示设置入口，这条交互与设置对话框一起留给后续里程碑。
 * `Button` 只处理「按下与释放落在同一控件」这一种点击语义，没有拖拽取消、没有禁用态
   （`BTNSHNGL` 的第 4 帧就是禁用用的，等 M3 用得着时再加）。
+
+## ADR-023：像素基线入库，门禁排除运行时区域
+
+**背景**：ADR-013 定下「逐像素比对代替人工看图」，但目前只有 `AssetProbe compare` 这个工具，
+没有一段被固定下来的期望图像。主菜单已经能出图（ADR-022），改绘制顺序、换调色板、调字体时
+「看起来没变」和「真的没变」无法区分；而截图产物目录 `tools-output/` 是被 `.gitignore` 排除的，
+上次的截图过一天就没了。
+
+**决策**：
+
+1. 期望图像作为 **基线文件入库**：`tests/baselines/menu.png`（640×480，239,932 字节）。游戏数据
+   依旧不入库（ADR-010），所以基线是「我们自己渲染出来的结果」，不是原始美术。
+2. 门禁是一个脚本而不是新测试项目：`tools/scripts/VerifyMenuBaseline.ps1` 负责
+   `dotnet build` → 渲染一帧 → 比对 → 退出码（0 一致 / 1 不一致）。客户端是 WinExe + SDL3，
+   放进 xunit 会让测试进程加载原生库并与窗口/时钟耦合；脚本保持「跑真程序」这一点不变。
+3. 渲染必须完全可复现，因此固定三个开关：`--freeze-animation`（光晕冻在第 1 帧）、
+   `--cursor 620,100`（人造光标屏蔽真实指针）、`--screenshot-frame 30 --smoke-frames 90`。
+4. 状态栏排除在比对之外：`AssetProbe compare` 新增 `--ignore x,y,w,h`（可重复），
+   基线用 `--ignore 0,469,640,11`（底部 11 px 的 `FPS | 语言 | 版本`）。
+5. 缺数据的机器上脚本打印 `skip` 并以 **0** 退出（与 ADR-010 一致），`-RequireData` 才把缺数据
+   变成失败；`-Tolerance <n>` 允许把判据从「逐字节相等」放宽到「差异像素 ≤ n」。
+6. 基线只在**有意**改变视觉时用 `-Update` 重建，规矩写在 `tests/baselines/README.md`
+   （连同数据版本与 SHA-256）。
+
+**理由**：
+
+* 基线入库才叫回归：`tools-output/menu.png` 是一次性的，`git status` 里没人会看它变了没有。
+* 判据越硬越好：忽略状态栏后连续两次渲染逐字节相同，于是 `-Tolerance` 默认 0 —— 任何像素变化
+  都会让门禁失败，而不是「差得不多就放过」。
+* `--ignore` 放在 `compare` 里而不是在脚本里做后处理：矩形排除的语义与「逐像素差异」统计是同一件事，
+  放在一起才能让差异图、`first at`、退出码保持自洽。
+* 脚本 + 退出码可以直接被任何 CI 调用（`pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData`），
+  不需要为仓库里并不存在的 pipeline 预置 yml。
+
+**代价 / 约束**：
+
+* 二进制 PNG 进了仓库：239 KB / 张，且以后每加一个场景就再添一张。只给「一屏一图」的场景做基线，
+  不为每一帧动画建基线（动画的验证靠帧间 diff，见 PROGRESS）。
+* 基线绑定数据版本：当前是资料片（PoL）的 `HEROES.ICN`。只有基础版数据的机器必然 `DIFF`，
+  必须另存 `menu-classic.png`，不能覆盖。
+* 状态栏像素不在基线覆盖范围内（版本号与 FPS 是运行时值），它的渲染靠人工看
+  `tools-output/menu-hover.png` 这类截图。
+* 脚本依赖 Windows + PowerShell 与本地 Debug 输出路径（`bin/Debug/net10.0/FHeroes2Sharp.exe`）。
+  Linux 上的 runner 需要 `pwsh` 且路径/程序集名一致，否则先 `dotnet build` 再手搓那两条命令。
 

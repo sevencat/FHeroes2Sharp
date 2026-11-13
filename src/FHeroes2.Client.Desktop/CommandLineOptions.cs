@@ -9,6 +9,7 @@ namespace FHeroes2.Client.Desktop;
 /// <code>
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
+///                 [--freeze-animation] [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
 /// </summary>
 public sealed class CommandLineOptions
@@ -31,7 +32,9 @@ public sealed class CommandLineOptions
 
     /// <summary>
     /// Initial cursor position in logical (640x480) pixels passed with <c>--cursor</c>. Smoke runs
-    /// use it to capture the hover state of a widget, which no headless test can produce.
+    /// use it to capture the hover state of a widget, which no headless test can produce. The
+    /// position is synthetic: the host then ignores real mouse motion and mouse-leave events, so
+    /// the captured hover does not depend on where the physical pointer happens to be.
     /// </summary>
     public Point? Cursor { get; private set; }
 
@@ -43,10 +46,16 @@ public sealed class CommandLineOptions
     /// <summary>When set the client exits after rendering the given number of frames.</summary>
     public int? SmokeFrames { get; private set; }
 
+    /// <summary>
+    /// Keeps the main menu lantern on its first glow frame. The animation is driven by wall clock
+    /// time, so a pixel baseline would otherwise need to know which frame was captured.
+    /// </summary>
+    public bool FreezeAnimation { get; private set; }
+
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
 
-    /// <summary>Screenshot is taken after this many rendered frames.</summary>
+    /// <summary>Screenshot is taken after this many rendered frames (<c>--screenshot-frame</c>).</summary>
     public int ScreenshotFrame { get; private set; } = 30;
 
     /// <summary>Prints the archive contents and exits without opening a window.</summary>
@@ -122,6 +131,21 @@ public sealed class CommandLineOptions
                     options.ScreenshotPath = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--screenshot-frame":
+                    string rawCapture = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawCapture, out int captureFrame) || captureFrame <= 0)
+                    {
+                        throw new ArgumentException(
+                            $"'{argument}' expects a positive frame count, got '{rawCapture}'.");
+                    }
+
+                    options.ScreenshotFrame = captureFrame;
+                    break;
+
+                case "--freeze-animation":
+                    options.FreezeAnimation = true;
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -148,10 +172,14 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --lang <culture>    Interface language, e.g. 'zh_CN' or 'en'. A catalog must");
         Console.WriteLine("                      exist in <data>/files/lang; see BuildTranslations.ps1.");
         Console.WriteLine("  --cursor <x,y>      Puts the cursor at a logical pixel, e.g. to screenshot a hover.");
+        Console.WriteLine("                      The position is synthetic: real mouse motion is ignored, so the");
+        Console.WriteLine("                      hover state survives the physical pointer leaving the window.");
         Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2).");
         Console.WriteLine("  --fullscreen        Starts in borderless fullscreen mode.");
         Console.WriteLine("  --smoke-frames <n>  Renders n frames and exits (used by CI / smoke tests).");
         Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames.");
+        Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
+        Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
         Console.WriteLine("  --help              Shows this help.");
     }

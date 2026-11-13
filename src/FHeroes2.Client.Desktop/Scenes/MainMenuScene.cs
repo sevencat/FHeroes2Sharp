@@ -49,6 +49,24 @@ public sealed class MainMenuScene : IScene
 
     public const int QuitFrame = 17;
 
+    /// <summary>The lantern glow that flickers next to the street scene.</summary>
+    public const string AnimationAssetName = "SHNGANIM.ICN";
+
+    /// <summary>Sprite 0 of <c>SHNGANIM.ICN</c>: the unlit lantern, drawn once behind the glow.</summary>
+    public const int LanternBaseFrame = 0;
+
+    /// <summary>First glow frame. <c>ICN::getAnimatedIcnIndex</c> maps it to <c>1 + n % 39</c>.</summary>
+    public const int LanternFirstFrame = 1;
+
+    /// <summary>Number of glow frames in <c>SHNGANIM.ICN</c> (39 sprites after the base one).</summary>
+    public const int LanternFrameCount = 39;
+
+    /// <summary>
+    /// One glow frame every <c>Game::DelayType::MAIN_MENU_DELAY</c> (250 ms), so the cycle takes
+    /// 9.75 s.
+    /// </summary>
+    public static readonly TimeSpan LanternFrameDuration = TimeSpan.FromMilliseconds(250);
+
     /// <summary>Height of the status bar, which is exactly one line of <c>SMALFONT.ICN</c>.</summary>
     public const int StatusBarHeight = 11;
 
@@ -71,6 +89,8 @@ public sealed class MainMenuScene : IScene
 
     private readonly ScreenBuffer _frame;
     private readonly Sprite _background;
+    private readonly Sprite? _lanternBase;
+    private readonly IcnAnimation? _lantern;
     private readonly Button[] _buttons;
     private readonly GameFonts _fonts;
     private readonly IReadOnlyList<GameText> _languages;
@@ -86,6 +106,8 @@ public sealed class MainMenuScene : IScene
     private MainMenuScene(
         ScreenBuffer frame,
         Sprite background,
+        Sprite? lanternBase,
+        IcnAnimation? lantern,
         Button[] buttons,
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
@@ -93,6 +115,8 @@ public sealed class MainMenuScene : IScene
     {
         _frame = frame;
         _background = background;
+        _lanternBase = lanternBase;
+        _lantern = lantern;
         _buttons = buttons;
         _fonts = fonts;
         _languages = languages;
@@ -158,13 +182,20 @@ public sealed class MainMenuScene : IScene
                     signs.Sprites[released + 2]);
             }
 
+            (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(assets);
+
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
-            MainMenuScene scene = new(frame, background.Sprites[0], buttons, fonts, languages, culture);
+            MainMenuScene scene = new(
+                frame, background.Sprites[0], lanternBase, lantern, buttons, fonts, languages, culture);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
                 $"{background.Sprites[0].Height}, {Menu.Length} signs from {ButtonAssetName}, " +
+                (lantern is null
+                    ? "no lantern animation, "
+                    : $"lantern glow {LanternFrameCount} frames every " +
+                      $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -177,17 +208,43 @@ public sealed class MainMenuScene : IScene
     }
 
     /// <summary>
-    /// The menu art does not animate in this milestone; the swinging lantern of
-    /// <c>SHNGANIM.ICN</c> is the next step.
+    /// Whether the lantern glow animates. The host clears it for reproducible screenshots
+    /// (<c>--freeze-animation</c>); the first glow frame then stays on screen.
     /// </summary>
-    public void Update(double elapsedSeconds) => _ = elapsedSeconds;
+    public bool AnimationEnabled { get; set; } = true;
 
-    /// <summary>Draws the background, the signs in their current state and the status bar.</summary>
+    /// <summary>
+    /// Advances the lantern glow. The scene keeps its own clock so that a slow frame does not
+    /// stretch the animation: one frame per 250 ms, 39 frames per cycle, like the original.
+    /// </summary>
+    public void Update(double elapsedSeconds)
+    {
+        if (AnimationEnabled && elapsedSeconds > 0.0)
+        {
+            _lantern?.Advance(TimeSpan.FromSeconds(elapsedSeconds));
+        }
+    }
+
+    /// <summary>
+    /// Draws the background, the lantern, the signs in their current state and the status bar, in
+    /// the order of <c>Game::MainMenu()</c>: the glow goes below the signs so that a lit pixel can
+    /// never repaint a sign.
+    /// </summary>
     public void DrawFrame(in DiagnosticsState state)
     {
         PixelBuffer pixels = _frame.Pixels;
 
         ImageOps.BlitSprite(pixels, _background);
+
+        if (_lanternBase is not null)
+        {
+            ImageOps.BlitSprite(pixels, _lanternBase);
+        }
+
+        if (_lantern is not null)
+        {
+            ImageOps.BlitSprite(pixels, _lantern.Current);
+        }
 
         foreach (Button button in _buttons)
         {
@@ -279,6 +336,28 @@ public sealed class MainMenuScene : IScene
         }
 
         return Text;
+    }
+
+    /// <summary>
+    /// Loads the lantern: sprite 0 is drawn once and the following 39 sprites are the glow that
+    /// flickers. The menu works without it, so missing artwork only costs the animation.
+    /// </summary>
+    private static (Sprite? Base, IcnAnimation? Animation) CreateLantern(AssetBundle assets)
+    {
+        IcnSpriteFile? file = assets.TryReadIcn(AnimationAssetName);
+        int required = LanternFirstFrame + LanternFrameCount;
+
+        if (file is null || file.Count < required)
+        {
+            GameLog.Warn(
+                $"'{AnimationAssetName}' is missing or has {file?.Count ?? 0} sprites instead of " +
+                $"{required}; the lantern will not flicker.");
+            return (null, null);
+        }
+
+        return (
+            file.Sprites[LanternBaseFrame],
+            IcnAnimation.FromFile(file, LanternFirstFrame, LanternFrameCount, LanternFrameDuration));
     }
 
     private static IReadOnlyList<GameText> SelectLanguages(IReadOnlyList<GameText> languages, GameFonts fonts)

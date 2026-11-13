@@ -1,0 +1,97 @@
+name: CI
+
+# Build + unit tests run everywhere. The pixel baseline job additionally needs the original game
+# data, which cannot live in this repository (ADR-010), so it renders only where such a directory
+# exists and otherwise just validates the committed baseline file (see the step comments below).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same branch makes the previous run obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    name: build + tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the .NET SDK pinned by global.json
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore FHeroes2Sharp.slnx
+
+      # TreatWarningsAsErrors is already on in Directory.Build.props; -warnaserror keeps the CI
+      # command line honest if that property is ever relaxed.
+      - name: Build
+        run: dotnet build FHeroes2Sharp.slnx --no-restore -warnaserror
+
+      # The data dependent tests return early when no archive is found (ADR-010), so this job
+      # needs nothing but the SDK.
+      - name: Test
+        run: dotnet test FHeroes2Sharp.slnx --no-build
+
+  menu-baseline:
+    name: main menu pixel baseline
+    # Runs in parallel with the build job on purpose: the script builds what it needs and its
+    # failure message ("MenuBaseline" output) is easier to read than a build job that failed
+    # earlier for an unrelated reason.
+    runs-on: ${{ vars.FHEROES2_RUNNER || 'windows-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the .NET SDK pinned by global.json
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # FHEROES2_DATA is a repository variable holding the data directory on the runner (for
+      # example D:\game\fh2). Set FHEROES2_RUNNER to a self hosted runner label (for example
+      # 'fh2-data') as well; without both, the run degrades to the baseline file check that the
+      # script performs before it looks for game data.
+      - name: Compare the rendered menu with tests/baselines/menu.png
+        shell: pwsh
+        env:
+          FHEROES2_DATA: ${{ vars.FHEROES2_DATA }}
+        run: |
+          $splat = @{}
+          if ($env:FHEROES2_DATA) {
+            $splat.DataDirectory = $env:FHEROES2_DATA
+            $splat.RequireData = $true   # a runner that claims to have data must not skip
+          }
+          else {
+            Write-Host '::notice::repository variable FHEROES2_DATA is not set; the render step is skipped and only the baseline file is validated.'
+          }
+
+          ./tools/scripts/VerifyMenuBaseline.ps1 @splat
+
+      # The diff image is the only useful artifact of a pixel regression.
+      - name: Upload the diff image
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: menu-baseline-diff
+          path: |
+            tools-output/baseline/menu.png
+            tools-output/baseline/diff/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,3 +1,5 @@
+using FHeroes2.Core.Geometry;
+
 namespace FHeroes2.AssetProbe;
 
 /// <summary>Parsed command line of the asset probe.</summary>
@@ -30,6 +32,13 @@ internal sealed class ProbeArguments
     public byte? Background { get; private set; }
 
     public string? DiffDirectory { get; private set; }
+
+    /// <summary>
+    /// Areas that <c>compare</c> skips, in pixels of the compared image. Screenshots contain
+    /// values that change from run to run (the FPS counter of the status bar), so a pixel baseline
+    /// has to exclude them instead of pinning them.
+    /// </summary>
+    public List<Rect> IgnoreAreas { get; } = [];
 
     public static ProbeArguments Parse(string[] args)
     {
@@ -88,6 +97,10 @@ internal sealed class ProbeArguments
                     parsed.DiffDirectory = NextValue(args, ref i, "--diff");
                     break;
 
+                case "--ignore":
+                    parsed.IgnoreAreas.Add(ParseRect(NextValue(args, ref i, "--ignore")));
+                    break;
+
                 default:
                     parsed.Positional.Add(args[i]);
                     break;
@@ -105,5 +118,28 @@ internal sealed class ProbeArguments
         }
 
         return args[++index];
+    }
+
+    /// <summary>Parses <c>x,y,width,height</c>; the format used by <c>--ignore</c>.</summary>
+    private static Rect ParseRect(string value)
+    {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length != 4 ||
+            !int.TryParse(parts[0], out int x) ||
+            !int.TryParse(parts[1], out int y) ||
+            !int.TryParse(parts[2], out int width) ||
+            !int.TryParse(parts[3], out int height))
+        {
+            throw new ArgumentException(
+                $"'--ignore' expects 'x,y,width,height', got '{value}'.");
+        }
+
+        if (width <= 0 || height <= 0)
+        {
+            throw new ArgumentException(
+                $"'--ignore' needs a positive width and height, got '{value}'.");
+        }
+
+        return new Rect(x, y, width, height);
     }
 }

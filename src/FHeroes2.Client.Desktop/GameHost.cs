@@ -24,6 +24,7 @@ public sealed class GameHost : IDisposable
 
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
+    private readonly bool _syntheticCursor;
 
     private AssetBundle? _assets;
     private Palette _palette = new();
@@ -45,6 +46,7 @@ public sealed class GameHost : IDisposable
     public GameHost(CommandLineOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _syntheticCursor = options.Cursor is not null;
 
         if (options.ScreenshotPath is not null)
         {
@@ -184,11 +186,21 @@ public sealed class GameHost : IDisposable
                     return false;
 
                 case SDL.EventType.MouseMotion:
-                    _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                    // With --cursor the synthetic pointer is what a screenshot should show, so the
+                    // real one must not steal the hover state.
+                    if (!_syntheticCursor)
+                    {
+                        _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                    }
+
                     break;
 
                 case SDL.EventType.WindowMouseLeave:
-                    _menu?.SetCursor(null);
+                    if (!_syntheticCursor)
+                    {
+                        _menu?.SetCursor(null);
+                    }
+
                     break;
 
                 case SDL.EventType.MouseButtonDown:
@@ -246,7 +258,10 @@ public sealed class GameHost : IDisposable
             return false;
         }
 
-        _menu.SetCursor(ToLogical(button.X, button.Y));
+        if (!_syntheticCursor)
+        {
+            _menu.SetCursor(ToLogical(button.X, button.Y));
+        }
 
         return _menu.SetLeftButton(button.Down) is { } action && HandleMenuAction(action);
     }
@@ -335,9 +350,14 @@ public sealed class GameHost : IDisposable
         {
             _menu = MainMenuScene.TryCreate(_frame, _assets, _fonts, _options.Language);
 
-            if (_menu is not null && _options.Cursor is { } cursor)
+            if (_menu is not null)
             {
-                _menu.SetCursor(cursor);
+                _menu.AnimationEnabled = !_options.FreezeAnimation;
+
+                if (_options.Cursor is { } cursor)
+                {
+                    _menu.SetCursor(cursor);
+                }
             }
         }
 

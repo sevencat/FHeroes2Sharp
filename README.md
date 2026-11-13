@@ -22,7 +22,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 108 + UI 8 = 252 个测试）。
+以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 136 + Assets 120 + UI 8 = 264 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
@@ -35,7 +35,10 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 `GameFonts` 在启动时装载（ADR-021）。**主菜单已经上屏**：`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 五块招牌
 （悬停/按下由 `UI.Widgets.Button` 处理，鼠标命中靠 `PresentationViewport.TryToLogical`），
 底部 11 px 状态栏用 `SMALFONT.ICN` 画 `.mo` 译文与语言标记，`F2` 切换中英文（ADR-022）。
-待办：`SHNGANIM.ICN` 灯笼动画、语言选择对话框、BGM。
+灯笼光晕也已接上：`SHNGANIM.ICN` 第 0 帧做灯体、第 1…39 帧每 250 ms 换帧（`Assets.Icn.IcnAnimation`）。
+像素回归有了基线门禁：`tests/baselines/menu.png` 入库，`tools/scripts/VerifyMenuBaseline.ps1`
+用「冻结动画 + 人造光标」渲染一帧后逐像素比对（状态栏的 FPS/版本号由 `compare --ignore` 排除，ADR-023）。
+待办：语言选择对话框、BGM、设置入口。
 
 ## 快速开始
 
@@ -74,6 +77,10 @@ dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles too
 pwsh tools/scripts/BuildReferenceTool.ps1
 pwsh tools/scripts/CompareWithReference.ps1
 
+# 主菜单像素基线门禁：渲染一帧与 tests/baselines/menu.png 逐像素比对（0 = 一致）
+pwsh tools/scripts/VerifyMenuBaseline.ps1
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update      # 有意改了视觉后重建基线
+
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
@@ -94,7 +101,8 @@ src/FHeroes2.Client.Desktop  SDL3 宿主、呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
-tools/scripts            调色板表生成、参考导出器编译、参考对拍、语言包编译脚本
+tools/scripts            调色板表生成、参考导出器编译、参考对拍、语言包编译、主菜单像素基线脚本
+tests/baselines          入库的回归基线 PNG（menu.png + 说明），像素门禁的期望图像
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 docs/                    计划、进度、决策与参考笔记
 ```
