@@ -69,10 +69,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$clientProject = Join-Path $root 'src/FHeroes2.Client.Desktop'
+$appProject = Join-Path $root 'src/FHeroes2.App'
 $probeProject = Join-Path $root 'tools/FHeroes2.AssetProbe'
 # The client assembly is called FHeroes2Sharp (see AssemblyName in its csproj).
-$clientExe = Join-Path $clientProject 'bin/Debug/net10.0/FHeroes2Sharp.exe'
+$appExe = Join-Path $appProject 'bin/Debug/net10.0/FHeroes2Sharp.exe'
 $probeExe = Join-Path $probeProject 'bin/Debug/net10.0/FHeroes2.AssetProbe.exe'
 
 function Resolve-DataDirectory {
@@ -181,11 +181,11 @@ if (-not $data) {
 }
 
 if (-not $SkipBuild) {
-    Invoke-Build $clientProject
+    Invoke-Build $appProject
     Invoke-Build $probeProject
 }
 
-foreach ($executable in @($clientExe, $probeExe)) {
+foreach ($executable in @($appExe, $probeExe)) {
     if (-not (Test-Path -LiteralPath $executable)) {
         throw "'$executable' does not exist. Run without -SkipBuild first."
     }
@@ -200,7 +200,7 @@ if (Test-Path -LiteralPath $screenshot) {
 
 Write-Host "render menu        $data"
 
-$clientArguments = @(
+$appArguments = @(
     '--data', $data,
     '--scene', 'menu',
     '--lang', $Culture,
@@ -211,8 +211,8 @@ $clientArguments = @(
     '--screenshot', $screenshot
 )
 
-$clientOutput = @(& $clientExe @clientArguments 2>&1)
-$clientExit = $LASTEXITCODE
+$appOutput = @(& $appExe @appArguments 2>&1)
+$appExit = $LASTEXITCODE
 
 if ($Update) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Baseline) | Out-Null

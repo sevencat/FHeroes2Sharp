@@ -1,4 +1,4 @@
-namespace FHeroes2.Client.Desktop.Scenes;
+namespace FHeroes2.App.Scenes;
 
 /// <summary>
 /// A screen the host drives. <see cref="DrawFrame"/> paints the indexed 640x480 frame (the game

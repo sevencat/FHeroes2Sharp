@@ -9,7 +9,7 @@
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
 | `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.MessageBox`）、界面流转 | Core, Assets, Rendering, Game |
-| `FHeroes2.Client.Desktop` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
+| `FHeroes2.App` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
 
@@ -76,13 +76,13 @@ CJK 或 `U+00FF` 以上字符由 `Assets.Fonts.TrueTypeGlyphSource` 补位：`Se
 UI 实际用的是 `Assets.Fonts.CompositeGlyphSource`：位图字体是 primary，决定
 `LineHeight`/`SpaceWidth`/拉丁字符，TrueType 只在 primary 不认识的码位上补字形，
 两边都不认识时退回位图的 `?`（ADR-021）。启动时由
-`Client.Desktop.Fonts.GameFonts.TryLoad(bundle)` 一次性装好 `Small`/`Normal`/`Yellow`
+`App.Fonts.GameFonts.TryLoad(bundle)` 一次性装好 `Small`/`Normal`/`Yellow`
 三个字形源并把结果交给场景，所以绘制点只拿 `IGlyphSource`，不需要知道字符范围。
 绘制走索引路径：`GlyphText.DrawLine` 写进 `ScreenBuffer`，颜色由调色板决定，上屏时再按整数倍放大
 （ADR-003）；SDL_ttf 后端只剩诊断覆盖层（`SdlTextRenderer`）。
 主菜单（`MainMenuScene`）是这条路径的第一个真实用户：招牌取自 `BTNSHNGL.ICN`，底部 11 px 状态栏
 用 `GameFonts.Small` 画 `.mo` 译文与语言标记，中英文共用一张调色板。界面语言由
-`Client.Desktop.Localization.GameText` 提供（一个语言一个不可变实例，英文 = msgid 本身），
+`App.Localization.GameText` 提供（一个语言一个不可变实例，英文 = msgid 本身），
 `F2` 在可用语言间循环；字体没有 CJK 字形时只保留英文（ADR-022）。
 颜色不是第二套字形资源：原版只有一份 `FONT.ICN`，黄色/灰色文字是把它的索引过一遍
 `Core.Imaging.PaletteTable`（`PAL::GetPalette` 的 13 张重着色表）得到的。

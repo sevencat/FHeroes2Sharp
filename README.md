@@ -64,18 +64,18 @@ dotnet build FHeroes2Sharp.slnx
 dotnet test  FHeroes2Sharp.slnx
 
 # 运行客户端（自动探测数据目录，也可显式指定）
-dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2"
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2"
 
 # 主菜单默认上屏；按键：ESC 退出、F2 切换中英文、N/L/H/C/Q 选招牌、F11 全屏、F12 截图
-dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2" --lang zh_CN
-dotnet run --project src/FHeroes2.Client.Desktop -- --data "F:\game\fh2" --scene diagnostics
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --lang zh_CN
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene diagnostics
 
 # 渲染 40 帧后截图退出（CI / 回归用）；--cursor 定格 hover 态
-dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
-dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --cursor 230,210 --screenshot hover.png
+dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot out.png
+dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 230,210 --screenshot hover.png
 
 # 右键提示框只存在于按住期间，所以抓图要人造光标 + --right-button
-dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --cursor 520,230 --right-button --screenshot tip.png
+dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 520,230 --right-button --screenshot tip.png
 
 # 资产归档检查
 dotnet run --project tools/FHeroes2.AssetProbe -- info
@@ -119,7 +119,7 @@ src/FHeroes2.Assets      AGG 归档、调色板/资源定位（依赖 Core）
 src/FHeroes2.Rendering   呈现接口、文本抽象（依赖 Core）
 src/FHeroes2.Game        游戏世界、回合、AI、存档（依赖 Core/Assets/Rendering）
 src/FHeroes2.UI          对话框栈与控件（依赖 Game/Rendering/Core）
-src/FHeroes2.Client.Desktop  SDL3 宿主、呈现、字体、场景
+src/FHeroes2.App         SDL3 宿主、呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）

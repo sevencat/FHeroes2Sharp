@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <RootNamespace>FHeroes2.Client.Desktop</RootNamespace>
+    <RootNamespace>FHeroes2.App</RootNamespace>
     <AssemblyName>FHeroes2Sharp</AssemblyName>
     <RollForward>Major</RollForward>
     <TieredPGO>true</TieredPGO>

@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/FHeroes2.Assets/FHeroes2.Assets.csproj" />
-    <Project Path="src/FHeroes2.Client.Desktop/FHeroes2.Client.Desktop.csproj" />
+    <Project Path="src/FHeroes2.App/FHeroes2.App.csproj" />
     <Project Path="src/FHeroes2.Core/FHeroes2.Core.csproj" />
     <Project Path="src/FHeroes2.Game/FHeroes2.Game.csproj" />
     <Project Path="src/FHeroes2.Rendering/FHeroes2.Rendering.csproj" />

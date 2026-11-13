@@ -33,7 +33,7 @@
 FHeroes2.Core  ←  FHeroes2.Assets  ←  FHeroes2.Rendering  ←  FHeroes2.UI
                         ↑                    ↑                    ↑
                         └──── FHeroes2.Game ─┴────────────────────┘
-FHeroes2.Client.Desktop  →  引用以上全部（组合根）
+FHeroes2.App  →  引用以上全部（组合根）
 ```
 
 ## 主要风险与对策

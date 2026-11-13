@@ -1,4 +1,4 @@
-namespace FHeroes2.Client.Desktop.Fonts;
+namespace FHeroes2.App.Fonts;
 
 /// <summary>A font file that can be handed to the text backend.</summary>
 /// <param name="Path">Absolute path to the TrueType/OpenType file.</param>

@@ -1,7 +1,7 @@
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 
-namespace FHeroes2.Client.Desktop;
+namespace FHeroes2.App;
 
 /// <summary>
 /// Command line of the desktop client.

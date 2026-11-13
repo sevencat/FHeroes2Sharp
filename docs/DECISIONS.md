@@ -76,7 +76,7 @@
 
 ## ADR-011：考虑 NativeAOT，但暂不作为支持目标
 
-**决策**：产品项目（`Core`/`Assets`/`Rendering`/`Game`/`UI`/`Client.Desktop`/`AssetProbe`）全部开启
+**决策**：产品项目（`Core`/`Assets`/`Rendering`/`Game`/`UI`/`App`/`AssetProbe`）全部开启
 AOT 与裁剪分析器：
 
 ```xml
@@ -253,7 +253,7 @@ AOT 与裁剪分析器：
 
 **决策**：
 
-1. `FHeroes2.Client.Desktop` 直接使用 `SDL3-CS`（3.4.20）+ `SDL3-CS.Native`（3.4.2）+
+1. `FHeroes2.App` 直接使用 `SDL3-CS`（3.4.20）+ `SDL3-CS.Native`（3.4.2）+
    `SDL3-CS.Native.TTF`（3.3.0），从依赖图里移除 MonoGame 与 FontStashSharp。
 2. `SdlPresenter` 独占窗口与呈现：流式帧纹理（`SDL_PIXELFORMAT_ABGR8888`）+ 640×480 目标纹理，
    脏矩形 `SDL_UpdateTexture`，最后最近邻整数倍放大并加黑边；`PresentationViewport` 的数学不变。
@@ -428,7 +428,7 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
    GlyphCoverageRamp.Heroes2Text.WithPalette(primary.Palette))`。因为
    `BitmapFont` 现在记录自己的 `Palette`（`WithPalette` 的产物，未重着色为
    `PaletteId.Standard`），混排里的中文自动继承英文的颜色，调用方不必把调色板传两遍（ADR-020）。
-3. 客户端把加载收进 `Client.Desktop.Fonts.GameFonts`：`TryLoad(AssetBundle, TextFont?)`
+3. 客户端把加载收进 `App.Fonts.GameFonts`：`TryLoad(AssetBundle, TextFont?)`
    读 `FONT.ICN` / `SMALFONT.ICN`，生成 `Small` / `Normal` / `Yellow` 三个 `IGlyphSource`
    （`Yellow` = `FONT.ICN` 过 `PaletteId.YellowFont`），并暴露 `SupportsCjk`（探测 `'中'`）
    与 `Description` 供诊断覆盖层显示。缺数据或缺字体时不抛异常，`TryLoad` 返回
@@ -469,11 +469,11 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 2. 新增 `FHeroes2.UI.Widgets.Button`：三张 `Sprite`（released / hovered / pressed）+ 一个
    `ButtonState` 状态机，`Area` 取 released 精灵的包围盒，`Update(cursor, leftButtonDown)`
    返回「状态是否变化」，缺 hover/pressed 帧时回退到 released（只有一帧的表也能用）。
-3. 新增 `FHeroes2.Client.Desktop.Scenes.IScene`：`Update` / `DrawFrame(in DiagnosticsState)` /
+3. 新增 `FHeroes2.App.Scenes.IScene`：`Update` / `DrawFrame(in DiagnosticsState)` /
    `DrawOverlay(in DiagnosticsState)`。真实画面（`MainMenuScene`）只用前两个：文字全部画进
    索引帧缓冲，`DrawOverlay` 留空；`DiagnosticsScene` 继续用 SDL_ttf 覆盖层，两条路径共存但互不影响。
    `DiagnosticsState` 因此被提升为「宿主交给场景的运行时快照」（FPS、归档条目数、字体描述等）。
-4. 文字统一由 `Client.Desktop.Localization.GameText` 提供：一个语言一个不可变实例，英文直接用
+4. 文字统一由 `App.Localization.GameText` 提供：一个语言一个不可变实例，英文直接用
    msgid（`.mo` 缺失时也是英文），`zh_CN` 由 `<data>/files/lang/zh_CN.mo` 装入。主菜单用
    `GameFonts.Small` 把 `.mo` 里的提示译文与语言标记画进状态栏，`F2` 循环切换语言。
 5. 鼠标坐标由 `PresentationViewport.TryToLogical` 反算（整数倍放大 + 黑边），落在黑边上返回
@@ -689,4 +689,34 @@ win-x64/arm64、linux-x64/arm64、osx-x64/arm64 都带了二进制，于是看�
   `GenerateAppIcon.ps1` 并提交新的 `.ico`。
 * 图标没有像素门禁：`VerifyMenuBaseline.ps1` 只比对 640×480 的逻辑画面。窗口图标属于 Win32 层，
   能拿到的证据只有「`ExtractAssociatedIcon` 取得出图标」与日志里的 `Window icon set`。
+
+## ADR-026：SDL 宿主项目更名为 `FHeroes2.App`
+
+**背景**：分层表里其余项目都是「一个词」（`Core` / `Assets` / `Rendering` / `Game` / `UI`），
+只有组合根叫 `FHeroes2.Client.Desktop`。这两段都是误导：`Desktop` 在 .NET 里通常指
+`net10.0-windows` 加 WPF/WinForms，而这里只有 SDL3；`Client` 又预设了一个并不存在的服务端，
+ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
+
+**决策**：目录 `src/FHeroes2.Client.Desktop` → `src/FHeroes2.App`，工程文件
+`FHeroes2.Client.Desktop.csproj` → `FHeroes2.App.csproj`，根命名空间
+`FHeroes2.Client.Desktop` → `FHeroes2.App`（子命名空间同理：`App.Fonts` / `App.Graphics` /
+`App.Localization` / `App.Scenes`）。**程序集名与产物名保持不变**：`AssemblyName` 仍是
+`FHeroes2Sharp`，可执行文件还是 `bin/Debug/net10.0/FHeroes2Sharp.exe`。
+
+**理由**：
+
+* 名字直接说明职责：`App` 是组合根，引用 `Core` / `Assets` / `Rendering` / `Game` / `UI` 并
+  驱动它们；`dotnet run --project src/FHeroes2.App` 与 `using FHeroes2.App.Scenes;` 也更短。
+* 保留 `AssemblyName` 是刻意的：`VerifyMenuBaseline.ps1`、CI 与所有截图命令都按 exe 名找产物，
+  改 exe 名会把「改项目名」变成一次构建产物的变更——那才是真正需要重新回归的部分。
+
+**代价 / 约束**：
+
+* 纯机械重命名：`.slnx`、`VerifyMenuBaseline.ps1` 的工程路径（脚本内变量随之改为
+  `$appProject` / `$appExe` / `$appArguments`）、文档与 `REFERENCE.md` 映射表里的项目名和命名空间
+  引用全部同步，`git mv` 保留历史。
+* 语义上它仍然是「客户端」：文档里说「客户端渲染」时指的就是这个项目，命名空间写 `App`，两者
+  不冲突。
+* 没有行为变更，所以没有新增验证项：与图标那次一样，证据是构建、单元测试与
+  `VerifyMenuBaseline.ps1` 三件套。
 

@@ -5,7 +5,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Rendering.Text;
 using SDL3;
 
-namespace FHeroes2.Client.Desktop.Fonts;
+namespace FHeroes2.App.Fonts;
 
 /// <summary>
 /// SDL_ttf backed <see cref="ITextRenderer"/>. FreeType rasterizes the glyphs into blended surfaces

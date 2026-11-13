@@ -10,7 +10,7 @@
 | `FHeroes2.Assets` | ✅ | `AssetArchive`（AGG）、`AggFileNameHash`、`AssetLocator`、`AssetBundle` |
 | `FHeroes2.Rendering` | ✅ | `IScreenPresenter`、`ITextRenderer`/`TextStyle`/`TextMetrics` |
 | `FHeroes2.Game` / `FHeroes2.UI` | ✅（占位） | 仅层边界标记类型，M2/M3 起实现 |
-| `FHeroes2.Client.Desktop` | ✅ | SDL3 宿主、`SdlPresenter`、`SdlTextRenderer`（SDL3_ttf）、诊断场景、命令行、截图 |
+| `FHeroes2.App` | ✅ | SDL3 宿主、`SdlPresenter`、`SdlTextRenderer`（SDL3_ttf）、诊断场景、命令行、截图 |
 | `tools/FHeroes2.AssetProbe` | ✅ | `list` / `info` / `extract` / `sprites` / `tiles` 五个子命令 |
 | 测试 | ✅ | 174 个（Core 117 / Assets 57，全部通过；支持真实数据时含 1434 条哈希与 ICN/TIL 摘要集成校验） |
 | AOT / 裁剪 | ✅ | 产品项目开启 `IsAotCompatible` 等分析器（警告即错误），0 条 IL 发现；**不发布** AOT（ADR-011） |
@@ -139,13 +139,13 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `Assets.Fonts.GlyphText` | ✅ | 唯一的一份布局实现（`Measure` / `DrawLine` / `DrawMultiline` / `WrapLines`），`BitmapFont` 与 `TrueTypeGlyphSource` 共用；CJK 无空格段落按字符断行 |
 | `Core.Imaging.PaletteTable` / `PaletteId`（文字颜色） | ✅ | `PAL::GetPalette` 的 13 张 256 字节重着色表 + identity，`tools/scripts/GeneratePaletteTable.ps1` 从 C++ 源生成、`PaletteTableTests` 固定 SHA-256；`ImageOps.ApplyPalette` 负责应用；`BitmapFont.WithPalette` 与 `GlyphCoverageRamp.WithPalette` 让位图字体与 TrueType 用同一颜色（ADR-020） |
 | `Assets.Fonts.CompositeGlyphSource` | ✅ | `IGlyphSource` 的复合实现：primary（原版位图字体）定 `LineHeight`/`SpaceWidth`，fallback（TrueType）只补 primary 不能表达的字符；`ForBitmapFont()` 自动把 primary 的调色板交给 CJK 梯度（ADR-021） |
-| `Client.Desktop.Fonts.GameFonts` | ✅ | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 并合成 `Small`/`Normal`/`Yellow` 三个字形源，暴露 `SupportsCjk` + `Description`；缺数据时返回 `null` 不抛异常 |
+| `App.Fonts.GameFonts` | ✅ | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 并合成 `Small`/`Normal`/`Yellow` 三个字形源，暴露 `SupportsCjk` + `Description`；缺数据时返回 `null` 不抛异常 |
 | 主菜单界面（`HEROES.ICN` 背景 + `BTNSHNGL.ICN` 招牌） | ✅ | `Scenes.MainMenuScene`：背景取 `HEROES.ICN`（资料片优先），五块招牌取 `BTNSHNGL.ICN` 的 1/5/9/13/17 帧（悬停 `+1`、按下 `+2`），位置直接来自 ICN 的 `OffsetX/OffsetY`；鼠标命中 + 释放判定 + `N/L/H/C/Q` 热键，`ESC` 退出（ADR-022） |
 | `UI.Widgets.Button` / `ButtonState` | ✅ | 三帧 `Sprite` + 状态机，`Area` = released 精灵包围盒，`Update(cursor, leftButtonDown)` 返回状态是否变化；缺帧回退到 released |
 | `Core.Geometry.PresentationViewport.TryToLogical` | ✅ | 窗口坐标 → 640×480 逻辑坐标（整数倍 + 黑边），黑边上返回 `false` |
 | `Core.Imaging.Palette.FindDarkestIndex/FindBrightestIndex` | ✅ | 状态栏底色与诊断场景的极值色查找，权重 `299/587/114`、并列取最小索引 |
 | `Assets.AssetBundle.TryReadIcn` | ✅ | ICN 装载的单一入口（`HEROES.ICN` / `BTNSHNGL.ICN` / `FONT.ICN` …），缺条目返回 `null` |
-| `Client.Desktop.Localization.GameText` | ✅ | 一个语言一个不可变实例：英文 = msgid，`zh_CN` = `<data>/files/lang/zh_CN.mo`；无 CJK 字形时自动退回英文 |
+| `App.Localization.GameText` | ✅ | 一个语言一个不可变实例：英文 = msgid，`zh_CN` = `<data>/files/lang/zh_CN.mo`；无 CJK 字形时自动退回英文 |
 | 状态栏（索引文字 + 语言标记 + FPS） | ✅ | 底部 11 px（一行 `SMALFONT.ICN`），左侧画悬停招牌的 `.mo` 译文、右侧画 `FPS \| 语言 (F2) \| vX.Y.Z`；`F2` 循环切换语言 |
 | `--scene` / `--lang` / `--cursor` / `--right-button` / `--screenshot-frame` / `--freeze-animation` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 把人造光标放进逻辑坐标（真实鼠标移动 / 移出被忽略，hover 态不会被物理指针清掉）；`--right-button` 在人造光标处按住右键，用来看/抓提示框；`--screenshot-frame n` 选抓图帧，`--freeze-animation` 把灯笼冻在第 1 帧 |
 | `Assets.Icn.IcnAnimation` | ✅ | ICN 帧区间循环播放器（对齐 `ICN::getAnimatedIcnIndex` 的帧表 + `fheroes2::TimeDelay` 的计时）：起始帧 + 帧数 + 每帧时长，整帧才前进、长停顿跳帧不补播、越界/非正时长抛异常 |
@@ -289,7 +289,7 @@ dotnet test FHeroes2Sharp.slnx
 ```
 dotnet test FHeroes2Sharp.slnx
   → Core 128 passed / Assets 105 passed / 0 failed（合计 233）
-dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot tools-output/fonts.png
+dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot tools-output/fonts.png
   → Game fonts ready: FONT.ICN + SMALFONT.ICN + WenQuanYi Micro Hei (CJK).
     Presentation ready: 1280x960 output, x2 scale, logical 640x480.  91.0 FPS
 ```
@@ -324,7 +324,7 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 ```
 dotnet build FHeroes2Sharp.slnx                       → 0 warning / 0 error
 dotnet test  FHeroes2Sharp.slnx                       → Core 136 / Assets 108 / UI 8 = 252 passed, 0 failed
-dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2\Data \
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2\Data \
     --smoke-frames 90 --screenshot tools-output/menu.png
   → Text catalog 'F:\game\fh2\files\lang\zh_CN.mo' loaded: 95 entries, language 'zh_CN'.
     Main menu ready: HEROES.ICN 640x480, 5 signs from BTNSHNGL.ICN, language 'zh_CN' (95 entries).
@@ -362,7 +362,7 @@ AssetProbe compare menu.png menu-hover.png
 ```
 dotnet build FHeroes2Sharp.slnx                       → 0 warning / 0 error
 dotnet test  FHeroes2Sharp.slnx                       → Core 136 / Assets 120 / UI 8 = 264 passed, 0 failed
-dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2\Data \
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2\Data \
     --smoke-frames 90 --freeze-animation --screenshot tools-output/menu.png
   → Main menu ready: HEROES.ICN 640x480, 5 signs from BTNSHNGL.ICN,
     lantern glow 39 frames every 250 ms, language 'zh_CN' (95 entries).
@@ -399,7 +399,7 @@ AssetProbe compare menu.png menu-hover.png
 ```
 dotnet build -warnaserror                              → 0 warning / 0 error
 dotnet test  --no-build                                → Core 136 / Assets 120 / UI 16 = 272 passed, 0 failed
-dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2 --scene menu --lang en \
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --scene menu --lang en \
     --cursor 100,280 --freeze-animation --screenshot-frame 30 --smoke-frames 90 \
     --screenshot tools-output/door/hover.png
   → Main menu ready: …, settings door lights up on hover, language 'en' (0 entries)

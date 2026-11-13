@@ -2,7 +2,7 @@ using FHeroes2.Assets.Localization;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Io;
 
-namespace FHeroes2.Client.Desktop.Localization;
+namespace FHeroes2.App.Localization;
 
 /// <summary>
 /// The text a screen shows: msgids of the original engine translated through the catalog that

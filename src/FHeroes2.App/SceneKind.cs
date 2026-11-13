@@ -1,4 +1,4 @@
-namespace FHeroes2.Client.Desktop;
+namespace FHeroes2.App;
 
 /// <summary>The screen the client starts with.</summary>
 public enum SceneKind

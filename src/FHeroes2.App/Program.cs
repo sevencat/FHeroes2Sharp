@@ -9,7 +9,7 @@ using FHeroes2.Core.Io;
 // analyzer check the SDL and Win32 interop the same way a net10.0-windows target would.
 [assembly: SupportedOSPlatform("windows")]
 
-namespace FHeroes2.Client.Desktop;
+namespace FHeroes2.App;
 
 /// <summary>Entry point of the desktop client.</summary>
 internal static class Program

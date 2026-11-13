@@ -5,7 +5,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using GlyphRaster;
 
-namespace FHeroes2.Client.Desktop.Fonts;
+namespace FHeroes2.App.Fonts;
 
 /// <summary>
 /// The fonts the UI draws with, loaded once at startup: the original bitmap tables

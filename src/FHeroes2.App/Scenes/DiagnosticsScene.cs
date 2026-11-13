@@ -1,11 +1,11 @@
 using FHeroes2.Assets.Fonts;
-using FHeroes2.Client.Desktop.Fonts;
+using FHeroes2.App.Fonts;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Rendering.Text;
 
-namespace FHeroes2.Client.Desktop.Scenes;
+namespace FHeroes2.App.Scenes;
 
 /// <summary>
 /// The engine diagnostics screen: palette strip, moving marker, font samples and the runtime state

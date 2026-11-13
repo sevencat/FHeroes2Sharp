@@ -5,7 +5,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Rendering.Present;
 using SDL3;
 
-namespace FHeroes2.Client.Desktop.Graphics;
+namespace FHeroes2.App.Graphics;
 
 /// <summary>
 /// SDL3 implementation of <see cref="IScreenPresenter"/>: owns the window, the renderer, the

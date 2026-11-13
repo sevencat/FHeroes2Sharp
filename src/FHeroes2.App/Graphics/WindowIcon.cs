@@ -4,7 +4,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using SDL3;
 
-namespace FHeroes2.Client.Desktop.Graphics;
+namespace FHeroes2.App.Graphics;
 
 /// <summary>
 /// The window icon: <c>assets/logo.ico</c> (embedded into the assembly) decoded into SDL surfaces

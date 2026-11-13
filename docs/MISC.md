@@ -59,7 +59,7 @@ dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-outpu
 dotnet run --project tools/FHeroes2.AssetProbe -- cursor ADVMBW01.BMP tools-output/cursor
 dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles-bmp --format bmp
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/heroes tools-output/heroes-ref --diff tools-output/diff
-dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
+dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot out.png
 pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译参考引擎导出器
 pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
@@ -105,7 +105,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData # 自建 runner：缺数�
 脚本真正执行的客户端命令就是下面这条，手搓等价：
 
 ```powershell
-dotnet run --project src/FHeroes2.Client.Desktop -- --data F:\game\fh2 --scene menu --lang en `
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --scene menu --lang en `
     --cursor 620,100 --freeze-animation --screenshot-frame 30 --smoke-frames 90 `
     --screenshot tools-output/baseline/menu.png
 FHeroes2.AssetProbe compare tools-output/baseline/menu.png tests/baselines/menu.png --ignore 0,469,640,11

@@ -1,4 +1,4 @@
-namespace FHeroes2.Client.Desktop.Scenes;
+namespace FHeroes2.App.Scenes;
 
 /// <summary>What a main menu button asks the host to do.</summary>
 /// <remarks>

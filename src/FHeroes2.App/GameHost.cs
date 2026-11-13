@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using FHeroes2.Assets;
-using FHeroes2.Client.Desktop.Fonts;
-using FHeroes2.Client.Desktop.Graphics;
-using FHeroes2.Client.Desktop.Scenes;
+using FHeroes2.App.Fonts;
+using FHeroes2.App.Graphics;
+using FHeroes2.App.Scenes;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
@@ -10,7 +10,7 @@ using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
 using SDL3;
 
-namespace FHeroes2.Client.Desktop;
+namespace FHeroes2.App;
 
 /// <summary>
 /// Composition root and SDL3 host of the desktop client: owns the SDL lifetime, the window and
