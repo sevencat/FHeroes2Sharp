@@ -1,5 +1,6 @@
 using FHeroes2.Assets;
 using FHeroes2.Assets.Agg;
+using FHeroes2.Assets.Cursor;
 using FHeroes2.Assets.Icn;
 using FHeroes2.Assets.Til;
 using FHeroes2.Core.Diagnostics;
@@ -16,8 +17,9 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe list    [--data &lt;dir&gt;] [--agg &lt;path&gt;] [--limit &lt;n&gt;]
 ///   FHeroes2.AssetProbe info    [--data &lt;dir&gt;] [--agg &lt;path&gt;]
 ///   FHeroes2.AssetProbe extract &lt;NAME&gt; &lt;output&gt; [--data &lt;dir&gt;] [--agg &lt;path&gt;]
-///   FHeroes2.AssetProbe sprites &lt;NAME.ICN&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;]
-///   FHeroes2.AssetProbe tiles   &lt;NAME.TIL&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;]
+///   FHeroes2.AssetProbe sprites &lt;NAME.ICN&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
+///   FHeroes2.AssetProbe tiles   &lt;NAME.TIL&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
+///   FHeroes2.AssetProbe cursor  &lt;NAME.BMP&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;]
 /// </code>
 /// </summary>
@@ -47,6 +49,7 @@ internal static class Program
                 "extract" => Extract(arguments),
                 "sprites" => ExportSprites(arguments),
                 "tiles" => ExportTiles(arguments),
+                "cursor" => ExportCursor(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -127,9 +130,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// Decodes every sprite of an ICN entry and writes it as a PNG, one file per sprite. Sprites
-    /// whose transform layer entry is "skip" become transparent, so the images can be compared
-    /// with the reference engine by eye.
+    /// Decodes every sprite of an ICN entry, one file per sprite. PNG is the default and keeps
+    /// "skip" transform entries transparent, so the images can be compared with the reference
+    /// engine by eye; BMP writes the 8 bit indexed raster instead, composed over
+    /// <c>--background</c> because an indexed bitmap has no alpha channel.
     /// </summary>
     private static int ExportSprites(ProbeArguments arguments)
     {
@@ -150,13 +154,14 @@ internal static class Program
         string stem = Path.GetFileNameWithoutExtension(name);
         Console.WriteLine($"# {name}: {icn.Count} sprites, palette '{arguments.PaletteName}'");
 
+        string extension = ExportExtension(arguments);
         for (int index = 0; index < icn.Count; ++index)
         {
             IcnHeader header = icn.Headers[index];
             Sprite sprite = icn.Sprites[index];
-            string file = Path.Combine(outputDirectory, $"{stem}_{index:D3}.png");
+            string file = Path.Combine(outputDirectory, $"{stem}_{index:D3}{extension}");
 
-            File.WriteAllBytes(file, PngWriter.EncodeRgba(sprite.Image, palette, sprite.Transform));
+            WriteSprite(file, sprite, palette, arguments);
 
             Console.WriteLine(string.Join(
                 '\t',
@@ -168,11 +173,12 @@ internal static class Program
                 Path.GetFileName(file)));
         }
 
-        Console.WriteLine($"Wrote {icn.Count} PNG files to '{Path.GetFullPath(outputDirectory)}'.");
+        Console.WriteLine(
+            $"Wrote {icn.Count} {arguments.Format.ToUpperInvariant()} files to '{Path.GetFullPath(outputDirectory)}'.");
         return 0;
     }
 
-    /// <summary>Decodes every tile of a TIL entry and writes it as a PNG.</summary>
+    /// <summary>Decodes every tile of a TIL entry and writes it as one image per tile.</summary>
     private static int ExportTiles(ProbeArguments arguments)
     {
         (string name, string outputDirectory) = ParseExportArguments(arguments, "tiles", "<NAME.TIL>");
@@ -192,17 +198,86 @@ internal static class Program
         string stem = Path.GetFileNameWithoutExtension(name);
         Console.WriteLine($"# {name}: {til.Count} tiles of {til.Width}x{til.Height}, palette '{arguments.PaletteName}'");
 
+        string extension = ExportExtension(arguments);
         for (int index = 0; index < til.Count; ++index)
         {
-            string file = Path.Combine(outputDirectory, $"{stem}_{index:D3}.png");
+            string file = Path.Combine(outputDirectory, $"{stem}_{index:D3}{extension}");
 
-            File.WriteAllBytes(file, PngWriter.EncodeRgba(til.Images[index], palette));
+            WriteImage(file, til.Images[index], palette, arguments);
 
             Console.WriteLine($"{index}\t{til.Width}x{til.Height}\t{Path.GetFileName(file)}");
         }
 
-        Console.WriteLine($"Wrote {til.Count} PNG files to '{Path.GetFullPath(outputDirectory)}'.");
+        Console.WriteLine(
+            $"Wrote {til.Count} {arguments.Format.ToUpperInvariant()} files to '{Path.GetFullPath(outputDirectory)}'.");
         return 0;
+    }
+
+    /// <summary>
+    /// Decodes a monochrome cursor entry (<c>ADVMBWnn.BMP</c>, <c>CMSEBWnn.BMP</c>,
+    /// <c>SPELBWnn.BMP</c>) and writes it as one image. These archive entries are cursor bitmaps in
+    /// the engine's own format, not Windows bitmaps.
+    /// </summary>
+    private static int ExportCursor(ProbeArguments arguments)
+    {
+        (string name, string outputDirectory) = ParseExportArguments(arguments, "cursor", "<NAME.BMP>");
+
+        using AssetArchive archive = OpenArchive(arguments);
+        byte[]? data = archive.TryRead(name);
+        if (data is null)
+        {
+            Console.Error.WriteLine($"error: '{name}' was not found in '{archive.Path}'.");
+            return 3;
+        }
+
+        Sprite cursor = MonoCursorFile.Parse(data);
+        Palette palette = LoadPalette(archive, arguments.PaletteName);
+        Directory.CreateDirectory(outputDirectory);
+
+        int total = cursor.Width * cursor.Height;
+        int opaque = cursor.Transform is null ? total : cursor.Transform.Count(entry => entry != 1);
+        string stem = Path.GetFileNameWithoutExtension(name);
+        string file = Path.Combine(outputDirectory, $"{stem}{ExportExtension(arguments)}");
+
+        WriteSprite(file, cursor, palette, arguments);
+
+        Console.WriteLine(
+            $"# {name}: {cursor.Width}x{cursor.Height} monochrome cursor, palette '{arguments.PaletteName}'");
+        Console.WriteLine($"{stem}\t{opaque}/{total} opaque\t{Path.GetFileName(file)}");
+        Console.WriteLine(
+            $"Wrote 1 {arguments.Format.ToUpperInvariant()} file to '{Path.GetFullPath(outputDirectory)}'.");
+        return 0;
+    }
+
+    /// <summary>File extension of the exported images, derived from <c>--format</c>.</summary>
+    private static string ExportExtension(ProbeArguments arguments) =>
+        arguments.Format == "bmp" ? ".bmp" : ".png";
+
+    /// <summary>
+    /// Writes an indexed image. PNG keeps the palette colours with full alpha, BMP keeps the
+    /// palette itself and the raw image layer.
+    /// </summary>
+    private static void WriteImage(string path, PixelBuffer image, Palette palette, ProbeArguments arguments)
+    {
+        File.WriteAllBytes(
+            path,
+            arguments.Format == "bmp"
+                ? BmpWriter.EncodeIndexed(image, palette)
+                : PngWriter.EncodeRgba(image, palette));
+    }
+
+    /// <summary>
+    /// Writes a sprite. PNG exports the transform layer as transparency, while BMP - like
+    /// <c>fheroes2::Save()</c> - composes the sprite over <c>--background</c> (palette index 0 by
+    /// default), because an indexed bitmap has no alpha channel.
+    /// </summary>
+    private static void WriteSprite(string path, Sprite sprite, Palette palette, ProbeArguments arguments)
+    {
+        File.WriteAllBytes(
+            path,
+            arguments.Format == "bmp"
+                ? BmpWriter.EncodeSprite(sprite, palette, arguments.Background ?? 0)
+                : PngWriter.EncodeRgba(sprite.Image, palette, sprite.Transform));
     }
 
     /// <summary>
@@ -438,11 +513,14 @@ internal static class Program
         Console.WriteLine("  list    [--data <dir>] [--agg <path>] [--limit <n>]    Lists the entries.");
         Console.WriteLine("  info    [--data <dir>] [--agg <path>]                 Shows statistics.");
         Console.WriteLine("  extract <NAME> <output> [--data <dir>] [--agg <path>] Writes one entry to disk.");
-        Console.WriteLine("  sprites <NAME.ICN> <dir> [--palette <NAME>]           Exports sprites as PNG files.");
-        Console.WriteLine("  tiles   <NAME.TIL> <dir> [--palette <NAME>]           Exports tiles as PNG files.");
+        Console.WriteLine("  sprites <NAME.ICN> <dir> [--palette <NAME>]           Exports sprites.");
+        Console.WriteLine("  tiles   <NAME.TIL> <dir> [--palette <NAME>]           Exports tiles.");
+        Console.WriteLine("  cursor  <NAME.BMP> <dir> [--palette <NAME>]           Exports one monochrome cursor.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>]                 Diffs PNG files or folders pixel by pixel.");
         Console.WriteLine();
         Console.WriteLine("The palette defaults to KB.PAL, which is read from the same archive.");
+        Console.WriteLine("--format png (default) or bmp selects the export format; PNG keeps transparent pixels,");
+        Console.WriteLine("BMP composes sprites over --background <index> because an indexed bitmap has no alpha.");
         Console.WriteLine("compare exits with 0 when everything matches and 3 when a size or a pixel differs.");
         Console.WriteLine();
         Console.WriteLine($"The data directory is resolved from --data, {AssetLocator.DataDirectoryEnvironmentVariable}");

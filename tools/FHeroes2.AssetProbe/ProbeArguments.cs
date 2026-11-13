@@ -20,6 +20,15 @@ internal sealed class ProbeArguments
 
     public string PaletteName { get; private set; } = "KB.PAL";
 
+    /// <summary>File format of the exported images: <c>png</c> (default) or <c>bmp</c>.</summary>
+    public string Format { get; private set; } = "png";
+
+    /// <summary>
+    /// Palette index used as the background of the exported sprites when the BMP format is chosen.
+    /// The reference engine recommends 23; the default leaves the raw image layer visible.
+    /// </summary>
+    public byte? Background { get; private set; }
+
     public string? DiffDirectory { get; private set; }
 
     public static ProbeArguments Parse(string[] args)
@@ -52,6 +61,27 @@ internal sealed class ProbeArguments
 
                 case "--palette":
                     parsed.PaletteName = NextValue(args, ref i, "--palette");
+                    break;
+
+                case "--format":
+                    string format = NextValue(args, ref i, "--format").ToLowerInvariant();
+                    if (format is not ("png" or "bmp"))
+                    {
+                        throw new ArgumentException($"'--format' expects 'png' or 'bmp', got '{format}'.");
+                    }
+
+                    parsed.Format = format;
+                    break;
+
+                case "--background":
+                    string rawBackground = NextValue(args, ref i, "--background");
+                    if (!byte.TryParse(rawBackground, out byte background))
+                    {
+                        throw new ArgumentException(
+                            $"'--background' expects a palette index between 0 and 255, got '{rawBackground}'.");
+                    }
+
+                    parsed.Background = background;
                     break;
 
                 case "--diff":
