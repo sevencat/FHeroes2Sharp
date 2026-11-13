@@ -539,6 +539,11 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
    变成失败；`-Tolerance <n>` 允许把判据从「逐字节相等」放宽到「差异像素 ≤ n」。
 6. 基线只在**有意**改变视觉时用 `-Update` 重建，规矩写在 `tests/baselines/README.md`
    （连同数据版本与 SHA-256）。
+7. CI 用 `.github/workflows/ci.yml`：`build` job 只做还原/编译/`dotnet test`（不需要数据）；
+   `menu-baseline` job 调 `VerifyMenuBaseline.ps1`，数据目录与 runner 由仓库变量
+   `FHEROES2_DATA` / `FHEROES2_RUNNER` 注入（设了才加 `-RequireData`）。脚本在**渲染之前**先校验
+   基线文件本身（PNG 魔数 + IHDR 必须 640×480），所以没有数据的托管 runner 上「基线被删/被换尺寸」
+   依然会让 job 失败，只有像素比对退化为 `skip`。失败时上传 `tools-output/baseline/` 作 artifact。
 
 **理由**：
 
@@ -547,8 +552,10 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
   都会让门禁失败，而不是「差得不多就放过」。
 * `--ignore` 放在 `compare` 里而不是在脚本里做后处理：矩形排除的语义与「逐像素差异」统计是同一件事，
   放在一起才能让差异图、`first at`、退出码保持自洽。
-* 脚本 + 退出码可以直接被任何 CI 调用（`pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData`），
-  不需要为仓库里并不存在的 pipeline 预置 yml。
+* 门禁必须是「一条命令 + 退出码」（`pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData`），
+  CI 只负责在什么机器上以什么变量调它；把渲染逻辑塞进 yml 会让本地与 CI 走两条不同的路。
+* 基线文件自检放在渲染之前而不是之后：没有游戏数据的托管 runner 也能抓住「基线被删掉」这类
+  错误，这类错误恰恰是提交基线时最容易犯的。
 
 **代价 / 约束**：
 
@@ -558,6 +565,9 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
   必须另存 `menu-classic.png`，不能覆盖。
 * 状态栏像素不在基线覆盖范围内（版本号与 FPS 是运行时值），它的渲染靠人工看
   `tools-output/menu-hover.png` 这类截图。
+* **托管 runner 只能做基线自检，做不了像素比对**：游戏数据不能入库、也不该塞进仓库 secret（体积），
+  所以真正的门禁需要一台装了数据的自建 runner（`FHEROES2_RUNNER=fh2-data` + `FHEROES2_DATA=…`）。
+  在此之前，PR 上的 `menu-baseline` job 绿只代表「基线文件本身没坏」。
 * 脚本依赖 Windows + PowerShell 与本地 Debug 输出路径（`bin/Debug/net10.0/FHeroes2Sharp.exe`）。
   Linux 上的 runner 需要 `pwsh` 且路径/程序集名一致，否则先 `dotnet build` 再手搓那两条命令。
 

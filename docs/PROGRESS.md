@@ -150,7 +150,8 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `--scene` / `--lang` / `--cursor` / `--screenshot-frame` / `--freeze-animation` 开关 | ✅ | 默认进主菜单，`--scene diagnostics` 保留 M0 诊断屏；`--cursor x,y` 把人造光标放进逻辑坐标（真实鼠标移动 / 移出被忽略，hover 态不会被物理指针清掉）；`--screenshot-frame n` 选抓图帧，`--freeze-animation` 把灯笼冻在第 1 帧 |
 | `Assets.Icn.IcnAnimation` | ✅ | ICN 帧区间循环播放器（对齐 `ICN::getAnimatedIcnIndex` 的帧表 + `fheroes2::TimeDelay` 的计时）：起始帧 + 帧数 + 每帧时长，整帧才前进、长停顿跳帧不补播、越界/非正时长抛异常 |
 | `SHNGANIM.ICN` 灯笼光晕动画 | ✅ | 第 0 帧灯体先画一次，第 1…39 帧每 250 ms 换帧（9.75 s 一圈），顺序「背景 → 灯体 → 光晕 → 招牌 → 状态栏」同 `Game::MainMenu()`（ADR-022） |
-| `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
+| `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
+| `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
 | 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面） |
 
 ### M2 验证记录（本地化部分）
@@ -364,7 +365,26 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Baseline tools-output/menu-hover.png 
   → 1095 of 307200 pixels differ, tolerance is 2000 → match（退出码 0）
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData（数据目录不可用时）
   → error Heroes2.agg was not found（退出码 1）；不给 -RequireData 时 skip（退出码 0）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Baseline tools-output/nope.png
+  → error baseline '…\nope.png' does not exist（退出码 1，渲染前就失败）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Baseline README.md
+  → error baseline '…\README.md' is not a PNG file（退出码 1）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -Baseline tools-output/preflight/BTNSHNGL_000.png
+  → error baseline '…' is 81x113; the logical surface is 640x480（退出码 1）
 ```
+
+* CI：`.github/workflows/ci.yml`（Python `yaml.safe_load` 校验通过，job/step 与 `on` 键都能解析）——
+  `build` job 跑 `dotnet restore` → `dotnet build -warnaserror` → `dotnet test --no-build`；
+  `menu-baseline` job 用 `@splat` 拼参数调脚本（设了 `vars.FHEROES2_DATA` 才加 `-DataDirectory` 与
+  `-RequireData`），失败时上传 `tools-output/baseline/`。本地按 yml 里的片段原样跑过两次：
+  设 `FHEROES2_DATA=F:\game\fh2` → `match`（退出码 0），splat 传参与 `-RequireData` 都生效。
+* 基线自检（`Assert-PngBaseline`）在查数据**之前**执行：读 8 字节 PNG 魔数 + `IHDR`，再用
+  `Read-BigEndianInt32` 解出宽高要求 640×480。这样托管 runner 上没有数据也能抓住「基线被删/被换」，
+  只有真正的像素比对退化为 `skip`。
+* 没有游戏数据的机器上脚本 `skip` 并以 0 退出（与 ADR-010 的「缺数据提前返回」同一策略），
+  自建 runner 用 `-RequireData` 把 skip 变成失败。托管 runner 永远没有数据（不入库、也不该塞进
+  secret），所以 PR 上的绿色 `menu-baseline` 只代表「基线文件没坏」；真正的像素门禁要靠
+  `FHEROES2_RUNNER=fh2-data` + `FHEROES2_DATA=…` 的自建 runner（ADR-023 第 7 条）。
 
 * 门禁的核心是「三个开关必须一起给」：`--freeze-animation`（光晕不跟挂钟）、`--cursor 620,100`
   （人造光标，物理鼠标不会点亮招牌）、`--ignore 0,469,640,11`（状态栏的 FPS 与版本号）。

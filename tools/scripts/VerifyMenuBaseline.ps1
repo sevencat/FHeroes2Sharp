@@ -9,6 +9,10 @@
     the data dependent xunit tests (ADR-010). Pass -RequireData on a machine that must have data
     (for example a self hosted runner) to turn that skip into a failure.
 
+    Before the data lookup the committed baseline itself is validated (PNG signature and 640x480
+    size), so a deleted, truncated or wrongly sized baseline fails even where the render has to
+    be skipped; that is the part a hosted CI runner can always enforce.
+
     Two things make the frame reproducible:
       --freeze-animation  the lantern glow stays on its first frame instead of following the clock
       --cursor            a synthetic cursor is used, so the physical mouse cannot hover a sign
@@ -111,6 +115,19 @@ function Invoke-Build {
     }
 }
 
+# PNG stores its integers big endian. -shl on a [byte] operand stays inside the byte width
+# (0x02 -shl 8 evaluates to 0), so every operand is widened before the shift.
+function Read-BigEndianInt32 {
+    param([byte[]] $Bytes, [int] $Offset)
+
+    $value = 0
+    for ($index = 0; $index -lt 4; $index++) {
+        $value = ($value -shl 8) -bor [int]$Bytes[$Offset + $index]
+    }
+
+    return $value
+}
+
 # The baseline is the artefact under test, so it is checked even when no game data exists: a
 # deleted or wrongly sized baseline has to fail on a machine that can only run the cheap part
 # (that is exactly what a hosted CI runner does).
@@ -137,8 +154,8 @@ function Assert-PngBaseline {
 
     # The client renders on a fixed 640x480 logical surface; a baseline of another size can only
     # be a mistake (for example a 2x screenshot).
-    $width = ($bytes[16] -shl 24) -bor ($bytes[17] -shl 16) -bor ($bytes[18] -shl 8) -bor $bytes[19]
-    $height = ($bytes[20] -shl 24) -bor ($bytes[21] -shl 16) -bor ($bytes[22] -shl 8) -bor $bytes[23]
+    $width = Read-BigEndianInt32 -Bytes $bytes -Offset 16
+    $height = Read-BigEndianInt32 -Bytes $bytes -Offset 20
     if ($width -ne 640 -or $height -ne 480) {
         Write-Host ("error  baseline '{0}' is {1}x{2}; the logical surface is 640x480." -f $Path, $width, $height)
         exit 1

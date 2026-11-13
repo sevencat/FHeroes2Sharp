@@ -1,5 +1,7 @@
 # FHeroes2Sharp
 
+[![CI](https://github.com/sevencat/FHeroes2Sharp/actions/workflows/ci.yml/badge.svg)](https://github.com/sevencat/FHeroes2Sharp/actions/workflows/ci.yml)
+
 C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植自
 [fheroes2](https://github.com/ihhub/fheroes2)（C++，GPLv2）。
 
@@ -38,6 +40,9 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 灯笼光晕也已接上：`SHNGANIM.ICN` 第 0 帧做灯体、第 1…39 帧每 250 ms 换帧（`Assets.Icn.IcnAnimation`）。
 像素回归有了基线门禁：`tests/baselines/menu.png` 入库，`tools/scripts/VerifyMenuBaseline.ps1`
 用「冻结动画 + 人造光标」渲染一帧后逐像素比对（状态栏的 FPS/版本号由 `compare --ignore` 排除，ADR-023）。
+CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这个脚本做像素门禁：托管 runner 没有游戏数据，
+只校验基线文件本身（PNG 魔数 + 640×480），像素比对留给装了数据的自建 runner（仓库变量
+`FHEROES2_RUNNER` + `FHEROES2_DATA`）。
 待办：语言选择对话框、BGM、设置入口。
 
 ## 快速开始

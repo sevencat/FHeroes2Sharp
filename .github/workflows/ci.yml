@@ -51,9 +51,9 @@ jobs:
 
   menu-baseline:
     name: main menu pixel baseline
-    # Runs in parallel with the build job on purpose: the script builds what it needs and its
-    # failure message ("MenuBaseline" output) is easier to read than a build job that failed
-    # earlier for an unrelated reason.
+    # Deliberately not `needs: build` - it runs in parallel, builds what it needs itself, and its
+    # own failure output (render + compare lines + diff image) is easier to read than a build job
+    # that failed earlier for an unrelated reason.
     runs-on: ${{ vars.FHEROES2_RUNNER || 'windows-latest' }}
     timeout-minutes: 20
     steps:

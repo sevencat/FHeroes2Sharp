@@ -16,11 +16,24 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData # 自建 runner 上把「
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16 # 容忍少量像素漂移
 ```
 
-脚本做的事：`dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
+脚本做的事：先做**基线自检**（PNG 魔数 + `IHDR` 必须是 640×480，失败即退出 `1`），
+再 `dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
 渲染一帧 → 交给 `AssetProbe compare` 与基线逐像素比对（差异图写到
 `tools-output/baseline/diff/diff_menu.png`，退出码 `1` 表示超阈值）。
 找不到 `Heroes2.agg` 时打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致
 （ADR-010）；只有显式给 `-RequireData` 才把缺数据当失败。
+
+## CI 怎么接
+
+`.github/workflows/ci.yml` 的 `menu-baseline` job 直接调用这个脚本：
+
+* 托管 runner（`windows-latest`）没有游戏数据，脚本会停在自检之后：**基线文件本身**被校验
+  （存在、是 PNG、640×480），像素比对退化为 `skip`。这一步拦的是「基线被删/被换错尺寸」。
+* 要真正跑像素比对，需要一台装了数据的自建 runner：把仓库变量 `FHEROES2_RUNNER` 设成它的标签
+  （例如 `fh2-data`）、`FHEROES2_DATA` 设成数据目录（例如 `D:\game\fh2`）。两个变量都在时，
+  job 才会传 `-DataDirectory` 与 `-RequireData`（缺数据即失败，而不是静默 skip）。
+* 失败时 job 会把 `tools-output/baseline/menu.png`（刚渲染的图）与 `diff/diff_menu.png`
+  作为 artifact `menu-baseline-diff` 上传。
 
 ## 为什么逐字节一致是可达的
 

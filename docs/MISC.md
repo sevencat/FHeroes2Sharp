@@ -110,6 +110,20 @@ FHeroes2.AssetProbe compare tools-output/baseline/menu.png tests/baselines/menu.
 不会点亮招牌）、`--ignore 0,469,640,11`（状态栏的 FPS / 版本号）。少任何一个，基线都会随机失败。
 基线文件本身的来历与更新规矩写在 `tests/baselines/README.md`。
 
+CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 → 编译 → `dotnet test`）在任何
+机器上都能跑，`menu-baseline` 调这个脚本。像素比对需要原版数据（不能入库），所以数据和 runner
+通过仓库变量接线：
+
+| 仓库变量 | 作用 |
+| --- | --- |
+| `FHEROES2_DATA` | runner 上的游戏数据目录；设置了才把 `-DataDirectory` + `-RequireData` 传给脚本 |
+| `FHEROES2_RUNNER` | runner 标签（如 `fh2-data`），指向装了数据的自建 runner；不设置就用 `windows-latest` |
+
+托管 runner 上没有数据，脚本会在渲染**之前**先校验基线文件本身（PNG 魔数 + IHDR 必须是
+640×480），然后打印 `skip` 并以 0 退出——这样「基线被删掉/换错尺寸」在托管 runner 上也会失败，
+而真正的像素比对留给有数据的 runner。比对失败时 workflow 把 `tools-output/baseline/` 里的
+`menu.png` 与 `diff/diff_menu.png` 作为 artifact 上传。
+
 ### 参考引擎对拍（C++ ↔ C#）
 
 `tools/reference/fh2_reference.cpp` 只是一层参数解析：它把自己链接到 fheroes2 的
@@ -236,6 +250,10 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 21. **`(Get-Content x).Count` 与 `Measure-Object -Line` 数出来的行号不一样**：后者**不计空行**，
     脚本按它算插入位置会把代码插进函数体中间（表现为「脚本安静地什么都不做就 exit 0」）。
     需要行号时用 `(Get-Content -LiteralPath x).Count`，或者干脆按唯一文本做锚点替换。
+22. **PowerShell 的 `-shl` 在 `[byte]` 操作数上按字节宽度算**：读 PNG 头时
+    `$bytes[18] -shl 8` 得到 **0**（不是 512），于是 640×480 被解析成 128×224 却毫无报错。
+    移位前先 `[int]` 展开，或用「循环左移 8 位再 `-bor`」的写法（`VerifyMenuBaseline.ps1`
+    的 `Read-BigEndianInt32` 就是后者）。
 
 ## 目录与产物
 
@@ -245,6 +263,7 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 | `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
 | `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、参考导出器编译、参考对拍、语言包编译、主菜单像素基线 |
 | `tests/baselines/` | **入库**的回归基线 PNG（`menu.png` 等），来历与更新规矩见其中的 `README.md` |
+| `.github/workflows/` | CI（`ci.yml`）：`build` job 编译 + 测试，`menu-baseline` job 跑像素基线脚本 |
 | `translations/` | 语言包源文件（`.po`，UTF-8）；`.mo` 编译产物装到数据目录，不入库 |
 | `tools-output/` | 截图、导出产物、编译出的参考导出器，已在 `.gitignore` 中忽略 |
 | `data/` | 本地游戏数据（若复制进仓库目录），已忽略 |
