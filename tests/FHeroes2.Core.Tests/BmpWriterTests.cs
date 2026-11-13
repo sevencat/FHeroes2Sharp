@@ -38,7 +38,10 @@ public sealed class BmpWriterTests
         Assert.Equal(3, bmp[entry]); // Blue.
         Assert.Equal(2, bmp[entry + 1]); // Green.
         Assert.Equal(1, bmp[entry + 2]); // Red.
-        Assert.Equal(0, bmp[entry + 3]); // Reserved.
+        // The fourth byte is "reserved" in the BMP specification, but SDL_SaveBMP writes the
+        // palette alpha there (255 for every entry of fheroes2::SaveImage), and matching that
+        // makes our files byte for byte identical to the reference engine output.
+        Assert.Equal(255, bmp[entry + 3]);
     }
 
     [Fact]

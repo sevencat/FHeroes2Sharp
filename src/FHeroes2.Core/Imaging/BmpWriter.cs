@@ -22,7 +22,7 @@ public static class BmpWriter
     /// <summary>Size of the <c>BITMAPINFOHEADER</c>.</summary>
     public const int InfoHeaderSize = 40;
 
-    /// <summary>Size of one palette entry: blue, green, red and a reserved byte.</summary>
+    /// <summary>Size of one palette entry: blue, green, red and the alpha byte SDL stores.</summary>
     public const int PaletteEntrySize = 4;
 
     /// <summary>Size of the table stored in the file, which always holds all 256 entries.</summary>
@@ -109,7 +109,10 @@ public static class BmpWriter
             entry[0] = color.B;
             entry[1] = color.G;
             entry[2] = color.R;
-            entry[3] = 0; // Reserved, always zero.
+            // BMP calls this byte reserved, but SDL_SaveBMP writes the palette's alpha there and
+            // fheroes2::SaveImage() sets every entry to 255. Writing 255 keeps the output byte
+            // for byte identical to the reference engine; readers ignore the value.
+            entry[3] = 255;
             stream.Write(entry);
         }
 
