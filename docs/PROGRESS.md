@@ -154,9 +154,29 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `tests/baselines/menu.png` + `tools/scripts/VerifyMenuBaseline.ps1` | ✅ | 入库的 640×480 像素基线 + 门禁脚本：先做基线自检（PNG 魔数 + 尺寸），再冻结动画 + 人造光标渲染一帧，用 `compare --ignore 0,469,640,11` 逐像素比对；缺数据时 `skip` 退出 0（ADR-023） |
 | `.github/workflows/ci.yml` | ✅ | `build` job（`dotnet restore` → `build -warnaserror` → `test`）+ `menu-baseline` job（调基线脚本，`FHEROES2_DATA`/`FHEROES2_RUNNER` 两个仓库变量接线），失败时把差异图当 artifact 上传 |
 | 右键提示框（`BUYBUILD.ICN` 消息框） | ✅ | `UI.Dialogs.FrameBoxChrome` + `FrameBox` + `MessageBox`：六块列拼装（顶 99 + 中段 35×n + 底 81），文字区 244 宽、最小 70 高；标题 yellow / 正文 normal 折行居中；`MainMenuScene.SetRightButton` 按住创建、松开丢弃，画在状态栏之后（ADR-024） |
+| 对话框影像原语（渐变阴影 / 抖动过渡） | ✅ | `ImageOps` 新增 partial 文件：`ApplyTransform`（按 16 张重着色表转换一块矩形）、`AddGradientShadow`（沿精灵轮廓投 2–5 号表的渐变阴影，斜率取整同 `std::round`）、`AddGradientShadowForArea`（矩形左边与下边的 16 px 阴影带）、`CreateDitheringTransition`（周期逐次翻倍的棋盘过渡，奇数尺寸的一半右移一格照抄）；8 个用例与 C++ 参考实现逐字节相同（`CompareEffectsWithReference.ps1`） |
 | 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框还缺 `StandardWindow` 与按钮组，见 ADR-024） |
 
-### M2 验证记录（本地化部分）
+### M2 验证记录（对话框影像原语）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx              → Core 145 / Assets 120 / UI 36，全部通过
+                                               （Core 新增 9 条：ImageShadingTests）
+pwsh tools/scripts/BuildReferenceTool.ps1    → 参考导出器编译通过（新增 effects 子命令）
+pwsh tools/scripts/CompareEffectsWithReference.ps1
+  → Files: 8 of 8 are byte for byte identical
+```
+
+* `effects` 的输入全是公式（96×64 画布、37×21 精灵，每第五条对角线透明），两侧共享的只有算式：
+  8 个用例分别覆盖变换表、精灵阴影、矩形阴影、纵/横过渡的偶数与奇数尺寸，以及越界裁剪。
+  这条比对是「移植是否忠实」唯一的硬证据，单元测试只钉 C# 侧的约定。
+* 测试补的是对拍覆盖不到的部分：`ApplyTransform` 只动请求的矩形、负坐标裁剪、非法表号抛异常、
+  单层源不出阴影、阴影越靠近轮廓越强（4 号表比 5 号表深）、过渡里奇数尺寸的一半位移、透明源像素不覆盖目标。
+* 一个实现细节：C++ 用指针走 `CreateDitheringTransition`，移植改成「左右/上下两个索引各自前进」，
+  但奇偶分支的 `--`/`++` 与 `patternPoint` 的计算一字未改——这正是逐字节相同的原因。
+
+
 
 ```
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN

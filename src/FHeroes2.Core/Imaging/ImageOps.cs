@@ -6,7 +6,7 @@ namespace FHeroes2.Core.Imaging;
 /// Clipping aware primitives on <see cref="PixelBuffer"/>. Everything here works on the
 /// indexed 8 bit surface; palette lookup happens only when the frame is presented.
 /// </summary>
-public static class ImageOps
+public static partial class ImageOps
 {
     public static void FillRect(PixelBuffer target, in Rect area, byte color)
     {

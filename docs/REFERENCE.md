@@ -14,6 +14,7 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/engine/math_base.h`（`Point`/`Size`/`Rect`） | `FHeroes2.Core.Geometry.Point/Size/Rect` | 右/下边界半开 |
 | `src/engine/image_palette.h/.cpp` | `FHeroes2.Core.Imaging.Palette` | 6 bit → `<<2`，循环色复制见下 |
 | `src/engine/image.h`（`Image`、`Blit`） | `PixelBuffer` + `ScreenBuffer` + `Sprite` + `ImageOps` | 变换层感知的 `BlitSprite` |
+| `src/engine/image.cpp`（`ApplyTransform`、`addGradientShadow`、`addGradientShadowForArea`、`CreateDitheringTransition`） | `ImageOps.ApplyTransform` / `AddGradientShadow` / `AddGradientShadowForArea` / `CreateDitheringTransition` | 目标一律是单层表面；阴影线的斜率取整改用 `MidpointRounding.AwayFromZero`（`std::round` 的语义）；8 个用例与 C++ 逐字节相同（`tools/scripts/CompareEffectsWithReference.ps1`） |
 | `src/engine/image.cpp`（`transformTable`、`ApplyPalette`） | `FHeroes2.Core.Imaging.PaletteTransformTable` | 16×256 表，逐字节移植（SHA-256 固定） |
 | `src/engine/pal.cpp`（`PAL::GetPalette`、`CombinePalettes`） | `FHeroes2.Core.Imaging.PaletteTable` + `PaletteId` | 13×256 重着色表 + identity；脚本生成 + SHA-256 固定（ADR-020） |
 | `src/engine/image_tool.cpp`（`decodeICNSprite`） | `FHeroes2.Assets.Icn.IcnSpriteDecoder` | 单色流 + 彩色流、`0xC0` 变换段 |

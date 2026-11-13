@@ -61,6 +61,7 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译参考引擎导出器
 pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
+pwsh tools/scripts/CompareEffectsWithReference.ps1 # 对话框影像原语（阴影 / 抖动过渡）逐字节比对
 pwsh tools/scripts/VerifyMenuBaseline.ps1     # 主菜单像素基线（冻结动画 + 合成光标，退出码 0 = 一致）
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update   # 有意改了视觉后重建 tests/baselines/menu.png
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
@@ -150,6 +151,17 @@ pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
   | `fh2_reference icn <AGG> <NAME.ICN> <OUT> [bg]` | `sprites <NAME.ICN> <OUT> --format bmp --background <bg>` | `<STEM>_000.bmp`、… |
   | `fh2_reference til <AGG> <NAME.TIL> <OUT>` | `tiles <NAME.TIL> <OUT> --format bmp` | `<STEM>_000.bmp`、… |
   | `fh2_reference cursor <AGG> <NAME.BMP> <OUT> [bg]` | `cursor <NAME.BMP> <OUT> --format bmp --background <bg>` | `<STEM>.bmp` |
+  | `fh2_reference effects <AGG> <OUT>` | `effects <OUT>` | `01-transform.bmp`、…（固定 8 个） |
+
+* `effects` 对拍的是**对话框影像原语**而不是归档条目：两侧用同一组公式化输入（96×64 画布
+  `(11x + 17y + 40) & 0xFF`、37×21 带变换层的精灵 `(29x + 7y + 3) & 0xFF`，每第五条对角线透明），
+  各自调用 `ApplyTransform` / `addGradientShadow` / `addGradientShadowForArea` /
+  `CreateDitheringTransition`，写出 8 个 8 bit BMP。`tests/FHeroes2.Core.Tests/ImageShadingTests.cs`
+  只钉 C# 侧的行为，像素级的「和原版一模一样」由这个子命令保证。
+* 跑参考导出器时要把 MSYS2 的 `bin` 加进 `PATH`（它链接了 MSYS2 运行时）；照抄
+  `BuildReferenceTool.ps1` 的做法即可，`CompareEffectsWithReference.ps1` 已经内置这一段：
+  `$env:PATH = (Join-Path $MsysRoot 'bin') + ';' + $env:PATH`。少了这一步 exe 直接以
+  `0xC0000135`（`STATUS_DLL_NOT_FOUND`）退出，且没有任何输出。
 
 * 底色必须一致才能比：参考引擎导出精灵/光标时用调色板索引 23，所以脚本传 `--background 23`
   （`AssetProbe` 的默认值是 0，直接对比会全图不同）。

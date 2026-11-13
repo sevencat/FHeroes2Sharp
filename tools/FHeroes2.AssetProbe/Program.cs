@@ -21,6 +21,7 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe sprites &lt;NAME.ICN&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe tiles   &lt;NAME.TIL&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe cursor  &lt;NAME.BMP&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
+///   FHeroes2.AssetProbe effects &lt;output-dir&gt; [--palette &lt;NAME&gt;]
 ///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;] [--ignore x,y,w,h]...
 /// </code>
 /// </summary>
@@ -51,6 +52,7 @@ internal static class Program
                 "sprites" => ExportSprites(arguments),
                 "tiles" => ExportTiles(arguments),
                 "cursor" => ExportCursor(arguments),
+                "effects" => ExportEffects(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -253,6 +255,37 @@ internal static class Program
     /// <summary>File extension of the exported images, derived from <c>--format</c>.</summary>
     private static string ExportExtension(ProbeArguments arguments) =>
         arguments.Format == "bmp" ? ".bmp" : ".png";
+
+    /// <summary>
+    /// Renders the dialog effects on synthetic input, the C# half of
+    /// <c>fh2_reference effects</c>. The files are always 8 bit BMP because that is what the
+    /// reference exporter writes; <c>tools/scripts/CompareEffectsWithReference.ps1</c> hashes both
+    /// output folders.
+    /// </summary>
+    private static int ExportEffects(ProbeArguments arguments)
+    {
+        if (arguments.Positional.Count != 1)
+        {
+            throw new ArgumentException("'effects' expects exactly one argument: <output-dir>.");
+        }
+
+        string outputDirectory = arguments.Positional[0];
+
+        using AssetArchive archive = OpenArchive(arguments);
+        Palette palette = LoadPalette(archive, arguments.PaletteName);
+        Directory.CreateDirectory(outputDirectory);
+
+        foreach ((string name, PixelBuffer image) in EffectsPreview.Render())
+        {
+            string file = Path.Combine(outputDirectory, name);
+            File.WriteAllBytes(file, BmpWriter.EncodeIndexed(image, palette));
+            Console.WriteLine($"{name}\t{image.Width}x{image.Height}");
+        }
+
+        Console.WriteLine(
+            $"Wrote 8 BMP files to '{Path.GetFullPath(outputDirectory)}' using palette '{arguments.PaletteName}'.");
+        return 0;
+    }
 
     /// <summary>
     /// Writes an indexed image. PNG keeps the palette colours with full alpha, BMP keeps the
@@ -551,6 +584,7 @@ internal static class Program
         Console.WriteLine("  sprites <NAME.ICN> <dir> [--palette <NAME>]           Exports sprites.");
         Console.WriteLine("  tiles   <NAME.TIL> <dir> [--palette <NAME>]           Exports tiles.");
         Console.WriteLine("  cursor  <NAME.BMP> <dir> [--palette <NAME>]           Exports one monochrome cursor.");
+        Console.WriteLine("  effects <dir> [--palette <NAME>]                     Renders the dialog effects preview.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
         Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
         Console.WriteLine("                      bar shows a live FPS counter.");
