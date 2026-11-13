@@ -1,0 +1,350 @@
+# Simplified Chinese (zh_CN) translation of FHeroes2Sharp
+# Copyright (C) 2026 FHeroes2Sharp contributors
+# This file is distributed under the same license as the project (GPLv2).
+#
+# The msgid values are byte identical to the English strings of fheroes2 1.1.18
+# (src/fheroes2/**), so the same catalog can be shared with the reference engine
+# once it grows CJK support. Strings that are missing here fall back to English
+# (see docs/MISC.md, "本地化").
+#
+# Build: pwsh tools/scripts/BuildTranslations.ps1
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: FHeroes2Sharp\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-13 12:00+0800\n"
+"PO-Revision-Date: 2026-11-13 12:00+0800\n"
+"Last-Translator: FHeroes2Sharp contributors\n"
+"Language-Team: Simplified Chinese\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: hand written\n"
+
+#. 通用按钮与菜单条目
+msgid "Okay"
+msgstr "确定"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Exit"
+msgstr "退出"
+
+msgid "Quit"
+msgstr "退出游戏"
+
+msgid "New Game"
+msgstr "新游戏"
+
+msgid "Load Game"
+msgstr "载入游戏"
+
+msgid "High Scores"
+msgstr "高分榜"
+
+msgid "Credits"
+msgstr "制作人员"
+
+msgid "Editor"
+msgstr "地图编辑器"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Game Settings"
+msgstr "游戏设置"
+
+msgid "Standard"
+msgstr "标准"
+
+msgid "Campaign"
+msgstr "战役"
+
+msgid "Unknown Hero"
+msgstr "无名英雄"
+
+msgid "Your Name"
+msgstr "你的名字"
+
+#. 主菜单
+msgid ""
+"\n"
+"\n"
+"Before starting the game, please select a game resolution."
+msgstr ""
+"\n"
+"\n"
+"开始游戏前，请先选择游戏分辨率。"
+
+msgid ""
+"\n"
+"\n"
+"To simulate a right-click with a touch to get info on various items, you "
+"need to first touch and keep touching on the item of interest and then touch "
+"anywhere else on the screen. While holding the second finger, you can remove "
+"the first one from the screen and keep viewing the information on the item."
+msgstr ""
+"\n"
+"\n"
+"如果想用触摸来模拟右键查看物品的各项信息，请先按住想查看的物品不放，"
+"然后再用另一根手指触摸屏幕的其他位置。保持第二根手指按住的同时，"
+"可以移开第一根手指，此时仍然可以看到该物品的信息。"
+
+msgid "Welcome to Heroes of Might and Magic II powered by fheroes2 engine!"
+msgstr "欢迎来到由 fheroes2 引擎运行的《魔法门之英雄无敌 II》！"
+
+msgid "Start a single or multi-player game."
+msgstr "开始单人游戏或多人游戏。"
+
+msgid "Load a previously saved game."
+msgstr "载入之前保存的游戏。"
+
+msgid "View the high scores screen."
+msgstr "查看高分榜。"
+
+msgid "View the credits screen."
+msgstr "查看制作人员名单。"
+
+msgid "Create new or modify existing maps."
+msgstr "创建新地图或修改已有地图。"
+
+msgid "Change language, resolution and settings of the game."
+msgstr "更改游戏的语言、分辨率与设置。"
+
+msgid "Quit Heroes of Might and Magic II and return to the operating system."
+msgstr "退出《魔法门之英雄无敌 II》并返回操作系统。"
+
+msgid "Greetings!"
+msgstr "欢迎！"
+
+#. 高分榜
+msgid "View High Scores for Campaigns."
+msgstr "查看战役高分榜。"
+
+msgid "View High Scores for Standard Maps."
+msgstr "查看标准地图的高分榜。"
+
+#. 设置总览
+msgid "Audio"
+msgstr "音频"
+
+msgid "Graphics"
+msgstr "画面"
+
+msgid "Interface"
+msgstr "界面"
+
+msgid "Battles"
+msgstr "战斗"
+
+msgid "Interface Settings"
+msgstr "界面设置"
+
+msgid "Interface Type"
+msgstr "界面类型"
+
+msgid "Mouse Cursor"
+msgstr "鼠标指针"
+
+msgid "Text Support"
+msgstr "文字提示"
+
+msgid "Hot Keys"
+msgstr "快捷键"
+
+msgid "Auto Resolve"
+msgstr "自动战斗"
+
+msgid "Auto, No Spells"
+msgstr "自动（不使用法术）"
+
+msgid "Don't Show"
+msgstr "不显示"
+
+msgid "Hero Speed"
+msgstr "英雄速度"
+
+msgid "Enemy Speed"
+msgstr "敌方速度"
+
+msgid "Select Game Language"
+msgstr "选择游戏语言"
+
+msgid "Select Game Language:"
+msgstr "选择游戏语言："
+
+msgid "Select Language:"
+msgstr "选择语言："
+
+msgid "Select Game Resolution:"
+msgstr "选择游戏分辨率："
+
+msgid "Jump"
+msgstr "跳跃"
+
+msgid "combatMode|Manual"
+msgstr "手动"
+
+msgid "hotkeys|All Categories"
+msgstr "全部分类"
+
+msgid "Category: "
+msgstr "类别："
+
+msgid "Event: "
+msgstr "事件："
+
+msgid "Hot Keys:"
+msgstr "快捷键："
+
+msgid "Hotkey: "
+msgstr "快捷键："
+
+msgid "Click here to select:\n"
+msgstr "点击这里选择：\n"
+
+msgid "Select hotkeys category"
+msgstr "选择快捷键类别"
+
+#. 设置项说明（鼠标悬停提示）
+msgid "Change the audio settings of the game."
+msgstr "更改游戏的音频设置。"
+
+msgid "Change the graphics settings of the game."
+msgstr "更改游戏的画面设置。"
+
+msgid "Change the interface settings of the game."
+msgstr "更改游戏的界面设置。"
+
+msgid "Change the language of the game."
+msgstr "更改游戏的语言。"
+
+msgid "Change the speed at which your heroes move on the main screen."
+msgstr "更改英雄在主地图上的移动速度。"
+
+msgid "Check and configure all the hot keys present in the game."
+msgstr "查看并配置游戏中的全部快捷键。"
+
+msgid ""
+"Sets the speed that computer heroes move at. You can also elect not to view "
+"computer movement at all."
+msgstr "设置电脑英雄的移动速度。你也可以选择完全不观看电脑的移动。"
+
+msgid "Toggle instant battle mode."
+msgstr "切换快速战斗模式。"
+
+msgid "Toggle colored cursor on or off. This is only an aesthetic choice."
+msgstr "打开或关闭彩色鼠标指针。这只是外观上的选择。"
+
+msgid ""
+"Toggle text support mode to output extra information about windows and "
+"events in the game."
+msgstr "切换文字提示模式，输出关于游戏窗口与事件的额外信息。"
+
+msgid "Toggle the type of interface you want to use."
+msgstr "切换你想要使用的界面类型。"
+
+msgid "Exit this menu."
+msgstr "退出此菜单。"
+
+msgid "Exit this menu without doing anything."
+msgstr "不进行任何操作，直接退出此菜单。"
+
+msgid "Click to choose the selected language."
+msgstr "点击以选择该语言。"
+
+msgid "Click to apply the selected resolution."
+msgstr "点击以应用所选分辨率。"
+
+msgid "Select this game resolution."
+msgstr "选择此游戏分辨率。"
+
+msgid ""
+"Selecting this resolution will set a resolution that is scaled from the "
+"original resolution (%{resolution}) by multiplying it with the number in the "
+"brackets (%{scale}).\n"
+"\n"
+"A resolution with a clean integer number (2.0x, 3.0x etc.) will usually look "
+"better because the pixels are upscaled evenly in both horizontal and "
+"vertical directions."
+msgstr ""
+"选择此分辨率后，游戏会以原版分辨率（%{resolution}）乘以括号中的倍数"
+"（%{scale}）进行缩放。\n"
+"\n"
+"整数倍的分辨率（2.0x、3.0x 等）通常显示效果更好，因为像素在水平和垂直"
+"方向上都会按整数倍均匀放大。"
+
+#. 语言名称，显示在语言选择列表中
+msgid "English"
+msgstr "英语"
+
+msgid "Belarusian"
+msgstr "白俄罗斯语"
+
+msgid "Bulgarian"
+msgstr "保加利亚语"
+
+msgid "Czech"
+msgstr "捷克语"
+
+msgid "Danish"
+msgstr "丹麦语"
+
+msgid "Dutch"
+msgstr "荷兰语"
+
+msgid "Esperanto"
+msgstr "世界语"
+
+msgid "French"
+msgstr "法语"
+
+msgid "German"
+msgstr "德语"
+
+msgid "Greek"
+msgstr "希腊语"
+
+msgid "Hungarian"
+msgstr "匈牙利语"
+
+msgid "Italian"
+msgstr "意大利语"
+
+msgid "Norwegian"
+msgstr "挪威语"
+
+msgid "Polish"
+msgstr "波兰语"
+
+msgid "Portuguese"
+msgstr "葡萄牙语"
+
+msgid "Romanian"
+msgstr "罗马尼亚语"
+
+msgid "Russian"
+msgstr "俄语"
+
+msgid "Slovak"
+msgstr "斯洛伐克语"
+
+msgid "Spanish"
+msgstr "西班牙语"
+
+msgid "Swedish"
+msgstr "瑞典语"
+
+msgid "Turkish"
+msgstr "土耳其语"
+
+msgid "Ukrainian"
+msgstr "乌克兰语"
+
+msgid "Vietnamese"
+msgstr "越南语"
+
