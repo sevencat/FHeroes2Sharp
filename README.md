@@ -18,6 +18,8 @@ C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，�
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
 以及钉住真实资源解码结果的摘要测试（Core 111 + Assets 44 = 155 个测试）。
+导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
+`tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
 ## 快速开始
 
@@ -46,6 +48,10 @@ dotnet run --project tools/FHeroes2.AssetProbe -- sprites ADVMCO.ICN tools-outpu
 
 # 逐像素比对两个 PNG 文件或两个目录（0 = 全同、3 = 有差异）
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles tools-output/tiles-ref
+
+# 与原版 C++ 实现逐字节对拍（需要 MSYS2 UCRT64 的 g++ 与一份 fheroes2 源码，见 docs/MISC.md）
+pwsh tools/scripts/BuildReferenceTool.ps1
+pwsh tools/scripts/CompareWithReference.ps1
 ```
 
 数据目录解析顺序：`--data` → 环境变量 `FHEROES2_DATA` → 可执行文件目录（及其 `Data` 子目录）
@@ -62,6 +68,8 @@ src/FHeroes2.UI          对话框栈与控件（依赖 Game/Rendering/Core）
 src/FHeroes2.Client.Desktop  MonoGame 宿主、SDL 呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
+tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
+tools/scripts            调色板表生成、参考导出器编译、参考对拍脚本
 docs/                    计划、进度、决策与参考笔记
 ```
 

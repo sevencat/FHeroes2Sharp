@@ -135,14 +135,20 @@ width × height × uint8         像素码：1 = 白（调色板索引 11）、2
 ```
 14 字节 BITMAPFILEHEADER        'BM'、文件大小、像素数据偏移 1078
 40 字节 BITMAPINFOHEADER        1 平面、8 bpp、BI_RGB、imageSize、clrUsed = 256
-256 × { B, G, R, 0 }            调色板（BGRA 顺序，A 恒为 0）
+256 × { B, G, R, 255 }          调色板（BGRA 顺序；第 4 字节是 SDL 写入的 alpha，恒为 255）
 height 行                       自下而上，每行按 4 字节对齐补零
 ```
 
 * 与 `SDL_SaveBMP` 对 8 bpp surface 的输出一致：C++ 端就是把索引图交给 SDL 保存。
+  注意 BMP 规范称调色板第 4 字节为「保留」，但 `SDL_SaveBMP` 写的是 `SDL_Color.a`，
+  `fheroes2::SaveImage()` 把每个条目都设为 255——`BmpWriter` 照抄 255 才能与参考导出逐字节相同。
 * 索引位图没有 alpha，所以导出精灵时先用 `--background`（默认 0，原版推荐 23）填充画布，
   再用 `BlitSprite` 按变换层合成，对应 `fheroes2::Save(image, path, background)`。
 * 实测：`GROUND32.TIL` 的 432 个图块导出 BMP 后用 Pillow 读回，调色板索引与 PNG 导出逐像素一致。
+* 参考对拍：`tools/reference/fh2_reference.cpp` 链接原版 `image_tool.cpp` / `agg_file.cpp` 导出，
+  默认 14 个代表性条目的 1204 个 BMP 与本项目 `--format bmp` 的输出**逐字节相同**；`-All` 覆盖
+  归档中 958 个 `.ICN` / `.TIL` / `.BMP` 条目，共 15,025 个 BMP 全部相同
+  （文件头、调色板、行序、变换层合成全部命中）；流程见 `MISC.md`。
 
 ### 调色板转换表（`transformTable`）
 

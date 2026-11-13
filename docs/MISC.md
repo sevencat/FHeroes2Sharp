@@ -58,6 +58,9 @@ dotnet run --project tools/FHeroes2.AssetProbe -- cursor ADVMBW01.BMP tools-outp
 dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles-bmp --format bmp
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/heroes tools-output/heroes-ref --diff tools-output/diff
 dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
+pwsh tools/scripts/BuildReferenceTool.ps1     # 用 MSYS2 UCRT64 的 g++ 编译参考引擎导出器
+pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节比对（C++ ↔ C#）
+pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
 ```
 
 `compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
@@ -75,6 +78,39 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 
 BMP 的第三方交叉验证同理：`PIL.Image.open("x.bmp")` 只有在文件头、调色板与自下而上的行序都对时
 才会给出 `mode == "P"` 与正确的尺寸；`REFERENCE.md` 记录了实测数据（432 个图块 BMP 与 PNG 逐像素一致）。
+
+### 参考引擎对拍（C++ ↔ C#）
+
+`tools/reference/fh2_reference.cpp` 只是一层参数解析：它把自己链接到 fheroes2 的
+`agg_file.cpp` / `serialize.cpp` / `zzlib.cpp` / `image.cpp` / `image_palette.cpp` /
+`image_tool.cpp`，于是「解码」这一步跑的是**原版实现**，写文件走的是原版 `fheroes2::Save()`
+（内部调用 `SDL_SaveBMP`）。因此对拍的是「我们的移植 vs 参考实现」，而不是两份 C# 互相验证。
+
+```powershell
+# 1. 编译参考导出器（默认找 F:\code\fheroes2 与 D:\msys64\ucrt64，可用参数覆盖）
+pwsh tools/scripts/BuildReferenceTool.ps1 -Fheroes2Source F:\code\fheroes2 -MsysRoot D:\msys64\ucrt64
+#    产物：tools-output/reference/fh2_reference.exe（SDL2.dll / SDL3.dll 会一起复制过去）
+
+# 2. 逐字节比对（脚本自己跑两侧工具、用 SHA-256 比较每个 BMP）
+pwsh tools/scripts/CompareWithReference.ps1
+pwsh tools/scripts/CompareWithReference.ps1 -All -DataDirectory 'D:\HoMM2'
+```
+
+* 参考导出器的命令行与 `AssetProbe --format bmp` 一一对应：
+
+  | 参考导出器 | AssetProbe | 产物命名 |
+  | --- | --- | --- |
+  | `fh2_reference icn <AGG> <NAME.ICN> <OUT> [bg]` | `sprites <NAME.ICN> <OUT> --format bmp --background <bg>` | `<STEM>_000.bmp`、… |
+  | `fh2_reference til <AGG> <NAME.TIL> <OUT>` | `tiles <NAME.TIL> <OUT> --format bmp` | `<STEM>_000.bmp`、… |
+  | `fh2_reference cursor <AGG> <NAME.BMP> <OUT> [bg]` | `cursor <NAME.BMP> <OUT> --format bmp --background <bg>` | `<STEM>.bmp` |
+
+* 底色必须一致才能比：参考引擎导出精灵/光标时用调色板索引 23，所以脚本传 `--background 23`
+  （`AssetProbe` 的默认值是 0，直接对比会全图不同）。
+* 目前结果：默认 14 个代表性条目（3 个 TIL + 11 个 ICN/BMP）共 1204 个 BMP **逐字节相同**；
+  `-All` 扫描归档中的每个 `.ICN` / `.TIL` / `.BMP` 条目：**958 个条目 / 15,025 个 BMP 全部相同**，
+  没有跳过项（两侧都拒绝解码的条目会记为 `skip`）。
+* 这项工作替代了原先「只能靠 Pillow 与摘要间接验证」的做法：文件头、调色板（含第 4 字节）、
+  行序、变换层合成、RLE 解码全部被钉死。
 
 环境变量：
 
@@ -99,11 +135,22 @@ BMP 的第三方交叉验证同理：`PIL.Image.open("x.bmp")` 只有在文件�
 7. **依赖真实数据的测试**：`FHeroes2.Assets.Tests` 找不到数据时会**提前返回**（xunit 2 无 `Assert.Skip`），
    因此务必关注测试总数与 `PROGRESS.md` 中的实测记录。
 8. **MonoGame 窗口在后台不活跃时**会按 `InactiveSleepTime` 限速，`--smoke-frames` 前几帧 FPS 偏低属正常。
+9. **PowerShell 直接调用 MSYS2 的 `g++.exe` 会静默失败**：退出码 1、没有任何诊断输出。原因是从
+   `libexec/gcc/...` 启动的 `cc1plus` / `ld` 找不到运行时 DLL，必须先把 `<msys2>/ucrt64/bin`
+   放进 `PATH`（`BuildReferenceTool.ps1` 已处理）。若在 MSYS2 的 bash 里编译则天然没问题。
+10. **SDL 写的 BMP 调色板第 4 字节不是 0**：`SDL_SaveBMP` 把 `SDL_Color.a` 写进去，而
+    `fheroes2::SaveImage()` 把每个条目的 alpha 都设为 255。`BmpWriter` 也写 255，否则与参考导出
+    差 256 个字节（每条目一个），阅读方（Pillow、Windows 图片查看器）并不关心这个字节。
+11. **参考导出器不会自动建目录**：`fheroes2::Save()` 直接交给 `SDL_SaveBMP`，目录不存在就失败。
+    `CompareWithReference.ps1` 在调用前会 `New-Item -ItemType Directory`。
 
 ## 目录与产物
 
 | 路径 | 说明 |
 | --- | --- |
 | `assets/fonts/` | 可再分发字体（SIL OFL）才会入库；当前为空，运行时回退系统字体 |
-| `tools-output/` | 截图、导出产物，已在 `.gitignore` 中忽略 |
+| `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
+| `tools/scripts/` | 生成/校验脚本：调色板转换表、参考导出器编译、参考对拍 |
+| `tools-output/` | 截图、导出产物、编译出的参考导出器，已在 `.gitignore` 中忽略 |
 | `data/` | 本地游戏数据（若复制进仓库目录），已忽略 |
+

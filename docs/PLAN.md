@@ -40,7 +40,7 @@ FHeroes2.Client.Desktop  →  引用以上全部（组合根）
 
 | 风险 | 对策 |
 | --- | --- |
-| ICN 变换层/裁剪语义复杂 | M1 先做「参考导出对比」工具链：C++ 侧导出 PNG，C# 侧比对像素 |
+| ICN 变换层/裁剪语义复杂 | M1 已落地「参考导出对比」工具链：C++ 侧链接原版源码导出 BMP，C# 侧逐字节比较（ADR-015） |
 | 字体：原版位图字体 vs TrueType 度量差异 | `ITextRenderer` 抽象；布局用逻辑像素，位图字体延后接入 |
 | 大端/字节对齐陷阱 | 统一 `LittleEndianReader`，禁止 `BinaryReader` |
 | 存档与 C++ 不互通 | 自研版本化 schema（`CURRENT_FORMAT_VERSION` 仅作参考），不做互操作 |
