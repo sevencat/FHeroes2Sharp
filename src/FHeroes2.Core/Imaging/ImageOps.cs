@@ -92,4 +92,59 @@ public static class ImageOps
             sourceRow.Slice(sourceRect.X + skipX, clipped.Width).CopyTo(destinationRow[clipped.X..]);
         }
     }
+
+    /// <summary>Draws <paramref name="sprite"/> at its own <see cref="Sprite.OffsetX"/>/<see cref="Sprite.OffsetY"/>.</summary>
+    public static void BlitSprite(PixelBuffer destination, Sprite sprite) =>
+        BlitSprite(destination, new Point(sprite.OffsetX, sprite.OffsetY), sprite);
+
+    /// <summary>
+    /// Draws <paramref name="sprite"/> with its transform layer applied, the equivalent of
+    /// <c>fheroes2::Blit( const Sprite &amp; in, Image &amp; out )</c> on a single layer destination.
+    /// </summary>
+    /// <remarks>
+    /// A transform value of <c>0</c> copies the image layer, <c>1</c> keeps the destination pixel
+    /// untouched and any other value converts the <i>destination</i> color through
+    /// <see cref="PaletteTransformTable"/>, which is what makes shadows and light effects work.
+    /// </remarks>
+    public static void BlitSprite(PixelBuffer destination, Point destinationOffset, Sprite sprite)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(sprite);
+
+        Rect destinationRect = new(destinationOffset, sprite.Image.Size);
+        Rect clipped = destinationRect.Intersect(destination.Bounds);
+        if (clipped.IsEmpty)
+        {
+            return;
+        }
+
+        int skipX = clipped.X - destinationRect.X;
+        int skipY = clipped.Y - destinationRect.Y;
+
+        ReadOnlySpan<byte> image = sprite.Image.AsSpan();
+        byte[]? transform = sprite.Transform;
+
+        for (int y = 0; y < clipped.Height; ++y)
+        {
+            int sourceRow = ((skipY + y) * sprite.Image.Stride) + skipX;
+            Span<byte> destinationRow = destination.Row(clipped.Y + y);
+
+            for (int x = 0; x < clipped.Width; ++x)
+            {
+                int sourceIndex = sourceRow + x;
+                int destinationIndex = clipped.X + x;
+                byte transformId = transform is null ? (byte)0 : transform[sourceIndex];
+
+                if (transformId == 0)
+                {
+                    destinationRow[destinationIndex] = image[sourceIndex];
+                }
+                else if (transformId != 1 && transformId < PaletteTransformTable.TransformCount)
+                {
+                    destinationRow[destinationIndex] =
+                        PaletteTransformTable.Apply(transformId, destinationRow[destinationIndex]);
+                }
+            }
+        }
+    }
 }
