@@ -161,3 +161,29 @@ AOT 与裁剪分析器：
 * 不支持 Adam7 交织；读取交织文件会抛 `NotSupportedException`（当前所有参考导出都是非交织的）。
 * 解码结果统一展开为 RGBA，不再保留「索引 + 调色板」的信息；需要索引时用
   `PngImage.ToIndices(palette, buffer)` 反查，未知颜色会被计入未映射计数。
+
+## ADR-014：BMP 导出保持 8 bit 索引，光标按专用格式解码
+
+**决策**：
+
+1. `BmpWriter` 只写 8 bit 索引 BMP：`BITMAPFILEHEADER` + `BITMAPINFOHEADER` + 256 条 BGRA 调色板 +
+   自下而上、按 4 字节对齐的行。这与参考引擎「把 8 bpp surface 交给 `SDL_SaveBMP`」的输出同构。
+2. 索引位图没有 alpha，所以 `BmpWriter.EncodeSprite(sprite, palette, background)` 先按
+   `background` 填满画布，再用 `ImageOps.BlitSprite` 按变换层合成，等价于
+   `fheroes2::Save( image, path, background )`。
+3. 归档里的 `*.BMP` 条目（`ADVMBWnn` / `CMSEBWnn` / `SPELBWnn`）不是 Windows 位图，
+   由 `MonoCursorFile` 按引擎自己的「黑索引 + 宽高 + 像素码」布局解码，而不是复用 BMP 读取器。
+
+**理由**：
+
+* 保留调色板索引意味着导出结果可以直接拿来断言「解码得到的索引是否正确」，不必先经过
+  RGB 归一化——与 `PngWriter` 写 RGBA 的方向互补：PNG 用于看图与 `compare`，BMP 用于索引级校验。
+* 32 bit BMP 会让两种导出器写同一份像素，失去这种互补性，而且与原版 `Save()` 的行为不一致。
+* 把光标条目的「伪 BMP」和真正的位图格式混在一个读取器里，会让格式判断变得不可靠；
+  两者的头部（6 字节 vs 14+40 字节）与像素语义（3 值码 vs 调色板索引）都不同。
+
+**代价 / 约束**：
+
+* `compare` 只读 PNG；BMP 未实现读回，第三方验证借助 Pillow（见 `MISC.md`）。
+* 单色光标只有黑/白两色，颜色由 `KB.PAL` 的 11（白）与条目头字节（原版为 33）决定，
+  改了调色板就无法得到黑白效果——这与参考引擎一致。

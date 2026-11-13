@@ -50,7 +50,7 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 4. 未生成与 C++ 的 PCG32 黄金向量对比（需要构建参考二进制）；当前用性质测试 + 可复现性测试。
 5. 帧率在启动瞬间偏低（着色器/纹理首次创建），稳定后受垂直同步约束；`--smoke-frames` 的 FPS 不是基准。
 
-## M1 — 图像栈（进行中）
+## M1 — 图像栈 ✅
 
 | 项目 | 状态 | 说明 |
 | --- | --- | --- |
@@ -63,13 +63,16 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 | `Assets.Til.TilFile` | ✅ | 未压缩图块网格 |
 | `AssetProbe sprites` / `tiles` | ✅ | 解码后按序号导出 PNG，便于与 C++ 输出比对 |
 | `AssetProbe compare` | ✅ | PNG 逐像素比对（文件或目录），`--diff` 输出品红差异图；退出码 0 = 全同、3 = 有差异 |
-| `Cursor` / BMP 导出 | ⬜ | M1 剩余项 |
+| `Assets.Cursor.MonoCursorFile` | ✅ | 单色光标 `*.BMP` 条目解码（`decodeBMPFile` 移植）；透明经变换层表达 |
+| `Core.Imaging.CursorTheme` / `CursorLayout` | ✅ | 主题枚举（`0x1000`–`0x4037`）、图集选择、热点偏移、距离主题换算 |
+| `BmpWriter` | ✅ | 8 bit 索引 BMP（布局同 `SDL_SaveBMP`）；`EncodeSprite` 完成「背景 + 变换层」合成 |
+| `AssetProbe cursor` / `--format` | ✅ | 单色光标导出；`sprites`/`tiles`/`cursor` 可选 PNG 或 BMP，`--background` 指定 BMP 底色 |
 
 ### M1 验证记录
 
 ```
 dotnet build FHeroes2Sharp.slnx        → 0 error / 0 warning
-dotnet test  FHeroes2Sharp.slnx        → Core: 72 passed / 0 failed；Assets: 36 passed / 0 failed
+dotnet test  FHeroes2Sharp.slnx        → Core: 111 passed / 0 failed；Assets: 44 passed / 0 failed
 
 AssetProbe sprites HEROES.ICN          → 1 个 640×480 精灵，color/single，PNG 243,258 字节
 AssetProbe tiles   GROUND32.TIL        → 432 个 32×32 图块，共 432 个 PNG（399,161 字节）
@@ -79,6 +82,14 @@ GROUND32.TIL 解码摘要                   → SHA-256 8AAB8C87…64BA5F
 AssetProbe compare ground-a ground-b   → 432 identical / 0 different（退出码 0）
 AssetProbe compare ground-a ground-pil → 432 identical / 0 different（Pillow 重新编码的 PNG）
 AssetProbe compare ground-a ground-diff → 431 identical / 1 different（1 像素，退出码 3）
+
+AssetProbe cursor ADVMBW01.BMP         → 32×32 单色光标，90/1024 不透明，1 个 PNG
+AssetProbe cursor ADVMBW01.BMP --format bmp --background 23 → 1 个索引 BMP
+AssetProbe sprites ADVMCO.ICN --format bmp --background 23  → 41 个索引 BMP（尺寸与 PNG 一致）
+AssetProbe tiles   GROUND32.TIL --format bmp               → 432 个 32×32 索引 BMP
+ADVMBW01.BMP 解码摘要                   → SHA-256 EA6B3726…2C402
+SPELBW00.BMP 解码摘要                   → SHA-256 52DB46A2…C9B50B
+Pillow 交叉校验                         → 光标 BMP/PNG 的透明与颜色一致；432 个图块 BMP 与 PNG 逐像素一致
 ```
 
 * `HEROES.ICN` 一条目 288,082 字节（RLE）→ 全不透明 640×480，`noTransformLayer` 生效即丢弃变换层。
@@ -88,8 +99,10 @@ AssetProbe compare ground-a ground-diff → 431 identical / 1 different（1 像�
   `compare` 判定两者逐像素相同，说明 `PngWriter` 输出符合规范、`PngReader` 能正确还原第三方编码器的结果。
 * 环境内没有 C++ 编译器，因此「C++ 导出 ↔ C# 解码」的比对目前只能以 Pillow/摘要为参照；
   `AssetProbe compare` 就是为将来拿到参考引擎导出图后直接使用而准备的。
+* 单色光标的摘要钉住 `ADVMBW01.BMP` / `SPELBW00.BMP`（图像层 + 变换层），任何像素码或调色板索引偏差都会失败；
+  Pillow 读回导出的 BMP 时按 8 bit 索引解释，因此同时校验了文件头、调色板顺序与自下而上的行序。
 
 ## 后续里程碑
 
-见 [PLAN.md](PLAN.md)。M1 剩余：`Cursor`、BMP 导出。C++ ↔ C# 的逐像素比对工具已就位（`AssetProbe compare`），
+见 [PLAN.md](PLAN.md)。M1 的条目已全部完成；C++ ↔ C# 的逐像素比对工具已就位（`AssetProbe compare`），
 拿到参考引擎导出图后可直接门禁化。

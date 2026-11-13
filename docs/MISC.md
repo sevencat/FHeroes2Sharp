@@ -54,6 +54,8 @@ dotnet run --project tools/FHeroes2.AssetProbe -- list --limit 20
 dotnet run --project tools/FHeroes2.AssetProbe -- extract KB.PAL kb.pal
 dotnet run --project tools/FHeroes2.AssetProbe -- sprites HEROES.ICN tools-output/heroes
 dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles
+dotnet run --project tools/FHeroes2.AssetProbe -- cursor ADVMBW01.BMP tools-output/cursor
+dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles-bmp --format bmp
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/heroes tools-output/heroes-ref --diff tools-output/diff
 dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
 ```
@@ -63,6 +65,16 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 方便在脚本里做门禁。第三方交叉验证的办法：用 Pillow 把导出图重新编码
 （`Image.open(p).convert("RGBA").save(q)`，它会用自适应行滤波），再 `compare` 两个目录，
 结果应为全同——这能同时验证 `PngWriter` 的规范性与 `PngReader` 的行滤波/调色板展开实现。
+
+导出格式由 `--format` 选择：
+
+| 值 | 说明 |
+| --- | --- |
+| `png`（默认） | 透明直接写进 alpha，单色光标的形状一目了然，也能被 `compare` 比对 |
+| `bmp` | 8 bit 索引位图（同 `SDL_SaveBMP`）；没有 alpha，精灵/光标用 `--background <0..255>` 填充底色（原版推荐 23） |
+
+BMP 的第三方交叉验证同理：`PIL.Image.open("x.bmp")` 只有在文件头、调色板与自下而上的行序都对时
+才会给出 `mode == "P"` 与正确的尺寸；`REFERENCE.md` 记录了实测数据（432 个图块 BMP 与 PNG 逐像素一致）。
 
 环境变量：
 

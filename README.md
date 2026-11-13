@@ -13,10 +13,11 @@ C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，�
 ## 当前状态
 
 **M0 已完成**：解决方案骨架、AGG 归档解析、调色板加载、640×480 索引帧缓冲、
-整数倍呈现、FontStashSharp 文本、诊断场景（含截图）、AssetProbe 工具、108 个单元/集成测试。
+整数倍呈现、FontStashSharp 文本、诊断场景（含截图）、AssetProbe 工具。
 
-**M1 进行中**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
-`sprite` 贴图、PNG 导出与读回、逐像素比对工具（`AssetProbe compare`），以及钉住真实资源解码结果的摘要测试。
+**M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
+`sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
+以及钉住真实资源解码结果的摘要测试（Core 111 + Assets 44 = 155 个测试）。
 
 ## 快速开始
 
@@ -38,6 +39,10 @@ dotnet run --project tools/FHeroes2.AssetProbe -- extract KB.PAL kb.pal
 # 导出精灵 / 图块为 PNG（默认调色板 KB.PAL，可用 --palette 指定）
 dotnet run --project tools/FHeroes2.AssetProbe -- sprites HEROES.ICN tools-output/heroes
 dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles
+
+# 导出单色光标；--format bmp 改成 8 bit 索引位图（--background 指定透明处的调色板索引）
+dotnet run --project tools/FHeroes2.AssetProbe -- cursor ADVMBW01.BMP tools-output/cursor
+dotnet run --project tools/FHeroes2.AssetProbe -- sprites ADVMCO.ICN tools-output/advmco --format bmp --background 23
 
 # 逐像素比对两个 PNG 文件或两个目录（0 = 全同、3 = 有差异）
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles tools-output/tiles-ref
