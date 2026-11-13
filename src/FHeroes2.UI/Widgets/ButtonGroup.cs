@@ -26,9 +26,10 @@ namespace FHeroes2.UI.Widgets;
 /// feature yet, so every press that ends inside the button is a click.
 /// </para>
 /// <para>
-/// Layout is not part of the group: the constructors that place the standard OK/CANCEL pairs need
-/// the text-button factories of <c>ui_button.cpp</c>, which arrive together with the settings dialog.
-/// Until then a caller adds buttons where its artwork puts them.
+/// <see cref="CreateStandard"/> ports the constructor that places the standard OK/CANCEL, YES/NO and
+/// single button rows. The constructors that build a group from a list of texts or from a whole ICN
+/// table are not ported yet: they need the text-button factories of <c>ui_button.cpp</c>, which are
+/// only partly here (<see cref="ButtonArtwork"/> covers the sprite side, not the label).
 /// </para>
 /// </remarks>
 public sealed class ButtonGroup
@@ -88,6 +89,100 @@ public sealed class ButtonGroup
         ButtonSprite button = new(released, pressed, null, offsetX, offsetY);
         Add(button, value);
         return button;
+    }
+
+    /// <summary>
+    /// Builds the standard button row of a dialog, the
+    /// <c>ButtonGroup( const Rect &amp; area, const int buttonTypes )</c> constructor of the
+    /// reference.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <paramref name="area"/> is the whole window content, so the buttons always sit on its bottom
+    /// edge. A pair is spread with a quarter of the free width as padding on both sides of the pair;
+    /// a single button is centred. Unsupported combinations produce an empty group, exactly like the
+    /// <c>default:</c> of the reference switch.
+    /// </para>
+    /// <para>
+    /// The ICN sprites of the original carry their own anchor, and so does <see cref="ButtonSprite"/>:
+    /// the sizes below come from the sprites, the placement from <paramref name="area"/>, and the
+    /// anchor is added on top by the button itself.
+    /// </para>
+    /// </remarks>
+    /// <param name="area">Area the buttons have to be placed in, usually <see cref="Dialogs.StandardWindow.ActiveArea"/>.</param>
+    /// <param name="buttons">Which buttons to place, e.g. <c>DialogButton.Ok | DialogButton.Cancel</c>.</param>
+    /// <param name="artwork">Source of the released and pressed sprites.</param>
+    /// <returns>The group with the placed buttons, in reading order.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="artwork"/> is <see langword="null"/>.</exception>
+    public static ButtonGroup CreateStandard(Rect area, DialogButton buttons, IDialogButtonArtworkSource artwork)
+    {
+        ArgumentNullException.ThrowIfNull(artwork);
+
+        ButtonGroup group = new();
+
+        switch (buttons)
+        {
+            case DialogButton.Yes | DialogButton.No:
+                group.AddPair(area, DialogButton.Yes, DialogButton.No, artwork);
+                break;
+
+            case DialogButton.Ok | DialogButton.Cancel:
+                group.AddPair(area, DialogButton.Ok, DialogButton.Cancel, artwork);
+                break;
+
+            case DialogButton.Ok:
+                group.AddCentered(area, DialogButton.Ok, artwork);
+                break;
+
+            case DialogButton.Cancel:
+                group.AddCentered(area, DialogButton.Cancel, artwork);
+                break;
+
+            default:
+                break;
+        }
+
+        return group;
+    }
+
+    /// <summary>
+    /// Places two buttons with a quarter of the free width as padding, the
+    /// <c>Dialog::YES | Dialog::NO</c> and <c>Dialog::OK | Dialog::CANCEL</c> branches.
+    /// </summary>
+    private void AddPair(Rect area, DialogButton leftValue, DialogButton rightValue,
+        IDialogButtonArtworkSource artwork)
+    {
+        DialogButtonArtwork left = artwork.Get(leftValue);
+        DialogButtonArtwork right = artwork.Get(rightValue);
+
+        int padding = (area.Width - left.Released.Width - right.Released.Width) / 4;
+
+        CreateButton(
+            area.X + padding,
+            area.Y + area.Height - left.Released.Height,
+            left.Released,
+            left.Pressed,
+            leftValue);
+
+        CreateButton(
+            area.X + area.Width - right.Released.Width - padding,
+            area.Y + area.Height - right.Released.Height,
+            right.Released,
+            right.Pressed,
+            rightValue);
+    }
+
+    /// <summary>Places one button in the horizontal middle of the bottom edge.</summary>
+    private void AddCentered(Rect area, DialogButton value, IDialogButtonArtworkSource artwork)
+    {
+        DialogButtonArtwork button = artwork.Get(value);
+
+        CreateButton(
+            area.X + ((area.Width - button.Released.Width) / 2),
+            area.Y + area.Height - button.Released.Height,
+            button.Released,
+            button.Pressed,
+            value);
     }
 
     /// <summary>Draws the buttons in the order they were added.</summary>
