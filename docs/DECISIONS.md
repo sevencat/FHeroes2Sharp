@@ -114,3 +114,50 @@ AOT 与裁剪分析器：
 
 **未来开启路径**：M9 评估 `PublishAot=true` + `InvariantGlobalization` 可行性，
 前提是 MonoGame 上游正式支持且真实资源全流程验证通过。
+
+## ADR-012：变换层语义与转换表「生成 + 摘要固定」
+
+**决策**：
+
+1. 变换层按 C++ 语义实现——`0` 复制图像层、`1` 跳过目标像素、其余值是
+   `PaletteTransformTable` 的索引，用来转换**目标**（已存在于画布上）的颜色；它**不是**遮罩。
+2. `transformTable`（16 × 256 字节）不手抄，而由
+   `tools/scripts/GeneratePaletteTransformTable.ps1` 从 fheroes2 的 `src/engine/image.cpp`
+   提取，生成以 Base64 存储的 `PaletteTransformTable.cs`。
+3. 测试用 SHA-256 固定这 4096 字节，并抽查表 2/5（阴影强弱）、表 15（循环色静态化）。
+
+**理由**：
+
+* 手写 4096 个字节既无法审查也无法验证；脚本保证「来源唯一」，重跑即可确认生成物与参考源码一致。
+* Base64 让 diff 保持可读规模（逐字节十六进制数组会是数千行）。
+* 摘要常量与「1434 条名称哈希」的思路一致：任何一位偏差都会让测试立刻失败，而不是等到肉眼比对 PNG。
+
+**代价 / 约束**：
+
+* 参考版本升级后必须重跑脚本并更新期望摘要（`PaletteTransformTableTests`）。
+* 导出 PNG 时 `1` 写成 alpha 0，其余变换值一律不透明——变换效果发生在目标像素上，
+  单独看精灵无法表达，需按 `BlitSprite` 合成后再比对。
+
+## ADR-013：PNG 编解码自己实现，逐像素比对代替人工看图
+
+**决策**：
+
+1. PNG 的写出与读回都由 `FHeroes2.Core.Imaging` 自己实现（`PngWriter` / `PngReader` / `PngImage`），
+   不引入 ImageSharp / SkiaSharp 之类的第三方图像库。
+2. 读回侧支持 PNG 规范里与回归相关的子集：色彩类型 0/2/3/4/6、位深 1/2/4/8/16、五种行滤波、
+   `tRNS`；Adam7 交织与未知关键块显式抛异常而不是静默接受。
+3. 回归验证以「逐像素比对」为准：`AssetProbe compare` 比较文件或目录，退出码 `0`/`3` 可直接门禁。
+
+**理由**：
+
+* `FHeroes2.Core` 的约束是零外部依赖（见 ADR-001/ARCHITECTURE），图像库会把原生依赖和
+  AOT 限制带进来，而我们只需要 RGBA 这一种写出格式加一个「能读回别人编码的 PNG」的能力。
+* 只有自己实现读回，才能把 `PngWriter`、行滤波、调色板展开都放进单元测试；
+  用第三方库读回自己的输出，会把两侧的错误互相抵消掉。
+* 逐像素比对可以脚本化、可复现；肉眼比对 PNG 无法进 CI，也无法给出差异数量和坐标。
+
+**代价 / 约束**：
+
+* 不支持 Adam7 交织；读取交织文件会抛 `NotSupportedException`（当前所有参考导出都是非交织的）。
+* 解码结果统一展开为 RGBA，不再保留「索引 + 调色板」的信息；需要索引时用
+  `PngImage.ToIndices(palette, buffer)` 反查，未知颜色会被计入未映射计数。

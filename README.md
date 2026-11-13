@@ -13,7 +13,10 @@ C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，�
 ## 当前状态
 
 **M0 已完成**：解决方案骨架、AGG 归档解析、调色板加载、640×480 索引帧缓冲、
-整数倍呈现、FontStashSharp 文本、诊断场景（含截图）、AssetProbe 工具、54 个单元/集成测试。
+整数倍呈现、FontStashSharp 文本、诊断场景（含截图）、AssetProbe 工具、108 个单元/集成测试。
+
+**M1 进行中**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
+`sprite` 贴图、PNG 导出与读回、逐像素比对工具（`AssetProbe compare`），以及钉住真实资源解码结果的摘要测试。
 
 ## 快速开始
 
@@ -31,6 +34,13 @@ dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screensh
 # 资产归档检查
 dotnet run --project tools/FHeroes2.AssetProbe -- info
 dotnet run --project tools/FHeroes2.AssetProbe -- extract KB.PAL kb.pal
+
+# 导出精灵 / 图块为 PNG（默认调色板 KB.PAL，可用 --palette 指定）
+dotnet run --project tools/FHeroes2.AssetProbe -- sprites HEROES.ICN tools-output/heroes
+dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles
+
+# 逐像素比对两个 PNG 文件或两个目录（0 = 全同、3 = 有差异）
+dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles tools-output/tiles-ref
 ```
 
 数据目录解析顺序：`--data` → 环境变量 `FHEROES2_DATA` → 可执行文件目录（及其 `Data` 子目录）

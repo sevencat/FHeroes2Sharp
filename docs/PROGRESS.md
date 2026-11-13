@@ -11,8 +11,8 @@
 | `FHeroes2.Rendering` | ✅ | `IScreenPresenter`、`ITextRenderer`/`TextStyle`/`TextMetrics` |
 | `FHeroes2.Game` / `FHeroes2.UI` | ✅（占位） | 仅层边界标记类型，M2/M3 起实现 |
 | `FHeroes2.Client.Desktop` | ✅ | MonoGame 宿主、`MonoGamePresenter`、`FontStashTextRenderer`、诊断场景、命令行、截图 |
-| `tools/FHeroes2.AssetProbe` | ✅ | `list` / `info` / `extract` 三个子命令 |
-| 测试 | ✅ | 54 个（Core 40 / Assets 14，全部通过；支持真实数据时含 1434 条哈希集成校验） |
+| `tools/FHeroes2.AssetProbe` | ✅ | `list` / `info` / `extract` / `sprites` / `tiles` 五个子命令 |
+| 测试 | ✅ | 97 个（Core 61 / Assets 36，全部通过；支持真实数据时含 1434 条哈希与 ICN/TIL 摘要集成校验） |
 | AOT / 裁剪 | ✅ | 产品项目开启 `IsAotCompatible` 等分析器（警告即错误），0 条 IL 发现；**不发布** AOT（ADR-011） |
 | 文档 | ✅ | PLAN / PROGRESS / ARCHITECTURE / DECISIONS / REFERENCE / MISC / OTHER / README |
 
@@ -50,6 +50,46 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 4. 未生成与 C++ 的 PCG32 黄金向量对比（需要构建参考二进制）；当前用性质测试 + 可复现性测试。
 5. 帧率在启动瞬间偏低（着色器/纹理首次创建），稳定后受垂直同步约束；`--smoke-frames` 的 FPS 不是基准。
 
+## M1 — 图像栈（进行中）
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `FHeroes2.Core.Imaging.Sprite` | ✅ | 图像层 + 可选变换层 + 锚点偏移；`Reset` / `Clone` / `WithoutTransformLayer` 对齐 `fheroes2::Image` |
+| `ImageOps.BlitSprite` | ✅ | 变换层感知：`0` 复制、`1` 跳过、其余值经 `PaletteTransformTable` 转换目标色 |
+| `PaletteTransformTable` | ✅ | 16×256 表由 `tools/scripts/GeneratePaletteTransformTable.ps1` 从 C++ 源码提取，SHA-256 固定 |
+| `PngWriter` | ✅ | 手写 RGBA PNG（0 依赖）；`transform == 1` 写为 alpha 0 |
+| `PngReader` / `PngImage` | ✅ | 手写 PNG 解码：色彩类型 0/2/3/4/6、1/2/4/8/16 bit、五种行滤波、`tRNS`；Adam7 交织显式拒绝 |
+| `Assets.Icn.*` | ✅ | `IcnHeader`（13 字节）、`IcnSpriteDecoder`（`decodeICNSprite` 逐字节移植）、`IcnSpriteFile` |
+| `Assets.Til.TilFile` | ✅ | 未压缩图块网格 |
+| `AssetProbe sprites` / `tiles` | ✅ | 解码后按序号导出 PNG，便于与 C++ 输出比对 |
+| `AssetProbe compare` | ✅ | PNG 逐像素比对（文件或目录），`--diff` 输出品红差异图；退出码 0 = 全同、3 = 有差异 |
+| `Cursor` / BMP 导出 | ⬜ | M1 剩余项 |
+
+### M1 验证记录
+
+```
+dotnet build FHeroes2Sharp.slnx        → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx        → Core: 72 passed / 0 failed；Assets: 36 passed / 0 failed
+
+AssetProbe sprites HEROES.ICN          → 1 个 640×480 精灵，color/single，PNG 243,258 字节
+AssetProbe tiles   GROUND32.TIL        → 432 个 32×32 图块，共 432 个 PNG（399,161 字节）
+HEROES.ICN 解码摘要                     → SHA-256 C27A3BB3…2734A（图像层 + 变换层状态）
+GROUND32.TIL 解码摘要                   → SHA-256 8AAB8C87…64BA5F
+
+AssetProbe compare ground-a ground-b   → 432 identical / 0 different（退出码 0）
+AssetProbe compare ground-a ground-pil → 432 identical / 0 different（Pillow 重新编码的 PNG）
+AssetProbe compare ground-a ground-diff → 431 identical / 1 different（1 像素，退出码 3）
+```
+
+* `HEROES.ICN` 一条目 288,082 字节（RLE）→ 全不透明 640×480，`noTransformLayer` 生效即丢弃变换层。
+* 变换表抽查：表 2 比表 5 更暗（64 → 69 / 65），表 15 把循环色（214–217、231–233、235）映射到静态副本。
+* 摘要值写在 `SpriteAssetIntegrationTests` / `PaletteTransformTableTests` 中，任何解码偏差都会让测试失败。
+* `ground-pil` 是把 `AssetProbe` 导出的 PNG 用 Pillow 13 重新编码（自适应行滤波、不同压缩）后的目录：
+  `compare` 判定两者逐像素相同，说明 `PngWriter` 输出符合规范、`PngReader` 能正确还原第三方编码器的结果。
+* 环境内没有 C++ 编译器，因此「C++ 导出 ↔ C# 解码」的比对目前只能以 Pillow/摘要为参照；
+  `AssetProbe compare` 就是为将来拿到参考引擎导出图后直接使用而准备的。
+
 ## 后续里程碑
 
-见 [PLAN.md](PLAN.md)。M1 起点：ICN/TIL 解码与变换层，配套「C++ 导出 ↔ C# 解码」像素比对工具。
+见 [PLAN.md](PLAN.md)。M1 剩余：`Cursor`、BMP 导出。C++ ↔ C# 的逐像素比对工具已就位（`AssetProbe compare`），
+拿到参考引擎导出图后可直接门禁化。

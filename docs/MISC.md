@@ -52,8 +52,17 @@ dotnet test  FHeroes2Sharp.slnx            # 全部测试
 dotnet run --project tools/FHeroes2.AssetProbe -- info
 dotnet run --project tools/FHeroes2.AssetProbe -- list --limit 20
 dotnet run --project tools/FHeroes2.AssetProbe -- extract KB.PAL kb.pal
+dotnet run --project tools/FHeroes2.AssetProbe -- sprites HEROES.ICN tools-output/heroes
+dotnet run --project tools/FHeroes2.AssetProbe -- tiles GROUND32.TIL tools-output/tiles
+dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/heroes tools-output/heroes-ref --diff tools-output/diff
 dotnet run --project src/FHeroes2.Client.Desktop -- --smoke-frames 40 --screenshot out.png
 ```
+
+`compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
+`--diff` 把差异像素标成品红写成 `diff_<name>.png`。退出码：`0` 全同、`3` 有差异、`1` 参数/IO 错误，
+方便在脚本里做门禁。第三方交叉验证的办法：用 Pillow 把导出图重新编码
+（`Image.open(p).convert("RGBA").save(q)`，它会用自适应行滤波），再 `compare` 两个目录，
+结果应为全同——这能同时验证 `PngWriter` 的规范性与 `PngReader` 的行滤波/调色板展开实现。
 
 环境变量：
 

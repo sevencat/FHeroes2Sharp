@@ -2,7 +2,7 @@
 
 C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
-## 已移植（M0）
+## 已移植
 
 | C++ | C# | 备注 |
 | --- | --- | --- |
@@ -13,7 +13,12 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `Rand::uniformIntDistribution` | `Pcg32.NextInclusive` | Lemire 拒绝采样，`[from, to]` 闭区间 |
 | `src/engine/math_base.h`（`Point`/`Size`/`Rect`） | `FHeroes2.Core.Geometry.Point/Size/Rect` | 右/下边界半开 |
 | `src/engine/image_palette.h/.cpp` | `FHeroes2.Core.Imaging.Palette` | 6 bit → `<<2`，循环色复制见下 |
-| `src/engine/image.h`（`Image` 基础） | `PixelBuffer` + `ScreenBuffer` + `ImageOps` | 变换层待 M1 |
+| `src/engine/image.h`（`Image`、`Blit`） | `PixelBuffer` + `ScreenBuffer` + `Sprite` + `ImageOps` | 变换层感知的 `BlitSprite` |
+| `src/engine/image.cpp`（`transformTable`、`ApplyPalette`） | `FHeroes2.Core.Imaging.PaletteTransformTable` | 16×256 表，逐字节移植（SHA-256 固定） |
+| `src/engine/image_tool.cpp`（`decodeICNSprite`） | `FHeroes2.Assets.Icn.IcnSpriteDecoder` | 单色流 + 彩色流、`0xC0` 变换段 |
+| `readIcnFromAgg()` / `ICNHeader` | `FHeroes2.Assets.Icn.IcnSpriteFile` + `IcnHeader` | 6 字节文件头 + 13 字节精灵头 |
+| `src/engine/til.cpp`（TIL 读取） | `FHeroes2.Assets.Til.TilFile` | 未压缩图块网格 |
+| PNG 导出 / 读回（用于回归比对） | `FHeroes2.Core.Imaging.PngWriter` + `PngReader` + `PngImage` | 导出 8 bit RGBA（`transform==1` → alpha 0）；读回支持 0/2/3/4/6 色彩类型、1/2/4/8/16 bit、五种行滤波、`tRNS` |
 | `src/engine/screen.h` | `PresentationViewport` + `MonoGamePresenter` | 整数倍 + 黑边 |
 | `DEBUG_LOG` / `ERROR_LOG` | `FHeroes2.Core.Diagnostics.GameLog` | 级别 + 环境变量 |
 | `src/fheroes2/gui/ui_font.h` | `FHeroes2.Rendering.Text.ITextRenderer` | TrueType 后端先行 |
@@ -22,8 +27,8 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
 | C++ | 计划 C# | 里程碑 |
 | --- | --- | --- |
-| `src/engine/image_tool.cpp`（ICN 解码、变换层） | `Assets/Icn/*` | M1 |
-| `src/engine/til.cpp` | `Assets/Terrain/TerrainSet` | M1 |
+| `src/engine/image_tool.cpp`（BMP 导出、缩放） | `Core/Imaging/BmpWriter`、`ImageOps.Resize` | M1 |
+| `src/engine/cursor.*` | `Core/Imaging/Cursor` | M1 |
 | `src/engine/h2d_file.h` | `Assets/H2D/H2DArchive` | M3 |
 | `src/engine/audio/*`、`82M` 解码 | `Assets/Audio/*` | M2/M7 |
 | `src/fheroes2/gui/ui_text.*`、`translations/*.mo` | `Assets/Localization` + `Rendering.Text` | M2 |
@@ -63,6 +68,51 @@ for (char c : reverse(name)) {          // 反向遍历
 * 循环色复制（`fheroes2::setGamePalette`）：
   * 水：231→246，232→247，233→248，235→249
   * 岩浆：214→250，215→251，216→252，217→253
+
+### ICN（精灵图集，`decodeICNSprite`）
+
+```
+uint16                         精灵数 count
+uint32                         数据块大小 dataSize（6 + dataSize == 条目长度）
+count × 13 字节头 { int16 offsetX, int16 offsetY, uint16 width, uint16 height,
+                    uint8 animationFrames, uint32 offsetData }
+...                            RLE 压缩负载（每条 offsetData 相对 6，非相对文件头）
+```
+
+* `animationFrames & 0x20` → 单色精灵：只编码变换层，图像层全 0。
+* 彩色流的控制字节：
+
+| 控制字节 | 含义 |
+| --- | --- |
+| `0x00` | 行结束（该行剩余像素保持透明） |
+| `0x01`–`0x7F` | 后续字面像素个数 |
+| `0x80` | 图像结束 |
+| `0x81`–`0xBF` | 透明像素个数 + `0x80`（`0xC0` 起被变换段占用） |
+| `0xC0` | 变换段：紧跟描述字节，低 2 位是像素数（0 表示再读一字节） |
+| `0xC1` | 单色游程，下一字节给出像素数 |
+| `0xC2`–`0xFF` | 单色游程，像素数 = 值 − `0xC0` |
+
+* 变换段描述字节：bit `0x40` 置位时，`((value & 0x3C) >> 2) + 2` 为 `PaletteTransformTable` 索引；
+  bit `0x80`（轮廓高亮）在 C++ 里是 TODO，本项目同。
+* 变换层语义：`0` 复制图像层，`1` 跳过目标像素，其余值用表转换**目标**颜色（阴影/光照）。
+  整幅精灵都不需要变换层时（`noTransformLayer`）丢弃该层，等价 `_disableTransformLayer()`。
+* 实测：`HEROES.ICN` = 1 个 640×480 精灵，全不透明（无变换层）。
+
+### TIL（地形图块）
+
+```
+uint16 count, uint16 width, uint16 height
+count × width × height          原始 8bpp 索引，无压缩
+```
+
+* 实测：`GROUND32.TIL` = 432 个 32×32 图块（6 + 432×1024 = 442,374 字节）。
+
+### 调色板转换表（`transformTable`）
+
+* `src/engine/image.cpp` 中的 `transformTable` 共 16×256 字节 `const uint8_t`：
+  `0` / `1` 为占位（全 0），`2`–`5` 阴影（2 最强）、`6`–`9` 光照、`15` 把循环色映射为静态色。
+* 由 `tools/scripts/GeneratePaletteTransformTable.ps1` 从参考源码提取并生成
+  `PaletteTransformTable.cs`（Base64 存储）；测试用 SHA-256 固定这 4096 字节。
 
 ### PCG32（`src/engine/rand.h`）
 
