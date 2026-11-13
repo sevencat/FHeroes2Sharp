@@ -12,7 +12,6 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 * 平台：**仅 Windows x64**（Win10/11）。客户端项目固定 `win-x64` 运行时标识符，原生 SDL3 /
   SDL3_ttf 按它解析，非 Windows 或 32 位进程启动时直接报错退出（ADR-025）；
   exe 图标与窗口图标来自同一份 `assets/logo.ico`（`AssetProbe` 等工具不受此限制）。
-
 * 目标框架：**.NET 10**（`net10.0`），渲染后端 **SDL3 3.4（SDL3-CS 绑定）**，
   诊断文本使用 **SDL3_ttf**（FreeType，支持中文）。
 * 游戏界面文本：原版 `FONT.ICN` / `SMALFONT.ICN` 位图字体（`BitmapFont`）；CJK 等 ICN 表外的字符由
