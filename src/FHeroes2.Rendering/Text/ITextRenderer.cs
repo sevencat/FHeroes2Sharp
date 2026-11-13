@@ -3,7 +3,7 @@ namespace FHeroes2.Rendering.Text;
 /// <summary>
 /// Backend independent text measurement/layout service.
 ///
-/// The M0 renderer is FontStashSharp based (TrueType). The original bitmap fonts
+/// The M0 renderer is SDL3_ttf based (TrueType). The original bitmap fonts
 /// (<c>BIGFONT.ICN</c>/<c>SMALFONT.ICN</c>) will be provided by a second implementation in a
 /// later milestone so the UI layer never depends on a concrete backend.
 /// </summary>

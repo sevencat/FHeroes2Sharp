@@ -4,14 +4,14 @@
 
 | 程序集 | 职责 | 允许依赖 |
 | --- | --- | --- |
-| `FHeroes2.Core` | 几何、随机数、二进制 IO、索引图像与调色板、精灵与变换层、PNG 导出/读回、BMP 导出、光标主题与热点、日志、计时、版本信息 | 无 |
+| `FHeroes2.Core` | 几何、随机数、二进制 IO、索引图像与调色板、精灵与变换层、重着色调色板表、PNG 导出/读回、BMP 导出、光标主题与热点、日志、计时、版本信息 | 无 |
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
 | `FHeroes2.UI` | 对话框栈、控件、界面流转 | Core, Rendering, Game |
-| `FHeroes2.Client.Desktop` | MonoGame 宿主、SDL 呈现、字体、场景、命令行 | 全部 |
+| `FHeroes2.Client.Desktop` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
-依赖方向单向；`Core` 不得引用任何 MonoGame 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
+依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
 
 ## 帧数据流（M0 已贯通）
 
@@ -24,11 +24,11 @@
       ↓
 场景绘制      ScreenBuffer(640×480, byte) + ImageOps    纯 CPU、索引色、无 GC 分配
       ↓
-脏区上传      MonoGamePresenter.Upload  Color[256] 查表 → Texture2D.SetData(脏矩形)
+脏区上传      SdlPresenter.Upload      uint[256] 查表（IndexedFrameConverter）→ SDL_UpdateTexture(脏矩形)
       ↓
-逻辑合成      RenderTarget2D 640×480  帧 + 文本叠加（FontStashSharp，1x 逻辑像素）
+逻辑合成      640×480 目标纹理        帧 + 文本叠加（SDL3_ttf，1x 逻辑像素）
       ↓
-呈现          PointClamp + 整数倍放大 + 居中黑边 → 背缓冲
+呈现          Nearest 采样 + 整数倍放大 + 居中黑边 → 窗口
 ```
 
 放大的数学在 `PresentationViewport.Compute` 中：窗口 ≥ 640×480 时取整数倍并居中；
@@ -36,14 +36,14 @@
 
 ## 组合根与生命周期
 
-`GameHost`（MonoGame `Game`）是唯一的组合根：
+`GameHost` 是唯一的组合根，同时托管 SDL 事件循环：
 
 ```
-Initialize()   → 打开 AssetBundle（失败则记错误、ExitCode=1、使用灰度调色板继续）
-LoadContent()  → SpriteBatch / MonoGamePresenter / FontStashTextRenderer / DiagnosticsScene
-Update()       → FrameTimer、场景动画、输入（ESC/F11/F12）、smoke 帧数控制
-Draw()         → 场景绘制 → 上传 → 逻辑 RT 合成 → 文本 → 截图 → 呈现
-UnloadContent()→ 逆序释放全部 IDisposable（文本、呈现器、SpriteBatch、归档）
+Run()     → SDL_Init(Video) / TTF_Init()；打开 AssetBundle（失败则记错误、ExitCode=1、使用灰度调色板继续）
+            创建 SdlPresenter（窗口 + 渲染器 + 流式帧纹理 + 640×480 目标纹理）、SdlTextRenderer、DiagnosticsScene
+Loop()    → PollEvent（ESC 退出、F11 全屏、F12 截图、窗口关闭）、FrameTimer、场景动画、smoke 帧数控制
+Draw()    → 场景绘制 → 上传脏区 → 绑定目标纹理 → 帧纹理 1:1 → 文本 → 截图 → 放大呈现 → RenderPresent
+Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF、SDL）
 ```
 
 不使用 DI 容器；所有依赖在构造函数中显式传入。
@@ -51,13 +51,24 @@ UnloadContent()→ 逆序释放全部 IDisposable（文本、呈现器、SpriteB
 ## 文本
 
 `ITextRenderer` 只暴露 `Name` 与 `Measure(string, TextStyle)`，M0 实现为
-`FontStashTextRenderer`（FontStashSharp，TrueType，2048² 动态图集）。
-绘制入口 `Draw(SpriteBatch, text, Point, TextStyle)` 属于客户端层，因为它需要 GPU 上下文。
-M2 将加入 `AggBitmapTextRenderer`（`BIGFONT.FNT`/`SMALFONT.FNT`），并在此基础上把绘制方法
-上移为后端无关接口。
+`SdlTextRenderer`（SDL3_ttf / FreeType，逻辑字号 12 px）。
+绘制入口 `Draw(text, Point, TextStyle)` 属于客户端层，因为它需要 GPU 上下文：每段文字生成一张
+混合纹理，按 (文本, 字号, 颜色) 缓存，整帧未被使用的缓存在下一帧释放，所以变化的 FPS 行不会让缓存无限增长。
 
 字体解析顺序：`FHEROES2_FONT` → `assets/fonts/*.ttf|otf` → Windows 系统字体
-（`simhei.ttf` → `msyh.ttc` → `simsun.ttc` → `arialuni.ttf` → `segoeui.ttf` → `arial.ttf`）。
+（`simsun.ttc` → `simhei.ttf` → `msyh.ttc` → `arialuni.ttf` → `segoeui.ttf` → `arial.ttf`）。
+SimSun 在 12 px 有内嵌点阵，小字号下比纯轮廓字体锐利得多；想要硬边像素可设
+`FHEROES2_TEXT_CRISP=1`，把覆盖率量化为 0/255（见 ADR-017）。
+M2 加入 `Assets.Fonts.BitmapFont`（`FONT.ICN`/`SMALFONT.ICN` 精灵表，`BitmapFontSize.Small|Normal`；
+大字号由 `FONT.ICN` 运行时放大，见 ADR-018），布局与绘制都产出 8 bit 索引像素，因此与调色板/变换层天然一致。
+CJK 或 `U+00FF` 以上字符由 `Assets.Fonts.TrueTypeGlyphSource` 补位：`Sevencat.GlyphRaster`（纯托管、
+内嵌文泉驿微米黑）做光栅化，覆盖率经 `GlyphCoverageRamp` 量化到 `KB.PAL` 的灰阶（ADR-019）。
+两个 provider 都实现 `IGlyphSource`，`GlyphText` 负责唯一的布局实现：`Measure` / `DrawLine` /
+`DrawMultiline` / `WrapLines`，换行、居中、裁剪、尾随空格规则因此只有一份。
+颜色不是第二套字形资源：原版只有一份 `FONT.ICN`，黄色/灰色文字是把它的索引过一遍
+`Core.Imaging.PaletteTable`（`PAL::GetPalette` 的 13 张重着色表）得到的。
+`BitmapFont.WithPalette(PaletteId.YellowFont)` 重着色位图字体，
+`GlyphCoverageRamp.WithPalette(...)` 把同一张表套到覆盖率梯度上，于是混排里的中文与英文同色（ADR-020）。
 若最终字体不含 CJK，诊断文本自动切换为英文。
 
 ## 错误处理

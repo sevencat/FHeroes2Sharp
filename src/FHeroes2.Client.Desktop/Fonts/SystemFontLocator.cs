@@ -15,10 +15,12 @@ public static class SystemFontLocator
 
     private static readonly (string FileName, bool SupportsCjk)[] WindowsFonts =
     [
+        // SimSun contains embedded bitmap strikes at 12 px, so mixed Chinese/Latin text stays hard
+        // edged on the 640x480 frame. SimHei and Microsoft YaHei are outline only and turn soft.
+        ("simsun.ttc", true),
         ("simhei.ttf", true),
         ("msyh.ttc", true),
         ("msyhbd.ttc", true),
-        ("simsun.ttc", true),
         ("arialuni.ttf", true),
         ("segoeui.ttf", false),
         ("consola.ttf", false),

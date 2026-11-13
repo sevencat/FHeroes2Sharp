@@ -12,8 +12,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.DesktopGL" />
-    <PackageReference Include="FontStashSharp.MonoGame" />
+    <!-- SDL3-CS brings the C# bindings; the two Native packages ship SDL3.dll / SDL3_ttf.dll
+         (and the .so/.dylib equivalents) per runtime identifier, so no manual copying is needed. -->
+    <PackageReference Include="SDL3-CS" />
+    <PackageReference Include="SDL3-CS.Native" />
+    <PackageReference Include="SDL3-CS.Native.TTF" />
   </ItemGroup>
 
   <ItemGroup>

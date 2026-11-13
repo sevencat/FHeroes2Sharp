@@ -11,7 +11,7 @@ namespace FHeroes2.AssetProbe;
 
 /// <summary>
 /// Command line inspector for the original game archives. It is intentionally dependency free
-/// (no MonoGame, no window) so it can run in CI and diff the parser behaviour.
+/// (no SDL, no window) so it can run in CI and diff the parser behaviour.
 ///
 /// <code>
 ///   FHeroes2.AssetProbe list    [--data &lt;dir&gt;] [--agg &lt;path&gt;] [--limit &lt;n&gt;]

@@ -1,9 +1,9 @@
+using FHeroes2.Assets.Fonts;
 using FHeroes2.Client.Desktop.Fonts;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Rendering.Text;
-using Microsoft.Xna.Framework.Graphics;
 
 namespace FHeroes2.Client.Desktop.Scenes;
 
@@ -11,6 +11,11 @@ namespace FHeroes2.Client.Desktop.Scenes;
 /// Milestone M0 screen: exercises the whole pipeline (palette, indexed frame buffer, text) and
 /// shows the state of the port. It is replaced by the real main menu in M2.
 /// </summary>
+/// <remarks>
+/// Besides the M0 diagnostics it draws the game fonts into the indexed frame buffer
+/// (<see cref="DrawFontSample"/>), which is the path the main menu uses: <c>FONT.ICN</c> for Latin
+/// text, a rasterized CJK face for everything else and a palette for the colour.
+/// </remarks>
 public sealed class DiagnosticsScene
 {
     private const int LineHeight = 14;
@@ -22,24 +27,31 @@ public sealed class DiagnosticsScene
     private const int MarkerWidth = 28;
     private const int MarkerTop = 240;
     private const int BottomHintTop = 452;
+    private const int FontSampleLeft = 12;
+    private const int FontSampleTop = 286;
+
+    /// <summary>The line that has to look identical in both colours.</summary>
+    private const string FontSampleLine = "英雄无敌 II  Hero Edition 12345";
 
     private static readonly RgbaColor LabelColor = new(255, 226, 120);
 
     private readonly ScreenBuffer _frame;
-    private readonly FontStashTextRenderer? _text;
+    private readonly SdlTextRenderer? _text;
+    private readonly GameFonts? _fonts;
     private readonly bool _supportsCjk;
     private readonly byte _backgroundIndex;
     private readonly byte _highlightIndex;
 
     private double _elapsedSeconds;
 
-    public DiagnosticsScene(ScreenBuffer frame, FontStashTextRenderer? text, bool supportsCjk)
+    public DiagnosticsScene(ScreenBuffer frame, SdlTextRenderer? text, bool supportsCjk, GameFonts? fonts = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
 
         _frame = frame;
         _text = text;
         _supportsCjk = supportsCjk;
+        _fonts = fonts;
         _backgroundIndex = FindPaletteIndex(frame.Palette, brightest: false);
         _highlightIndex = FindPaletteIndex(frame.Palette, brightest: true);
     }
@@ -78,12 +90,42 @@ public sealed class DiagnosticsScene
         ImageOps.FillRect(pixels, new Rect(markerX, MarkerTop, MarkerWidth, MarkerWidth), _highlightIndex);
         ImageOps.DrawRect(pixels, new Rect(markerX - 2, MarkerTop - 2, MarkerWidth + 4, MarkerWidth + 4), _backgroundIndex);
 
+        // The game fonts are drawn into the indexed buffer, so the palette decides their colour.
+        DrawFontSample(pixels);
+
         // M0 redraws everything; the dirty rectangle machinery is used from M1 on.
         _frame.InvalidateAll();
     }
 
+    /// <summary>
+    /// Draws the two text providers into the frame buffer: the same mixed Chinese/Latin line once in
+    /// the yellow of <c>YELLOW_FONT</c> and once in the grey of the untouched table, then the small
+    /// font with the characters the ICN tables cannot express.
+    /// </summary>
+    private void DrawFontSample(PixelBuffer pixels)
+    {
+        if (_fonts is null)
+        {
+            return;
+        }
+
+        int y = FontSampleTop;
+
+        GlyphText.DrawLine(_fonts.Small, pixels, new Point(FontSampleLeft, y), "索引文本 (FONT.ICN + TrueType 补位)");
+        y += _fonts.Small.LineHeight + 4;
+
+        GlyphText.DrawLine(_fonts.Yellow, pixels, new Point(FontSampleLeft, y), FontSampleLine);
+        y += _fonts.Yellow.LineHeight;
+
+        GlyphText.DrawLine(_fonts.Normal, pixels, new Point(FontSampleLeft, y), FontSampleLine);
+        y += _fonts.Normal.LineHeight + 4;
+
+        GlyphText.DrawLine(
+            _fonts.Small, pixels, new Point(FontSampleLeft, y), "SMALFONT.ICN: 8 px 字形，中英混排 mixed text");
+    }
+
     /// <summary>Draws the diagnostic text in logical (640x480) pixel space.</summary>
-    public void DrawOverlay(SpriteBatch batch, in DiagnosticsState state)
+    public void DrawOverlay(in DiagnosticsState state)
     {
         if (_text is null)
         {
@@ -94,39 +136,37 @@ public sealed class DiagnosticsScene
         TextStyle value = new(12, new RgbaColor(232, 232, 232));
 
         int y = OverlayTop;
-        WriteLine(batch, BuildInfo.DisplayName, y, label);
-        WriteLine(batch, "参考实现 " + BuildInfo.ReferenceImplementation, y += LineHeight, value);
+        WriteLine(BuildInfo.DisplayName, y, label);
+        WriteLine("参考实现 " + BuildInfo.ReferenceImplementation, y += LineHeight, value);
 
         string dataLine = state.DataDirectory is null
             ? (_supportsCjk ? "游戏数据: 未找到 (使用灰度调色板)" : "Game data: not found (grayscale palette)")
             : (_supportsCjk ? "游戏数据: " : "Game data: ") + state.DataDirectory;
-        WriteLine(batch, dataLine, y += LineHeight, value);
+        WriteLine(dataLine, y += LineHeight, value);
 
         WriteLine(
-            batch,
             $"heroes2.agg: {state.BaseArchiveEntries}   heroes2x.agg: {state.ExpansionArchiveEntries}",
             y += LineHeight,
             value);
 
-        WriteLine(batch, (_supportsCjk ? "文本后端: " : "Text backend: ") + state.TextBackend, y += LineHeight, value);
+        WriteLine((_supportsCjk ? "文本后端: " : "Text backend: ") + state.TextBackend, y += LineHeight, value);
+        WriteLine((_supportsCjk ? "游戏字体: " : "Game fonts: ") + state.FontBackend, y += LineHeight, value);
         WriteLine(
-            batch,
             $"640x480 → {state.OutputSize.Width}x{state.OutputSize.Height} (x{state.Scale:0.##})",
             y += LineHeight,
             value);
         WriteLine(
-            batch,
             $"FPS {state.FramesPerSecond,6:0.0}   frame {state.FrameCount}",
             y += LineHeight,
             value);
 
         if (_supportsCjk)
         {
-            WriteLine(batch, "按键: ESC 退出 | F11 全屏 | F12 截图", BottomHintTop, label);
+            WriteLine("按键: ESC 退出 | F11 全屏 | F12 截图", BottomHintTop, label);
         }
         else
         {
-            WriteLine(batch, "Keys: ESC quits | F11 fullscreen | F12 screenshot", BottomHintTop, label);
+            WriteLine("Keys: ESC quits | F11 fullscreen | F12 screenshot", BottomHintTop, label);
         }
     }
 
@@ -152,6 +192,6 @@ public sealed class DiagnosticsScene
         return bestIndex;
     }
 
-    private void WriteLine(SpriteBatch batch, string text, int y, in TextStyle style) =>
-        _text!.Draw(batch, text, new Point(OverlayLeft, y), style);
+    private void WriteLine(string text, int y, in TextStyle style) =>
+        _text!.Draw(text, new Point(OverlayLeft, y), style);
 }

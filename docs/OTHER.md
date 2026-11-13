@@ -14,8 +14,9 @@
 
 | 依赖 | 许可 | 用途 |
 | --- | --- | --- |
-| MonoGame.Framework.DesktopGL | MS-PL | 窗口、图形、输入、音频 |
-| FontStashSharp.MonoGame | MIT | TrueType 光栅化与动态图集 |
+| SDL3-CS / SDL3-CS.Native | MIT（绑定）；SDL3 本体 Zlib | 窗口、图形、输入、音频 |
+| SDL3-CS.Native.TTF | Zlib | TrueType 光栅化（SDL3_ttf / FreeType） |
+| Sevencat.GlyphRaster | 仓库 GPL-3.0；内嵌字体 Apache-2.0 / GPL-3.0 双许可 | 纯托管 TrueType 光栅化 + 内嵌文泉驿微米黑（ADR-019）。**该包由本项目作者维护，许可可按需调整，不构成分发阻塞** |
 | xunit / xunit.runner.visualstudio | Apache-2.0 | 测试 |
 
 ## 已知限制（M0）
@@ -23,9 +24,9 @@
 * 只有诊断场景；没有主菜单、地图或战斗。
 * 没有音频、视频；本地化已有 `.mo` 读取与 `zh_CN` 语言包，但界面尚未接入（M2）。
 * 无编辑器、无存档。
-* 未提供 NativeAOT / 裁剪发布配置（ADR-011）：代码已是反射自由且分析器全开，但 MonoGame DesktopGL
+* 未提供 NativeAOT / 裁剪发布配置（ADR-011）：代码已是反射自由且分析器全开，但 SDL3 原生库
   在 AOT 下的完整验证留到 M9。
-* 仅 Windows 桌面验证过；MonoGame DesktopGL 理论上可跨平台，但数据目录解析与字体回退目前针对 Windows 调优。
+* 仅 Windows 桌面验证过；SDL3 绑定本身跨平台，但数据目录解析与字体回退目前针对 Windows 调优。
 
 ## 待讨论 / 想法池
 
@@ -35,13 +36,13 @@
    经 `BuildTranslations.ps1` 生成 `zh_CN.mo`；后续需要与 `ITextRenderer` 的布局配合（CJK 断行）。
 4. **存档兼容性**：目前决定不兼容 C++ 存档；若未来需要，可先做只读导入。
 5. **性能**：`Upload` 在整屏脏时每帧转换 30 万像素，M1 引入「场景级脏矩形 + 图集缓存」后再评估。
-6. **输入抽象**：键盘/鼠标事件目前直接读 `Keyboard.GetState()`，M2 需要接入 `UI` 层的输入路由（含长按、双击）。
-7. **NativeAOT**：M9 试用 `PublishAot=true` + `InvariantGlobalization=true`，重点验证 MonoGame DesktopGL、
-   FontStashSharp 图集与 SDL 音频；同时评估 `dotnet publish -p:PublishSingleFile=true` 的裁剪体积收益。
+6. **输入抽象**：键盘/鼠标事件目前直接在事件循环里处理（`SDL_PollEvent`），M2 需要接入 `UI` 层的输入路由（含长按、双击）。
+7. **NativeAOT**：M9 试用 `PublishAot=true` + `InvariantGlobalization=true`，重点验证 SDL3 / SDL3_ttf
+   原生库的加载与 SDL 音频；同时评估 `dotnet publish -p:PublishSingleFile=true` 的裁剪体积收益。
 
 ## 参考链接
 
 * fheroes2 上游：<https://github.com/ihhub/fheroes2>
 * 本项目参考版本：`version.txt` = `1.1.18`，commit `6c51acfdc`
-* MonoGame：<https://monogame.net/>
-* FontStashSharp：<https://github.com/FontStashSharp/FontStashSharp>
+* SDL3：<https://github.com/libsdl-org/SDL>
+* SDL3-CS 绑定：<https://github.com/edwardgushchin/SDL3-CS>

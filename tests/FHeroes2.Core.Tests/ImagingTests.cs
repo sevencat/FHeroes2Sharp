@@ -75,7 +75,7 @@ public sealed class ImagingTests
     }
 
     [Fact]
-    public void RgbaColor_PacksLikeMonoGameColor()
+    public void RgbaColor_PacksAsAbgr8888()
     {
         RgbaColor color = new(0x11, 0x22, 0x33, 0x44);
 

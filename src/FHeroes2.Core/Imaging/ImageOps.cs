@@ -106,12 +106,31 @@ public static class ImageOps
     /// untouched and any other value converts the <i>destination</i> color through
     /// <see cref="PaletteTransformTable"/>, which is what makes shadows and light effects work.
     /// </remarks>
-    public static void BlitSprite(PixelBuffer destination, Point destinationOffset, Sprite sprite)
+    public static void BlitSprite(PixelBuffer destination, Point destinationOffset, Sprite sprite) =>
+        BlitSprite(destination, destinationOffset, sprite, sprite.Image.Bounds);
+
+    /// <summary>
+    /// Draws the <paramref name="sourceArea"/> part of <paramref name="sprite"/> with its transform
+    /// layer applied. <paramref name="sourceArea"/> is in sprite local coordinates, which is what
+    /// clipping a single character of a bitmap font or an arbitrary sub rectangle needs.
+    /// </summary>
+    public static void BlitSprite(PixelBuffer destination, Point destinationOffset, Sprite sprite, in Rect sourceArea)
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(sprite);
 
-        Rect destinationRect = new(destinationOffset, sprite.Image.Size);
+        Rect sourceRect = sourceArea.Intersect(sprite.Image.Bounds);
+        if (sourceRect.IsEmpty)
+        {
+            return;
+        }
+
+        Rect destinationRect = new(
+            destinationOffset.X + sourceRect.X,
+            destinationOffset.Y + sourceRect.Y,
+            sourceRect.Width,
+            sourceRect.Height);
+
         Rect clipped = destinationRect.Intersect(destination.Bounds);
         if (clipped.IsEmpty)
         {
@@ -120,13 +139,15 @@ public static class ImageOps
 
         int skipX = clipped.X - destinationRect.X;
         int skipY = clipped.Y - destinationRect.Y;
+        int sourceX = sourceRect.X + skipX;
+        int sourceY = sourceRect.Y + skipY;
 
         ReadOnlySpan<byte> image = sprite.Image.AsSpan();
         byte[]? transform = sprite.Transform;
 
         for (int y = 0; y < clipped.Height; ++y)
         {
-            int sourceRow = ((skipY + y) * sprite.Image.Stride) + skipX;
+            int sourceRow = ((sourceY + y) * sprite.Image.Stride) + sourceX;
             Span<byte> destinationRow = destination.Row(clipped.Y + y);
 
             for (int x = 0; x < clipped.Width; ++x)
@@ -147,4 +168,39 @@ public static class ImageOps
             }
         }
     }
+
+    /// <summary>
+    /// Converts every pixel of <paramref name="target"/> through the recolouring
+    /// <paramref name="palette"/>, the equivalent of <c>fheroes2::ApplyPalette( Image &amp;, ... )</c>.
+    /// </summary>
+    /// <remarks>
+    /// The table maps a palette index onto another one (see <see cref="PaletteTable"/>), so the
+    /// image keeps its shape and only changes colour: that is how the original engine turns the
+    /// white <c>FONT.ICN</c> into the yellow and gray faces, and how a disabled button is drawn.
+    /// The transform layer is left alone - it stores operations, not colours.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The table is not <see cref="PaletteTable.Size"/> bytes long.</exception>
+    public static void ApplyPalette(PixelBuffer target, ReadOnlySpan<byte> palette)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (palette.Length != PaletteTable.Size)
+        {
+            throw new ArgumentException(
+                $"A palette table must hold {PaletteTable.Size} entries.", nameof(palette));
+        }
+
+        for (int y = 0; y < target.Height; ++y)
+        {
+            Span<byte> row = target.Row(y);
+
+            for (int x = 0; x < row.Length; ++x)
+            {
+                row[x] = palette[row[x]];
+            }
+        }
+    }
+
+    /// <summary>Converts <paramref name="target"/> through one of the original palettes.</summary>
+    public static void ApplyPalette(PixelBuffer target, PaletteId id) => ApplyPalette(target, PaletteTable.Get(id));
 }

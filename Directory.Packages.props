@@ -5,9 +5,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Rendering / windowing -->
-    <PackageVersion Include="MonoGame.Framework.DesktopGL" Version="3.8.6.1" />
-    <PackageVersion Include="FontStashSharp.MonoGame" Version="1.6.2" />
+    <!-- Rendering / windowing: SDL3 bindings plus the native SDL3 and SDL3_ttf binaries
+         for every desktop target (win-x64/arm64, linux-x64/arm64, osx-x64/arm64). -->
+    <PackageVersion Include="SDL3-CS" Version="3.4.20" />
+    <PackageVersion Include="SDL3-CS.Native" Version="3.4.2" />
+    <PackageVersion Include="SDL3-CS.Native.TTF" Version="3.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Fonts: pure managed TrueType rasterizer with an embedded CJK face (WenQuanYi Micro Hei).
+         No native library, no system font lookup, AOT safe; backs TrueTypeGlyphSource. -->
+    <PackageVersion Include="Sevencat.GlyphRaster" Version="0.1.5" />
   </ItemGroup>
 
   <ItemGroup>

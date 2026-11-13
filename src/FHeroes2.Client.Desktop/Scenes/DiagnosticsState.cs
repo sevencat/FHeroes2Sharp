@@ -8,6 +8,7 @@ public readonly record struct DiagnosticsState(
     int BaseArchiveEntries,
     int ExpansionArchiveEntries,
     string TextBackend,
+    string FontBackend,
     Size OutputSize,
     float Scale,
     double FramesPerSecond,

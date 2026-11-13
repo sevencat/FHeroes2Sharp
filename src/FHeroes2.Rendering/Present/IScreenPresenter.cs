@@ -5,7 +5,7 @@ namespace FHeroes2.Rendering.Present;
 
 /// <summary>
 /// Uploads the indexed <see cref="ScreenBuffer"/> to the back end and scales it to the output
-/// surface. Implementations live in the platform layer (MonoGame, headless test double, …).
+/// surface. Implementations live in the platform layer (SDL3, headless test double, …).
 /// </summary>
 public interface IScreenPresenter : IDisposable
 {

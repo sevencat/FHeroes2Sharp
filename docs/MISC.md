@@ -6,13 +6,13 @@
 | --- | --- |
 | SDK | .NET 10（`global.json` 固定 10.0.101，`rollForward: latestFeature`；本机实际使用 10.0.402） |
 | 解决方案 | `FHeroes2Sharp.slnx`（SDK 10 默认 XML 格式） |
-| 渲染 | MonoGame.Framework.DesktopGL 3.8.6.1 |
-| 字体 | FontStashSharp.MonoGame 1.6.2 |
+| 渲染 | SDL3-CS 3.4.20 + SDL3-CS.Native 3.4.2（SDL 3.4） |
+| 字体 | SDL3-CS.Native.TTF 3.3.0（SDL3_ttf / FreeType，仅诊断文本）+ Sevencat.GlyphRaster 0.1.5（纯托管 TrueType 光栅化，内嵌文泉驿微米黑 4.35 MB） |
 | 测试 | xunit 2.9.3 + xunit.runner.visualstudio 3.1.5 + Microsoft.NET.Test.Sdk 18.12.0 |
 | 包管理 | 集中版本（`Directory.Packages.props`，`ManagePackageVersionsCentrally`） |
 | AOT / 裁剪 | 已开启 `IsAotCompatible` + `IL2xxx`/`IL3xxx`（警告即错误）；**不提供** `PublishAot` 发布（ADR-011） |
 
-MonoGame 模板未安装，所有 csproj 均手写，也不使用 MGCB 内容管线。
+所有 csproj 均手写，不使用内容管线；SDL3 / SDL3_ttf 的原生 DLL 由 NuGet 按 RID 拷贝到输出目录。
 
 ## 代码约定
 
@@ -63,6 +63,7 @@ pwsh tools/scripts/CompareWithReference.ps1   # 14 个代表性条目逐字节�
 pwsh tools/scripts/CompareWithReference.ps1 -All   # 归档内全部 ICN/TIL/BMP 条目
 pwsh tools/scripts/BuildTranslations.ps1      # 编译并安装 translations/*.po → <data>/files/lang/*.mo
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验简体中文语言包
+pwsh tools/scripts/GeneratePaletteTable.ps1   # 从 fheroes2 pal.cpp 重新生成 PaletteTable.cs
 ```
 
 `compare` 可比较两个 PNG 文件或两个目录（按文件名配对），逐像素统计差异并打印首个差异坐标；
@@ -150,22 +151,24 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 | `FHEROES2_DATA` | 游戏数据目录（含 `Data/heroes2.agg` 或直接含 `heroes2.agg`） |
 | `FHEROES2_TEST_DATA` | 覆盖测试使用的数据目录（默认走 `AssetLocator`） |
 | `FHEROES2_FONT` | 覆盖字体文件路径 |
+| `FHEROES2_TEXT_CRISP` | `1` = 把字形覆盖率二值化（硬边像素风，配合点阵字体使用） |
 | `FHEROES2_LOG_LEVEL` | `Debug` / `Info` / `Warning` / `Error` / `None` |
 
 ## 坑位记录
 
-1. **`FHeroes2.Game` 命名空间遮蔽 `Microsoft.Xna.Framework.Game`**
-   在 `FHeroes2.*` 命名空间内写 `: Game` 会解析成命名空间。解决：客户端里用别名
-   `using XnaGame = Microsoft.Xna.Framework.Game;`。
-2. **`TextStyle` / `Point` 名称冲突**：`FontStashSharp.TextStyle`、`Microsoft.Xna.Framework.Point`
-   与引擎同名类型冲突，客户端用 `using` 别名显式指向引擎类型。
+1. **`SDL.Rect` / `SDL.Point` / `SDL.Color` 与引擎同名类型冲突**：客户端的呈现与文本代码里
+   写完整限定名（`SDL.Rect`、`FHeroes2.Core.Geometry.Rect`），不要靠 `using` 前缀去猜。
+2. **`SDLEvent` 的 `Type` 字段是 `uint`**：绑定的结构体里是 `UInt32 Type`，需要
+   `(SDL.EventType)evt.Type` 再 `switch`，直接比较枚举编译不过。
 3. **PCG32 的 stream 会被强制为奇数**（`stream | 1`），所以 54 与 55 是同一流。
 4. **`KB.PAL` 是 6 bit**：直接当 8 bit 用会得到一张极暗的调色板（最大分量 63）。
 5. **AGG 头部第一个 `uint16` 是条目数**，用脚本读取时注意字节序累加；错读会得到 154 这类假数据。
-6. **`.ttc` 字体集合**：FontStashSharp 对 TTC 支持有限，加载失败会自动尝试下一个候选字体。
+6. **`.ttc` 字体集合**：SDL_ttf 打开的是第 0 个字面；`simsun.ttc` 的第 0 个正是 SimSun，
+   12 px 有内嵌点阵，小字号最锐利。
 7. **依赖真实数据的测试**：`FHeroes2.Assets.Tests` 找不到数据时会**提前返回**（xunit 2 无 `Assert.Skip`），
    因此务必关注测试总数与 `PROGRESS.md` 中的实测记录。
-8. **MonoGame 窗口在后台不活跃时**会按 `InactiveSleepTime` 限速，`--smoke-frames` 前几帧 FPS 偏低属正常。
+8. **`--smoke-frames` 的前几帧 FPS 偏低**：`RenderPresent` 受垂直同步影响，启动阶段还在等首个 vsync，
+   平滑后的数值要 0.25 s 之后才稳定。
 9. **PowerShell 直接调用 MSYS2 的 `g++.exe` 会静默失败**：退出码 1、没有任何诊断输出。原因是从
    `libexec/gcc/...` 启动的 `cc1plus` / `ld` 找不到运行时 DLL，必须先把 `<msys2>/ucrt64/bin`
    放进 `PATH`（`BuildReferenceTool.ps1` 已处理）。若在 MSYS2 的 bash 里编译则天然没问题。
@@ -186,7 +189,7 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 | --- | --- |
 | `assets/fonts/` | 可再分发字体（SIL OFL）才会入库；当前为空，运行时回退系统字体 |
 | `tools/reference/` | 参考引擎导出器的 C++ 源码（链接 fheroes2 源码，不复制其代码） |
-| `tools/scripts/` | 生成/校验脚本：调色板转换表、参考导出器编译、参考对拍、语言包编译 |
+| `tools/scripts/` | 生成/校验脚本：变换层转换表、重着色调色板表、参考导出器编译、参考对拍、语言包编译 |
 | `translations/` | 语言包源文件（`.po`，UTF-8）；`.mo` 编译产物装到数据目录，不入库 |
 | `tools-output/` | 截图、导出产物、编译出的参考导出器，已在 `.gitignore` 中忽略 |
 | `data/` | 本地游戏数据（若复制进仓库目录），已忽略 |

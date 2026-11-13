@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FHeroes2.Assets;
 using FHeroes2.Client.Desktop.Fonts;
 using FHeroes2.Client.Desktop.Graphics;
@@ -6,53 +7,38 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
-using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
-using XnaGame = Microsoft.Xna.Framework.Game;
+using SDL3;
 
 namespace FHeroes2.Client.Desktop;
 
 /// <summary>
-/// Composition root and MonoGame host of the desktop client: owns the window, the presenter,
-/// the text backend and the currently active scene.
+/// Composition root and SDL3 host of the desktop client: owns the SDL lifetime, the window and
+/// renderer (through <see cref="SdlPresenter"/>), the text backend, the frame loop and the
+/// currently active scene.
 /// </summary>
-/// <remarks>
-/// The base class is written as <see cref="XnaGame"/> because the namespace
-/// <c>FHeroes2.Game</c> shadows <c>Microsoft.Xna.Framework.Game</c> inside the product namespaces.
-/// </remarks>
-public sealed class GameHost : XnaGame
+public sealed class GameHost : IDisposable
 {
     private readonly CommandLineOptions _options;
-    private readonly GraphicsDeviceManager _graphics;
     private readonly FrameTimer _timer = new();
 
     private AssetBundle? _assets;
     private Palette _palette = new();
     private ScreenBuffer _frame = null!;
-    private SpriteBatch? _spriteBatch;
-    private MonoGamePresenter? _presenter;
-    private FontStashTextRenderer? _text;
+    private SdlPresenter? _presenter;
+    private SdlTextRenderer? _text;
+    private GameFonts? _fonts;
     private DiagnosticsScene? _scene;
     private bool _supportsCjk;
-    private bool _fullscreen;
+    private bool _sdlInitialised;
+    private bool _ttfInitialised;
+    private bool _running;
     private int _screenshotFrame = -1;
     private bool _screenshotRequested;
+    private bool _disposed;
 
     public GameHost(CommandLineOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
-
-        _graphics = new GraphicsDeviceManager(this)
-        {
-            PreferredBackBufferWidth = ScreenBuffer.DefaultWidth * options.WindowScale,
-            PreferredBackBufferHeight = ScreenBuffer.DefaultHeight * options.WindowScale,
-            SynchronizeWithVerticalRetrace = true,
-            IsFullScreen = options.Fullscreen,
-            HardwareModeSwitch = false,
-        };
-
-        _fullscreen = options.Fullscreen;
 
         if (options.ScreenshotPath is not null)
         {
@@ -64,80 +50,178 @@ public sealed class GameHost : XnaGame
 
             _screenshotFrame = Math.Max(1, captureFrame);
         }
-
-        Content.RootDirectory = "Content";
-        IsMouseVisible = true;
-        IsFixedTimeStep = false;
-        Window.AllowUserResizing = true;
-        Window.Title = BuildInfo.DisplayName;
-        InactiveSleepTime = TimeSpan.FromMilliseconds(30);
     }
 
-    /// <summary>Process exit code; non zero when mandatory game data was missing.</summary>
+    /// <summary>Process exit code; non zero when mandatory game data or SDL was missing.</summary>
     public int ExitCode { get; private set; }
 
-    protected override void Initialize()
+    /// <summary>Runs the client until the window is closed or the smoke frame budget is spent.</summary>
+    public void Run()
     {
-        GameLog.Info(BuildInfo.DisplayName + " starting");
+        if (!SDL.Init(SDL.InitFlags.Video))
+        {
+            GameLog.Error($"SDL_Init failed: {SDL.GetError()}");
+            ExitCode = 1;
+            return;
+        }
+
+        _sdlInitialised = true;
+
+        if (!TTF.Init())
+        {
+            GameLog.Error($"TTF_Init failed: {SDL.GetError()}");
+            ExitCode = 1;
+            return;
+        }
+
+        _ttfInitialised = true;
+        GameLog.Info($"{BuildInfo.DisplayName} starting (SDL {SDL.GetVersion()}, SDL_ttf {TTF.Version()})");
+
         LoadGameData();
-        base.Initialize();
+        _fonts = GameFonts.TryLoad(_assets);
+
+        try
+        {
+            _presenter = new SdlPresenter(ScreenBuffer.DefaultSize, _options.WindowScale, _options.Fullscreen);
+            _presenter.SetPalette(_palette);
+
+            _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
+            CreateTextRenderer();
+            _scene = new DiagnosticsScene(_frame, _text, _supportsCjk, _fonts);
+
+            GameLog.Info(
+                $"Presentation ready: {_presenter.OutputSize} output, x{_presenter.Viewport.Scale:0.##} scale, " +
+                $"logical {_presenter.LogicalSize}.");
+
+            if (_options.SmokeFrames is int frames)
+            {
+                GameLog.Info($"Smoke mode: the client will exit after {frames} rendered frames.");
+            }
+
+            _running = true;
+            Loop();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            GameLog.Error("The client stopped because of an SDL error", exception);
+            ExitCode = 1;
+        }
     }
 
-    protected override void LoadContent()
+    public void Dispose()
     {
-        _spriteBatch = new SpriteBatch(GraphicsDevice);
-        _presenter = new MonoGamePresenter(GraphicsDevice, ScreenBuffer.DefaultSize);
-        _presenter.SetPalette(_palette);
-
-        _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
-        CreateTextRenderer();
-        _scene = new DiagnosticsScene(_frame, _text, _supportsCjk);
-
-        if (_options.SmokeFrames is int frames)
+        if (_disposed)
         {
-            GameLog.Info($"Smoke mode: the client will exit after {frames} rendered frames.");
+            return;
         }
 
-        base.LoadContent();
+        _disposed = true;
+
+        // Textures belong to the renderer, so the text backend has to go first.
+        _text?.Dispose();
+        _text = null;
+
+        _presenter?.Dispose();
+        _presenter = null;
+
+        _assets?.Dispose();
+        _assets = null;
+
+        if (_ttfInitialised)
+        {
+            TTF.Quit();
+            _ttfInitialised = false;
+        }
+
+        if (_sdlInitialised)
+        {
+            SDL.Quit();
+            _sdlInitialised = false;
+        }
     }
 
-    protected override void Update(GameTime gameTime)
+    private void Loop()
     {
-        double elapsed = gameTime.ElapsedGameTime.TotalSeconds;
-        _timer.Tick(elapsed);
-        _scene?.Update(elapsed);
+        Stopwatch clock = Stopwatch.StartNew();
+        double previous = clock.Elapsed.TotalSeconds;
 
-        KeyboardState keyboard = Keyboard.GetState();
-        if (keyboard.IsKeyDown(Keys.Escape))
+        while (_running)
         {
-            Exit();
+            if (!PumpEvents())
+            {
+                break;
+            }
+
+            double now = clock.Elapsed.TotalSeconds;
+
+            // Clamp the step so that dragging the window does not teleport the animation.
+            double elapsed = Math.Clamp(now - previous, 0.0, 0.5);
+            previous = now;
+
+            Update(elapsed);
+            Draw();
+        }
+    }
+
+    /// <summary>Drains the SDL event queue; returns <see langword="false"/> when the client must stop.</summary>
+    private bool PumpEvents()
+    {
+        while (SDL.PollEvent(out SDL.Event evt))
+        {
+            switch ((SDL.EventType)evt.Type)
+            {
+                case SDL.EventType.Quit:
+                case SDL.EventType.WindowCloseRequested:
+                    return false;
+
+                case SDL.EventType.KeyDown when HandleKeyDown(evt.Key):
+                    return false;
+
+                default:
+                    break;
+            }
         }
 
-        if (keyboard.IsKeyDown(Keys.F11))
-        {
-            ToggleFullscreen();
-        }
+        return true;
+    }
 
-        if (keyboard.IsKeyDown(Keys.F12))
+    /// <summary>Handles a key press; returns <see langword="true"/> when the client must stop.</summary>
+    private bool HandleKeyDown(in SDL.KeyboardEvent key)
+    {
+        switch (key.Key)
         {
-            _screenshotRequested = true;
+            case SDL.Keycode.Escape:
+                return true;
+
+            case SDL.Keycode.F11 when !key.Repeat:
+                _presenter?.ToggleFullscreen();
+                return false;
+
+            case SDL.Keycode.F12 when !key.Repeat:
+                _screenshotRequested = true;
+                return false;
+
+            default:
+                return false;
         }
+    }
+
+    private void Update(double elapsedSeconds)
+    {
+        _timer.Tick(elapsedSeconds);
+        _scene?.Update(elapsedSeconds);
 
         if (_options.SmokeFrames is int maxFrames && _timer.FrameCount >= maxFrames)
         {
             GameLog.Info($"Smoke mode finished after {_timer.FrameCount} frames ({_timer.FramesPerSecond:0.0} FPS).");
-            Exit();
+            _running = false;
         }
-
-        base.Update(gameTime);
     }
 
-    protected override void Draw(GameTime gameTime)
+    private void Draw()
     {
         if (_presenter is null || _scene is null)
         {
-            GraphicsDevice.Clear(Color.Black);
-            base.Draw(gameTime);
             return;
         }
 
@@ -147,45 +231,57 @@ public sealed class GameHost : XnaGame
         _presenter.BeginLogicalFrame();
         _presenter.DrawFrameTexture();
 
-        if (_spriteBatch is not null)
-        {
-            DiagnosticsState state = new(
-                _assets?.DataDirectory,
-                _assets?.BaseArchive.Count ?? 0,
-                _assets?.ExpansionArchive?.Count ?? 0,
-                _text?.Name ?? "none",
-                _presenter.OutputSize,
-                _presenter.Viewport.Scale,
-                _timer.FramesPerSecond,
-                _timer.FrameCount);
+        DiagnosticsState state = new(
+            _assets?.DataDirectory,
+            _assets?.BaseArchive.Count ?? 0,
+            _assets?.ExpansionArchive?.Count ?? 0,
+            _text?.Name ?? "none",
+            _fonts?.Description ?? "none",
+            _presenter.OutputSize,
+            _presenter.Viewport.Scale,
+            _timer.FramesPerSecond,
+            _timer.FrameCount);
 
-            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
-            _scene.DrawOverlay(_spriteBatch, state);
-            _spriteBatch.End();
-        }
+        _text?.BeginFrame();
+        _scene.DrawOverlay(state);
 
         CaptureScreenshot();
 
         _presenter.EndFrame();
-
-        base.Draw(gameTime);
     }
 
-    protected override void UnloadContent()
+    private void CaptureScreenshot()
     {
-        _text?.Dispose();
-        _text = null;
+        bool requestedByCommandLine = _screenshotFrame >= 0 && _timer.FrameCount >= _screenshotFrame;
+        bool requestedByKey = _screenshotRequested;
+        if (!requestedByCommandLine && !requestedByKey)
+        {
+            return;
+        }
 
-        _presenter?.Dispose();
-        _presenter = null;
+        _screenshotFrame = -1;
+        _screenshotRequested = false;
 
-        _spriteBatch?.Dispose();
-        _spriteBatch = null;
+        string path = requestedByKey
+            ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png"
+            : _options.ScreenshotPath!;
 
-        _assets?.Dispose();
-        _assets = null;
+        try
+        {
+            string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
 
-        base.UnloadContent();
+            _presenter!.SaveLogicalFrame(path);
+            GameLog.Info($"Screenshot saved to '{Path.GetFullPath(path)}'.");
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            GameLog.Error("Screenshot could not be written", exception);
+            ExitCode = 1;
+        }
     }
 
     private void LoadGameData()
@@ -215,11 +311,16 @@ public sealed class GameHost : XnaGame
 
     private void CreateTextRenderer()
     {
+        if (_presenter is null)
+        {
+            return;
+        }
+
         foreach (FontChoice candidate in SystemFontLocator.EnumerateCandidates())
         {
             try
             {
-                _text = new FontStashTextRenderer(candidate.Path);
+                _text = new SdlTextRenderer(_presenter.Renderer, candidate.Path);
                 _supportsCjk = candidate.SupportsCjk;
                 GameLog.Info($"Text backend ready: {_text.Name} (CJK: {(_supportsCjk ? "yes" : "no")}).");
                 return;
@@ -231,42 +332,5 @@ public sealed class GameHost : XnaGame
         }
 
         GameLog.Warn("No usable TrueType font found; the diagnostics overlay stays disabled.");
-    }
-
-    private void ToggleFullscreen()
-    {
-        _fullscreen = !_fullscreen;
-        _graphics.HardwareModeSwitch = false;
-        _graphics.IsFullScreen = _fullscreen;
-        _graphics.ApplyChanges();
-        GameLog.Info(_fullscreen ? "Switched to fullscreen." : "Switched to windowed mode.");
-    }
-
-    private void CaptureScreenshot()
-    {
-        bool requestedByCommandLine = _screenshotFrame >= 0 && _timer.FrameCount >= _screenshotFrame;
-        bool requestedByKey = _screenshotRequested;
-        if (!requestedByCommandLine && !requestedByKey)
-        {
-            return;
-        }
-
-        _screenshotFrame = -1;
-        _screenshotRequested = false;
-
-        string path = requestedByKey
-            ? $"screenshot-{DateTime.Now:yyyyMMdd-HHmmss}.png"
-            : _options.ScreenshotPath!;
-
-        try
-        {
-            _presenter!.SaveLogicalFrame(path);
-            GameLog.Info($"Screenshot saved to '{Path.GetFullPath(path)}'.");
-        }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException)
-        {
-            GameLog.Error("Screenshot could not be written", exception);
-            ExitCode = 1;
-        }
     }
 }

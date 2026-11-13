@@ -10,4 +10,10 @@
     <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- TrueType glyph rasterization for the CJK / above-U+00FF glyph source.
+         See docs/DECISIONS.md ADR-019 for why this is not SDL3_ttf. -->
+    <PackageReference Include="Sevencat.GlyphRaster" />
+  </ItemGroup>
+
 </Project>

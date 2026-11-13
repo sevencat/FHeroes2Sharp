@@ -1,7 +1,7 @@
 # 移植计划（PLAN）
 
 > 参考实现：**fheroes2 1.1.18（commit `6c51acfdc`）**
-> 目标：C# / .NET 10 / MonoGame / FontStashSharp，逻辑分辨率 640×480。
+> 目标：C# / .NET 10 / SDL3 / SDL3_ttf，逻辑分辨率 640×480。
 
 ## 总体原则
 
@@ -16,9 +16,9 @@
 
 | 里程碑 | 内容 | 验收标准 |
 | --- | --- | --- |
-| **M0** | 解决方案骨架；Core/Assets/Rendering 最小子集；MonoGame 窗口 640×480 + 2x；FontStashSharp 文本；AssetProbe；文档 | 构建 0 警告（warnings-as-errors）；测试全绿；`--smoke-frames` 可运行并出图 |
+| **M0** | 解决方案骨架；Core/Assets/Rendering 最小子集；SDL3 窗口 640×480 + 2x；SDL3_ttf 文本；AssetProbe；文档 | 构建 0 警告（warnings-as-errors）；测试全绿；`--smoke-frames` 可运行并出图 |
 | **M1** | 图像栈：ICN/TIL 解码、变换层（palette transform 6–13）、`Cursor`、PNG/BMP 导出、黄金图像测试 | 解码 `HEROES.ICN`/`GROUND32.TIL` 与 C++ 输出逐像素一致（抽样 20 个资源） |
-| **M2** | 主菜单：`ADVBORD.ICN` 边框、按钮、FNT 位图字体、`.mo` 本地化、BGM 播放 | 可从数据目录启动到主菜单，中英文切换 |
+| **M2** | 主菜单：`ADVBORD.ICN` 边框、按钮、原版位图字体（`FONT.ICN`/`SMALFONT.ICN`）、TrueType 补位 CJK（`Sevencat.GlyphRaster`）、`.mo` 本地化、BGM 播放 | 可从数据目录启动到主菜单，中英文切换 |
 | **M3** | 新游戏/场景设置：地图尺寸、玩家数、种族、难度；H2D 场景列表 | 能创建新对局并进入冒险地图（占位渲染） |
 | **M4** | 冒险地图渲染：地形、物体、英雄/城镇精灵、滚动、小地图、路径 | 与参考实现同视角截图对齐（tile 级一致） |
 | **M5** | 回合与英雄：移动力、拾取资源、战斗触发、AI 基础 | 完整回合可循环，AI 可行动 |
@@ -41,7 +41,7 @@ FHeroes2.Client.Desktop  →  引用以上全部（组合根）
 | 风险 | 对策 |
 | --- | --- |
 | ICN 变换层/裁剪语义复杂 | M1 已落地「参考导出对比」工具链：C++ 侧链接原版源码导出 BMP，C# 侧逐字节比较（ADR-015） |
-| 字体：原版位图字体 vs TrueType 度量差异 | `ITextRenderer` 抽象；布局用逻辑像素，位图字体延后接入 |
+| 字体：原版位图字体 vs TrueType 度量差异 | `IGlyphSource` 抽象（ADR-018）：`BitmapFont` 走原版 ICN 字形，`TrueTypeGlyphSource` 只补 CJK／非单字节字符，两者共用 `GlyphText` 的布局；布局统一用逻辑像素。颜色统一走 `PaletteTable` 索引重映射（ADR-020），中英文同色。许可已澄清（该包由本项目作者维护，ADR-019），剩余风险只是无 hinting 的糊边与渐变字体尚未移植 |
 | 大端/字节对齐陷阱 | 统一 `LittleEndianReader`，禁止 `BinaryReader` |
 | 存档与 C++ 不互通 | 自研版本化 schema（`CURRENT_FORMAT_VERSION` 仅作参考），不做互操作 |
 | 音频/视频后端差异 | SMK 与 82M 解码作为独立可测试组件，先做数据层再接入播放 |

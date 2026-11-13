@@ -1,10 +1,14 @@
 # FHeroes2Sharp
 
-C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，移植自
+C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植自
 [fheroes2](https://github.com/ihhub/fheroes2)（C++，GPLv2）。
 
-* 目标框架：**.NET 10**（`net10.0`），渲染后端 **MonoGame 3.8.6 (DesktopGL)**，
-  字体使用 **FontStashSharp**（TrueType，支持中文）。
+* 目标框架：**.NET 10**（`net10.0`），渲染后端 **SDL3 3.4（SDL3-CS 绑定）**，
+  诊断文本使用 **SDL3_ttf**（FreeType，支持中文）。
+* 游戏界面文本：原版 `FONT.ICN` / `SMALFONT.ICN` 位图字体（`BitmapFont`）；CJK 等 ICN 表外的字符由
+  `TrueTypeGlyphSource` 补位，光栅化用纯托管的 `Sevencat.GlyphRaster`（内嵌文泉驿微米黑，见 ADR-019），
+  两种字形共用同一套布局（`GlyphText`）。文字颜色不是第二套资源：白/黄/灰都是同一份字形过一遍
+  `Core.Imaging.PaletteTable`（原版 `PAL::GetPalette` 的索引重映射表，ADR-020），所以中英文混排同色。
 * 分辨率：内部逻辑分辨率固定 **640×480**，按整数倍放大并加黑边（默认 2x = 1280×960）。
 * 策略：解析层对原版资源格式 **逐字节一致**，工程结构用现代 C# 分层重写。
 * NativeAOT：**暂不作为支持目标**，但已开启 AOT / 裁剪分析器（`IsAotCompatible`，`IL2xxx`/`IL3xxx`
@@ -13,18 +17,20 @@ C# / .NET 10 / MonoGame 版的《魔法门之英雄无敌 II》引擎重制，�
 ## 当前状态
 
 **M0 已完成**：解决方案骨架、AGG 归档解析、调色板加载、640×480 索引帧缓冲、
-整数倍呈现、FontStashSharp 文本、诊断场景（含截图）、AssetProbe 工具。
+整数倍呈现、SDL3_ttf 文本、诊断场景（含截图）、AssetProbe 工具。
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（Core 111 + Assets 44 = 155 个测试）。
+以及钉住真实资源解码结果的摘要测试（Core 128 + Assets 93 = 221 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
 **M2 进行中**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
 `translations/zh_CN.po` + `tools/scripts/BuildTranslations.ps1` 生成并安装
 `<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 95 条，
-未翻译项回退英文）。主菜单界面与语言切换仍待实现。
+未翻译项回退英文）。文字颜色也已落地：`Core.Imaging.PaletteTable`（原版 13 张索引重映射表）+
+`BitmapFont.WithPalette` / `GlyphCoverageRamp.WithPalette`，白/黄/灰文字与 CJK 混排同色（ADR-020）。
+主菜单界面与语言切换仍待实现。
 
 ## 快速开始
 
@@ -74,7 +80,7 @@ src/FHeroes2.Assets      AGG 归档、调色板/资源定位（依赖 Core）
 src/FHeroes2.Rendering   呈现接口、文本抽象（依赖 Core）
 src/FHeroes2.Game        游戏世界、回合、AI、存档（依赖 Core/Assets/Rendering）
 src/FHeroes2.UI          对话框栈与控件（依赖 Game/Rendering/Core）
-src/FHeroes2.Client.Desktop  MonoGame 宿主、SDL 呈现、字体、场景
+src/FHeroes2.Client.Desktop  SDL3 宿主、呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
@@ -84,7 +90,7 @@ docs/                    计划、进度、决策与参考笔记
 ```
 
 依赖方向单向：`Core ← Assets ← Rendering`；`Game` 依赖 Core/Assets/Rendering，`UI` 依赖 Core/Rendering/Game；
-客户端引用全部。任何反向引用都会破坏可测试性（`Core` 里不允许出现 MonoGame 类型）。
+客户端引用全部。任何反向引用都会破坏可测试性（`Core` 里不允许出现 SDL 或 XNA 类型）。
 
 ## 文档
 

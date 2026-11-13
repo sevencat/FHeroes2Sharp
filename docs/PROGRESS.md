@@ -10,9 +10,9 @@
 | `FHeroes2.Assets` | ✅ | `AssetArchive`（AGG）、`AggFileNameHash`、`AssetLocator`、`AssetBundle` |
 | `FHeroes2.Rendering` | ✅ | `IScreenPresenter`、`ITextRenderer`/`TextStyle`/`TextMetrics` |
 | `FHeroes2.Game` / `FHeroes2.UI` | ✅（占位） | 仅层边界标记类型，M2/M3 起实现 |
-| `FHeroes2.Client.Desktop` | ✅ | MonoGame 宿主、`MonoGamePresenter`、`FontStashTextRenderer`、诊断场景、命令行、截图 |
+| `FHeroes2.Client.Desktop` | ✅ | SDL3 宿主、`SdlPresenter`、`SdlTextRenderer`（SDL3_ttf）、诊断场景、命令行、截图 |
 | `tools/FHeroes2.AssetProbe` | ✅ | `list` / `info` / `extract` / `sprites` / `tiles` 五个子命令 |
-| 测试 | ✅ | 97 个（Core 61 / Assets 36，全部通过；支持真实数据时含 1434 条哈希与 ICN/TIL 摘要集成校验） |
+| 测试 | ✅ | 174 个（Core 117 / Assets 57，全部通过；支持真实数据时含 1434 条哈希与 ICN/TIL 摘要集成校验） |
 | AOT / 裁剪 | ✅ | 产品项目开启 `IsAotCompatible` 等分析器（警告即错误），0 条 IL 发现；**不发布** AOT（ADR-011） |
 | 文档 | ✅ | PLAN / PROGRESS / ARCHITECTURE / DECISIONS / REFERENCE / MISC / OTHER / README |
 
@@ -32,6 +32,16 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 
 `docs/` 之外的实际画面证据：`tools-output/m0.png`（该目录已在 `.gitignore` 中忽略）。
 
+### 呈现层切换为 SDL3 的验证记录
+
+```
+dotnet build FHeroes2Sharp.slnx            → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx            → Core: 117 passed；Assets: 57 passed（合计 174）
+客户端 --smoke-frames 40 --scale 2         → 退出码 0，末帧 111~118 FPS（vsync 未限速的合成速度）
+客户端 --screenshot artifacts/smoke/*.png  → 640×480 PNG：调色板色带 + 中文叠加文本，2x 整数倍呈现
+字体选择                                    → simsun.ttc（12 px 内嵌点阵，CJK 与拉丁混排均锐利）
+```
+
 ### 关键数据校正（相对早前侦察笔记）
 
 * `heroes2.agg` 条目数是 **1434**（不是 154——早期脚本读取头部时字节序累加写错）。
@@ -40,7 +50,8 @@ AOT 分析器探针                        → 临时加入 Type.GetType 后构�
 * `heroes2x.agg` 条目数是 **52**。
 * `KB.PAL` 是 **6 bit VGA** 调色板（分量 0..63），需 `<< 2` 归一化，并按 `setGamePalette`
   复制水/岩浆循环色（231–233、235 → 246–249，214–217 → 250–253）。
-* 原版位图字体文件名是 `BIGFONT.FNT` / `SMALFONT.FNT`（不是 `.ICN`）。
+* 原版归档里有 `BIGFONT.FNT` / `SMALFONT.FNT`（各约 17 KB），但参考实现从不读取它们；
+  界面字体实际来自 `FONT.ICN` / `SMALFONT.ICN` 精灵表（ADR-018）。
 
 ### M0 已知偏差 / 待办
 
@@ -122,7 +133,12 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `Assets.Localization.MoCatalog` | ✅ | GNU MO 读取（对齐 `Translation::MOFile`）：大小端、主版本校验、`\0` 分隔复数、空条目跳过、`context\|` 剥离；仅 UTF-8（ADR-016） |
 | `translations/zh_CN.po` | ✅ | 简体中文 95 条：主菜单、设置、语言选择、分辨率说明、快捷键；未翻译项回退英文 |
 | `tools/scripts/BuildTranslations.ps1` | ✅ | `msgfmt --check` 校验 + 安装到 `<data>/files/lang`；`-Cultures` / `-NoInstall` / `-MsgfmtPath` |
-| 主菜单界面（`ADVBORD` 边框、按钮、FNT 位图字体） | ⏳ | 未开始 |
+| `Assets.Fonts.BitmapFont`（`FONT.ICN` / `SMALFONT.ICN`） | ✅ | 原版位图字体：每字符一个 `Sprite`，索引 = 字符码；ICN 从 0x20 起，载入时前置 32 个空格字形副本（对齐 `processICN()`）。度量与绘制移植自 `fheroes2::FontCharHandler`（advance = `OffsetX + Width`、空格 4/6/8、行高 11/17/33、`?` 回退、`\n`、多行居中/换行、裁剪区） |
+| `Assets.Fonts.IGlyphSource` | ✅（接口） | 文本布局与光栅化之间的接缝：「度量 + 取字形」；实现有 `BitmapFont`（原版 ICN）与 `TrueTypeGlyphSource`（CJK／非单字节） |
+| `Assets.Fonts.TrueTypeGlyphSource` | ✅ | 实现 `IGlyphSource`：`Sevencat.GlyphRaster`（纯托管 + 内嵌 WenQuanYi Micro Hei）按 em 尺寸光栅化，覆盖率经 `GlyphCoverageRamp` 量化到 `KB.PAL` 灰阶；`OffsetY += Ascent` 对齐位图字体的原点；`ForLineHeight(font, 17)` 直接对齐原版行高；字形按字符缓存 |
+| `Assets.Fonts.GlyphText` | ✅ | 唯一的一份布局实现（`Measure` / `DrawLine` / `DrawMultiline` / `WrapLines`），`BitmapFont` 与 `TrueTypeGlyphSource` 共用；CJK 无空格段落按字符断行 |
+| `Core.Imaging.PaletteTable` / `PaletteId`（文字颜色） | ✅ | `PAL::GetPalette` 的 13 张 256 字节重着色表 + identity，`tools/scripts/GeneratePaletteTable.ps1` 从 C++ 源生成、`PaletteTableTests` 固定 SHA-256；`ImageOps.ApplyPalette` 负责应用；`BitmapFont.WithPalette` 与 `GlyphCoverageRamp.WithPalette` 让位图字体与 TrueType 用同一颜色（ADR-020） |
+| 主菜单界面（`ADVBORD` 边框、按钮） | ⏳ | 未开始 |
 | 语言切换界面、BGM 播放 | ⏳ | 未开始 |
 
 ### M2 验证记录（本地化部分）
@@ -141,6 +157,70 @@ dotnet test FHeroes2Sharp.slnx         → Core 111 passed / Assets 57 passed / 
 * 条目数会随翻译推进增长，测试只断言下限（`Count > 50`）与若干固定译文，补翻译不需要改测试。
 * `msgid` 与参考实现的英文原文逐字节一致（`Okay`、`New Game`、`combatMode|Manual` 等已由
   `fheroes2/files/lang/de.po` 交叉核对），因此同一份 `.po` 将来可以被 C++ 侧复用。
+
+### M2 验证记录（位图字体）
+
+```
+dotnet test tests/FHeroes2.Assets.Tests --filter FullyQualifiedName~BitmapFontTests
+  → 17 passed / 0 failed
+dotnet test FHeroes2Sharp.slnx
+  → Core 117 passed / Assets 74 passed / 0 failed（合计 191）
+  FONT.ICN     : 96 个 sprite → 128 个字形（前置 32），空格 6，行高 17
+                 'A' 15x13 @ (0,0) → advance 15；'i' 5x12 @ (0,1)；"Heroes" = 56
+  SMALFONT.ICN : 96 个 sprite → 128 个字形，空格 4，行高 11；'A' advance 9；"Heroes" = 40
+  "New Game"   : 宽度 91，绘制结束笔位 95（起点 4），目标缓冲 SHA256 =
+                 B22BC79E11181778A41310FC75B7E23AE39B3711AC02562FEE716D347BD84446
+```
+
+* 索引移位是关键：`FONT.ICN` 的第 0 个 sprite 是空格，`game_assets.cpp` 会
+  `insert(begin(), 32, imageArray[0])` 让「索引 = 字符码」，所以 `FromIcn` 也前置 32 个副本；
+  少了这一步整张表会错位一个单词的首字母（`'A'` 会被当成 `'!'`）。
+* 原始表只有 96 项（0x20–0x7F，含小写），因此当前字体能画 `'a'`–`'z'`；
+  0x80 以上（含 CJK）在 `BitmapFont` 里走 `?` 回退，CJK 文本改用 `TrueTypeGlyphSource`（ADR-019）。
+* 只做布局/绘制，不改字形：`modifyBaseNormalFont()` 的若干像素级修补（`$`、`%`、`&`、`-`、`\`、`|`、
+  小写 `k`）与 `resizeCodePage()`/`generateAlphabet()` 的码页扩展尚未移植，属于主菜单拼接阶段的像素级对齐项。
+* 摘要（digest）只随测试输出打印、暂不断言：真实字形的逐像素结果还没有和 C++ 侧对拍过，
+  先用它做变化哨兵，等 `ADVBORD` 拼好主菜单后再固化为回归基线。
+
+### M2 验证记录（TrueType 字体）
+
+```
+dotnet test tests/FHeroes2.Assets.Tests --filter FullyQualifiedName~TrueTypeGlyphSourceTests
+  → 12 passed / 0 failed
+dotnet test FHeroes2Sharp.slnx
+  → Core 117 passed / Assets 86 passed / 0 failed（合计 203）
+```
+
+* 内置字体实测（`TextFont.BuiltIn` = WenQuanYi Micro Hei，unitsPerEm 2048）：em 16 → ascent 14.98、
+  行高 18.76、空格 4 px；`'A'` 10x12 advance 10、`'中'` 14x15 advance 16。
+  `TrueTypeGlyphSource.ForLineHeight(font, 17)` 反解出 em 14.50，行高正好 17，与 `FONT.ICN` 的
+  17 px 网格一致，所以中英混排能落在同一基线上。
+* 量化依据：`KB.PAL` 的 10–36 号索引是一条 27 级灰阶（10 = (63,63,63) 最亮 → 36 = 黑），
+  `FONT.ICN` 的亮像素集中在 10/16/21/12/14 上——原版字形自带「预烘焙抗锯齿」。因此 TrueType 也量化到
+  同一梯度（默认 `[25, 21, 16, 12, 10]`，最淡→实心），同屏混排不会出现「两种白」。
+* `'中'` @16 的覆盖率有 16 个档位（0–255），量化后只落 3–4 个调色板索引；覆盖率 < 32 的像素走变换层
+  跳过，这是小字号不糊边的关键。
+* 坐标只换算一次：`Sprite.OffsetY = mask.OffsetY + Ascent`（em 16 下 `'中'` 为 -13 + 15 = 2），
+  于是 `GlyphText.DrawLine` 用同一套「左上角 + OffsetX/OffsetY」就能画两种字形。
+* 布局抽到 `GlyphText` 之后，`BitmapFontTests` 的 17 个用例原样通过：换行、居中、裁剪、尾随空格规则没有变化。
+
+### M2 验证记录（文字颜色）
+
+```
+pwsh tools/scripts/GeneratePaletteTable.ps1
+  → 3584 bytes (14 tables)，SHA-256 4DB8D4E1…81FA3C
+dotnet test FHeroes2Sharp.slnx
+  → Core 128 passed / Assets 93 passed / 0 failed（合计 221）
+```
+
+* 表语义抽查：`Standard` 为恒等表；`YellowFont` 把灰阶 10–36 映射到黄阶 114–130；`WhiteFont` 保持灰阶
+  不变、其余索引清零；`GrayFont` 10 → 15（更暗）；`Darkening` 10 → 16；`Purple` 落在 131–151。
+* `GlyphCoverageRamp.Heroes2Text.WithPalette(PaletteId.YellowFont)` = `[124, 121, 118, 115, 114]`，
+  于是 `'中'` 的每个落地像素都落在 114–130，与 `YELLOW_FONT` 的色阶完全一致（`FontPaletteTests` 断言）。
+* 共享字形只转换一次：`FromIcn` 让 32 个控制码共用首个 sprite，`WithPalette` 用引用相等的字典去重，
+  否则二次映射会把像素清零（`BitmapFont_ConvertsAReusedGlyphOnlyOnce`）。
+* 变换层不参与重着色：`WithPalette` 保留 `Transform`（1 = 跳过），只改图像层，因此 TrueType 字形的
+  「跳过透明像素」语义与位图字体一致。
 
 ## 后续里程碑
 
