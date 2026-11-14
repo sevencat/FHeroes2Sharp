@@ -106,10 +106,55 @@ public sealed class Mp2ObjectDataTests
     [Fact]
     public void TheDescriptionOfATroopStackIsItsCount()
     {
+        // Frame 4 of MONS32 is the veteran pikeman, ids starting at the peasant.
         string text = Mp2ObjectData.Describe(
             Tile(Mp2ObjectType.ActionMonster, ground: Mp2ObjectIcnType.Mons32, groundIndex: 4, data: 25));
 
-        Assert.Equal("the word is the troop count: 25 monsters", text);
+        Assert.Equal("the word is the troop count: 25 Veteran Pikemen", text);
+
+        // A stack of one takes the singular, the way Monster::GetPluralName does.
+        Assert.Equal(
+            "the word is the troop count: 1 Veteran Pikeman",
+            Mp2ObjectData.Describe(
+                Tile(Mp2ObjectType.ActionMonster, ground: Mp2ObjectIcnType.Mons32, groundIndex: 4, data: 1)));
+
+        // Without the sprite there is a count but no kind of creature to name.
+        Assert.Equal(
+            "the word is the troop count: 25",
+            Mp2ObjectData.Describe(Tile(Mp2ObjectType.ActionMonster, ground: Mp2ObjectIcnType.MtnMult, groundIndex: 81, data: 25)));
+    }
+
+    [Fact]
+    public void TheKindOfACreatureComesFromTheSpriteItIsDrawnWith()
+    {
+        // ICN::MONS32 starts at the peasant, so the frame is one less than the creature id.
+        Assert.Equal(
+            1,
+            Mp2ObjectData.MonsterOf(Tile(Mp2ObjectType.ActionMonster, ground: Mp2ObjectIcnType.Mons32, groundIndex: 0)));
+
+        Assert.Equal(
+            21,
+            Mp2ObjectData.MonsterOf(Tile(Mp2ObjectType.ActionMonster, top: Mp2ObjectIcnType.Mons32, topIndex: 20)));
+
+        Assert.Equal(
+            Mp2MonsterName.Unknown,
+            Mp2ObjectData.MonsterOf(Tile(Mp2ObjectType.ActionMine, top: Mp2ObjectIcnType.ExtraOvr, topIndex: 0)));
+    }
+
+    [Fact]
+    public void TheDescriptionOfAShrineIsItsSpell()
+    {
+        Assert.Equal(
+            "the word is the spell it teaches, 0 for one the game rolls at start",
+            Mp2ObjectData.Describe(Tile(Mp2ObjectType.ActionShrineThirdCircle, data: 14)));
+
+        Assert.Equal(
+            "the word is the spell it teaches, 0 for one the game rolls at start",
+            Mp2ObjectData.Describe(Tile(Mp2ObjectType.ActionPyramid)));
+
+        Assert.Equal(
+            "the word is the skill it teaches, 0 for one the game rolls at start",
+            Mp2ObjectData.Describe(Tile(Mp2ObjectType.ActionWitchsHut)));
     }
 
     [Fact]

@@ -127,13 +127,14 @@ E2 起可以**真的改地形、也能放对象**：左键刷、右键按住拖�
 按 `I` 打开指针下那一格的**属性框**（参考在右键上弹的那个 popup）：对象名、`ground icn:帧 layer`、
 `top icn:帧`、`data N` 和 `[x; y]`。`data` 就是 MP2 tile 里那段 13 位数据字（`quantity1` 高位 +
 `quantity2`）；`[` / `]` 逐 1 步进，一次一撤销，写的时候保留 `quantity1` 低三位的层位。框开着时点击或
-按其它键只关框，不会在背后刷地图（ADR-051）。
+按其它键只关框，不会在背后刷地图（ADR-051）。标题是参考的对象名（`Monster`、`Trees`、`Archer's
+House`，照 `MP2::StringObject`，ADR-053），不是移植的枚举名。
 
-数据字下面还有一句它**真正**代表什么（ADR-052）：怪物格是数量（`the word is the troop count: 250
-monsters`，因为参考读地图时只保留这一种对象的字），资源堆与矿的种类取自精灵（`OBJNRSRC` 帧 / 矿的
-`EXTRAOVR` 覆盖层），宝箱与墓地的内容是开局掷出来的，其余对象的字游戏会直接清掉。注意 MP2 **没有**
-存资源堆的数量和宝箱的金币——参考自己的格式把它们放在扩展元数据块里，所以这里不会编出「500 黄金」。
-矿不产资源、宝箱没有守卫、多格建筑也还没做。
+数据字下面还有一句它**真正**代表什么（ADR-052）：怪物格是数量加兵种（`the word is the troop count: 250
+Medusas`，兵种来自 `MONS32` 帧，因此改字时数量跟着变），资源堆与矿的种类取自精灵（`OBJNRSRC` 帧 / 矿的
+`EXTRAOVR` 覆盖层），神庙与金字塔是它教的法术、女巫小屋是它教的技能（0 = 开局掷），宝箱与墓地的内容是
+开局掷出来的，其余对象的字游戏会直接清掉。注意 MP2 **没有**存资源堆的数量和宝箱的金币——参考自己的格式
+把它们放在扩展元数据块里，所以这里不会编出「500 黄金」。矿不产资源、宝箱没有守卫、多格建筑也还没做。
 
 E3 起可以**存回 MP2**：`Ctrl+S` 写回打开的那个 `.mp2`，状态栏闪一下 `saved`。写回是**只改 tile 区**的
 原地补丁——文件头、add-on 表、城堡与可占领对象表、信息块、对象编号全部原样保留，所以「打开→保存」
@@ -188,7 +189,8 @@ dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --m
 # 新建地图：不读任何 .mp2，造一张 108x108 的空白草地地图再整份写出
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --editor-new 108 --editor-save new.mp2 --smoke-frames 8
 
-# 渲染 40 帧后截图退出（CI / 回归用）；--cursor 定格 hover 态
+# 截图会自己退出（CI / 回归用）：--screenshot 抓到那张图就关客户端，不必再配 --smoke-frames；
+# --screenshot-frame 选抓图帧，--smoke-frames 只是限制总渲染帧数（F12 手动截图不退出）
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot out.png
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 230,210 --screenshot hover.png
 

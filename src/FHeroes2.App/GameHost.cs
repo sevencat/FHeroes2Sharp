@@ -1116,6 +1116,17 @@ public sealed class GameHost : IDisposable
             GameLog.Error("Screenshot could not be written", exception);
             ExitCode = 1;
         }
+
+        // --screenshot is a script, not a session: the shell that asked for the file has to get its
+        // prompt back, so the client stops once the frame is written (or the write has failed). F12
+        // keeps the window open, because a player takes one screenshot and carries on playing. The
+        // flag decides, not the key, so that an F12 that beats the capture frame cannot leave a
+        // scripted run waiting for a window to be closed by hand.
+        if (_options.ScreenshotPath is not null)
+        {
+            GameLog.Info("Screenshot was requested on the command line, closing the client.");
+            _running = false;
+        }
     }
 
     private void LoadGameData()

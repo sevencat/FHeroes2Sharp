@@ -181,7 +181,10 @@ public sealed class CommandLineOptions
     /// </summary>
     public EditorDataRequest? EditorData { get; private set; }
 
-    /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
+    /// <summary>
+    /// Writes a PNG of the composed logical frame and then stops: the flag is a script, so it hands the
+    /// prompt back to the shell instead of leaving a window to close by hand.
+    /// </summary>
     public string? ScreenshotPath { get; private set; }
 
     /// <summary>Screenshot is taken after this many rendered frames (<c>--screenshot-frame</c>).</summary>
@@ -405,7 +408,7 @@ public sealed class CommandLineOptions
         Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2).");
         Console.WriteLine("  --fullscreen        Starts in borderless fullscreen mode.");
         Console.WriteLine("  --smoke-frames <n>  Renders n frames and exits (used by CI / smoke tests).");
-        Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames.");
+        Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames, then exits.");
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
         Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");

@@ -576,7 +576,8 @@ public sealed class EditorScene : IScene
 
     /// <summary>
     /// Names what a tile holds: the preset of the editor when the tile shows one of its objects, the
-    /// object type when it does not, and the ground when there is no object at all.
+    /// name <see cref="Mp2ObjectName.Of"/> gives the object type when it does not, and the ground when
+    /// there is no object at all.
     /// </summary>
     /// <param name="info">Tile to name.</param>
     /// <returns>The name shown as the header of the information box.</returns>
@@ -588,7 +589,7 @@ public sealed class EditorScene : IScene
         }
 
         return info.ObjectType != Mp2ObjectType.None
-            ? info.ObjectType.ToString()
+            ? Mp2ObjectName.Of(info.ObjectType)
             : MapGrounds.FromTerrainImageIndex(info.TerrainImageIndex).ToString();
     }
 
@@ -1276,7 +1277,7 @@ public sealed class EditorScene : IScene
 
         if (_editor.Hover is { } info && info.ObjectType != Mp2ObjectType.None)
         {
-            Line(info.ObjectType.ToString());
+            Line(Mp2ObjectName.Of(info.ObjectType));
         }
 
         if (_editor.GridEnabled)

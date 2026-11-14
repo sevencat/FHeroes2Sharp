@@ -1650,3 +1650,39 @@ if (dirty.IsEmpty)
 * 参考编辑器本身也不给资源堆写数量到 tile：点资源对象弹 `Dialog::SelectCount`，写的是它自己格式的
   `resourcesMetadata`，与 MP2 无关。
 
+## ADR-053：属性框用参考的对象名与怪物名，不印枚举名
+
+**背景**：ADR-051 的属性框拿 `Mp2ObjectType.ToString()` 当标题，于是框里出现 `ActionMonster`、
+`ActionRandomResource` 这种移植内部的枚举名；ADR-052 的怪物句子也只能写 `250 monsters`，因为
+`Media::` 里没有一张「怪物 id → 名字」的表。参考这两处都有现成的表：
+
+* `MP2::StringObject`（`maps/mp2.cpp`）——一个按 `MP2::MapObjectType` 展开的大 `switch`，进来先把
+  `OBJ_ACTION_OBJECT_TYPE` 位掩掉，所以 `ActionArtifact` 与 `Artifact` 共用一条分支，名字是
+  `Artifact`、`Archer's House`、`Random Monster - very strong` 这样的游戏原文。
+* `Monster::monster_t` 的名字（`monster_info.cpp` 的 `untranslatedName` / `untranslatedPluralName`，
+  经 `Monster::GetName` / `GetPluralName` 取用）——72 条，`UNKNOWN` 在前、66 种兵在后、4 个随机怪物收尾。
+
+**决策**：
+
+1. **照抄两张表，不做本地化**：新增 `FHeroes2.Assets.Maps.Mp2ObjectName` 与 `Mp2MonsterName`，字符串与
+   参考一字不差。界面语言切换管的是 `.mo` 里的界面词条，对象名与怪物名在参考里也是原文常量，不属于
+   `GameText`；等界面接 CJK 译文时再统一给这两张表接 `.mo`（届时 key 就是这些英文原文）。
+2. **动作位只掩那一位**：`(type & ~0x80)`，不是 `type & 0x7F`——`OBJ_RESURRECTION_OBJECT_TYPE` 之上
+   的宝物（`Swampy Lake`、`Barrel`…）用第 8 位，掩成 `& 0x7F` 会把它们名字吃掉。
+3. **未知字节退回枚举名**：参考对没见过的类型直接 `assert`，地图允许有错，编辑器不该因此崩。
+4. **怪物 id = `MONS32` 帧 + 1**：与 `Maps::setInitialObjectInfo` 的 `OBJ_MONSTER` 分支一致
+   （`Monster( icnIndex + 1 ) // ICN::MONS32 start from PEASANT`）；主精灵优先，其次地面精灵。
+5. **复数只按 1 变**：`Monster::GetPluralName(count)` 的规则就是 `count == 1 ? name : pluralName`，
+   所以 `1 Veteran Pikeman` / `25 Veteran Pikemen`。参考对灯塔、风车、魔法花园用 `_n` 数个数，这里
+   一个对象取单数。
+
+**后果**：
+
+* 属性框标题与面板下的悬停提示都换成参考名（`Monster`、`Trees`），`data` 那句里的怪物也有种类
+  （`the word is the troop count: 250 Medusas`）。
+* `Mp2ObjectNameTests` 10 条 + `Mp2ObjectDataTests` 4 条（Assets 254 → 264）：枚举成员全部有名字、
+  动作位同名、第 8 位不被吃掉、未知类型留数字、怪物名单复数与越界。
+* 两张表都只解码、不碰界面状态，`editor.png` 与其它四条基线逐像素不变（框与悬停提示都不在基线里）。
+* 仍未做：参考按类型拼出来的整段正文（`getObjectInfoText`、`map_object_info.cpp`）与属性对话框；
+  那些要有「icn + 帧号 → 对象身份」的目录才写得出。
+

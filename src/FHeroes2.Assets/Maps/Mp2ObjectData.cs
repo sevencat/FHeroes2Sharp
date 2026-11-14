@@ -37,13 +37,14 @@ public enum Mp2ResourceType
 
 /// <summary>
 /// What the 13 bit data word of a tile means, and what is left of the meaning when the sprite has to
-/// tell instead. The reference reads the word in <c>Maps::setInitialObjectInfo</c> while loading a
-/// map, and that function settles the question: <c>OBJ_MONSTER</c> is the only action object whose
-/// word it keeps, as the count of the troop stack. For resource piles, mines, chests and graveyards
-/// it throws the word away — the sprite names the resource of a pile or a mine, and everything else
-/// is rolled when the map starts. The amounts do exist in the reference's own map format, but they
-/// live in an extended metadata block (<c>metadata[1]</c>) that an MP2 file does not have, so the
-/// editor can describe the data word but never a number of gold pieces it cannot store.
+/// tell instead. The reference settles the question in <c>Maps::setInitialObjectInfo</c> and in
+/// <c>Maps::setSpellOnTile</c> while loading a map: a monster keeps its word as the count of the
+/// stack, a shrine or a pyramid keeps it as the id of the spell it teaches and the witch's hut as the
+/// id of the skill, and everything else is rolled or cleared — the sprite names the resource of a
+/// pile and of a mine, a chest rolls its gold or experience, a graveyard its artifact. Amounts do
+/// exist in the reference's own map format, but they live in an extended metadata block
+/// (<c>metadata[1]</c>) that an MP2 file does not have, so the editor can describe the data word but
+/// never a number of gold pieces it cannot store.
 /// </summary>
 public static class Mp2ObjectData
 {
@@ -109,6 +110,29 @@ public static class Mp2ObjectData
     }
 
     /// <summary>
+    /// The kind of creature of a stack, read from its <c>MONS32</c> sprite: the frame is the id minus
+    /// one, since the sprite starts at the peasant.
+    /// </summary>
+    /// <param name="tile">Tile to read.</param>
+    /// <returns>
+    /// Creature id, <see cref="Mp2MonsterName.Unknown"/> when no part of the tile is a stack.
+    /// </returns>
+    public static int MonsterOf(Mp2TileInfo tile)
+    {
+        if (tile.HasTopObject && tile.TopIcnType == Mp2ObjectIcnType.Mons32)
+        {
+            return tile.TopIcnImageIndex + 1;
+        }
+
+        if (tile.HasGroundObject && tile.GroundIcnType == Mp2ObjectIcnType.Mons32)
+        {
+            return tile.BottomIcnImageIndex + 1;
+        }
+
+        return Mp2MonsterName.Unknown;
+    }
+
+    /// <summary>
     /// Whether the data word of an object is the size of the troop stack on it, i.e. whether the
     /// reference keeps the word instead of clearing it.
     /// </summary>
@@ -138,7 +162,12 @@ public static class Mp2ObjectData
 
         if (CarriesTroopCount(type))
         {
-            return FormattableString.Invariant($"the word is the troop count: {word} monsters");
+            int monster = MonsterOf(tile);
+
+            return monster == Mp2MonsterName.Unknown
+                ? FormattableString.Invariant($"the word is the troop count: {word}")
+                : FormattableString.Invariant(
+                    $"the word is the troop count: {word} {Mp2MonsterName.Plural(monster, word)}");
         }
 
         switch (type)
@@ -149,6 +178,15 @@ public static class Mp2ObjectData
 
             case Mp2ObjectType.ActionMine:
                 return DescribeMine(tile);
+
+            case Mp2ObjectType.ActionShrineFirstCircle:
+            case Mp2ObjectType.ActionShrineSecondCircle:
+            case Mp2ObjectType.ActionShrineThirdCircle:
+            case Mp2ObjectType.ActionPyramid:
+                return "the word is the spell it teaches, 0 for one the game rolls at start";
+
+            case Mp2ObjectType.ActionWitchsHut:
+                return "the word is the skill it teaches, 0 for one the game rolls at start";
 
             case Mp2ObjectType.ActionTreasureChest:
                 return "the gold or the experience is rolled when the map starts";

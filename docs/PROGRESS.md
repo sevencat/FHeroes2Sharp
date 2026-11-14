@@ -1136,7 +1136,9 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | 笔刷尺寸 | ✅ | 四个尺寸照参考的 `EditorPanel::BrushSize`：`Small` 1×1、`Medium` 2×2（指针在左上角）、`Large` 4×4（以指针为中心）、`Area` 从按下那格拖成矩形；面板上是 `EDITBTNS` 第 24～31 帧的四个按钮（24×18，`x = 14 + 30·i`，`y = 113`），当前那个是按下帧，点一下就换；橡皮同样按面积清对象（ADR-050） |
 | `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象/笔刷尺寸与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
 | 对象属性（信息框 + 数据字） | ✅ | `I` 打开指针下那一格的属性框（参考右键弹出的 `Editor::showPopupWindow`）：对象名（编辑器放过的就是预设名）、`地面 icn:帧 layer`、`顶 icn:帧`、`data N` 与**这句话的意思**、`[x; y]`；`[` / `]` 逐 1 改这段 13 位数据字，一次一撤销。数据字就是 MP2 的 `quantity1/quantity2` 高位，写入时保留 `quantity1 & 0x07`（含地面层位）；空 tile 没有属性可改（ADR-051、ADR-052） |
-| 数据字的语义 | ✅ | `Mp2ObjectData` 把 13 位字翻成一句话：怪物是「the word is the troop count: 250 monsters」，资源堆/矿的类型取自精灵（`OBJNRSRC` 帧 1/3/…/13、矿的 `EXTRAOVR` 帧 0～4），宝箱与墓地的内容是开局随机——因为参考的 `Maps::setInitialObjectInfo` 载入 MP2 时只保留怪物的字，其它一律清掉（ADR-052） |
+| 数据字的语义 | ✅ | `Mp2ObjectData` 把 13 位字翻成一句话：怪物是「the word is the troop count: 250 Medusas」（种类与单复数来自 `MONS32` 帧与 `Mp2MonsterName`），资源堆/矿的类型取自精灵（`OBJNRSRC` 帧 1/3/…/13、矿的 `EXTRAOVR` 帧 0～4），神庙/金字塔是法术 id、女巫小屋是技能 id（0 表示开局掷），宝箱与墓地开局随机，其余游戏直接清掉（ADR-052） |
+| 对象名表 `Mp2ObjectName` | ✅ | 照 `MP2::StringObject` 把类型翻成名（`Artifact`、`Archer's House`、`Random Monster - very strong`…），动作位先掩掉，所以 `ActionArtifact` 与 `Artifact` 同名；`OBJ_RESURRECTION_OBJECT_TYPE` 之上的宝物（`Swampy Lake`、`Barrel`…）保留第 8 位；未知字节退回枚举名而不是像参考那样断言（ADR-053） |
+| 怪物名表 `Mp2MonsterName` | ✅ | 按 `Monster::monster_t` 顺序的 72 条名字（`UNKNOWN` + 66 种 + 4 个随机怪物），`Of` 给单数、`Plural(id, count)` 按 `Monster::GetPluralName` 的规则：只有 1 个用单数（`1 Veteran Pikeman` / `25 Veteran Pikemen`） |
 | `--editor-info <x,y>` / `--editor-data <x,y,value>` | ✅ | 属性框与数据字的脚本版：前者开框（截图即所见），后者在开场景前把某个对象的数据字写成 0～8191 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
@@ -1151,6 +1153,7 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `--editor-object` / `--editor-place` | ✅ | 脚本化对象工具（名字或 1 起的序号 + `x,y;x,y`），截图与存盘回环靠它 |
 | `tests/.../Mp2ObjectPresetsTests` | ✅ | 7 条：预设都有可画的部分、名字/序号查找与越界、空名字拒绝、0 号占位补齐、非 List 表拒绝追加、`SetAddonAt` 边界、链写出后读回、UID 递增 |
 | `tests/.../Mp2ObjectDataTests` | ✅ | 11 条：`OBJNRSRC` 只有奇数帧是资源（0～15 全表）、矿按 `EXTRAOVR` 帧 0～4 认、主精灵优先于地面精灵、只有怪物保留字、怪物句子里有数量、资源堆/矿/宝箱/墓地的句子、无字可言的句子、空地的句子、资源名与 `All` 掩码 |
+| `tests/.../Mp2ObjectNameTests` | ✅ | 10 条：枚举里每个成员都有名字（不会退成数字）、动作位掩掉后同名、`Beach`/`Trees`/`Archer's House` 等直白条目、第 8 位不被当动作位吃掉、未知类型保留数字、怪物名首尾与随机怪物、单复数只按 1 变、越界 id 退回 `Unknown Monster`；另加 4 条 `Mp2ObjectDataTests`（怪物名进句子、`MonsterOf` 取 `MONS32` 帧、神庙/金字塔/女巫小屋的句子） |
 | `tests/.../MapEditSessionTests` | ✅ | 新增 8 条：放置写 tile 与 add-on、重复放置不改动、擦除保留地面、空格擦除不成笔、撤销/重做带回对象、`Apply` 按工具分派、`O`/`1..9` 切工具与环绕、带 add-on 的保存走整份 |
 
 ### E2 验证记录
@@ -1273,6 +1276,49 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-info "76,6"
      `Dialog::SelectCount`，那是它自己格式的扩展元数据）。
   3. **句子是「这句话的意思」，不是新的控件**：只是属性框多一行（`Mp2ObjectData.Describe`），`[` / `]`
      照旧逐 1 改字；怪物的字改了数量就跟着变，因为那一行读的是同一个字。
+
+### E2 对象名 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 159 / UI 145 全绿（新增 10 条）
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+FHeroes2Sharp.exe --scene editor --map Alteris.mp2 --editor-info "76,6"
+  → Editor info: Monster at (76; 6), data 250.
+  → 框头从 ActionMonster 变成 Monster；第五行 the word is the troop count: 250 Medusas
+FHeroes2Sharp.exe --scene editor --map Alteris.mp2 --editor-info "78,3"
+  → Editor info: Trees at (78; 3), data 0.（框头 Trees，面板下悬停提示同步）
+```
+
+* 三处观察：
+  1. **名字照参考的一张表**：`MP2::StringObject`（`mp2.cpp`）把类型写成一个大 `switch`，进来先把动作位
+     掩掉，所以 `ActionArtifact` 与 `Artifact` 同名；我们照这个规则做 `Mp2ObjectName.Of`，132 条条目
+     逐条对过参考的字符串。
+  2. **`MONS32` 帧到怪物 id 是 +1**：参考 `Maps::setInitialObjectInfo` 里 `OBJ_MONSTER` 的分支写着
+     `Monster( tile.getMainObjectPart().icnIndex + 1 ) // ICN::MONS32 start from PEASANT`。Alteris (76;6)
+     的 `MONS32:61` 因此是 62 号 Medusa，句子里的种类与 `[` / `]` 改出来的数量读的是同一个字。
+  3. **复数是参考的规则**：`Monster::GetPluralName` 只在 `count == 1` 时用单数，所以 1 个是
+     `1 Medusa`、250 个是 `250 Medusas`；参考对灯塔、风车这类会数个数（`_n`），这里按「一个对象」取单数。
+* 名字表之外没有新控件：框头与面板下的悬停提示都只换了字符串，`editor.png` 里不含这两处，基线不变。
+
+### 截图自动退出 修正记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 159 / UI 145 全绿
+FHeroes2Sharp.exe --scene editor --map Alteris.mp2 --editor-info "76,6" --screenshot tools-output\quit-check.png
+  → Screenshot saved to 'tools-output\quit-check.png'.
+    Screenshot was requested on the command line, closing the client.
+  → 45 秒内自行退出，退出码 0（此前要人工关窗口）
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+```
+
+* `--screenshot` 以前只负责抓图，退出靠 `--smoke-frames`；手写的截图命令一旦漏了这个开关，抓完就停在
+  主循环里，只能人工关窗口（本轮前面几次截图正是这样中止的）。现在图写盘（或写盘失败）之后立刻把
+  `_running` 置 false，命令行截图一律自己退出。
+* 判据是**有没有配 `--screenshot`**，而不是这一次由谁触发：F12 就算抢在抓图帧之前，脚本化运行也不会卡住；
+  玩家运行时没有这个开关，F12 截完继续玩。
+* 五条基线脚本本来就带 `--smoke-frames`，行为不变、仍逐像素 identical；`--help` 与 README 的说明同步。
 
 ### E2 对象属性 验证记录
 
@@ -1419,8 +1465,8 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
 * **属性框写不出「500 黄金」**：MP2 的 tile 只存 13 位字，资源堆的数量与宝箱的内容在参考自己的格式里
   是 `metadata[1]`（扩展元数据块），MP2 根本没有这一层。要写出数量只有两条路：改用参考的存档格式
   （E4），或者在 MP2 之外另存一份旁路数据（会与别的编辑器不兼容）。参考那句按类型拼出来的
-  「日产 2 宝石」还要搬 `map_object_info.cpp` 的**对象目录**与 `MP2::StringObject` 才行；城堡表与可占领表
-  同理，也不随对象更新。
+  「日产 2 宝石」还要搬 `map_object_info.cpp` 的**对象目录**（`MP2::StringObject` 的名字表已在 ADR-053
+  搬过来，目录是它缺的前一半：`icn + 帧号 → 对象身份`）；城堡表与可占领表同理，也不随对象更新。
 * **对象目录只有 9 个、且几乎都是单格对象**：城镇、锯木厂这类多格建筑要按格拼装并处理 add-on 的
   相对偏移；面板的对象工具现在只是把这 9 个预设列成名字表，参考那套按对象类型分页的图标菜单要先有图标来源。
 * **面板少了参考的系统按钮行**：`EDITBTNS` 只有 35 帧（参考要 45+：undo / redo / 网格 / 视图 / 系统菜单），
