@@ -83,9 +83,9 @@ public static class MapGrounds
     };
 
     /// <summary>
-    /// The terrain image index a brush of <paramref name="ground"/> paints: the first image of its
-    /// range, which is the plainest image of that ground. The reference's terrain tools start from the
-    /// same plain tile and then blend the edges with the neighbours; the blending is not ported yet.
+    /// The terrain image index the range of <paramref name="ground"/> starts at. Not the image to
+    /// paint: the first images of a range are transitions to another ground, so an editor paints
+    /// <see cref="PlainImageOffset"/> past this and lets <c>TerrainTransitions</c> blend the edges.
     /// </summary>
     /// <param name="ground">Ground to paint; <see cref="MapGround.Unknown"/> has no image.</param>
     /// <exception cref="ArgumentOutOfRangeException">The ground has no terrain images.</exception>
@@ -102,4 +102,43 @@ public static class MapGrounds
         MapGround.Beach => BeachStartImageIndex,
         _ => throw new ArgumentOutOfRangeException(nameof(ground), ground, "The ground has no terrain images."),
     };
+
+    /// <summary>
+    /// The offset inside the block of <paramref name="ground"/> where its plain images start: 38 for
+    /// grass, snow, swamp, lava, desert and wasteland, 16 for water and dirt, 0 for beach. The images
+    /// before that offset draw a transition to another ground; the eight images from it are the plain
+    /// tile in its variants.
+    /// </summary>
+    /// <param name="ground">Ground to look up.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The ground has no terrain images.</exception>
+    public static int PlainImageOffset(MapGround ground) => ground switch
+    {
+        MapGround.Water or MapGround.Dirt => 16,
+        MapGround.Beach => 0,
+        MapGround.Unknown => throw new ArgumentOutOfRangeException(nameof(ground), ground, "The ground has no terrain images."),
+        _ => 38,
+    };
+
+    /// <summary>
+    /// A deterministic variant in <c>0 .. count - 1</c> for a tile, the stand-in for the
+    /// <c>Rand::Get</c> the reference uses when it picks among the eight images of a ground. A painted
+    /// tile has to be reproducible: the same click must produce the same bytes, and a screenshot
+    /// baseline cannot depend on a random generator.
+    /// </summary>
+    /// <param name="x">Tile column.</param>
+    /// <param name="y">Tile row.</param>
+    /// <param name="count">Number of variants, must be positive.</param>
+    /// <returns>Variant index.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is not positive.</exception>
+    public static int VariantOffset(int x, int y, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+
+        // The product term breaks the eight-tile period the two linear terms would leave in the low
+        // bits, and shifting down mixes the high bits into the answer: a plain xor of two multiples
+        // makes the variants line up in diagonal stripes.
+        uint hash = (uint)((x * 73856093) ^ (y * 19349663) ^ (x * y * 6037));
+
+        return (int)((hash >> 7) % (uint)count);
+    }
 }

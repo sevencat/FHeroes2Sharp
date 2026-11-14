@@ -39,9 +39,6 @@ public sealed class MapEditSession
     /// <summary>Number of strokes kept in the undo history, oldest dropped first.</summary>
     public const int MaxUndoDepth = 200;
 
-    /// <summary>Bits of <see cref="Mp2TileInfo.TerrainFlags"/> that hold the terrain shape.</summary>
-    private const byte TerrainShapeMask = 0x03;
-
     private readonly MapEditorView _editor;
     private readonly List<MapStroke> _undo = [];
     private readonly List<MapStroke> _redo = [];
@@ -243,12 +240,20 @@ public sealed class MapEditSession
     /// Paints the ground of the brush onto <paramref name="tile"/>, which is one step of a stroke.
     /// </summary>
     /// <remarks>
-    /// The terrain shape stays as it was: it tells the renderer how to flip the tile, and a painted
-    /// tile should keep the orientation of the one it replaces. The beach bits (bit 2 to 4) are
-    /// dropped, because they describe how water touches the ground that is no longer there.
+    /// <para>
+    /// The tile gets the plain image of the brush and then the blend is recomputed for it and its eight
+    /// neighbours, because the images of those neighbours say how the tile ends against every other
+    /// ground: painting grass next to water has to change the water edge too. All nine tiles belong to
+    /// the same stroke, so one <c>Ctrl+Z</c> takes the whole edit back. See
+    /// <see cref="TerrainTransitions"/> for the table itself.
+    /// </para>
+    /// <para>
+    /// The terrain shape and the beach bits of a painted tile are replaced by what the blend says: both
+    /// describe the ground that is no longer there.
+    /// </para>
     /// </remarks>
     /// <param name="tile">Tile to paint, ignored when it is outside the map or <see langword="null"/>.</param>
-    /// <returns>Whether the tile changed.</returns>
+    /// <returns>Whether anything changed.</returns>
     public bool Paint(Point? tile)
     {
         if (tile is not { } point || !WithinMap(point))
@@ -259,14 +264,21 @@ public sealed class MapEditSession
         bool ownStroke = _stroke is null;
         BeginStroke();
 
-        Mp2TileInfo before = Map.Tile(point.X, point.Y);
-        Mp2TileInfo after = before with
-        {
-            TerrainImageIndex = MapGrounds.StartImageIndex(_brush),
-            TerrainFlags = (byte)(before.TerrainFlags & TerrainShapeMask),
-        };
+        bool changed = WriteGround(point, TerrainTransitions.PlainImageIndex(_brush, point), 0);
 
-        if (after == before)
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                Point neighbour = new(point.X + dx, point.Y + dy);
+                if (WithinMap(neighbour))
+                {
+                    changed |= Blend(neighbour);
+                }
+            }
+        }
+
+        if (!changed)
         {
             if (ownStroke)
             {
@@ -276,10 +288,6 @@ public sealed class MapEditSession
             return false;
         }
 
-        int index = Map.TileIndex(point.X, point.Y);
-        Map.SetTileAt(index, after);
-        _stroke!.Record(index, before, after);
-
         if (ownStroke)
         {
             EndStroke();
@@ -287,6 +295,36 @@ public sealed class MapEditSession
 
         return true;
     }
+
+    /// <summary>
+    /// Writes the terrain image and flags of one tile into the map and the open stroke.
+    /// </summary>
+    /// <param name="point">Tile to write, must be inside the map.</param>
+    /// <param name="imageIndex">Terrain image index to set.</param>
+    /// <param name="flags">Terrain flags to set.</param>
+    /// <returns>Whether the tile changed.</returns>
+    private bool WriteGround(Point point, ushort imageIndex, byte flags)
+    {
+        Mp2TileInfo before = Map.Tile(point.X, point.Y);
+        Mp2TileInfo after = before with { TerrainImageIndex = imageIndex, TerrainFlags = flags };
+
+        if (after == before)
+        {
+            return false;
+        }
+
+        int index = Map.TileIndex(point.X, point.Y);
+        Map.SetTileAt(index, after);
+        _stroke!.Record(index, before, after);
+        return true;
+    }
+
+    /// <summary>Recomputes the blend of one tile and writes it back when it changed.</summary>
+    /// <param name="point">Tile to blend, must be inside the map.</param>
+    /// <returns>Whether the tile changed.</returns>
+    private bool Blend(Point point)
+        => TerrainTransitions.TryGetBlend(Map, point, out ushort imageIndex, out byte shape)
+           && WriteGround(point, imageIndex, shape);
 
     /// <summary>
     /// Runs the active tool on <paramref name="tile"/>, the one entry point a click and a drag share.

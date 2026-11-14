@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Io;
 
 namespace FHeroes2.Assets.Tests;
@@ -274,6 +275,24 @@ public sealed class Mp2MapWriterTests
     public void CreateBlank_RejectsASizeTheFormatDoesNotKnow()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => Mp2Map.CreateBlank(50, 30));
+    }
+
+    [Fact]
+    public void CreateBlank_AsksForTheImageOfEveryTile()
+    {
+        List<Point> asked = [];
+
+        Mp2Map map = Mp2Map.CreateBlank(36, (x, y) =>
+        {
+            asked.Add(new Point(x, y));
+            return (ushort)((x * 100) + y);
+        });
+
+        // One call per tile, in row-major order, and the returned image ends up on that tile.
+        Assert.Equal(36 * 36, asked.Count);
+        Assert.Equal(new Point(0, 0), asked[0]);
+        Assert.Equal(new Point(1, 0), asked[1]);
+        Assert.Equal((ushort)((3 * 100) + 4), map.Tile(3, 4).TerrainImageIndex);
     }
 
     private static string NewMapPath() =>

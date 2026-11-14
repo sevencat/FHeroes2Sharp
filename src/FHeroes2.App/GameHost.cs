@@ -707,6 +707,23 @@ public sealed class GameHost : IDisposable
             }
         }
 
+        // --editor-radar-click is the scripted radar click: the minimap only reacts to the pointer, so
+        // a screenshot cannot show that a click on the panel moves the view.
+        if (_options.EditorRadarClick is { } radar)
+        {
+            bool moved = scene.ClickRadar(radar.Start, radar.DragTo);
+
+            GameLog.Info(
+                $"Minimap {(radar.DragTo is null ? "click" : "drag")} at ({radar.Start.X}; {radar.Start.Y}) " +
+                $"put the view at ({scene.View.Scroll.X}; {scene.View.Scroll.Y})" +
+                $"{(moved ? "." : ", where it already was.")}");
+
+            if (_options.Cursor is { } pointer)
+            {
+                scene.SetCursor(pointer);
+            }
+        }
+
         // --editor-save closes the loop that --editor-paint opens: the map is written back at once, so
         // a script can open, change and save a real map without a mouse.
         if (_options.EditorSavePath is { } savePath)

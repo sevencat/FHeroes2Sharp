@@ -15,7 +15,7 @@ namespace FHeroes2.App;
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
-///                 [--editor-place &lt;x,y[;x,y...]&gt;]
+///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -146,6 +146,15 @@ public sealed class CommandLineOptions
     /// screenshot cannot produce.
     /// </summary>
     public IReadOnlyList<Point> EditorPlacements { get; private set; } = [];
+
+    /// <summary>
+    /// Gesture on the minimap panel the editor performs when it opens (<c>--editor-radar-click
+    /// &lt;x,y[,x2,y2]&gt;</c>, panel coordinates from 0 to 143): the press lands on the first point,
+    /// and the second one is the drag target when it is given. It is the scripted version of the radar
+    /// of <c>Radar::QueueEventProcessing</c>, where the pointer centres the map while the button is
+    /// held, so a click and a drag are the same branch.
+    /// </summary>
+    public EditorRadarRequest? EditorRadarClick { get; private set; }
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -311,6 +320,10 @@ public sealed class CommandLineOptions
                     options.EditorPlacements = ParsePlacements(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--editor-radar-click":
+                    options.EditorRadarClick = ParseRadarClick(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -373,6 +386,9 @@ public sealed class CommandLineOptions
         Console.WriteLine("                      '1'; the numbered list is what the O key cycles in the editor.");
         Console.WriteLine("  --editor-place <x,y[;x,y...]>  Places the selected object on those tiles when the");
         Console.WriteLine("                      editor opens, the scripted version of a click.");
+        Console.WriteLine("  --editor-radar-click <x,y[,x2,y2]>  Presses that point of the 144x144 minimap when the");
+        Console.WriteLine("                      editor opens, e.g. '20,20'; with a second point the press is dragged");
+        Console.WriteLine("                      there first. The map centres on the tile under the pointer.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -421,6 +437,31 @@ public sealed class CommandLineOptions
         throw new ArgumentException(
             $"'{option}' expects '<x>,<y>,<width>,<height>,<ground>', got '{value}'. " +
             "The ground is a name such as 'Snow' or a number from 1 (water) to 9 (beach).");
+    }
+
+    /// <summary>
+    /// Parses <c>--editor-radar-click</c>: <c>x,y</c> for a click, <c>x1,y1,x2,y2</c> for a press that
+    /// is dragged to a second point before the release.
+    /// </summary>
+    /// <param name="value">The option value.</param>
+    /// <param name="option">Name of the option, for the error message.</param>
+    /// <returns>The gesture on the minimap panel.</returns>
+    /// <exception cref="ArgumentException">The value is not two or four integers.</exception>
+    private static EditorRadarRequest ParseRadarClick(string value, string option)
+    {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length is 2 or 4 && parts.All(part => int.TryParse(part, out _)))
+        {
+            int[] numbers = parts.Select(int.Parse).ToArray();
+            Point start = new(numbers[0], numbers[1]);
+
+            return parts.Length == 2
+                ? new EditorRadarRequest(start, null)
+                : new EditorRadarRequest(start, new Point(numbers[2], numbers[3]));
+        }
+
+        throw new ArgumentException(
+            $"'{option}' expects '<x>,<y>' or '<x1>,<y1>,<x2>,<y2>' in panel pixels, got '{value}'.");
     }
 
     /// <summary>Parses <c>--editor-place</c>: one or more <c>x,y</c> pairs, separated by semicolons.</summary>
@@ -480,3 +521,12 @@ public sealed class CommandLineOptions
 /// <param name="Height">Height of the rectangle in tiles.</param>
 /// <param name="Ground">Ground the brush paints.</param>
 public readonly record struct EditorPaintRequest(Point Tile, int Width, int Height, MapGround Ground);
+
+/// <summary>
+/// The minimap gesture of <c>--editor-radar-click</c>: where the press lands and, for a drag, where
+/// the pointer is before the release. Panel pixels, not screen pixels, so the request does not
+/// depend on where the frame puts the panel.
+/// </summary>
+/// <param name="Start">Point of the panel the press lands on.</param>
+/// <param name="DragTo">Point the pointer moves to while the button is held, or <see langword="null"/>.</param>
+public readonly record struct EditorRadarRequest(Point Start, Point? DragTo);

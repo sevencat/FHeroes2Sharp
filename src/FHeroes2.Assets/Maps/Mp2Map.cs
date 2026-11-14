@@ -183,13 +183,34 @@ public sealed record Mp2Map
     /// </para>
     /// </remarks>
     /// <param name="size">Width and height in tiles, 36, 72, 108 or 144.</param>
-    /// <param name="terrainImageIndex">Terrain image every tile starts with, the ground of the map.</param>
+    /// <param name="terrainImageIndex">Terrain image every tile starts with.</param>
     /// <param name="name">Name stored in the header, <see cref="NewMapName"/> by default.</param>
     /// <returns>A map that is not backed by a file; saving it needs a target path.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="size"/> is not a map size.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
     public static Mp2Map CreateBlank(int size, ushort terrainImageIndex, string name = NewMapName)
+        => CreateBlank(size, (_, _) => terrainImageIndex, name);
+
+    /// <summary>
+    /// Creates an empty square map, picking the terrain image of every tile by its position.
+    /// </summary>
+    /// <remarks>
+    /// The editor uses this to spread the eight plain variants of one ground over the map instead of
+    /// repeating a single image on every tile, which is what the reference does with
+    /// <c>Rand::Get</c> and what <see cref="MapGrounds.VariantOffset"/> makes reproducible.
+    /// </remarks>
+    /// <param name="size">Width and height in tiles, 36, 72, 108 or 144.</param>
+    /// <param name="terrainImageOf">Terrain image of the tile at the given column and row.</param>
+    /// <param name="name">Name stored in the header, <see cref="NewMapName"/> by default.</param>
+    /// <returns>A map that is not backed by a file; saving it needs a target path.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="size"/> is not a map size.</exception>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="terrainImageOf"/> or <paramref name="name"/> is <see langword="null"/>.
+    /// </exception>
+    public static Mp2Map CreateBlank(int size, Func<int, int, ushort> terrainImageOf, string name = NewMapName)
     {
+        ArgumentNullException.ThrowIfNull(terrainImageOf);
+
         if (!IsSupportedSize(size, size))
         {
             throw new ArgumentOutOfRangeException(
@@ -198,24 +219,28 @@ public sealed record Mp2Map
 
         ArgumentNullException.ThrowIfNull(name);
 
-        Mp2TileInfo empty = new()
-        {
-            TerrainImageIndex = terrainImageIndex,
-            ObjectName1 = 0,
-            BottomIcnImageIndex = 0,
-            Quantity1 = 0,
-            Quantity2 = 0,
-            ObjectName2 = 0,
-            TopIcnImageIndex = 0,
-            TerrainFlags = 0,
-            ObjectType = Mp2ObjectType.None,
-            NextAddonIndex = 0,
-            Level1ObjectUid = 0,
-            Level2ObjectUid = 0,
-        };
-
         Mp2TileInfo[] tiles = new Mp2TileInfo[size * size];
-        Array.Fill(tiles, empty);
+        for (int y = 0; y < size; ++y)
+        {
+            for (int x = 0; x < size; ++x)
+            {
+                tiles[x + (y * size)] = new Mp2TileInfo
+                {
+                    TerrainImageIndex = terrainImageOf(x, y),
+                    ObjectName1 = 0,
+                    BottomIcnImageIndex = 0,
+                    Quantity1 = 0,
+                    Quantity2 = 0,
+                    ObjectName2 = 0,
+                    TopIcnImageIndex = 0,
+                    TerrainFlags = 0,
+                    ObjectType = Mp2ObjectType.None,
+                    NextAddonIndex = 0,
+                    Level1ObjectUid = 0,
+                    Level2ObjectUid = 0,
+                };
+            }
+        }
 
         return new Mp2Map
         {

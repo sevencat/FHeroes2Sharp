@@ -1117,17 +1117,23 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 
 | 项目 | 状态 | 说明 |
 | --- | --- | --- |
-| 地形笔刷 | ✅ | `MapEditSession.SetBrush/SetBrushByNumber`：九个地面各取区间首图（`MapGrounds.StartImageIndex`），**保留 shape 位**（渲染要靠它翻转）、清掉 beach 位（bit 2..4），对象字段原样保留 |
+| 地形笔刷 | ✅ | `MapEditSession.SetBrush/SetBrushByNumber`：写入该地面的**纯图**（`MapGrounds.PlainImageOffset` 之后的八张之一，见 ADR-046），shape 与 beach 位随后交给接缝重算；对象字段原样保留 |
+| 地形接缝 | ✅ | `TerrainTransitions.TryGetBlend`：参考 `setTerrainBoundaries` 的整套移植（缺一角 / 开一边 / 开四分之一 / 只剩斜角），按八邻算出图像偏移与翻转；越界邻格钳制在地图边界，所以地图边缘不算过渡；beach 永不接缝 |
+| 纯图与变体 | ✅ | `MapGrounds.PlainImageOffset`（草/雪/沼泽/熔岩/沙漠/荒地为 38、水与泥土 16、海滩 0）与 `VariantOffset`（坐标哈希代替 `Rand::Get`，同一格永远同一张图，截图才可复现） |
+| `Mp2Map.CreateBlank(size, Func<int,int,ushort>)` | ✅ | 按坐标取图的重载：新建地图把八张纯图变体铺满，而不是整图都是同一张"过渡图" |
+| `tests/.../TerrainTransitionsTests` | ✅ | 8 条：孤岛无图、水边草的偏移与翻转、水对草、beach 不接缝、边界钳制、dirt 只认水与海滩、八变体与稳定性、刷水会连带改四邻且一笔撤销 |
 | 笔划（stroke） | ✅ | 按下开笔、抬起结笔；同一格在这一笔里被刷多次只留「首次 before / 末次 after」，所以一次拖拽 = 一次 `Ctrl+Z` |
 | 撤销/重做 | ✅ | `List<MapStroke>` 双栈，200 笔上限（最旧丢弃）；新笔清空 redo；撤销会先把未结的笔关上再回退 |
 | `Mp2Map.SetTile / SetTileAt` | ✅ | 记录的唯一原地写：返回旧值，越界抛 `ArgumentOutOfRangeException`，`Tiles` 仍是对外只读视图 |
 | 输入重排 | ✅ | 左键 = 刷、右键按住 = 平移（`MapScrollController.SetPanButton`）、右键单击不拖 = 吸管、`1..9` 选地面、`Ctrl+Z` / `Ctrl+Y` 撤销重做；方向键 / `Home` / `G` / `Esc` 不变 |
 | 小地图重建 | ✅ | 编辑器里唯一的缓存：结笔、撤销、重做后 `Minimap.Build` 重烤；地图视图本来就是逐帧读 tile，改完立刻可见 |
 | `--editor-paint <x,y,w,h,ground>` | ✅ | 诊断开关：截图按不动鼠标，用它做一次脚本化矩形笔刷，`editor.png` 靠它守住「改 tile → 画面变」这条链路 |
-| `tests/.../MapEditSessionTests` | ✅ | 15 条：笔刷选择与非法地面、刷地形改 image/ground、shape 保留 beach 位清零、原地形重刷不算改动、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动 |
+| `tests/.../MapEditSessionTests` | ✅ | 15+1 条：笔刷选择与非法地面、刷地形改 image/ground、shape 由接缝决定且 beach 位清掉、同地面刷两次只算一次、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动 |
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
-| 像素基线 `editor.png` | ✅ | 现在多了一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块），雪地落在海岸线上，正好证明地形层被改写、对象层（船）仍压在上面 |
+| 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
+| `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
+| 像素基线 `editor.png` | ✅ | 一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块）把雪落在海岸线上：地形层被改写、雪块四周是真正的雪/草/水过渡、对象层（船）仍压在上面 |
 | 对象工具 | ✅ | `EditorTool`：`1..9` 选地面并回到地形工具、`O` 循环对象并选中对象工具、`X` 擦除、`T` 回地形；`MapEditSession.Apply` 是左键唯一入口（地形 / 放置 / 擦除）。工具与对象名印在状态栏 |
 | 对象目录 `Mp2ObjectPresets` | ✅ | 9 个预设：树、丛林树、树顶、山、带山顶的山、墓地、宝箱、矿、资源。**每个字节都取自 `Alteris.mp2` 的真实 tile**（icn 类型、帧号、layer/quantity1），不发明帧号——格式里没有对象表，`icn+帧号` 就是「一个对象」的全部定义 |
 | `Mp2Map` 的 add-on 编辑 | ✅ | `AppendAddon`（文件里 add-on 数为 0 时自动补 0 号占位）、`SetAddonAt`、`TakeObjectUid`（UID 计数器随之推进，写进文件尾部）；`Addons` 对外仍是只读视图 |
@@ -1154,8 +1160,8 @@ dotnet run -- --scene editor --editor-paint "50,50,8,5,Snow" → 日志 Painted 
      拖拽笔刷会变成 GC 抖动；撤销栈保存 `before/after`，改动照样可回退。只有 `SetTile` 能写，`Tiles` 仍只读。
   2. **左键让给笔刷**：E1 里左键是拖动，但编辑器的主动作是画；参考同样是左键进 instrument、右键拖地图，
      所以加 `SetPanButton` 让同一个状态机由右键驱动，冒险地图那边一行没动。
-  3. **只换地形图，不做相邻过渡**：参考的地形工具刷完会重算与四邻的接缝（`updateTerrain`），我们只把
-     `TerrainImageIndex` 设成区间首图，所以刷出来是硬边。宁可先给它一个诚实的硬边，也不假装做了过渡。
+  3. ~~只换地形图，不做相邻过渡~~：当时只把 `TerrainImageIndex` 设成区间首图，刷出来是硬边。E2 后来
+     补了接缝（`TerrainTransitions`，见下与 **ADR-046**）。
 
 ### E2 对象放置与删除 验证记录
 
@@ -1181,6 +1187,54 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-object 5 --editor-place 
 * 这一次 `editor.png` 的差异只在顶部工具栏与底部状态栏（工具名从工具栏挪到状态栏，避免和右侧提示重叠），
   地图内容逐字节不变，差异图 `diff_editor.png` 已确认。
 
+### E2 地形接缝 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / UI 145 / Game 150 全绿（新增 10）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png sha256 46B35BD4…，108,862 字节
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap}Baseline.ps1 → identical
+dotnet run -- --scene editor --map Alteris.mp2 --editor-paint "46,52,6,4,Snow"
+  → diff_editor.png 的差异全部落在雪块与小地图对应点，海岸线一处未动
+dotnet run -- --scene editor --map Alteris.mp2 --editor-paint "50,50,4,3,Water" --editor-save …
+  → 重开截图与保存前逐像素相同（差异 517 px 全在状态栏 y=469..479）
+dotnet run -- --scene editor --editor-new 36 --editor-paint "2,2,3,3,Grass"
+  → 零改动：新建地图铺的已经是纯草，笔刷没有可改的
+```
+
+* 四处观察：
+  1. **地面不是字段而是图号**：MP2 的 tile 不存 `Ground`，`TerrainImageIndex` 落在哪个区间就是哪个地面。
+     所以「接缝」在这里不是加一层遮罩，而是把图号换成同一区间的另一张：草 30..83 里 30..67 是过渡、
+     68..75 是纯图；水 0..29 里 0..15 过渡、16..23 纯图；海滩 415..431 全是纯图。
+  2. **改一格要改九格**：邻居的图号各自描述了"我与谁接壤"，刷完必须把它们一起重算，否则新地面的一侧
+     仍是旧边缘。九格同属一笔，所以 `Ctrl+Z` 一次退干净。
+  3. **地图边界钳制**：参考把越界邻格钳到边界上，于是地图最外圈不算"与别的地面接壤"。不这么做，整张图
+     的四条边会凭空多出一圈过渡。
+  4. **变体必须确定**：参考用 `Rand::Get(3)` 选同组里的三张之一。编辑器要可复现——同一笔刷出同样的字节，
+     截图基线不能随机——所以换成坐标哈希（`MapGrounds.VariantOffset`）。差异图证明同一次编辑每次都一样。
+
+### E2 小地图导航 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / UI 145 / Game 150 全绿（这条逻辑在 App 层，不加测试）
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 match
+dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "20,20"
+  → "Minimap click at (20; 20) put the view at (160; 240)"：tile (15;15) 居中，小地图白框移到左上
+dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "20,20,100,100"
+  → "Minimap drag at (20; 20) put the view at (2080; 2160)"：tile (75;75) 居中，状态栏 `undo 0`（拖动没开笔划）
+dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
+  → (2816; 2976)：点右下角被 `CenterOn` 钳在地图边界
+```
+
+* 四处观察：
+  1. **参考里点击与拖动是同一个分支**：`MouseClickLeft(rect) || isMouseLeftButtonPressedInArea(rect)` 都直接
+     `SetCenter`，没有"点击跳一次、拖动慢慢跟"的区别。照抄之后，`--editor-radar-click` 的两点形式就是它的拖动。
+  2. **面板必须吞掉笔划**：不吞的话，在小地图上按一下就 `BeginStroke` + `Paint`，既会在背后的格子上画一笔，
+     又可能留下一个空笔划。参考靠雷达的鼠标捕获挡住 game area，这里靠 `_radarGrabbed` 在 `SetLeftButton` 里提前返回。
+  3. **`Paint` 要排除面板**：把面板当作"盖住地图的工具栏"处理，一笔从地图拖到小地图上就不会在面板背后落笔。
+  4. **小地图不需要重烤**：视图移动不改编地图，`_minimap` 里烤好的是颜色不是位置，白框（视口框）每次 `Draw` 现算。
+
 ### E2 修复记录（从主菜单进不去编辑器）
 
 * **现象**：在招牌上点左键，日志已有 `Main menu: '地图编辑器' opens the map editor.` 与
@@ -1194,7 +1248,9 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-object 5 --editor-place 
 
 ### E2 已知遗留
 
-* **没有地形过渡/海岸自动衔接**：刷在草地上的一块雪是硬边方块，参考会自动接缝；这是下一个要补的渲染问题。
+* ~~没有地形过渡/海岸自动衔接~~：E2 已补（`TerrainTransitions`，见上表与 ADR-046）。
+* **孤岛不会被同化**：参考刷出一块四面不接的孤岛时，会把这块地面改回邻居的地面（它找不到图就换地面）；
+  我们保留这块地面并保持纯图。编辑器不该悄悄改用户刚画的东西，所以这是有意的差异。
 * **笔刷只有 1×1**：参考有 1×1 / 2×2 / 3×3 / 圆刷。
 * ~~对象不能放、不能删~~：E2 的对象工具已做（`O` / `X`，见上表）。
 * **对象只是外观**：矿、宝箱、资源放下去只改变画面与 `ObjectType`，`Quantity2` 里的资源类型、归属、

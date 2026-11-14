@@ -12,4 +12,8 @@
     <ProjectReference Include="..\FHeroes2.Rendering\FHeroes2.Rendering.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="FHeroes2.Game.Tests" />
+  </ItemGroup>
+
 </Project>

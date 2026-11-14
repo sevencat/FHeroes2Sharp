@@ -47,34 +47,43 @@ public sealed class MapEditSessionTests
 
         Mp2TileInfo tile = session.Map.Tile(1, 2);
 
-        Assert.Equal(Snow, tile.TerrainImageIndex);
         Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(tile.TerrainImageIndex));
+
+        // The plain part of a ground block starts at +38 and holds eight variants; the first images of
+        // the block are transitions to another ground, so a painted tile must not be one of those.
+        Assert.InRange(tile.TerrainImageIndex, Snow + 38, Snow + 45);
     }
 
     [Fact]
-    public void PaintingKeepsTheShapeAndDropsTheBeachBits()
+    public void PaintingRewritesTheShapeAndDropsTheBeachBits()
     {
         MapEditSession session = CreateSession();
-        session.SetBrush(MapGround.Snow);
+        session.SetBrush(MapGround.Grass);
 
         // Bits 0 and 1 are the terrain shape, bits 2 to 4 are the beach transition flags.
         session.Map.SetTile(1, 1, Tile(Grass) with { TerrainFlags = 0b0001_0011 });
 
         session.Paint(new Point(1, 1));
 
-        Assert.Equal(0b0000_0011, session.Map.Tile(1, 1).TerrainFlags);
+        // Grass all around: no edge has to be drawn, and the beach flag describes water that is no
+        // longer there.
+        Assert.Equal(0, session.Map.Tile(1, 1).TerrainFlags);
     }
 
     [Fact]
-    public void PaintingTheGroundThatIsAlreadyThereDoesNothing()
+    public void PaintingTheSameGroundTwiceChangesOnlyOnce()
     {
         MapEditSession session = CreateSession();
-
         session.SetBrush(MapGround.Grass);
 
+        Assert.True(session.Paint(new Point(0, 0)));
+
+        int depth = session.UndoDepth;
+
+        // A drag goes through the same tile again: the second time the tile already holds what the
+        // brush would write, so nothing is added to the stroke.
         Assert.False(session.Paint(new Point(0, 0)));
-        Assert.False(session.IsDirty);
-        Assert.Equal(0, session.UndoDepth);
+        Assert.Equal(depth, session.UndoDepth);
     }
 
     [Fact]
@@ -134,7 +143,7 @@ public sealed class MapEditSessionTests
         Assert.Equal(2, session.UndoDepth);
 
         Assert.True(session.Undo());
-        Assert.Equal(MapGrounds.StartImageIndex(MapGround.Swamp), session.Map.Tile(1, 1).TerrainImageIndex);
+        Assert.Equal(MapGround.Swamp, MapGrounds.FromTerrainImageIndex(session.Map.Tile(1, 1).TerrainImageIndex));
 
         Assert.True(session.Undo());
         Assert.Equal(Grass, session.Map.Tile(1, 1).TerrainImageIndex);
@@ -152,7 +161,7 @@ public sealed class MapEditSessionTests
 
         Assert.True(session.Redo());
 
-        Assert.Equal(Snow, session.Map.Tile(2, 2).TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(session.Map.Tile(2, 2).TerrainImageIndex));
         Assert.Equal(0, session.RedoDepth);
         Assert.Equal(1, session.UndoDepth);
     }
@@ -236,7 +245,7 @@ public sealed class MapEditSessionTests
 
         Mp2TileInfo painted = session.Map.Tile(0, 0);
 
-        Assert.Equal(Snow, painted.TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(painted.TerrainImageIndex));
         Assert.Equal(Mp2ObjectType.TreasureChest, painted.ObjectType);
         Assert.Equal(7, painted.ObjectName1);
     }
@@ -419,7 +428,7 @@ public sealed class MapEditSessionTests
 
         Mp2TileInfo tile = session.Map.Tile(1, 1);
 
-        Assert.Equal(Snow, tile.TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(tile.TerrainImageIndex));
         Assert.Equal(Mp2ObjectType.None, tile.ObjectType);
         Assert.Equal(0, tile.NextAddonIndex);
         Assert.Equal(0u, tile.Level1ObjectUid);
@@ -467,18 +476,18 @@ public sealed class MapEditSessionTests
 
         session.SetBrush(MapGround.Snow);
         Assert.True(session.Apply(new Point(0, 0)));
-        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(session.Map.Tile(0, 0).TerrainImageIndex));
 
         Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart);
         session.SelectObject(preset);
         Assert.True(session.Apply(new Point(0, 0)));
         Assert.Equal(preset.Type, session.Map.Tile(0, 0).ObjectType);
-        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(session.Map.Tile(0, 0).TerrainImageIndex));
 
         session.SetTool(EditorTool.Erase);
         Assert.True(session.Apply(new Point(0, 0)));
         Assert.Equal(Mp2ObjectType.None, session.Map.Tile(0, 0).ObjectType);
-        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+        Assert.Equal(MapGround.Snow, MapGrounds.FromTerrainImageIndex(session.Map.Tile(0, 0).TerrainImageIndex));
     }
 
     [Fact]

@@ -30,6 +30,14 @@ namespace FHeroes2.App.Scenes;
 /// and <c>T</c> the terrain tool again. <see cref="MapEditSession"/> owns what they do; this scene only
 /// forwards input and paints the bars.
 /// </para>
+///
+/// <para>
+/// The minimap in the top right corner is the radar of the reference and takes the pointer the same
+/// way: a press on it centres the map on the tile under the pointer and keeps centring while the
+/// button is held (one branch for the click and for the drag, as in
+/// <c>Radar::QueueEventProcessing</c>), and it opens no stroke, so a click there cannot end up in the
+/// undo history.
+/// </para>
 /// <para>
 /// Not ported yet: the <c>ADVBORD</c> interface frame and the <c>EditorPanel</c> instruments. Until
 /// those exist the map fills the logical frame and the two bars are painted over it, instead of the
@@ -71,6 +79,12 @@ public sealed class EditorScene : IScene
 
     /// <summary>Whether the paint button is held, i.e. the pointer keeps painting as it moves.</summary>
     private bool _painting;
+
+    /// <summary>Whether the left button is held anywhere in the window.</summary>
+    private bool _leftHeld;
+
+    /// <summary>Whether the press started on the minimap, which owns the pointer until it is released.</summary>
+    private bool _radarGrabbed;
 
     /// <summary>Seconds left of the "saved" note in the status bar.</summary>
     private double _savedFlash;
@@ -201,7 +215,16 @@ public sealed class EditorScene : IScene
             return null;
         }
 
-        Mp2Map map = Mp2Map.CreateBlank(size, MapGrounds.StartImageIndex(MapGround.Grass));
+        // The plain images of grass, spread over the tiles by position: a map that started on the
+        // first image of the range would be a transition to another ground on every tile.
+        MapGround ground = MapGround.Grass;
+        Mp2Map map = Mp2Map.CreateBlank(
+            size,
+            (x, y) => (ushort)(
+                MapGrounds.StartImageIndex(ground)
+                + MapGrounds.PlainImageOffset(ground)
+                + MapGrounds.VariantOffset(x, y, 8)));
+
         EditorScene scene = Assemble(frame, fonts, map, tiles, assets);
 
         GameLog.Info($"Editor created a new {map.Width}x{map.Height} map; it has no file until it is saved.");
@@ -277,11 +300,26 @@ public sealed class EditorScene : IScene
     /// Records the pointer: it moves the pan, the edge scroll and the highlighted tile, and paints the
     /// tile it enters while the left button is held.
     /// </summary>
+    /// <remarks>
+    /// A press that started on the minimap keeps centring the map while it is held, which is the
+    /// <c>MouseClickLeft || isMouseLeftButtonPressedInArea</c> branch of
+    /// <c>Radar::QueueEventProcessing</c>: one branch for the click and for the drag across the panel.
+    /// </remarks>
     /// <param name="cursor">Pointer in logical pixels, or <see langword="null"/> outside the window.</param>
     public void SetCursor(Point? cursor)
     {
         _editor.SetCursor(cursor);
         _mouse.SetCursor(cursor);
+
+        if (_radarGrabbed && _leftHeld)
+        {
+            if (cursor is { } point)
+            {
+                CentreOnRadar(point);
+            }
+
+            return;
+        }
 
         if (_painting)
         {
@@ -293,10 +331,30 @@ public sealed class EditorScene : IScene
     /// Records the left button, which paints in the editor: a press opens a stroke, a release closes
     /// it and rebuilds the minimap, because the minimap holds baked colours of the old tiles.
     /// </summary>
+    /// <remarks>
+    /// A press on the minimap is swallowed by it instead: it centres the map and opens no stroke, so
+    /// the release cannot leave an empty step in the history. The reference does the same by letting
+    /// the radar capture the mouse before the game area sees the event.
+    /// </remarks>
     /// <param name="down">Whether the left button is now held.</param>
     /// <returns>Whether a stroke with at least one changed tile was closed, so a caller can log it.</returns>
     public bool SetLeftButton(bool down)
     {
+        _leftHeld = down;
+
+        if (down && _mouse.Cursor is { } cursor && _radar.Contains(cursor))
+        {
+            _radarGrabbed = true;
+            CentreOnRadar(cursor);
+            return false;
+        }
+
+        if (!down && _radarGrabbed)
+        {
+            _radarGrabbed = false;
+            return false;
+        }
+
         if (down)
         {
             _painting = true;
@@ -320,13 +378,23 @@ public sealed class EditorScene : IScene
     /// Records the right button: dragging it pans the map, a click without a drag samples the ground
     /// under the pointer as the brush.
     /// </summary>
+    /// <remarks>
+    /// The minimap takes neither: the reference shows its "World Map" hint there, and an eyedropper or
+    /// a pan that started on the panel would describe a tile the user did not point at.
+    /// </remarks>
     /// <param name="down">Whether the right button is now held.</param>
     /// <returns>Whether the release took the brush from the map.</returns>
     public bool SetRightButton(bool down)
     {
+        bool onRadar = _mouse.Cursor is { } cursor && _radar.Contains(cursor);
+
         if (down)
         {
-            _mouse.SetPanButton(true);
+            if (!onRadar)
+            {
+                _mouse.SetPanButton(true);
+            }
+
             return false;
         }
 
@@ -338,7 +406,50 @@ public sealed class EditorScene : IScene
         }
 
         _mouse.SetPanButton(false);
-        return _edits.SampleBrush(_editor.HoverTile);
+
+        return !onRadar && _edits.SampleBrush(_editor.HoverTile);
+    }
+
+    /// <summary>
+    /// Presses the minimap and releases it, the scripted version of a click that
+    /// <c>--editor-radar-click</c> uses. With <paramref name="dragTo"/> the pointer also moves before
+    /// the release, which is the drag branch of <see cref="SetCursor"/>: the reference keeps centring
+    /// the map for as long as the button is held, not only on the press.
+    /// </summary>
+    /// <param name="panelPoint">Point inside the 144x144 panel, its top left corner at 0,0.</param>
+    /// <param name="dragTo">Point to drag to before the release, <see langword="null"/> for a click.</param>
+    /// <returns>Whether the view moved.</returns>
+    public bool ClickRadar(Point panelPoint, Point? dragTo = null)
+    {
+        Point before = _editor.Map.Scroll;
+
+        SetCursor(new Point(_radar.X + panelPoint.X, _radar.Y + panelPoint.Y));
+        SetLeftButton(true);
+
+        if (dragTo is { } end)
+        {
+            SetCursor(new Point(_radar.X + end.X, _radar.Y + end.Y));
+        }
+
+        SetLeftButton(false);
+
+        return _editor.Map.Scroll != before;
+    }
+
+    /// <summary>
+    /// Centres the map on the tile under a point of the minimap, <c>GameArea::SetCenter( tile )</c> of
+    /// <c>Radar::QueueEventProcessing</c>. A point outside the panel is ignored, which is what the
+    /// <c>rect &amp; pt</c> test of the reference does while the radar holds the mouse.
+    /// </summary>
+    private void CentreOnRadar(Point cursor)
+    {
+        if (!_radar.Contains(cursor))
+        {
+            return;
+        }
+
+        Point tile = _minimap.TileAt(new Point(cursor.X - _radar.X, cursor.Y - _radar.Y));
+        _editor.Map.CenterOn(tile.X, tile.Y);
     }
 
     /// <summary>
@@ -346,14 +457,16 @@ public sealed class EditorScene : IScene
     /// the ground, places the object or clears the tile.
     /// </summary>
     /// <remarks>
-    /// A click on the toolbar or on the status bar does nothing: the bars cover the map, so the tile
-    /// behind them is highlighted and hovered, but it is not what the user pointed at. The reference
-    /// does not have this problem because its panels are outside the 448x448 map area.
+    /// A click on the toolbar, the status bar or the minimap does nothing: the panels cover the map, so
+    /// the tile behind them is highlighted and hovered, but it is not what the user pointed at. The
+    /// reference does not have this problem because its panels are outside the 448x448 map area, and a
+    /// stroke that starts on the map and is dragged across the minimap keeps painting there.
     /// </remarks>
     /// <returns>Whether the tile changed.</returns>
     public bool Paint()
     {
-        if (_editor.Cursor is { } cursor && (_toolbar.Contains(cursor) || _statusBar.Contains(cursor)))
+        if (_editor.Cursor is { } cursor
+            && (_toolbar.Contains(cursor) || _statusBar.Contains(cursor) || _radar.Contains(cursor)))
         {
             return false;
         }
