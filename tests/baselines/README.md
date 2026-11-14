@@ -11,6 +11,7 @@
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
 | `adventure-map.png` | 冒险地图（M4，地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；右上角 144×144 雷达面板带视口虚线框 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，顶部 `MAP EDITOR` 工具条、光标双线高亮、tile 网格、小地图，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -24,19 +25,21 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update       # 有意改了视觉后重建场景基线
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1           # 冒险地图：0 = 一致
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update   # 有意改了视觉后重建冒险地图基线
+pwsh tools/scripts/VerifyEditorBaseline.ps1                 # 地图编辑器：0 = 一致
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update         # 有意改了视觉后重建编辑器基线
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData      # 自建 runner 上把「没数据」当失败
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素漂移
 ```
 
-四个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
+五个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
 `AssetProbe compare` 与容差判定都在那里，脚本本身只剩「哪些开关让这一帧可复现」与
-「哪块区域要忽略」。所以四个脚本的命令行、退出码与失败输出格式完全一致。
+「哪块区域要忽略」。所以五个脚本的命令行、退出码与失败输出格式完全一致。
 
 脚本做的事：先做**基线自检**（PNG 魔数 + `IHDR` 必须是 640×480，失败即退出 `1`），
 再 `dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
 渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
 `AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
-`diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+`diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
 打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
 `-RequireData` 才把缺数据当失败。
 
@@ -86,10 +89,21 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，`HeroLayerTests`
   钉住英雄的三带切分与阴影次序，`MinimapTests` 钉住地面分段与方框几何，一起才能把这一屏钉死。
 
+## 编辑器基线也是逐字节稳定的
+
+* 与冒险地图同一张图（`Alteris`，居中规则相同），多出来的只有编辑器自己画的东西：tile 网格、光标
+  双线高亮、顶部工具条与底部状态栏、小地图。它们都不带时钟。
+* `--editor-paint 46,52,6,4,Snow`：脚本先刷一块雪地再截帧。没有这一笔，基线分不出「编辑器能改 tile」
+  与「只是把地图画出来了」。
+* 状态栏（`0,469,640,11`）被忽略：那里印着 `scroll`、撤销步数与版本号。**顶部工具条不在忽略之列**，
+  因为它只有英文常量——改工具条文字就要重建这张基线（ADR-045 把工具名从工具条挪到状态栏时就是这么做的）。
+* 对象工具（`O` / `X`）不在这张基线里：它需要按键，而脚本没有键盘。对象的验证走
+  `--editor-object` + `--editor-place` 的截图与 `MapEditSessionTests`，见 `PROGRESS.md` 的 E2 记录。
+
 ## CI 怎么接
 
-`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用六条命令（job 名是历史原因，现在跑的是
-六份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图各一次）：
+`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用七条命令（job 名是历史原因，现在跑的是
+七份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图、地图编辑器各一次）：
 
 * 托管 runner（`windows-latest`）没有游戏数据，脚本会停在自检之后：**基线文件本身**被校验
   （存在、是 PNG、640×480），像素比对退化为 `skip`。这一步拦的是「基线被删/被换错尺寸」。
@@ -98,7 +112,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   job 才会传 `-DataDirectory` 与 `-RequireData`（缺数据即失败，而不是静默 skip）。
 * 失败时 job 会把 `tools-output/baseline/*.png`（刚渲染的图，文件名带语言后缀）与
   `diff/` 目录（`diff_menu.png` / `diff_settings.png` / `diff_settings.zh_CN.png` /
-  `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png`）作为
+  `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png` / `diff_editor.png`）作为
   artifact `pixel-baseline-diff` 上传。
 
 ## 为什么逐字节一致是可达的
@@ -121,7 +135,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 ## 基线的数据版本
 
-当前六张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
+当前七张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
 `heroes2x.agg`，`AssetBundle` 优先取后者，因此 `HEROES.ICN` 是 *The Price of Loyalty* 横幅版本。
 只有基础版数据（原版街景背景）时基线必然对不上——那种情况应当另存一份（例如
 `menu-classic.png`）而不是覆盖它。`settings.zh_CN.png` 还额外依赖 `files/lang/zh_CN.mo`
@@ -136,6 +150,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
 | `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
 | `adventure-map.png` | 168,285 | `DCFAD127EA40D3062EE6BE40C54C5558303603D6544B64293204CAD93EDF89E4` |
+| `editor.png` | 99,387 | `A86AF0FEEA71A9823AE7C867CF06774C6B0D32D9EAE7B75C5AC71A521F755629` |
 
 ## 更新基线的规矩
 

@@ -11,6 +11,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
+using FHeroes2.Game.Editor;
 using SDL3;
 
 namespace FHeroes2.App;
@@ -570,6 +571,18 @@ public sealed class GameHost : IDisposable
                 editor.ToggleGrid();
                 return false;
 
+            case SDL.Keycode.T when !key.Repeat:
+                editor.SetTool(EditorTool.Terrain);
+                return false;
+
+            case SDL.Keycode.O when !key.Repeat:
+                GameLog.Info($"Editor object: {editor.CycleObject(1).GetSummary()}.");
+                return false;
+
+            case SDL.Keycode.X when !key.Repeat:
+                editor.SetTool(EditorTool.Erase);
+                return false;
+
             case SDL.Keycode.Left:
                 editor.ScrollByTiles(-1, 0);
                 return false;
@@ -653,6 +666,41 @@ public sealed class GameHost : IDisposable
 
             // The snapshot is taken from the pointer that the paint moved away from; put it back so
             // the outlined tile and the hover text keep describing the frame that is captured.
+            if (_options.Cursor is { } pointer)
+            {
+                scene.SetCursor(pointer);
+            }
+        }
+
+        // --editor-object and --editor-place are the scripted object tool: the palette key O and a
+        // click, which a screenshot cannot produce.
+        if (_options.EditorObject is { } objectName)
+        {
+            if (scene.SelectObject(objectName))
+            {
+                GameLog.Info($"Editor object: {scene.Edits.ObjectBrush.GetSummary()}.");
+            }
+            else
+            {
+                GameLog.Warn(
+                    $"The editor has no object called '{objectName}'; pass a name or 1..{Mp2ObjectPresets.Count}.");
+            }
+        }
+
+        if (_options.EditorPlacements.Count > 0)
+        {
+            int placed = 0;
+
+            foreach (Point placement in _options.EditorPlacements)
+            {
+                if (scene.PlaceObject(placement))
+                {
+                    ++placed;
+                }
+            }
+
+            GameLog.Info($"Placed {placed} of {_options.EditorPlacements.Count} objects.");
+
             if (_options.Cursor is { } pointer)
             {
                 scene.SetCursor(pointer);

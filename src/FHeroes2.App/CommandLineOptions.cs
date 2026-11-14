@@ -14,7 +14,8 @@ namespace FHeroes2.App;
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
-///                 [--editor-new &lt;36|72|108|144&gt;]
+///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
+///                 [--editor-place &lt;x,y[;x,y...]&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -132,6 +133,19 @@ public sealed class CommandLineOptions
     /// <c>--editor-save</c> and takes the whole-file write path rather than the tile patch.
     /// </summary>
     public int? EditorNewMapSize { get; private set; }
+
+    /// <summary>
+    /// Object the object tool places, by name or one based number (<c>--editor-object Tree</c>). It is
+    /// the scripted counterpart of the <c>O</c> key, for screenshots and for the save round trip.
+    /// </summary>
+    public string? EditorObject { get; private set; }
+
+    /// <summary>
+    /// Tiles that receive <see cref="EditorObject"/> when the editor opens
+    /// (<c>--editor-place &lt;x,y;x,y&gt;</c>). Placement is otherwise a mouse click, which a
+    /// screenshot cannot produce.
+    /// </summary>
+    public IReadOnlyList<Point> EditorPlacements { get; private set; } = [];
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -289,6 +303,14 @@ public sealed class CommandLineOptions
                     options.EditorNewMapSize = ParseMapSize(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--editor-object":
+                    options.EditorObject = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--editor-place":
+                    options.EditorPlacements = ParsePlacements(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -347,6 +369,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("                      --editor-paint to write the whole open-edit-save loop from a script.");
         Console.WriteLine("  --editor-new <size>  Starts the editor on an empty grass map of 36, 72, 108 or 144");
         Console.WriteLine("                      tiles instead of a file; use --editor-save to give it a file.");
+        Console.WriteLine("  --editor-object <name|n>  Selects the object the left button places, e.g. 'Tree' or");
+        Console.WriteLine("                      '1'; the numbered list is what the O key cycles in the editor.");
+        Console.WriteLine("  --editor-place <x,y[;x,y...]>  Places the selected object on those tiles when the");
+        Console.WriteLine("                      editor opens, the scripted version of a click.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -395,6 +421,30 @@ public sealed class CommandLineOptions
         throw new ArgumentException(
             $"'{option}' expects '<x>,<y>,<width>,<height>,<ground>', got '{value}'. " +
             "The ground is a name such as 'Snow' or a number from 1 (water) to 9 (beach).");
+    }
+
+    /// <summary>Parses <c>--editor-place</c>: one or more <c>x,y</c> pairs, separated by semicolons.</summary>
+    /// <param name="value">The option value.</param>
+    /// <param name="option">Name of the option, for the error message.</param>
+    /// <returns>The tiles that receive an object.</returns>
+    /// <exception cref="ArgumentException">No pair or a malformed pair.</exception>
+    private static IReadOnlyList<Point> ParsePlacements(string value, string option)
+    {
+        string[] parts = value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+        {
+            throw new ArgumentException($"'{option}' expects at least one '<x>,<y>' pair, got '{value}'.");
+        }
+
+        List<Point> points = new(parts.Length);
+
+        foreach (string part in parts)
+        {
+            points.Add(ParsePoint(part, option));
+        }
+
+        return points;
     }
 
     private static int ParseMapSize(string value, string option)

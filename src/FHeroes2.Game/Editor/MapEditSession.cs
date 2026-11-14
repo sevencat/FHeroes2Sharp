@@ -6,19 +6,27 @@ using FHeroes2.Game.AdventureMap;
 namespace FHeroes2.Game.Editor;
 
 /// <summary>
-/// The editing half of the map editor: a ground brush, the stroke that a press-drag-release forms and
-/// the undo history. It owns no pixels and no input, so a stroke can be replayed in a test without a
-/// window, the same split <see cref="MapEditorView"/> uses for the hover.
+/// The editing half of the map editor: a ground brush, an object brush, the eraser, the stroke that a
+/// press-drag-release forms and the undo history. It owns no pixels and no input, so a stroke can be
+/// replayed in a test without a window, the same split <see cref="MapEditorView"/> uses for the hover.
 /// </summary>
 ///
 /// <remarks>
 /// <para>
 /// The reference paints through <c>Editor::Interface::mouseCursorAreaClickLeft</c>, which routes a
 /// click to the active instrument and lets it rewrite the tiles under the cursor
-/// (<c>editor_interface_panel.cpp</c> holds the instrument table). Its terrain tool also re-blends the
-/// painted tile with its neighbours; this port only swaps the terrain image, so a painted tile is the
-/// plain image of its ground and the edges stay hard. The blending is the next step, not a hidden
-/// behaviour.
+/// (<c>editor_interface_panel.cpp</c> holds the instrument table). <see cref="EditorTool"/> is that
+/// table cut down to three instruments and <see cref="Apply"/> is the routing. Its terrain tool also
+/// re-blends the painted tile with its neighbours; this port only swaps the terrain image, so a painted
+/// tile is the plain image of its ground and the edges stay hard. The blending is the next step, not a
+/// hidden behaviour.
+/// </para>
+/// <para>
+/// Placing an object rewrites the object half of a tile and appends the add-ons the preset needs; the
+/// terrain half is left alone, which is what makes "a tree on snow" a tree on snow. Add-ons are never
+/// reclaimed: the format has no free list, so replacing an object leaves its pieces unreferenced
+/// (ADR-045). A save after such a placement writes the whole file, because the add-on table grew and a
+/// tile patch cannot express that.
 /// </para>
 /// <para>
 /// A stroke, not a tile, is the unit of undo: a drag across twenty tiles is one <c>Ctrl+Z</c> in every
@@ -41,6 +49,19 @@ public sealed class MapEditSession
     private MapStroke? _stroke;
     private MapGround _brush = MapGround.Grass;
 
+    /// <summary>Instrument the left button uses; the ground brush until a key picks another one.</summary>
+    private EditorTool _tool = EditorTool.Terrain;
+
+    /// <summary>Object the object tool places; the first preset until a key picks another one.</summary>
+    private Mp2ObjectPreset _object = Mp2ObjectPresets.All[0];
+
+    /// <summary>
+    /// Whether the add-on table grew during this session. Tiles alone no longer describe the file
+    /// then: a tile of a placed multi piece object points at an add-on the file it was read from does
+    /// not have, so the save has to write every section instead of patching the tile area.
+    /// </summary>
+    private bool _addonsChanged;
+
     /// <summary>Undo depth at the last save; the map is dirty while the depth differs from it.</summary>
     private int _savedDepth;
 
@@ -61,6 +82,12 @@ public sealed class MapEditSession
 
     /// <summary>The ground the brush paints, grass until a tool picks another one.</summary>
     public MapGround Brush => _brush;
+
+    /// <summary>What the left button does: paint ground, place the object or erase it.</summary>
+    public EditorTool Tool => _tool;
+
+    /// <summary>The object the object tool places.</summary>
+    public Mp2ObjectPreset ObjectBrush => _object;
 
     /// <summary>Whether a stroke is in progress, i.e. the button is still held.</summary>
     public bool IsPainting => _stroke is not null;
@@ -86,21 +113,71 @@ public sealed class MapEditSession
     /// <summary>Number of redoable strokes, cleared by the next stroke.</summary>
     public int RedoDepth => _redo.Count;
 
-    /// <summary>Selects the ground the brush paints.</summary>
+    /// <summary>Selects the ground the brush paints, which also makes the terrain tool the active one.</summary>
     /// <param name="ground">Ground to paint, not <see cref="MapGround.Unknown"/>.</param>
-    /// <returns>Whether the brush changed, so that a caller can redraw only when it did.</returns>
+    /// <returns>Whether the brush or the tool changed, so that a caller can redraw only when it did.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="ground"/> has no terrain images.</exception>
     public bool SetBrush(MapGround ground)
     {
         _ = MapGrounds.StartImageIndex(ground);
 
-        if (ground == _brush)
+        bool changed = ground != _brush || _tool != EditorTool.Terrain;
+
+        _brush = ground;
+        _tool = EditorTool.Terrain;
+        return changed;
+    }
+
+    /// <summary>Selects what the left button does.</summary>
+    /// <param name="tool">The instrument to use.</param>
+    /// <returns>Whether the tool changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="tool"/> is not a tool.</exception>
+    public bool SetTool(EditorTool tool)
+    {
+        if (!Enum.IsDefined(tool))
+        {
+            throw new ArgumentOutOfRangeException(nameof(tool), tool, "Unknown editor tool.");
+        }
+
+        if (tool == _tool)
         {
             return false;
         }
 
-        _brush = ground;
+        _tool = tool;
         return true;
+    }
+
+    /// <summary>
+    /// Selects the object the object tool places and switches to that tool, the way picking a ground
+    /// switches to the terrain tool: a click on the button means a click with the instrument.
+    /// </summary>
+    /// <param name="preset">Object to place.</param>
+    /// <returns>Whether the object or the tool changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="preset"/> is <see langword="null"/>.</exception>
+    public bool SelectObject(Mp2ObjectPreset preset)
+    {
+        ArgumentNullException.ThrowIfNull(preset);
+
+        bool changed = !ReferenceEquals(preset, _object) || _tool != EditorTool.Object;
+
+        _object = preset;
+        _tool = EditorTool.Object;
+        return changed;
+    }
+
+    /// <summary>Steps through the object presets, the <c>O</c> key; also selects the object tool.</summary>
+    /// <param name="delta">Presets to step; wraps around the list.</param>
+    /// <returns>The object after the step.</returns>
+    public Mp2ObjectPreset CycleObject(int delta)
+    {
+        int count = Mp2ObjectPresets.Count;
+        int current = Mp2ObjectPresets.IndexOf(_object);
+        int next = ((current + delta) % count + count) % count;
+
+        _object = Mp2ObjectPresets.All[next];
+        _tool = EditorTool.Object;
+        return _object;
     }
 
     /// <summary>
@@ -211,6 +288,163 @@ public sealed class MapEditSession
         return true;
     }
 
+    /// <summary>
+    /// Runs the active tool on <paramref name="tile"/>, the one entry point a click and a drag share.
+    /// </summary>
+    /// <param name="tile">Tile under the pointer, ignored when outside the map.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool Apply(Point? tile) => _tool switch
+    {
+        EditorTool.Object => PlaceObject(tile),
+        EditorTool.Erase => EraseObject(tile),
+        _ => Paint(tile),
+    };
+
+    /// <summary>
+    /// Places <see cref="ObjectBrush"/> on <paramref name="tile"/>, one step of a stroke.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tile keeps its terrain image and its terrain flags: the object is drawn over the ground, it
+    /// does not replace it. The rest comes from the preset, except the add-on chain and the UIDs, which
+    /// are built here so that two placements are two objects to the game.
+    /// </para>
+    /// <para>
+    /// A tile that already shows the same object is left alone, so dragging across it does not spend a
+    /// UID per mouse move. An object of another kind is replaced, and the add-ons of the old one stay in
+    /// the table without a reference: the format has no free list to give them back to, and an orphan
+    /// costs 15 bytes in the file and nothing in the frame, while deleting it would renumber every
+    /// chain behind it.
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">Tile to place on, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool PlaceObject(Point? tile)
+    {
+        if (tile is not { } point || !WithinMap(point))
+        {
+            return false;
+        }
+
+        Mp2TileInfo before = Map.Tile(point.X, point.Y);
+        Mp2TileInfo template = _object.Template;
+
+        if (before.ObjectType == template.ObjectType
+            && before.ObjectName1 == template.ObjectName1
+            && before.BottomIcnImageIndex == template.BottomIcnImageIndex
+            && before.Quantity1 == template.Quantity1
+            && before.Quantity2 == template.Quantity2
+            && before.ObjectName2 == template.ObjectName2
+            && before.TopIcnImageIndex == template.TopIcnImageIndex)
+        {
+            return false;
+        }
+
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        uint groundUid = template.HasGroundObject ? Map.TakeObjectUid() : 0;
+        uint topUid = template.HasTopObject ? Map.TakeObjectUid() : 0;
+        uint pieceUid = groundUid != 0 ? groundUid : topUid;
+
+        ushort chain = 0;
+        for (int index = _object.Addons.Count - 1; index >= 0; --index)
+        {
+            chain = (ushort)Map.AppendAddon(_object.Addons[index] with
+            {
+                NextAddonIndex = chain,
+                Level1ObjectUid = pieceUid,
+                Level2ObjectUid = 0,
+            });
+        }
+
+        if (chain != 0)
+        {
+            _addonsChanged = true;
+        }
+
+        Mp2TileInfo after = before with
+        {
+            ObjectName1 = template.ObjectName1,
+            BottomIcnImageIndex = template.BottomIcnImageIndex,
+            Quantity1 = template.Quantity1,
+            Quantity2 = template.Quantity2,
+            ObjectName2 = template.ObjectName2,
+            TopIcnImageIndex = template.TopIcnImageIndex,
+            ObjectType = template.ObjectType,
+            NextAddonIndex = chain,
+            Level1ObjectUid = groundUid,
+            Level2ObjectUid = topUid,
+        };
+
+        int tileIndex = Map.TileIndex(point.X, point.Y);
+        Map.SetTileAt(tileIndex, after);
+        _stroke!.Record(tileIndex, before, after);
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Clears the object of <paramref name="tile"/> and keeps its ground, the eraser of the editor.
+    /// </summary>
+    /// <remarks>
+    /// The result is the empty tile a shipped map stores: no ICN type, sprite index 255 on both
+    /// parts, a zeroed layer and metadata and UIDs of 0, with the terrain image and the terrain flags
+    /// untouched.
+    /// </remarks>
+    /// <param name="tile">Tile to clear, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool EraseObject(Point? tile)
+    {
+        if (tile is not { } point || !WithinMap(point))
+        {
+            return false;
+        }
+
+        Mp2TileInfo before = Map.Tile(point.X, point.Y);
+
+        if (!before.HasGroundObject
+            && !before.HasTopObject
+            && before.ObjectType == Mp2ObjectType.None
+            && before.NextAddonIndex == 0)
+        {
+            return false;
+        }
+
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        Mp2TileInfo after = before with
+        {
+            ObjectName1 = 0,
+            BottomIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+            Quantity1 = 0,
+            Quantity2 = 0,
+            ObjectName2 = 0,
+            TopIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+            ObjectType = Mp2ObjectType.None,
+            NextAddonIndex = 0,
+            Level1ObjectUid = 0,
+            Level2ObjectUid = 0,
+        };
+
+        int tileIndex = Map.TileIndex(point.X, point.Y);
+        Map.SetTileAt(tileIndex, after);
+        _stroke!.Record(tileIndex, before, after);
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return true;
+    }
+
     /// <summary>Reverts the last stroke, or the stroke in progress first.</summary>
     /// <returns>Whether there was anything to undo.</returns>
     public bool Undo()
@@ -279,6 +513,8 @@ public sealed class MapEditSession
     /// A map that came from a file is patched: only the tiles are rewritten and every other section is
     /// kept as it was read. A map that never had a file — the ones <see cref="Mp2Map.CreateBlank"/>
     /// makes — has nothing to patch, so it is written whole instead (see <see cref="Mp2MapWriter"/>).
+    /// The same holds once an object with add-ons was placed: those add-ons are new rows of a section
+    /// the patch does not touch, so the file is written whole from then on.
     /// </remarks>
     /// <param name="filePath">File to write, created or replaced.</param>
     /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
@@ -295,7 +531,9 @@ public sealed class MapEditSession
 
         try
         {
-            if (string.IsNullOrWhiteSpace(_savePath) || !File.Exists(_savePath))
+            bool canPatch = !string.IsNullOrWhiteSpace(_savePath) && File.Exists(_savePath);
+
+            if (!canPatch || _addonsChanged)
             {
                 Mp2MapWriter.WriteAll(filePath, Map);
             }
@@ -305,6 +543,7 @@ public sealed class MapEditSession
             }
 
             _savePath = filePath;
+            _addonsChanged = false;
             _savedDepth = _undo.Count;
             return true;
         }

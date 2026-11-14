@@ -40,6 +40,13 @@ internal static class SyntheticMap
             }
         }
 
+        // A list, not an array: the editor appends to it when a placed object needs add-ons.
+        List<Mp2AddonInfo> addonList = [default];
+        if (addons is not null)
+        {
+            addonList.AddRange(addons);
+        }
+
         return new Mp2Map
         {
             Info = new Mp2FileInfo
@@ -52,7 +59,7 @@ internal static class SyntheticMap
                 Difficulty = GameDifficulty.Normal,
             },
             Tiles = tiles,
-            Addons = addons is null ? [default] : [default, .. addons],
+            Addons = addonList,
             Castles = [],
             CaptureObjects = [],
             Heroes = heroes,

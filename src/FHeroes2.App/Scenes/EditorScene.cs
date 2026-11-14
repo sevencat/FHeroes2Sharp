@@ -25,11 +25,16 @@ namespace FHeroes2.App.Scenes;
 /// the status bar are the editor's own.
 /// </para>
 /// <para>
+/// The instruments are keys for now: <c>1</c> to <c>9</c> pick a ground and the terrain tool, <c>O</c>
+/// cycles the objects of <see cref="Mp2ObjectPresets"/> and selects the object tool, <c>X</c> the eraser
+/// and <c>T</c> the terrain tool again. <see cref="MapEditSession"/> owns what they do; this scene only
+/// forwards input and paints the bars.
+/// </para>
+/// <para>
 /// Not ported yet: the <c>ADVBORD</c> interface frame and the <c>EditorPanel</c> instruments. Until
 /// those exist the map fills the logical frame and the two bars are painted over it, instead of the
-/// reference's 448x448 viewport between the frame and the panel. Editing - changing a tile, the
-/// object palette, undo, saving - is E2/E3, where <c>Editor::Interface</c> and
-/// <c>Maps::Map_Format::saveMap</c> become the port targets.
+/// reference's 448x448 viewport between the frame and the panel, and the objects are a fixed list of
+/// presets instead of a panel of buttons.
 /// </para>
 /// </summary>
 public sealed class EditorScene : IScene
@@ -337,10 +342,11 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>
-    /// Paints the brush onto the tile under the pointer, one step of the current stroke.
+    /// Runs the active tool on the tile under the pointer, one step of the current stroke: it paints
+    /// the ground, places the object or clears the tile.
     /// </summary>
     /// <remarks>
-    /// A click on the toolbar or on the status bar paints nothing: the bars cover the map, so the tile
+    /// A click on the toolbar or on the status bar does nothing: the bars cover the map, so the tile
     /// behind them is highlighted and hovered, but it is not what the user pointed at. The reference
     /// does not have this problem because its panels are outside the 448x448 map area.
     /// </remarks>
@@ -352,7 +358,7 @@ public sealed class EditorScene : IScene
             return false;
         }
 
-        return _edits.Paint(_editor.HoverTile);
+        return _edits.Apply(_editor.HoverTile);
     }
 
     /// <summary>
@@ -455,6 +461,44 @@ public sealed class EditorScene : IScene
     public bool SetBrushByNumber(int number) =>
         number >= 1 && number <= (int)MapGround.Beach && _edits.SetBrush((MapGround)number);
 
+    /// <summary>Selects what the left button does, <c>T</c> for the ground and <c>X</c> for the eraser.</summary>
+    /// <param name="tool">The instrument to use.</param>
+    /// <returns>Whether the tool changed.</returns>
+    public bool SetTool(EditorTool tool) => _edits.SetTool(tool);
+
+    /// <summary>Steps through the object presets and selects the object tool, the <c>O</c> key.</summary>
+    /// <param name="delta">Presets to step; wraps around the list.</param>
+    /// <returns>The object after the step.</returns>
+    public Mp2ObjectPreset CycleObject(int delta) => _edits.CycleObject(delta);
+
+    /// <summary>
+    /// Selects the object the object tool places by name or number, <c>--editor-object</c>.
+    /// </summary>
+    /// <param name="value">Name such as <c>Tree</c>, or a number from 1 to the number of presets.</param>
+    /// <returns>Whether the object was found and selected.</returns>
+    public bool SelectObject(string value) =>
+        Mp2ObjectPresets.Find(value) is { } preset && _edits.SelectObject(preset);
+
+    /// <summary>
+    /// Places one object as its own stroke, the scripted version of a click that
+    /// <c>--editor-place</c> uses; the tool the user selected stays untouched.
+    /// </summary>
+    /// <param name="tile">Tile to place on, outside the map is ignored.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool PlaceObject(Point tile)
+    {
+        _edits.BeginStroke();
+        bool changed = _edits.PlaceObject(tile);
+
+        if (!_edits.EndStroke() || !changed)
+        {
+            return false;
+        }
+
+        RebuildMinimap();
+        return true;
+    }
+
     /// <summary>Steps the brush through the nine grounds, the <c>+</c> and <c>-</c> keys.</summary>
     /// <param name="delta">Grounds to step; wraps around the nine grounds.</param>
     /// <returns>The brush after the step.</returns>
@@ -547,11 +591,12 @@ public sealed class EditorScene : IScene
         }
 
         IGlyphSource font = _fonts.Small;
-        GlyphText.DrawLine(
-            font, _frame.Pixels, new Point(Padding, _toolbar.Y), $"MAP EDITOR   brush {_edits.Brush}");
 
-        string right = (_editor.GridEnabled ? "G grid ON   " : "G grid OFF  ")
-            + "1-9 brush  ^Z/^Y undo  RMB drag  Esc";
+        // The tool and the object it places do not fit next to the hints at the narrowest logical
+        // width, so the bar keeps its name and the status bar reports the instrument.
+        GlyphText.DrawLine(font, _frame.Pixels, new Point(Padding, _toolbar.Y), "MAP EDITOR");
+
+        string right = "1-9 ground  O obj  X del  ^Z/^Y  G grid  Esc";
 
         int rightX = Math.Max(
             _toolbar.Right - Padding - GlyphText.Measure(font, right), Padding);
@@ -590,9 +635,16 @@ public sealed class EditorScene : IScene
 
         GlyphText.DrawLine(font, _frame.Pixels, new Point(Padding, top), left);
 
+        string tool = _edits.Tool switch
+        {
+            EditorTool.Object => FormattableString.Invariant($"object {_edits.ObjectBrush.Name}"),
+            EditorTool.Erase => "erase",
+            _ => FormattableString.Invariant($"brush {_edits.Brush}"),
+        };
+
         string hover = _editor.HoverTile is { } tile
-            ? FormattableString.Invariant($"{tile.X},{tile.Y}  {_editor.HoverGround}")
-            : "no tile";
+            ? FormattableString.Invariant($"{tool}  {tile.X},{tile.Y}  {_editor.HoverGround}")
+            : FormattableString.Invariant($"{tool}  no tile");
 
         if (_edits.IsDirty)
         {
@@ -601,6 +653,11 @@ public sealed class EditorScene : IScene
         else if (_savedFlash > 0.0)
         {
             hover += "  saved";
+        }
+
+        if (_editor.GridEnabled)
+        {
+            hover += "  grid";
         }
 
         if (_editor.Hover is { } info && info.ObjectType != Mp2ObjectType.None)

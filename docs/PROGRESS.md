@@ -1109,7 +1109,7 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
   换到有 20/21/22 帧的数据会自动改用原版美术。
 * ~~新建地图未做~~：E3b 已做，`--editor-new <size>` 打开空白地图（见下）。
 
-## E2 — 地图编辑器（改地形 + 撤销/重做）✅ 地形部分
+## E2 — 地图编辑器（改地形 + 放对象 + 撤销/重做）✅ 地形与对象
 
 > **参考对象**：`Editor::Interface` 的输入分发（`editor_interface.cpp` 把左键送进当前 instrument、右键拖地图）
 > 与地形工具的重绘逻辑；撤销不是参考里的概念（它的编辑直接落地），所以撤销栈是我们自己的设计，理由见
@@ -1128,6 +1128,16 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
 | 像素基线 `editor.png` | ✅ | 现在多了一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块），雪地落在海岸线上，正好证明地形层被改写、对象层（船）仍压在上面 |
+| 对象工具 | ✅ | `EditorTool`：`1..9` 选地面并回到地形工具、`O` 循环对象并选中对象工具、`X` 擦除、`T` 回地形；`MapEditSession.Apply` 是左键唯一入口（地形 / 放置 / 擦除）。工具与对象名印在状态栏 |
+| 对象目录 `Mp2ObjectPresets` | ✅ | 9 个预设：树、丛林树、树顶、山、带山顶的山、墓地、宝箱、矿、资源。**每个字节都取自 `Alteris.mp2` 的真实 tile**（icn 类型、帧号、layer/quantity1），不发明帧号——格式里没有对象表，`icn+帧号` 就是「一个对象」的全部定义 |
+| `Mp2Map` 的 add-on 编辑 | ✅ | `AppendAddon`（文件里 add-on 数为 0 时自动补 0 号占位）、`SetAddonAt`、`TakeObjectUid`（UID 计数器随之推进，写进文件尾部）；`Addons` 对外仍是只读视图 |
+| 放置 | ✅ | 保留落点 tile 的地形图与地形标志，只换对象字段；新取 UID（ground/top 各一）；预设的 add-on 按倒序接成链；**同一格重复放同一对象不算改动**（拖拽不会每帧消耗 UID） |
+| 擦除 | ✅ | 写回真实空 tile 的字节：`ObjectName1/2 = 0`、两处帧号 `255`、`Quantity1/2 = 0`、UID `0`、`NextAddonIndex = 0`；地形图与地形标志不动 |
+| 对象也进撤销栈 | ✅ | 放置/擦除与刷地形共用 `MapStroke`，所以 `Ctrl+Z` 一样能退；撤销只回滚 tile，新追加的 add-on 变成无人引用的孤儿（格式没有空闲表，见 ADR-045） |
+| 保存切回整份写出 | ✅ | `_addonsChanged` 为真时 `SaveAs` 走 `WriteAll`：add-on 段变长，tile 补丁表达不了；其余情况仍是 ADR-043 的补丁 |
+| `--editor-object` / `--editor-place` | ✅ | 脚本化对象工具（名字或 1 起的序号 + `x,y;x,y`），截图与存盘回环靠它 |
+| `tests/.../Mp2ObjectPresetsTests` | ✅ | 7 条：预设都有可画的部分、名字/序号查找与越界、空名字拒绝、0 号占位补齐、非 List 表拒绝追加、`SetAddonAt` 边界、链写出后读回、UID 递增 |
+| `tests/.../MapEditSessionTests` | ✅ | 新增 8 条：放置写 tile 与 add-on、重复放置不改动、擦除保留地面、空格擦除不成笔、撤销/重做带回对象、`Apply` 按工具分派、`O`/`1..9` 切工具与环绕、带 add-on 的保存走整份 |
 
 ### E2 验证记录
 
@@ -1147,6 +1157,30 @@ dotnet run -- --scene editor --editor-paint "50,50,8,5,Snow" → 日志 Painted 
   3. **只换地形图，不做相邻过渡**：参考的地形工具刷完会重算与四邻的接缝（`updateTerrain`），我们只把
      `TerrainImageIndex` 设成区间首图，所以刷出来是硬边。宁可先给它一个诚实的硬边，也不假装做了过渡。
 
+### E2 对象放置与删除 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 242 / UI 145 / Game 140 全绿
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png sha256 A86AF0FE…
+pwsh tools/scripts/Verify{Editor,Menu,AdventureMap}Baseline.ps1 → identical
+dotnet run -- --scene editor --editor-new 36 --editor-object "Tree" --editor-place "15,15;17,15;19,16;16,18"
+  → Placed 4 of 4 objects，截图里四棵树与小地图四个点都在
+dotnet run -- --scene editor --map Alteris.mp2 --editor-object 5 --editor-place "60,60;62,60" --editor-save …
+  → tile(60,60) icn 128/帧 56/type 100/next 1684/uid 4077；add-on 1684 → 1686（+30 字节）
+```
+
+* 三处观察：
+  1. **对象没有目录可抄**：MP2 只存 `icn 类型 + 帧号`，连「这是树还是矿」都只是 `ObjectType` 的一个枚举值。
+     所以 9 个预设的每个字节都去 `Alteris.mp2` 里取真实 tile，再用「写→读」回环钉住
+     （`APlacedChainSurvivesAWriteAndRead`），而不是凭 ICN 长度猜帧号。
+  2. **add-on 只增不回收**：删掉一个多格对象后它的 add-on 留在表里，代价是每次替换多 15 字节；换来的是
+     不必重编号后面所有链，撤销也因此天然安全（撤销只回滚 tile 的 `NextAddonIndex`，孤儿无人引用）。
+  3. **保存方式必须跟着数据长大**：add-on 段一变长，tile 补丁就表达不了——`SaveAs` 用 `_addonsChanged`
+     切到整份写出。真实地图实测 268538 → 268568 字节，正好是两条 add-on（2×15）。
+* 这一次 `editor.png` 的差异只在顶部工具栏与底部状态栏（工具名从工具栏挪到状态栏，避免和右侧提示重叠），
+  地图内容逐字节不变，差异图 `diff_editor.png` 已确认。
+
 ### E2 修复记录（从主菜单进不去编辑器）
 
 * **现象**：在招牌上点左键，日志已有 `Main menu: '地图编辑器' opens the map editor.` 与
@@ -1162,7 +1196,11 @@ dotnet run -- --scene editor --editor-paint "50,50,8,5,Snow" → 日志 Painted 
 
 * **没有地形过渡/海岸自动衔接**：刷在草地上的一块雪是硬边方块，参考会自动接缝；这是下一个要补的渲染问题。
 * **笔刷只有 1×1**：参考有 1×1 / 2×2 / 3×3 / 圆刷。
-* **对象不能放、不能删**：`Paint` 明确不动对象字段（有测试守着），对象面板属于下一步。
+* ~~对象不能放、不能删~~：E2 的对象工具已做（`O` / `X`，见上表）。
+* **对象只是外观**：矿、宝箱、资源放下去只改变画面与 `ObjectType`，`Quantity2` 里的资源类型、归属、
+  事件与守卫都没有编辑入口；城堡表与可占领表也不随对象更新——那是「对象属性」这一步的事。
+* **对象目录只有 9 个、且几乎都是单格对象**：城镇、锯木厂这类多格建筑要按格拼装并处理 add-on 的
+  相对偏移，得等 `EditorPanel` 的对象按钮面板。
 * **撤销深度不落盘**：200 笔内存栈，退出即丢。
 * **没有编辑器主菜单**：进编辑器只有主菜单按钮与 `--scene editor`；新建地图已由 `--editor-new` 提供（E3b）。
 

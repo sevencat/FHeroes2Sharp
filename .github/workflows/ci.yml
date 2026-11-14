@@ -92,7 +92,8 @@ jobs:
             @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'zh_CN' },
             @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'en' },
             @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'zh_CN' },
-            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en' }
+            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en' },
+            @{ Script = 'VerifyEditorBaseline.ps1'; Culture = 'en' }
           )
 
           foreach ($run in $runs) {

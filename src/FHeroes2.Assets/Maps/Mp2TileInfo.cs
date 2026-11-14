@@ -24,7 +24,11 @@ public readonly record struct Mp2TileInfo
     /// <summary>Terrain image index inside the terrain specific TIL file.</summary>
     public required ushort TerrainImageIndex { get; init; }
 
-    /// <summary>Ground object: the top two bits are a layer, the bottom six an <see cref="Mp2ObjectIcnType"/>.</summary>
+    /// <summary>
+    /// Ground object: the top six bits are an <see cref="Mp2ObjectIcnType"/> (read with
+    /// <c>&gt;&gt; 2</c>), the bottom two are unused. The layer lives in the low bits of
+    /// <see cref="Quantity1"/>.
+    /// </summary>
     public required byte ObjectName1 { get; init; }
 
     /// <summary>Sprite index of the ground object inside its ICN; 255 means "nothing".</summary>
@@ -39,7 +43,10 @@ public readonly record struct Mp2TileInfo
     /// <summary>The high bits of <see cref="Metadata"/>.</summary>
     public required byte Quantity2 { get; init; }
 
-    /// <summary>Top object: the top two bits are an <see cref="Mp2ObjectIcnType"/>, the bottom six are unused.</summary>
+    /// <summary>
+    /// Top object: the top six bits are an <see cref="Mp2ObjectIcnType"/> (read with
+    /// <c>&gt;&gt; 2</c>), the bottom two are unused.
+    /// </summary>
     public required byte ObjectName2 { get; init; }
 
     /// <summary>Sprite index of the top object inside its ICN; 255 means "nothing".</summary>

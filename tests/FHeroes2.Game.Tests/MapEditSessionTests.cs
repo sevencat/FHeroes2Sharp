@@ -363,6 +363,175 @@ public sealed class MapEditSessionTests
         }
     }
 
+    [Fact]
+    public void AnObjectIsPlacedOnTheTileAndGetsItsOwnAddon()
+    {
+        MapEditSession session = CreateSession();
+        Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.AddonCount > 0);
+
+        Assert.True(session.SelectObject(preset));
+        Assert.Equal(EditorTool.Object, session.Tool);
+        Assert.True(session.PlaceObject(new Point(1, 1)));
+
+        Mp2TileInfo tile = session.Map.Tile(1, 1);
+
+        Assert.Equal(preset.Type, tile.ObjectType);
+        Assert.Equal(preset.Template.ObjectName1, tile.ObjectName1);
+        Assert.NotEqual(0, tile.NextAddonIndex);
+        Assert.NotEqual(0u, tile.Level1ObjectUid);
+        Assert.Equal(preset.AddonCount, session.Map.EnumerateAddonChain(tile).Count());
+        Assert.True(session.IsDirty);
+        Assert.Equal(1, session.UndoDepth);
+    }
+
+    [Fact]
+    public void PlacingTheSameObjectOnTheSameTileChangesNothingTheSecondTime()
+    {
+        MapEditSession session = CreateSession();
+        Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.AddonCount > 0);
+
+        session.SelectObject(preset);
+        session.PlaceObject(new Point(1, 1));
+
+        uint uid = session.Map.Tile(1, 1).Level1ObjectUid;
+        int addons = session.Map.Addons.Count;
+        int depth = session.UndoDepth;
+
+        // A drag passes the same tile more than once: it must not spend a UID or an add-on per pass.
+        Assert.False(session.PlaceObject(new Point(1, 1)));
+        Assert.Equal(uid, session.Map.Tile(1, 1).Level1ObjectUid);
+        Assert.Equal(addons, session.Map.Addons.Count);
+        Assert.Equal(depth, session.UndoDepth);
+    }
+
+    [Fact]
+    public void ErasingClearsTheObjectAndKeepsTheGround()
+    {
+        MapEditSession session = CreateSession();
+        session.SetBrush(MapGround.Snow);
+        session.Paint(new Point(1, 1));
+
+        session.SelectObject(Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart));
+        session.PlaceObject(new Point(1, 1));
+
+        session.SetTool(EditorTool.Erase);
+        Assert.True(session.EraseObject(new Point(1, 1)));
+
+        Mp2TileInfo tile = session.Map.Tile(1, 1);
+
+        Assert.Equal(Snow, tile.TerrainImageIndex);
+        Assert.Equal(Mp2ObjectType.None, tile.ObjectType);
+        Assert.Equal(0, tile.NextAddonIndex);
+        Assert.Equal(0u, tile.Level1ObjectUid);
+        Assert.Equal(0u, tile.Level2ObjectUid);
+        Assert.Equal(Mp2TileInfo.EmptyImageIndex, tile.BottomIcnImageIndex);
+        Assert.Equal(Mp2TileInfo.EmptyImageIndex, tile.TopIcnImageIndex);
+        Assert.Equal(0, tile.Quantity1);
+        Assert.False(tile.HasGroundObject);
+        Assert.False(tile.HasTopObject);
+    }
+
+    [Fact]
+    public void ErasingAnEmptyTileIsNotAStroke()
+    {
+        MapEditSession session = CreateSession();
+
+        Assert.False(session.EraseObject(new Point(1, 1)));
+        Assert.False(session.IsDirty);
+        Assert.Equal(0, session.UndoDepth);
+        Assert.False(session.EraseObject(null));
+        Assert.False(session.EraseObject(new Point(9, 9)));
+    }
+
+    [Fact]
+    public void UndoBringsThePlacedObjectBack()
+    {
+        MapEditSession session = CreateSession();
+        session.SelectObject(Mp2ObjectPresets.All.First(candidate => candidate.AddonCount > 0));
+
+        session.PlaceObject(new Point(1, 1));
+        Assert.True(session.Undo());
+
+        Assert.Equal(Mp2ObjectType.None, session.Map.Tile(1, 1).ObjectType);
+        Assert.Equal(0, session.Map.Tile(1, 1).NextAddonIndex);
+        Assert.False(session.IsDirty);
+
+        Assert.True(session.Redo());
+        Assert.NotEqual(Mp2ObjectType.None, session.Map.Tile(1, 1).ObjectType);
+    }
+
+    [Fact]
+    public void TheToolDecidesWhatAClickDoes()
+    {
+        MapEditSession session = CreateSession();
+
+        session.SetBrush(MapGround.Snow);
+        Assert.True(session.Apply(new Point(0, 0)));
+        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+
+        Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart);
+        session.SelectObject(preset);
+        Assert.True(session.Apply(new Point(0, 0)));
+        Assert.Equal(preset.Type, session.Map.Tile(0, 0).ObjectType);
+        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+
+        session.SetTool(EditorTool.Erase);
+        Assert.True(session.Apply(new Point(0, 0)));
+        Assert.Equal(Mp2ObjectType.None, session.Map.Tile(0, 0).ObjectType);
+        Assert.Equal(Snow, session.Map.Tile(0, 0).TerrainImageIndex);
+    }
+
+    [Fact]
+    public void PickingAGroundOrAnObjectSelectsItsTool()
+    {
+        MapEditSession session = CreateSession();
+
+        Assert.False(session.SetTool(EditorTool.Terrain));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetTool((EditorTool)7));
+
+        session.CycleObject(1);
+        Assert.Equal(EditorTool.Object, session.Tool);
+        Assert.Same(Mp2ObjectPresets.All[1], session.ObjectBrush);
+
+        // Cycling wraps around in both directions.
+        Assert.Same(Mp2ObjectPresets.All[0], session.CycleObject(Mp2ObjectPresets.Count - 1));
+        Assert.Same(Mp2ObjectPresets.All[^1], session.CycleObject(-1));
+
+        Assert.True(session.SetBrush(MapGround.Lava));
+        Assert.Equal(EditorTool.Terrain, session.Tool);
+    }
+
+    [Fact]
+    public void APlacedAddonMakesTheSaveWriteEverySection()
+    {
+        string filePath = Path.Combine(Path.GetTempPath(), $"fh2-editor-object-{Guid.NewGuid():N}.mp2");
+
+        try
+        {
+            MapEditSession session = CreateSessionOn(
+                Mp2Map.CreateBlank(36, MapGrounds.StartImageIndex(MapGround.Grass)));
+
+            Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.AddonCount > 0);
+            session.SelectObject(preset);
+            Assert.True(session.PlaceObject(new Point(2, 3)));
+            Assert.True(session.SaveAs(filePath, out string? error), error);
+
+            Mp2Map saved = Mp2Map.Read(filePath);
+
+            Assert.Equal(preset.Type, saved.Tile(2, 3).ObjectType);
+            Assert.Equal(preset.AddonCount, saved.EnumerateAddonChain(saved.Tile(2, 3)).Count());
+
+            // The second save patches again: the add-ons are in the file now.
+            session.Paint(new Point(0, 0));
+            Assert.True(session.Save(out string? secondError), secondError);
+            Assert.Equal(filePath, session.SavePath);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
+    }
+
     /// <summary>Creates a session around an already built map, the way the host does.</summary>
     private static MapEditSession CreateSessionOn(Mp2Map map)
     {

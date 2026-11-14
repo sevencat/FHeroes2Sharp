@@ -104,7 +104,11 @@ public sealed record Mp2Map
     /// <summary>All tiles, row by row, <c>index = x + y * width</c>.</summary>
     public required IReadOnlyList<Mp2TileInfo> Tiles { get; init; }
 
-    /// <summary>All add-ons; index 0 is a placeholder that means "no add-on".</summary>
+    /// <summary>
+    /// All add-ons; index 0 is a placeholder that means "no add-on". Read only as an interface, but
+    /// <see cref="AppendAddon"/> and <see cref="SetAddonAt"/> grow it in place, the same way
+    /// <see cref="SetTileAt"/> edits the tiles.
+    /// </summary>
     public required IReadOnlyList<Mp2AddonInfo> Addons { get; init; }
 
     /// <summary>Non empty entries of the castle position table.</summary>
@@ -123,7 +127,14 @@ public sealed record Mp2Map
     public required IReadOnlyList<Mp2InfoBlock> InfoBlocks { get; init; }
 
     /// <summary>The object UID counter stored in the last four bytes of the file.</summary>
-    public uint LastObjectUid { get; init; }
+    public uint LastObjectUid
+    {
+        get => _lastObjectUid;
+        init => _lastObjectUid = value;
+    }
+
+    /// <summary>Backing field of <see cref="LastObjectUid"/>, which the editor advances.</summary>
+    private uint _lastObjectUid;
 
     /// <summary>Width of the map in tiles.</summary>
     public int Width => Info.Width;
@@ -223,7 +234,7 @@ public sealed record Mp2Map
                 Version = MapVersion.SuccessionWars,
             },
             Tiles = tiles,
-            Addons = [default],
+            Addons = new List<Mp2AddonInfo> { default },
             Castles = [],
             CaptureObjects = [],
             Heroes = [],
@@ -283,6 +294,78 @@ public sealed record Mp2Map
         }
 
         return SetTileAt(TileIndex(x, y), tile);
+    }
+
+    /// <summary>
+    /// Takes the next object UID and advances the counter, the identifier a placed object gets.
+    /// </summary>
+    /// <remarks>
+    /// The counter is the last field of the file, so a map written by <see cref="Mp2MapWriter"/>
+    /// carries it back; a map that reuses a UID would make two objects indistinguishable to the game.
+    /// The counter starts at 0 on a new map, so the first object is 1, which keeps 0 meaning "no
+    /// object" on every tile that does not hold one.
+    /// </remarks>
+    /// <returns>A UID no other object of this map uses.</returns>
+    public uint TakeObjectUid()
+    {
+        _lastObjectUid = unchecked(_lastObjectUid + 1);
+        return _lastObjectUid;
+    }
+
+    /// <summary>
+    /// Appends an add-on and returns its index, which is what a tile or another add-on stores in
+    /// <see cref="Mp2TileInfo.NextAddonIndex"/> or <see cref="Mp2AddonInfo.NextAddonIndex"/>.
+    /// </summary>
+    /// <remarks>
+    /// A map read from a file whose add-on count was 0 has no placeholder entry, so the first append
+    /// fills index 0 with the zeroed placeholder the format expects: index 0 means "no add-on" and
+    /// must never hold a real piece.
+    /// </remarks>
+    /// <param name="addon">The piece to add; its <see cref="Mp2AddonInfo.NextAddonIndex"/> is written by the caller.</param>
+    /// <returns>Index of the new add-on.</returns>
+    /// <exception cref="NotSupportedException">The add-on list of this map cannot be changed.</exception>
+    /// <exception cref="InvalidOperationException">The list is full, i.e. holds 65535 real pieces.</exception>
+    public int AppendAddon(Mp2AddonInfo addon)
+    {
+        if (Addons is not List<Mp2AddonInfo> addons)
+        {
+            throw new NotSupportedException("The add-ons of this map are not backed by a list, so they cannot be edited.");
+        }
+
+        if (addons.Count == 0)
+        {
+            addons.Add(default);
+        }
+
+        if (addons.Count >= ushort.MaxValue)
+        {
+            throw new InvalidOperationException(
+                $"The map already has {addons.Count} add-ons, which is as many as a 16 bit link can address.");
+        }
+
+        addons.Add(addon);
+        return addons.Count - 1;
+    }
+
+    /// <summary>Replaces the add-on at <paramref name="index"/>, the inverse of the read loop.</summary>
+    /// <param name="index">Index into <see cref="Addons"/>, 1 or more: 0 is the placeholder.</param>
+    /// <param name="addon">The new value.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The index is outside the list or is 0.</exception>
+    /// <exception cref="NotSupportedException">The add-on list of this map cannot be changed.</exception>
+    public void SetAddonAt(int index, Mp2AddonInfo addon)
+    {
+        if (Addons is not List<Mp2AddonInfo> addons)
+        {
+            throw new NotSupportedException("The add-ons of this map are not backed by a list, so they cannot be edited.");
+        }
+
+        if (index <= 0 || index >= addons.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(index), index, $"Add-on indexes run from 1 to {addons.Count - 1}; 0 is the placeholder.");
+        }
+
+        addons[index] = addon;
     }
 
     /// <summary>
@@ -395,7 +478,7 @@ public sealed record Mp2Map
         {
             Info = info,
             Tiles = tiles,
-            Addons = addons,
+            Addons = new List<Mp2AddonInfo>(addons),
             Castles = castles,
             CaptureObjects = captureObjects,
             Heroes = FindHeroes(tiles, info.Width),
