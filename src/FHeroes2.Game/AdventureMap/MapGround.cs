@@ -81,4 +81,25 @@ public static class MapGrounds
         < MaxImageIndex => MapGround.Beach,
         _ => MapGround.Unknown,
     };
+
+    /// <summary>
+    /// The terrain image index a brush of <paramref name="ground"/> paints: the first image of its
+    /// range, which is the plainest image of that ground. The reference's terrain tools start from the
+    /// same plain tile and then blend the edges with the neighbours; the blending is not ported yet.
+    /// </summary>
+    /// <param name="ground">Ground to paint; <see cref="MapGround.Unknown"/> has no image.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The ground has no terrain images.</exception>
+    public static ushort StartImageIndex(MapGround ground) => ground switch
+    {
+        MapGround.Water => WaterStartImageIndex,
+        MapGround.Grass => GrassStartImageIndex,
+        MapGround.Snow => SnowStartImageIndex,
+        MapGround.Swamp => SwampStartImageIndex,
+        MapGround.Lava => LavaStartImageIndex,
+        MapGround.Desert => DesertStartImageIndex,
+        MapGround.Dirt => DirtStartImageIndex,
+        MapGround.Wasteland => WastelandStartImageIndex,
+        MapGround.Beach => BeachStartImageIndex,
+        _ => throw new ArgumentOutOfRangeException(nameof(ground), ground, "The ground has no terrain images."),
+    };
 }

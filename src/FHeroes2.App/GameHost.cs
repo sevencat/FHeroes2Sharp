@@ -43,6 +43,7 @@ public sealed class GameHost : IDisposable
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
+    private EditorScene? _editor;
     private bool _supportsCjk;
     private bool _sdlInitialised;
     private bool _ttfInitialised;
@@ -205,18 +206,30 @@ public sealed class GameHost : IDisposable
 
                 case SDL.EventType.MouseMotion:
                     // With --cursor the synthetic pointer is what a screenshot should show, so the
-                    // real one must not steal the hover state. The adventure map has no widgets yet,
-                    // so the pointer only matters on the menu.
-                    if (!_syntheticCursor && _adventure is null)
+                    // real one must not steal the hover state.
+                    if (!_syntheticCursor)
                     {
-                        _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        if (_editor is { } editing)
+                        {
+                            editing.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
+                        else if (_adventure is { } moving)
+                        {
+                            moving.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
+                        else
+                        {
+                            _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
                     }
 
                     break;
 
                 case SDL.EventType.WindowMouseLeave:
-                    if (!_syntheticCursor && _adventure is null)
+                    if (!_syntheticCursor)
                     {
+                        _editor?.SetCursor(null);
+                        _adventure?.SetCursor(null);
                         _menu?.SetCursor(null);
                     }
 
@@ -233,14 +246,25 @@ public sealed class GameHost : IDisposable
 
                 case SDL.EventType.MouseWheel:
                     // SDL reports a positive y when the wheel turns away from the user, which rolls
-                    // a list up. The dialog ignores the event when the pointer is outside of it.
-                    if (!_syntheticCursor && _adventure is null && _menu?.Scenario is not null)
+                    // a list up and moves the view towards the top of the map.
+                    if (!_syntheticCursor)
                     {
-                        int rows = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
+                        int notches = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
 
-                        if (rows != 0)
+                        if (notches != 0)
                         {
-                            _menu.ScrollScenario(-rows);
+                            if (_editor is { } edited)
+                            {
+                                edited.ScrollByWheel(0, -notches);
+                            }
+                            else if (_adventure is { } scrolled)
+                            {
+                                scrolled.ScrollByWheel(0, -notches);
+                            }
+                            else
+                            {
+                                _menu?.ScrollScenario(-notches);
+                            }
                         }
                     }
 
@@ -270,6 +294,11 @@ public sealed class GameHost : IDisposable
 
             default:
                 break;
+        }
+
+        if (_editor is { } editor)
+        {
+            return HandleEditorKey(key, editor);
         }
 
         if (_adventure is { } adventure)
@@ -334,7 +363,52 @@ public sealed class GameHost : IDisposable
     /// <summary>Handles a mouse button event; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleMouseButton(in SDL.MouseButtonEvent button)
     {
-        if (_menu is null || _adventure is not null)
+        if (_editor is { } editor)
+        {
+            if (!_syntheticCursor)
+            {
+                editor.SetCursor(ToLogical(button.X, button.Y));
+            }
+
+            // The editor paints with the left button and pans with the right one, the way the
+            // reference routes the left click to the active instrument and the right one to the
+            // map drag.
+            if (button.Button == LeftMouseButton)
+            {
+                if (editor.SetLeftButton(button.Down))
+                {
+                    GameLog.Info($"Painted with '{editor.Edits.Brush}'; {editor.Edits.UndoDepth} undoable strokes.");
+                }
+            }
+            else if (button.Button == RightMouseButton)
+            {
+                if (editor.SetRightButton(button.Down))
+                {
+                    GameLog.Info($"Picked the '{editor.Edits.Brush}' brush from the map.");
+                }
+            }
+
+            return false;
+        }
+
+        if (_adventure is { } adventure)
+        {
+            // The map answers the left button only: the right one opens the info window of the
+            // object under the pointer in the reference, which is not implemented yet.
+            if (!_syntheticCursor)
+            {
+                adventure.SetCursor(ToLogical(button.X, button.Y));
+            }
+
+            if (button.Button == LeftMouseButton)
+            {
+                adventure.SetLeftButton(button.Down);
+            }
+
+            return false;
+        }
+
+        if (_menu is null)
         {
             return false;
         }
@@ -361,6 +435,20 @@ public sealed class GameHost : IDisposable
     /// <summary>Reacts to the choice of a main menu sign; returns <see langword="true"/> to stop.</summary>
     private bool HandleMenuAction(MainMenuAction action)
     {
+        // The editor opens on the first map of the catalog, the way the reference reacts to its
+        // editor button; choosing a map is the editor main menu of a later milestone.
+        if (action == MainMenuAction.Editor)
+        {
+            OpenEditor(null);
+
+            if (_editor is { } editor)
+            {
+                _scene = editor;
+            }
+
+            return false;
+        }
+
         if (action != MainMenuAction.Quit)
         {
             // The other signs are wired up from M3 on; the scene already shows this in its status bar.
@@ -408,6 +496,151 @@ public sealed class GameHost : IDisposable
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Handles the keys of the editor: the arrow keys scroll by one tile, Home returns to the top left
+    /// corner, G toggles the grid, 1 to 9 pick a ground for the brush, Ctrl+Z and Ctrl+Y walk the undo
+    /// history and Escape closes the editor. There is no menu to return to when the editor was started
+    /// with <c>--scene editor</c>, so Escape then leaves the client.
+    /// </summary>
+    private bool HandleEditorKey(in SDL.KeyboardEvent key, EditorScene editor)
+    {
+        if ((key.Mod & SDL.Keymod.Ctrl) != 0)
+        {
+            switch (key.Key)
+            {
+                case SDL.Keycode.Z when !key.Repeat:
+                    GameLog.Info(editor.Undo() ? "Editor: undo." : "Editor: nothing to undo.");
+                    return false;
+
+                case SDL.Keycode.Y when !key.Repeat:
+                    GameLog.Info(editor.Redo() ? "Editor: redo." : "Editor: nothing to redo.");
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
+        switch (key.Key)
+        {
+            case SDL.Keycode.Escape:
+                CloseEditor();
+                return _menu is null;
+
+            case SDL.Keycode.Alpha1 or SDL.Keycode.Alpha2 or SDL.Keycode.Alpha3
+                or SDL.Keycode.Alpha4 or SDL.Keycode.Alpha5 or SDL.Keycode.Alpha6
+                or SDL.Keycode.Alpha7 or SDL.Keycode.Alpha8 or SDL.Keycode.Alpha9 when !key.Repeat:
+                // The grounds are numbered 1 (water) to 9 (beach), the same order as the enum.
+                editor.SetBrushByNumber((int)key.Key - (int)SDL.Keycode.Alpha1 + 1);
+                return false;
+
+            case SDL.Keycode.G when !key.Repeat:
+                editor.ToggleGrid();
+                return false;
+
+            case SDL.Keycode.Left:
+                editor.ScrollByTiles(-1, 0);
+                return false;
+
+            case SDL.Keycode.Right:
+                editor.ScrollByTiles(1, 0);
+                return false;
+
+            case SDL.Keycode.Up:
+                editor.ScrollByTiles(0, -1);
+                return false;
+
+            case SDL.Keycode.Down:
+                editor.ScrollByTiles(0, 1);
+                return false;
+
+            case SDL.Keycode.Home:
+                editor.ScrollToStart();
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Closes the editor and returns to the menu, or to the diagnostics screen without one.</summary>
+    private void CloseEditor()
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        GameLog.Info($"Closing the editor of '{_editor.MapName}'.");
+        _editor = null;
+        _scene = _menu ?? (IScene?)_diagnostics;
+    }
+
+    /// <summary>
+    /// Opens the editor on <paramref name="filePath"/>, or on the first map of the catalog when no
+    /// file is given: an editor without a map would be an empty screen, and the first map is the one
+    /// the scenario list shows first.
+    /// </summary>
+    private void OpenEditor(string? filePath)
+    {
+        string? path = filePath;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            string? directory = _assets?.DataDirectory;
+            path = directory is null ? null : MapCatalog.ReadAll([directory]).FirstOrDefault()?.FilePath;
+        }
+
+        if (path is null)
+        {
+            GameLog.Warn("The editor needs a map: pass --map <file.mp2> or install the map collection.");
+            return;
+        }
+
+        Mp2FileInfo mapInfo;
+        try
+        {
+            mapInfo = Mp2FileInfo.Read(path);
+        }
+        catch (Exception exception) when (exception is BinaryFormatException or IOException or UnauthorizedAccessException)
+        {
+            GameLog.Error($"The map file '{path}' could not be read", exception);
+            return;
+        }
+
+        EditorScene? scene = EditorScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
+        if (scene is null)
+        {
+            GameLog.Warn($"The map file '{path}' cannot be edited: {error}");
+            return;
+        }
+
+        // The synthetic pointer of a screenshot has to reach the editor as well, or the highlighted
+        // tile and the hover text of the status bar would be missing from every baseline.
+        if (_options.Cursor is { } cursor)
+        {
+            scene.SetCursor(cursor);
+        }
+
+        // --editor-paint is the scripted brush stroke: a screenshot cannot press a button, and the
+        // point of the flag is to show that a painted tile reaches the frame.
+        if (_options.EditorPaint is { } paint && scene.PaintArea(paint.Tile, paint.Width, paint.Height, paint.Ground))
+        {
+            GameLog.Info(
+                $"Painted {paint.Width}x{paint.Height} tiles of '{paint.Ground}' at " +
+                $"({paint.Tile.X}; {paint.Tile.Y}).");
+
+            // The snapshot is taken from the pointer that the paint moved away from; put it back so
+            // the outlined tile and the hover text keep describing the frame that is captured.
+            if (_options.Cursor is { } pointer)
+            {
+                scene.SetCursor(pointer);
+            }
+        }
+
+        _editor = scene;
     }
 
     /// <summary>
@@ -546,6 +779,20 @@ public sealed class GameHost : IDisposable
     {
         _diagnostics = new DiagnosticsScene(_frame, _text, _supportsCjk, _fonts);
 
+        // The editor is a screen of its own, not a dialog of the menu: it starts without the menu so
+        // that a screenshot of it is the editor and nothing else.
+        if (_options.Scene == SceneKind.Editor)
+        {
+            OpenEditor(_options.MapFile);
+            _scene = _editor ?? (IScene?)_diagnostics;
+
+            GameLog.Info(_editor is null
+                ? "Starting on the diagnostics screen (the editor could not open a map)."
+                : $"Starting on the map editor ('{_editor.MapName}').");
+
+            return;
+        }
+
         if (_options.Scene == SceneKind.Menu)
         {
             _menu = MainMenuScene.TryCreate(_frame, _assets, _fonts, _options.Language);
@@ -582,6 +829,18 @@ public sealed class GameHost : IDisposable
         }
 
         _scene = _menu is not null ? _menu : _diagnostics;
+
+        // --left-click replays one click through the same method the event loop uses; press and
+        // release in the same frame is still a click, because the menu only reports on the release.
+        if (_options.LeftClick && _menu is not null)
+        {
+            _menu.SetLeftButton(true);
+
+            if (_menu.SetLeftButton(false) is { } clicked)
+            {
+                HandleMenuAction(clicked);
+            }
+        }
 
         if (_options.EnterMap && _menu is not null)
         {

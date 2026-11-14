@@ -110,6 +110,31 @@ public sealed class ImagingTests
     }
 
     [Fact]
+    public void Palette_FindClosestIndex_ReturnsTheNearestEntry()
+    {
+        byte[] raw = new byte[Palette.RawPaletteSize];
+        for (int index = 0; index < Palette.ColorCount; ++index)
+        {
+            raw[index * 3] = 255;
+            raw[(index * 3) + 1] = 255;
+            raw[(index * 3) + 2] = 255;
+        }
+
+        // Two warm browns: the query must land on the nearer one, not just on "some dark colour".
+        raw[40 * 3] = 74;
+        raw[(40 * 3) + 1] = 44;
+        raw[(40 * 3) + 2] = 18;
+        raw[90 * 3] = 38;
+        raw[(90 * 3) + 1] = 22;
+        raw[(90 * 3) + 2] = 10;
+
+        Palette palette = new(raw);
+
+        Assert.Equal(40, palette.FindClosestIndex(new RgbaColor(70, 40, 20)));
+        Assert.Equal(90, palette.FindClosestIndex(new RgbaColor(40, 24, 12)));
+    }
+
+    [Fact]
     public void RgbaColor_PacksAsAbgr8888()
     {
         RgbaColor color = new(0x11, 0x22, 0x33, 0x44);

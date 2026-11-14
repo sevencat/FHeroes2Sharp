@@ -38,9 +38,13 @@ public sealed class AdventureMapScene : IScene
     private readonly GameFonts? _fonts;
     private readonly AdventureMapView _view;
     private readonly Minimap _minimap;
+    private readonly MapScrollController _mouse;
     private readonly Rect _radar;
     private readonly Rect _statusBar;
     private readonly byte _statusBarColor;
+
+    private bool _leftHeld;
+    private bool _radarGrabbed;
 
     private AdventureMapScene(ScreenBuffer frame, GameFonts? fonts, AdventureMapView view, Minimap minimap)
     {
@@ -48,6 +52,7 @@ public sealed class AdventureMapScene : IScene
         _fonts = fonts;
         _view = view;
         _minimap = minimap;
+        _mouse = new MapScrollController(view);
         _radar = new Rect(
             frame.Size.Width - RadarMargin - Minimap.PanelSize,
             RadarMargin,
@@ -140,10 +145,8 @@ public sealed class AdventureMapScene : IScene
         }
     }
 
-    /// <summary>Nothing animates on the terrain layer yet.</summary>
-    public void Update(double elapsedSeconds)
-    {
-    }
+    /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
+    public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
 
     /// <summary>Paints the visible terrain, the minimap and the status bar.</summary>
     public void DrawFrame(in DiagnosticsState state)
@@ -170,6 +173,64 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>scrolls the view back to the top left corner, which is where a scenario starts without heroes.</summary>
     public void ScrollToStart() => _view.ScrollTo(0, 0);
+
+    /// <summary>The mouse of the terrain: drag, edge scroll and wheel.</summary>
+    public MapScrollController Mouse => _mouse;
+
+    /// <summary>
+    /// Records the pointer. A press that started on the minimap keeps centring the map while it is
+    /// held, which is the <c>MouseClickLeft || isMouseLeftButtonPressedInArea</c> branch of
+    /// <c>Radar::QueueEventProcessing</c>: one branch for the click and for the drag across the panel.
+    /// </summary>
+    /// <param name="cursor">Pointer in logical pixels, or <see langword="null"/> outside the window.</param>
+    public void SetCursor(Point? cursor)
+    {
+        if (_radarGrabbed && _leftHeld && cursor is { } point && _radar.Contains(point))
+        {
+            CentreOnRadar(point);
+        }
+
+        _mouse.SetCursor(cursor);
+    }
+
+    /// <summary>
+    /// Records the left button. A press on the minimap is consumed by the radar, everything else is
+    /// the drag of the terrain, and a release ends both.
+    /// </summary>
+    /// <param name="down">Whether the left button is now held.</param>
+    public void SetLeftButton(bool down)
+    {
+        _leftHeld = down;
+
+        if (down && _mouse.Cursor is { } cursor && _radar.Contains(cursor))
+        {
+            _radarGrabbed = true;
+            CentreOnRadar(cursor);
+            return;
+        }
+
+        if (!down)
+        {
+            _radarGrabbed = false;
+        }
+
+        _mouse.SetLeftButton(down);
+    }
+
+    /// <summary>Rolls the map with the wheel by whole tiles, one tile per notch.</summary>
+    /// <param name="columns">Tiles to scroll right; negative scrolls left.</param>
+    /// <param name="rows">Tiles to scroll down; negative scrolls up.</param>
+    public void ScrollByWheel(int columns, int rows) => _mouse.ScrollByWheel(columns, rows);
+
+    /// <summary>
+    /// Centres the map on the tile under a point of the minimap, <c>GameArea::SetCenter( tile )</c>
+    /// of the reference; the clamp of the view keeps points outside the panel harmless.
+    /// </summary>
+    private void CentreOnRadar(Point cursor)
+    {
+        Point tile = _minimap.TileAt(new Point(cursor.X - _radar.X, cursor.Y - _radar.Y));
+        _view.CenterOn(tile.X, tile.Y);
+    }
 
     private void DrawMinimap()
     {

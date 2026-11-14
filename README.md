@@ -21,8 +21,10 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
   `Core.Imaging.PaletteTable`（原版 `PAL::GetPalette` 的索引重映射表，ADR-020），所以中英文混排同色。
 * 分辨率：内部逻辑分辨率固定 **640×480**，按整数倍放大并加黑边（默认 2x = 1280×960）。
 * 策略：解析层对原版资源格式 **逐字节一致**，工程结构用现代 C# 分层重写。
-* 范围：**只做游戏本体，地图编辑器一期不做**——参考实现不含编辑器，MP2 的写路径没有可对拍的 C++
-  代码，一期只读 `.mp2`、不写（ADR-039，`docs/PLAN.md` 的「一期范围之外」）。改地图请继续用原版编辑器。
+* 范围：**游戏本体 + 地图编辑器（先只读）**——参考实现 fheroes2 1.1.18 有完整编辑器（`src/fheroes2/editor/`，
+  主菜单 EDITOR 按钮进入），因此编辑器有可对拍的 C++ 代码；但一期只做 E1：打开 `.mp2` 并叠加网格 / 光标
+  高亮 / 状态栏，**不改 tile、不保存**。改地图请继续用原版编辑器（ADR-039 已更正「参考没有编辑器」的说法，
+  范围与理由见 ADR-040）。
 * NativeAOT：**暂不作为支持目标**，但已开启 AOT / 裁剪分析器（`IsAotCompatible`，`IL2xxx`/`IL3xxx`
   为错误），代码保持「反射自由」以便将来切换（见 ADR-011）。
 
@@ -93,6 +95,20 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 （`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、地图怪物与船、
 雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `docs/PROGRESS.md`。
 
+**地图编辑器（E1 看得见，E2 改得动地形）**：主菜单右下角有 EDITOR 按钮（位置照参考，普通数据没有那三帧
+招牌美术时自绘一块招牌），点它或 `--scene editor [--map <file.mp2>]` 直接进编辑器，不给 `--map` 就打开地图
+目录里的第一张。画面整块复用 M4 的渲染，所以地形、对象、英雄、小地图与游戏里完全一致；编辑器自己加的是
+tile 网格（`G` 开关）、光标所在格的双线高亮、顶部 `MAP EDITOR` 工具条与底部状态栏——状态栏会报出光标下的
+`x,y`、地面类型（`MapGround`）与对象类型。
+
+E2 起可以**真的改地形**：左键刷、右键按住拖动地图、右键单击当吸管（取光标下的地面），`1`～`9` 选水面到海滩，
+`Ctrl+Z` / `Ctrl+Y` 撤销重做——一次按下到抬起算一步，来回刷同一格也只算一步；小地图在结笔后重烤。刷出来的
+是每种地面的「纯图块」，**还没有与四邻自动接缝**，所以边缘是硬的（ADR-041）。对象仍不能放、不能删，
+**也不能保存**（E3）。
+
+编辑器自己的工具条文字暂用英文常量，因此只有一份基线 `editor.png`（`VerifyEditorBaseline.ps1`，里面带一次
+脚本化笔刷 `--editor-paint`）；方向键、滚轮、边缘滚动、`Home`、`Esc` 与冒险地图同一套。
+
 音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
 `--play-sound PICKUP01` 单独试一个音效。
@@ -111,12 +127,23 @@ dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2"
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --lang zh_CN
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene diagnostics
 
+# 地图编辑器（E2 可改地形）：左键刷、右键拖、右键单击吸管、1~9 选地面、Ctrl+Z/Y 撤销重做
+# G 切网格、方向键/滚轮滚动、Home 回左上、ESC 退出
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --map "F:\game\fh2\maps\Alteris.mp2"
+
+# 脚本化笔刷（截图按不动鼠标）：在 (50,50) 起刷 8x5 的雪地，然后截图
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --editor-paint "50,50,8,5,Snow" --smoke-frames 8 --screenshot painted.png
+
 # 渲染 40 帧后截图退出（CI / 回归用）；--cursor 定格 hover 态
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot out.png
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 230,210 --screenshot hover.png
 
 # 右键提示框只存在于按住期间，所以抓图要人造光标 + --right-button
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 520,230 --right-button --screenshot tip.png
+
+# --left-click 在人造光标处点一下左键：用来验证「点招牌 → 进编辑器」这条只有鼠标能走的路径
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --cursor 565,380 --left-click --smoke-frames 20 --screenshot editor-from-menu.png
 
 # 资产归档检查
 dotnet run --project tools/FHeroes2.AssetProbe -- info
@@ -153,6 +180,10 @@ pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update
 pwsh tools/scripts/VerifyScenarioBaseline.ps1
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
+
+# 编辑器基线：--scene editor + 合成光标，居中到地图中心（地形 + 网格 + 高亮 + 工具条 + 状态栏）
+pwsh tools/scripts/VerifyEditorBaseline.ps1
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update           # 有意改了视觉后重建基线
 
 # 冒险地图基线：--map 直接开 Alteris.mp2，居中到地图中部的城堡（地形 + 对象层 + 英雄层 + 小地图）
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1

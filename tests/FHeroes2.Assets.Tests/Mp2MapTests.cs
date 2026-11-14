@@ -281,6 +281,37 @@ public sealed class Mp2MapTests
     }
 
     [Fact]
+    public void SetTile_WritesInPlaceAndReturnsTheOldValue()
+    {
+        using TemporaryMapFile file = TemporaryMapFile.Create(new Mp2MapFileBuilder(36));
+        Mp2Map map = Mp2Map.Read(file.FilePath);
+
+        Mp2TileInfo before = map.Tile(1, 2);
+        Mp2TileInfo written = before with { TerrainImageIndex = 92, ObjectName1 = 3 };
+
+        Mp2TileInfo replaced = map.SetTile(1, 2, written);
+
+        Assert.Equal(before, replaced);
+        Assert.Equal(written, map.Tile(1, 2));
+
+        // The write goes through the same array the read only view exposes, and touches nothing else.
+        Assert.Equal(written, map.Tiles[(2 * 36) + 1]);
+        Assert.Equal(before, map.Tile(2, 2));
+    }
+
+    [Fact]
+    public void SetTile_RejectsPointsOutsideTheMap()
+    {
+        using TemporaryMapFile file = TemporaryMapFile.Create(new Mp2MapFileBuilder(36));
+        Mp2Map map = Mp2Map.Read(file.FilePath);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => map.SetTile(36, 0, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() => map.SetTile(0, 36, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() => map.SetTileAt(36 * 36, default));
+        Assert.Throws<ArgumentOutOfRangeException>(() => map.SetTileAt(-1, default));
+    }
+
+    [Fact]
     public void GetSummary_DescribesTheMap()
     {
         Mp2MapFileBuilder builder = new(36);

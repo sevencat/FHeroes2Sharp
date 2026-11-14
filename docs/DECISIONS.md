@@ -1122,6 +1122,16 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
 
 ## ADR-039：地图编辑器一期不做
 
+> **更正（2026-11-14）**：本 ADR 的**事实前提是错的**。fheroes2 1.1.18 有完整的地图编辑器，
+> 位于 `src/fheroes2/editor/`（约 40 个源文件：`editor_interface.cpp` 164 KB、`editor_interface_panel.cpp`
+> 72 KB、`editor_map_specs_window.cpp` 114 KB 等），入口是主菜单的 EDITOR 按钮
+> （`Game::MainMenu()` 里 `ICN::BTNSHNGL` 第 20 帧，`EDITOR_DEFAULT = 20`，仅 `isPriceOfLoyaltySupported()`
+> 时出现）→ `Editor::menuMain()` 编辑器主菜单 → `Editor::Interface` 编辑器界面；保存走
+> `Maps::Map_Format::saveMap`（`maps/map_format_info.cpp:824`）。
+> 因此「MP2 写路径没有参考可对拍」也不成立。**本文的决策（一期不做编辑器）仍然有效**——那是范围选择，
+> 由 ADR-040 收窄为「先做只读可视化」——但**理由必须换成工作量与优先级，而不是「没有参考」**。
+> 写路径将来按 `Editor::Interface` 与 `Maps::Map_Format::saveMap` 移植即可对拍。
+
 **背景**：`PLAN.md` 的 M9 原本把「地图编辑器」与战役、视频并列，验收标准写着「编辑器可保存地图」。
 但参考实现 fheroes2 1.1.18 **本身不含地图编辑器**（它是游戏引擎，地图由原版 `h2maped` 与第三方编辑器
 生成），所以这条路径上没有任何 C++ 代码可以逐字节对拍。
@@ -1144,3 +1154,72 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
   收尾。编辑器若要做，单独立项，并且先补「写 MP2 的最小闭环 + 与原版编辑器的产物对拍」再谈界面。
 * 文档里不再出现「编辑器可保存地图」这类验收措辞，避免读者以为一期会交付它。
 * 玩家侧的诉求（改地图、造地图）一期由用户自带的原版编辑器满足：我们只读 `.mp2`，不写。
+
+## ADR-040：编辑器先做只读可视化（E1），收窄 ADR-039 的「一期不做」
+
+**背景**：ADR-039 把地图编辑器排除在一期之外，理由是 MP2 的写路径没有参考实现可对拍。实际运行后，
+「看不到编辑器」成了最直接的体验缺口：能打开地图、能滚动、能指出每个 tile 的地形与对象，这些都不需要
+写盘，却被一票否决了。用户于 2026-11-14 明确要求「先做编辑器，先能看到」。
+
+**决策**：
+
+1. **把编辑器拆成 E 系列，与 M 系列并行**，第一步 E1 只做**只读可视化**：`--scene editor [--map x.mp2]`
+   直接进编辑器，画出地形与对象层，叠加 tile 网格、光标所在 tile 的高亮方框、工具条与状态栏（含
+   `x,y` 与地形/对象名）、小地图，键鼠滚动全部复用冒险地图那套。
+2. **渲染完全复用 `AdventureMapView`**，不复制一份「编辑器专用渲染」。这一点与参考一致：`Editor::Interface`
+   也只是对同一个 `GameArea` 调 `SetAreaPosition( borderWidthPx, borderWidthPx, ... )`，没有第二套地图绘制。
+   复用还意味着 M4 每修好一层（对象、英雄、动画），编辑器跟着变好，`editor.png` 基线也连带守住这些层。
+3. **E1 不写路径**：不改 tile、不保存、不导出。E2（改地图、撤销）与 E3（保存 MP2）的参考对象是
+   `Editor::Interface` 的编辑动作与 `Maps::Map_Format::saveMap`，**有可对拍的 C++ 代码**（见 ADR-039 的
+   更正段），所以它们不是「先证明能写」的研究题，而是照参考移植的工程题；`Mp2MapFileBuilder` 与
+   `AssetProbe map` 仍是有用的第一道闸门。
+4. **入口是主菜单右下角的按钮**（原先写的是「只走命令行」，2026-11-14 按用户要求改）：位置与语义照参考
+   的 `buttonEditor`（`BTNSHNGL` 20/21/22）。但**普通 Heroes II 数据只有 20 帧招牌**（编辑器是 PoL 的产物，
+   参考也只在 `isPriceOfLoyaltySupported()` 时显示该按钮），所以 `BTNSHNGL` 没有这三帧时菜单自绘一块
+   `EditorFallbackArea` 招牌（深底 + 亮框 + 字体文本，三态与招牌一致），有帧时用原版美术。两条路径共用
+   同一个命中区与提示框。
+
+**后果**：
+
+* `PLAN.md` 增加 E1～E3 里程碑，M9 不再声称「编辑器不在本期」，而是指向 E 系列。
+* 新增 `MapEditorView`（Game 层，可测）与 `EditorScene`（App 层，只画像素），新增 `--scene editor`、
+  像素基线 `tests/baselines/editor.png` 与 `tools/scripts/VerifyEditorBaseline.ps1`。
+* 主菜单右下角新增编辑器按钮（`MainMenuAction.Editor`、`MainMenuScene.EditorArea`），美术与自绘两条路径；
+  `menu.png`、`settings.png`、`scenario.png` 及其 zh_CN 版本随之更新。
+* 编辑器的**工具条与状态栏文字**仍是英文常量（`MAP EDITOR`、`G grid ON`、`drag / edge / wheel scroll`），
+  未接入 `.mo`；按钮标题 `Editor` 与提示 `Create new or modify existing maps.` 走 `Text`，zh_CN 已有译文
+  （显示为「地图编辑器」）。`editor.png` 因此只有一份基线，不按语言分叉。
+* 已知缺口按「能不能看到」排序：网格颜色单一（深地形上对比低）、无地形/对象选择面板、无缩放、
+  右键无作用、无「新建地图」。这些都写在 `PROGRESS.md` 的 E1 已知遗留里。
+
+## ADR-041：编辑器的地形改走「原地写 + 笔划撤销」，左键让给笔刷
+
+**背景**：E1 交付后编辑器只能看。用户要求继续做，第一个真正的编辑动作是刷地形。参考的
+`Editor::Interface` 里左键直接进当前 instrument（`editor_interface.cpp` 的 `mouseCursorAreaClickLeft`），
+右键拖地图；它没有撤销栈——改了就改了。我们要一个能回退的实现，而且不能把 `Mp2Map` 的 record 语义改烂。
+
+**决策**：
+
+1. **tile 原地写**：`Mp2Map` 加 `SetTileAt(index, tile)` / `SetTile(x, y, tile)`，写回 `Tiles` 背后的数组并
+   返回旧值；`Tiles` 对外仍是只读视图。理由是量级：每刷一格就 `with` 复制整张地图在 108×108 上是
+   233 KB，拖拽笔刷会把 GC 拖成卡顿。作为代价，两张共用同一数组的地图会互相看见改动——当前没有这种用法，
+   记录在方法的 remarks 里。
+2. **撤销的单位是笔划不是 tile**：一次按下到抬起是一个 `MapStroke`，同一格被来回刷只保留「首次 before /
+   末次 after」。拖过二十格再 `Ctrl+Z` 应该一次退完，这是所有编辑器的常识；逐格撤销会让长拖拽无法收拾。
+   上限 200 笔，超出丢最旧的。
+3. **左键 = 刷，右键 = 拖**：E1 的左键拖动被让给笔刷。`MapScrollController` 增加 `SetPanButton`，与
+   `SetLeftButton` 走同一个状态机，所以冒险地图那边一行没动。右键单击（没拖动）做吸管，取光标下的地面当笔刷。
+4. **只换地形图，不做相邻过渡**：`MapGrounds.StartImageIndex` 给出每块地面的区间首图，刷完是硬边。参考会
+   重算与四邻的接缝；在没做那个算法之前，先把「能改」做出来，并把硬边写进已知遗留，而不是假装有过渡。
+5. **`--editor-paint` 是诊断开关**：截图驱动按不动鼠标。这个参数让一次矩形笔刷在打开编辑器时执行，于是
+   `editor.png` 能同时守住「地形层被改写」和「对象层仍压在上面」两条渲染事实。
+
+**后果**：
+
+* 新增 `Game.Editor.MapEditSession`（笔刷、笔划、双栈撤销、吸管）与 `MapTileChange`/`MapStroke`；
+  `EditorScene` 增加 `Paint/Undo/Redo/SetBrush/SetBrushByNumber/PaintArea`，工具条与状态栏跟着改写。
+* `Mp2Map` 有了第一个写方法，但它只写 tile 数组，`Info`、`Castles`、`Addons` 都还是只读的。
+* 编辑后的地图仍**不能保存**：`IsDirty` 只驱动状态栏的 `edited` 标记，E3 才谈 `saveMap` 与对拍。
+* 六条像素基线全部重建：`editor.png`（含脚本笔刷）、`menu.png`（编辑器按钮）、`settings.png`、
+  `scenario.png` 及两份 zh_CN。
+* 已知缺口见 `PROGRESS.md` 的 E2 已知遗留：无地形过渡、笔刷只有 1×1、对象不能放不能删、撤销不落盘。

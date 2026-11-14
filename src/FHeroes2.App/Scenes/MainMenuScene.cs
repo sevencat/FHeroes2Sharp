@@ -63,6 +63,30 @@ public sealed class MainMenuScene : IScene
 
     public const int QuitFrame = 17;
 
+    /// <summary>
+    /// The editor button of <c>BTNSHNGL.ICN</c>, <c>EDITOR_DEFAULT</c> of <c>Game::MainMenu()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only the Price of Loyalty artwork has these three frames (20, 21, 22) and the reference shows
+    /// the button only when that data is installed; a plain Heroes II installation has no editor and
+    /// no frame to draw, which is why the menu paints its own sign there instead
+    /// (<see cref="EditorFallbackArea"/>).
+    /// </remarks>
+    public const int EditorFrame = 20;
+
+    /// <summary>msgid of the editor button, the <c>_( "Editor" )</c> of the reference.</summary>
+    public const string EditorLabelId = "Editor";
+
+    /// <summary>msgid of the editor tooltip, <c>_( "Create new or modify existing maps." )</c>.</summary>
+    public const string EditorTooltipId = "Create new or modify existing maps.";
+
+    /// <summary>
+    /// Where the editor button sits when the artwork has no frame for it. Measured from the reference's
+    /// own screenshot: the little easel at the bottom right, right of the potted plant and clear of the
+    /// signs, of the settings door (0..86, 425..469) and of the status bar.
+    /// </summary>
+    public static readonly Rect EditorFallbackArea = new(527, 364, 76, 33);
+
     /// <summary>The lantern glow that flickers next to the street scene.</summary>
     public const string AnimationAssetName = "SHNGANIM.ICN";
 
@@ -132,6 +156,7 @@ public sealed class MainMenuScene : IScene
     private readonly DoorHighlight? _door;
     private readonly FrameBoxChrome? _messageChrome;
     private readonly Button[] _buttons;
+    private readonly Button? _editorSign;
     private readonly GameFonts _fonts;
     private readonly IReadOnlyList<GameText> _languages;
     private readonly Rect _statusBar;
@@ -145,6 +170,8 @@ public sealed class MainMenuScene : IScene
     private Point? _cursor;
     private bool _leftButtonDown;
     private bool _doorPressed;
+    private bool _editorPressed;
+    private ButtonState _editorState = ButtonState.Released;
     private string? _status;
     private MessageBox? _tip;
     private SettingsDialog? _settings;
@@ -160,6 +187,7 @@ public sealed class MainMenuScene : IScene
         DoorHighlight? door,
         FrameBoxChrome? messageChrome,
         Button[] buttons,
+        Button? editorSign,
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
         string? culture,
@@ -174,6 +202,7 @@ public sealed class MainMenuScene : IScene
         _door = door;
         _messageChrome = messageChrome;
         _buttons = buttons;
+        _editorSign = editorSign;
         _fonts = fonts;
         _languages = languages;
         _settingsArtwork = settingsArtwork;
@@ -192,6 +221,15 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>The status bar rectangle at the bottom of the logical frame.</summary>
     public Rect StatusBarArea => _statusBar;
+
+    /// <summary>
+    /// The area of the editor button: the artwork anchor when the data has the Price of Loyalty
+    /// frames, the painted corner sign otherwise.
+    /// </summary>
+    public Rect EditorArea => _editorSign?.Area ?? EditorFallbackArea;
+
+    /// <summary>Whether the editor button is painted by the menu instead of taken from the artwork.</summary>
+    public bool IsEditorSignPainted => _editorSign is null;
 
     /// <summary>
     /// Builds the menu from the game data.
@@ -241,6 +279,16 @@ public sealed class MainMenuScene : IScene
                     signs.Sprites[released + 2]);
             }
 
+            // The editor button: frames 20..22 exist only in the Price of Loyalty artwork, and a
+            // plain Heroes II installation has no editor at all. Missing frames are not an error -
+            // the menu paints its own sign in the corner instead of dropping the entry.
+            Button? editorSign = signs.Count > EditorFrame + 2
+                ? new Button(
+                    signs.Sprites[EditorFrame],
+                    signs.Sprites[EditorFrame + 1],
+                    signs.Sprites[EditorFrame + 2])
+                : null;
+
             IcnSpriteFile? lanternFile = assets.TryReadIcn(AnimationAssetName);
             (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(lanternFile);
             DoorHighlight? door = CreateDoor(lanternFile);
@@ -251,8 +299,8 @@ public sealed class MainMenuScene : IScene
             ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
 
             MainMenuScene scene = new(
-                frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, fonts, languages,
-                culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
+                frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, editorSign, fonts,
+                languages, culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -262,6 +310,7 @@ public sealed class MainMenuScene : IScene
                     : $"lantern glow {LanternFrameCount} frames every " +
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
+                (editorSign is null ? "editor sign drawn here, " : "editor sign from the artwork, ") +
                 (messageChrome is null ? "no tooltips, " : "right click tooltips, ") +
                 (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
@@ -323,6 +372,8 @@ public sealed class MainMenuScene : IScene
         {
             button.Draw(pixels);
         }
+
+        DrawEditorSign(pixels);
 
         DrawStatusBar(pixels, state);
 
@@ -423,6 +474,9 @@ public sealed class MainMenuScene : IScene
             // The door is not a sign: it opens the settings dialog, the way the reference treats the
             // bottom left corner of the street scene.
             _doorPressed = _pressedButton < 0 && (_door?.IsHovered(_cursor) ?? false);
+
+            // The editor button is neither: a press on it only arms the release below.
+            _editorPressed = !_doorPressed && _cursor is { } pressed && EditorArea.Contains(pressed);
             return null;
         }
 
@@ -433,6 +487,19 @@ public sealed class MainMenuScene : IScene
             if (_door?.IsHovered(_cursor) == true)
             {
                 OpenSettings();
+            }
+
+            return null;
+        }
+
+        if (_editorPressed)
+        {
+            _editorPressed = false;
+
+            if (_cursor is { } cursor && EditorArea.Contains(cursor))
+            {
+                GameLog.Info($"Main menu: '{Text.Get(EditorLabelId)}' opens the map editor.");
+                return MainMenuAction.Editor;
             }
 
             return null;
@@ -461,7 +528,10 @@ public sealed class MainMenuScene : IScene
     /// <param name="down">Whether the right mouse button is currently held.</param>
     public void SetRightButton(bool down) => _tip = down && _settings is null ? CreateTip() : null;
 
-    /// <summary>Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>).</summary>
+    /// <summary>
+    /// Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>), or the
+    /// editor through <c>E</c>.
+    /// </summary>
     public MainMenuAction? Select(char hotKey)
     {
         // While the settings dialog is open the keyboard belongs to it: Escape closes it without
@@ -511,12 +581,20 @@ public sealed class MainMenuScene : IScene
             'H' => MainMenuAction.HighScores,
             'C' => MainMenuAction.Credits,
             'Q' => MainMenuAction.Quit,
+            'E' => MainMenuAction.Editor,
             _ => null,
         };
 
         if (action is not { } requested)
         {
             return null;
+        }
+
+        // The editor is not one of the signs, so it has no MenuEntry to choose.
+        if (requested == MainMenuAction.Editor)
+        {
+            GameLog.Info($"Main menu: '{Text.Get(EditorLabelId)}' opens the map editor.");
+            return requested;
         }
 
         foreach (MenuEntry entry in Menu)
@@ -865,6 +943,11 @@ public sealed class MainMenuScene : IScene
             header = Text.Get(DoorLabelId);
             body = Text.Get(DoorTooltipId);
         }
+        else if (_cursor is { } over && EditorArea.Contains(over))
+        {
+            header = Text.Get(EditorLabelId);
+            body = Text.Get(EditorTooltipId);
+        }
         else
         {
             return null;
@@ -913,6 +996,54 @@ public sealed class MainMenuScene : IScene
         return 0;
     }
 
+    /// <summary>
+    /// Draws the editor button: the Price of Loyalty artwork when the data has it, a painted sign in
+    /// the bottom right corner otherwise. Both cover <see cref="EditorArea"/>, so the click and the
+    /// tooltip below are the same code for either look.
+    /// </summary>
+    private void DrawEditorSign(PixelBuffer pixels)
+    {
+        if (_editorSign is { } sign)
+        {
+            sign.Draw(pixels);
+            return;
+        }
+
+        // The signs of the street are wood and gold; the painted editor sign borrows the same pair so
+        // it does not read as a debug rectangle. The indices come from the palette, not from a guess.
+        // The board stays dark so the white glyphs of GameFonts stay readable on it.
+        Palette palette = _frame.Palette;
+        byte board = palette.FindClosestIndex(new RgbaColor(74, 44, 18));
+        byte frame = palette.FindClosestIndex(new RgbaColor(38, 22, 10));
+        byte glow = palette.FindClosestIndex(new RgbaColor(238, 206, 120));
+
+        Rect area = EditorFallbackArea;
+
+        ImageOps.FillRect(pixels, area, board);
+        ImageOps.DrawRect(pixels, area, frame);
+
+        // A pressed sign sinks (dark inner edge), a hovered one gets a second gold ring.
+        ImageOps.DrawRect(
+            pixels,
+            new Rect(area.X + 1, area.Y + 1, area.Width - 2, area.Height - 2),
+            _editorState == ButtonState.Pressed ? frame : glow);
+
+        if (_editorState == ButtonState.Hovered)
+        {
+            ImageOps.DrawRect(
+                pixels,
+                new Rect(area.X + 2, area.Y + 2, area.Width - 4, area.Height - 4),
+                glow);
+        }
+
+        IGlyphSource font = _fonts.Normal;
+        string label = Text.Get(EditorLabelId);
+        int x = area.X + ((area.Width - GlyphText.Measure(font, label)) / 2);
+        int y = area.Y + ((area.Height - font.LineHeight) / 2 + (_editorState == ButtonState.Pressed ? 2 : 1));
+
+        GlyphText.DrawLine(font, pixels, new Point(x, y), label);
+    }
+
     private void DrawStatusBar(PixelBuffer pixels, in DiagnosticsState state)
     {
         ImageOps.FillRect(pixels, _statusBar, _statusBarColor);
@@ -944,6 +1075,12 @@ public sealed class MainMenuScene : IScene
             {
                 return Text.Get(Menu[index].TooltipId);
             }
+        }
+
+        ButtonState editor = _editorSign?.State ?? _editorState;
+        if (editor == ButtonState.Hovered)
+        {
+            return Text.Get(EditorTooltipId);
         }
 
         return _status;
@@ -979,6 +1116,16 @@ public sealed class MainMenuScene : IScene
         {
             button.Update(_cursor, _leftButtonDown);
         }
+
+        if (_editorSign is { } sign)
+        {
+            sign.Update(_cursor, _leftButtonDown);
+            return;
+        }
+
+        _editorState = _cursor is { } point && EditorFallbackArea.Contains(point)
+            ? (_leftButtonDown ? ButtonState.Pressed : ButtonState.Hovered)
+            : ButtonState.Released;
     }
 
     private int IndexAt(Point? point)

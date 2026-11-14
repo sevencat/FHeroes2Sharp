@@ -51,6 +51,34 @@ public sealed class Palette
     public byte FindBrightestIndex() => FindExtremeIndex(brightest: true);
 
     /// <summary>
+    /// Returns the index of the colour closest to <paramref name="color"/>, so painted UI can ask for
+    /// "a warm wood tone" without hard coding an index that only holds for one palette. Distance is
+    /// squared RGB, and ties keep the lowest index like the other finders.
+    /// </summary>
+    public byte FindClosestIndex(RgbaColor color)
+    {
+        int best = 0;
+        int bestDistance = int.MaxValue;
+
+        for (int index = 0; index < _colors.Length; ++index)
+        {
+            RgbaColor candidate = _colors[index];
+            int dr = candidate.R - color.R;
+            int dg = candidate.G - color.G;
+            int db = candidate.B - color.B;
+            int distance = (dr * dr) + (dg * dg) + (db * db);
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = index;
+            }
+        }
+
+        return (byte)best;
+    }
+
+    /// <summary>
     /// Loads a palette exactly the way <c>fheroes2::setGamePalette</c> does for <c>KB.PAL</c>:
     /// the file stores 6 bit VGA components (0..63) which are shifted left by two bits, and the
     /// color cycling entries are duplicated into their non-cycling slots (water 231..233/235 ->

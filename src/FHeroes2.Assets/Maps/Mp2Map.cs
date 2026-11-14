@@ -147,6 +147,58 @@ public sealed record Mp2Map
     }
 
     /// <summary>
+    /// Replaces the tile at <paramref name="index"/> and returns the value it had.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one in place mutation of the record, added for the map editor. A brush stroke rewrites a
+    /// handful of tiles per frame, so returning a copy of the whole map (<c>width * height * 20</c>
+    /// bytes, 233 KB on a 108x108 map) per painted tile would turn a drag into a garbage collector
+    /// stutter. The editor keeps the previous value of every tile it touched, which is what makes the
+    /// mutation undoable.
+    /// </para>
+    /// <para>
+    /// Two maps that were built around the same tile array alias each other; nothing does that today,
+    /// and <see cref="Tiles"/> stays a read only view so only this method can change it.
+    /// </para>
+    /// </remarks>
+    /// <param name="index">Index of the tile, <c>x + y * width</c>.</param>
+    /// <param name="tile">The new value.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The index is outside the tile array.</exception>
+    /// <exception cref="NotSupportedException">The tile list is not backed by an array.</exception>
+    public Mp2TileInfo SetTileAt(int index, Mp2TileInfo tile)
+    {
+        if (index < 0 || index >= Tiles.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), $"{index} is outside the {Tiles.Count} tiles of the map.");
+        }
+
+        if (Tiles is not Mp2TileInfo[] tiles)
+        {
+            throw new NotSupportedException("The tiles of this map are not backed by an array, so they cannot be edited.");
+        }
+
+        Mp2TileInfo previous = tiles[index];
+        tiles[index] = tile;
+        return previous;
+    }
+
+    /// <summary>
+    /// Replaces the tile at <paramref name="x"/>, <paramref name="y"/> and returns the value it had,
+    /// the indexed form of <see cref="SetTileAt"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The point is outside the map.</exception>
+    public Mp2TileInfo SetTile(int x, int y, Mp2TileInfo tile)
+    {
+        if (x < 0 || x >= Width || y < 0 || y >= Height)
+        {
+            throw new ArgumentOutOfRangeException(nameof(x), $"({x}; {y}) is outside the {Width}x{Height} map.");
+        }
+
+        return SetTileAt(TileIndex(x, y), tile);
+    }
+
+    /// <summary>
     /// Walks the add-on chain that starts at <paramref name="tile"/>. Every returned value is a valid
     /// index into <see cref="Addons"/>. The walk stops at index 0, at an out of range index (a
     /// corrupt chain) or after <see cref="Addons"/>.-1 steps, so a chain that loops cannot hang.

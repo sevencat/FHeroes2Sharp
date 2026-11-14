@@ -909,7 +909,11 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `Game.AdventureMap.MapGround` + `MapGrounds` | ✅ | `Maps::Ground` 的移植：九个 `*_START_IMAGE_INDEX`（30/92/146/208/262/321/361/415/432）把 terrain image index 反解成地面类型，越界给 `Unknown` |
 | `Game.AdventureMap.Minimap` | ✅ | `Interface::Radar` 的数据与缩放：每格一个调色板索引（地面色 / 山树 +3 / 道路 `0x7A` / 英雄王国色）、`Zoom = 144 / 宽`、「每 6 像素省一个」的虚线视口方框、视口覆盖全图时不画方框；输出 144×144 `PixelBuffer`（ADR-038） |
 | `AdventureMapScene` 雷达叠加 | ✅ | 雷达画在参考坐标 `(480,16)`，1 px 黑框圈住；面板美术 `ADVBORD.ICN` 与 448×448 视口属于界面外壳，仍未做 |
-| `tests/FHeroes2.Game.Tests/MinimapTests` | ✅ | 35 条用例：19 条地形索引分段 + 8 条调色板常量 + 道路/山树/未知地面/英雄染色 + 缩放块对齐 + 方框几何（含贴边裁剪、全图时隐藏）+ 虚线步长 + 面板落位 |
+| `tests/FHeroes2.Game.Tests/MinimapTests` | ✅ | 35 条用例：19 条地形索引分段 + 8 条调色板常量 + 道路/山树/未知地面/英雄染色 + 缩放块对齐 + 方框几何（含贴边裁剪、全图时隐藏）+ 虚线步长 + 面板落位；另 2 条 `TileAt` 的整数除法（72 / 108 格两种缩放、越界不 clamp） |
+| `Game.AdventureMap.MapScrollController` | ✅ | 冒险地图的鼠标：`GameArea::QueueEventProcessing` 的拖动（10 px 严格阈值、位移 `last - current`、从按下点补位移）、`HumanTurn` 的 16 px 边框滚动（20 ms 一步、`2 << ScrollSpeed` = 8 px、拖动期间禁止、单帧最多 4 步）、滚轮（参考没有，自定一格 tile） |
+| `Minimap.TileAt` | ✅ | `Radar::QueueEventProcessing` 的面板像素 → tile 反算 `( pt - rect.pos ) * world / rect.size`，整数除法，越界交由视图 clamp |
+| `AdventureMapScene` 鼠标接线 | ✅ | `SetCursor` / `SetLeftButton` / `ScrollByWheel` / `Update`；按下落在雷达上就交给小地图（点击即居中、按住继续跟随，参考把两者放在同一分支），其余交给拖动；`GameHost` 的三处 `_adventure is null` 守卫改成转发，左键与滚轮都进地图 |
+| `tests/FHeroes2.Game.Tests/MapScrollControllerTests` | ✅ | 12 条：10 px 不算拖 / 11 px 算拖、方向、clamp、半 tick 不滚、角落双轴、拖动期间禁止边缘滚动、贴边返回 false、滚轮一格与 clamp |
 
 ### M4 验证记录（结构层、地形层与对象层）
 
@@ -1008,6 +1012,25 @@ pwsh tools/scripts/VerifyMenu/Scenario/SettingsBaseline.ps1 -SkipBuild → 全�
   `MapGrounds.FromTerrainImageIndex` 是分段函数，写错一个边界只会在某张图上偶尔错一格，看基线看不出来。
 * 其余五张基线不变：只改了 `AdventureMapScene` 的绘制顺序（地形 → 雷达 → 状态栏）。
 
+### M4 验证记录（鼠标滚动）
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 221 / UI 145 / Game 100 全绿（新增 14）
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild         → identical
+pwsh tools/scripts/VerifyMenu/Scenario/SettingsBaseline.ps1 -SkipBuild → 三条全部 identical
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --map …\Alteris.mp2 \
+    --smoke-frames 20 --freeze-animation --screenshot tools-output\smoke-map-mouse.png  → 正常出图
+```
+
+* **拖动**：左键按下记起点，位移**严格大于 10 px**（`minimalRequiredDraggingMovement`，比较用 `>`）才转为拖动；每次位移 `last - current`，所以地形跟着指针走、方向与"拖动一张纸"一致；起点是按下点，因此越过阈值的那一段不会被吞掉。松键后下一次按下重新按"点击"处理，拖动期间不碰行/对象命中。
+* **边缘滚动**：视口四边各 16 px（`borderWidthPx`），每 20 ms（`SCROLL_DELAY`）一步、`2 << ScrollSpeed` = 8 px（默认档 `NORMAL` = 2），四角自动合成斜向；拖动期间禁止，对应参考 `GameArea::SetScroll` 里的 `assert( !isDragScroll() )`；单帧最多补 4 步，避免调试器停顿后一次跳半张图（参考用 `DelayType` 节拍天然没这个问题）。
+* **小地图**：`Minimap.TileAt` 复刻 `( pt - rect.pos ) * world / rect.size` 的整数除法，按下即在雷达上居中、按住拖动继续跟随——参考把"点击"和"按住"写在同一个 `if` 里，所以按住横扫面板就是连续定位。出界点不在 `TileAt` 里 clamp，交给 `ScrollTo` 的 clamp，与 `GameArea::SetCenter` 一致。
+* **滚轮（与参考的差异）**：1.1.18 的冒险地图**不响应滚轮**（全仓库 `isMouseWheel*` 只在列表/对话框、`Radar::QueueEventProcessingForWorldView` 的缩放与编辑器里出现）。这里按方向键的粒度自定为"一格 notch = 一格 tile"，并在类注释里写明来由；滚轮想换成"平滑像素滚动"时只需改 `ScrollByWheel`。
+* **没做的部分**：拖动惯性（`UIScrollInertia` + `MapSmoothScrolling` 设置）、快速滚动迟滞（`fastScrollStartThreshold` 的 2 帧/`mouseIndicatesFastScroll` 的 3 px dead zone）、滚动时切换的 8 种 `Cursor::SCROLL_*`、右键信息框。这些都需要设置项或光标资源，留给「界面外壳」一起做。
+* `MapScrollControllerTests` 的 12 条把边界钉死：10 px 不算拖、11 px 算拖、方向为 `起点 - 当前`、clamp 到 160、半 tick 不滚、角落双轴、拖动期间不滚边、贴边返回 `false`、滚轮一格与 clamp。`MinimapTests` 的两条覆盖 72 格（2 px/tile）与 108 格（0.75 缩放）的整数除法，末像素落在最后一格而不是越界。
+* 四条像素基线逐字节不变：smoke 截图没有鼠标事件，`_cursor` 为 `null` 时 `Update` 直接返回且不累积计时。
+
 ### M4 已知遗留
 
 * **对象层没有动画与超大对象**：帧号直接用 MP2 里存的静态帧，参考的 `map_object_info` 动画表（火焰、旗帜、
@@ -1022,8 +1045,114 @@ pwsh tools/scripts/VerifyMenu/Scenario/SettingsBaseline.ps1 -SkipBuild → 全�
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
   `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。
 * **没有存档/退出确认**：`Esc` 直接回主菜单，参考会先弹系统对话框。
-* **滚动只有键盘**：鼠标拖屏、边缘滚动、小地图点击都未实现；滚动步长固定 1 tile。
-* **地图编辑器一期不做**（**不是遗留，是范围外**）：参考实现不含编辑器，MP2 的写路径没有可对拍的 C++
-  代码，所以一期只读 `.mp2`、不写。M9 验收标准里的「编辑器可保存地图」已删除，理由见 ADR-039 与
-  `PLAN.md` 的「一期范围之外」。
+* **滚动仍缺细节**：拖动 / 边缘滚动 / 小地图点击 / 滚轮已接上（见「M4 验证记录（鼠标滚动）」），
+  但拖动惯性、快速滚动迟滞与滚动时的专用光标未做；键盘滚动步长固定 1 tile。
+* **地图编辑器拆成了 E 系列**：~~一期不做~~（ADR-039 已被 ADR-040 收窄）。E1 只读可视化已完成（见
+  `## E1` 章节），改 tile 与写 MP2 仍受 ADR-039 的约束——没有可对拍的参考代码，必须先成立「写出来能被
+  自己读回 + 与原版编辑器产物对拍」。
+
+## E1 — 地图编辑器（只读可视化）✅
+
+> **参考对象**：fheroes2 1.1.18 有完整编辑器，`src/fheroes2/editor/`（`editor_interface.cpp` 164 KB、
+> `editor_interface_panel.cpp` 72 KB、`editor_map_specs_window.cpp` 114 KB …），入口是主菜单的 EDITOR 按钮
+> （`Game::MainMenu()` 里 `ICN::BTNSHNGL` 第 20 帧，仅 PoL 数据出现）→ `Editor::menuMain()` →
+> `Editor::Interface`。**地图绘制复用同一个 `GameArea`**（`SetAreaPosition( borderWidthPx, borderWidthPx, ... )`），
+> 保存走 `Maps::Map_Format::saveMap`（`maps/map_format_info.cpp:824`）。ADR-039 里「参考没有编辑器」的说法
+> 已在该 ADR 顶部标注更正。边界与理由见 **ADR-040**，里程碑见 `PLAN.md` 的 E 系列。
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `--scene editor` | ✅ | `SceneKind.Editor`；`--map <file.mp2>` 指定地图，缺省取 `MapCatalog` 的第一张（实测为 `Alteris`）；地图目录缺失时留在诊断屏并留一条 `WARN` |
+| 主菜单入口 | ✅ | `MainMenuAction.Editor` + `MainMenuScene.EditorArea`：位置照参考的 `buttonEditor`（右下角）。`BTNSHNGL` 有 23 帧（PoL 数据）时用原版 20/21/22 美术；普通数据只有 20 帧，菜单自绘一块深底亮框招牌（三态、右击提示、`E` 热键），两条路径共用命中区 |
+| `Game.Editor.MapEditorView` | ✅ | 编辑器状态：光标所在 tile（**每次现算，不缓存**）、地面类型（复用 `MapGrounds.FromTerrainImageIndex`）、可见 tile 边界、高亮方框矩形、网格开关 |
+| `App.Scenes.EditorScene` | ✅ | 绘制顺序：地形/对象/英雄（复用 `AdventureMapView`）→ 网格 → 光标高亮 → 小地图 → 顶栏 → 状态栏。视口仍是整屏 640×480，两条栏是**覆盖式**，不改 `AdventureMapView.Viewport` |
+| 工具条 | ✅ | 13 px 深色条 + `MAP EDITOR  brush <地面>` + 右侧 `G grid ON/OFF  1-9 brush  ^Z/^Y undo  RMB drag  Esc` |
+| 状态栏 | ✅ | 左：地图名与尺寸；中：`x,y 地面 [对象类型]`（改过地图时追加 `edited`），没有 tile 时 `no tile`；右：撤销深度、视口偏移与版本（基线忽略） |
+| 光标高亮 | ✅ | 外框取调色板最亮、内框取最深，1 px 双线，浅色沙地与深蓝海面上都看得见 |
+| `GameHost` 接线 | ✅ | 鼠标 Motion / Button / Wheel 与键盘分发都**优先**看 `_editor`；方向键按 tile 滚、`Home` 回左上、`G` 切网格、`Esc` 关闭（没有菜单可回时退出客户端）；`--cursor` 的合成光标也送进编辑器，否则基线里没有高亮 |
+| `tests/FHeroes2.Game.Tests/MapEditorViewTests` | ✅ | 11 条：hover 跟随光标、滚动后 hover 跟着地图变（缓存陷阱）、视口外与地图外都为 `null`、方框像素（含滚动偏移）、网格三条（可视边界 / 跟随滚动 / 地图边缘收口）、开关清空、地形反解（水 / 草） |
+| 像素基线 `editor.png` | ✅ | `--scene editor --cursor 320,240`，居中到地图中心，128 px 视口里每 32 px 一条网格线；忽略状态栏；`VerifyEditorBaseline.ps1` 与其余五条基线共用 `PixelBaseline.ps1` |
+
+### E1 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 167 / Assets 221 / UI 145 / Game 111 全绿（新增 11）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png sha256 33BE4BF5…
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -SkipBuild → identical（7040 像素忽略：状态栏）
+pwsh tools/scripts/VerifyMenu/Scenario/Settings/AdventureMapBaseline.ps1 -SkipBuild → 四条全部 identical
+dotnet run -- --scene editor --map …\Alteris.mp2 --cursor 320,240 --smoke-frames 20 → 出图，网格/高亮/状态栏齐全
+dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris' (108x108, 12 castles, 1684 add-ons)
+```
+
+* 三条决定值得记下来：
+  1. **复用而不是复制渲染**：参考的 `Editor::Interface` 也只是对同一个 `GameArea` 调 `SetAreaPosition`，
+     所以这里直接上 `AdventureMapView`；M4 修好一层编辑器就跟着好，`editor.png` 也连带守住那一层。
+  2. **hover 不缓存**：`HoverTile` 每次从当前 `Scroll` 现算。缓存的话「光标不动、地图滚动」会留下一个指错
+     地方的高亮框——这一条专门写了测试（`HoverTile_FollowsTheMapAfterAScroll`）。
+  3. **网格给地图边缘收口**：只画视口内的边界，但**包含最后一列的右边缘**，否则视口比地图大时（小地图合成、
+     将来放大视图）网格会是没有右边和底边的开口方框。
+* 顶栏盖住地图顶部 13 px、状态栏盖住底部 11 px：编辑器需要这两条信息，而整屏视口是 M4 的既定形状；参考的
+  编辑器用 `ADVBORD` 外壳把地图区缩到 448×448 再在底部放 `EditorPanel`，E2 移植外壳时这两条栏会挪进去。
+
+### E1 已知遗留
+
+* **网格颜色单一**：用调色板最深色画线，在深蓝海面、深色岩石上对比偏低。需要「按底色取反」或双色棋盘网格。
+* ~~**没有编辑动作**~~：E2 补齐了地形笔刷与撤销/重做（见 `## E2`）；对象放置与保存仍未做。
+* **没有编辑器主菜单**：参考点 EDITOR 后先进新建/载入/从零/随机四选一的 `Editor::menuMain()`；这里直接打开
+  目录里第一张地图，等「新建」能力做出来再补这一层。
+* **没有缩放**：参考的游戏内地图也不缩放，但编辑器通常需要整图概览；目前由小地图承担定位。
+* **右键只用来拖动**：E2 起右键点击是吸管、按住拖动是平移；参考里右键还负责对象菜单（弹出属性与删除）。
+* **工具条与状态栏文本是英文常量**：未接入 `.mo`，因此 `editor.png` 只有一份基线，不按语言分叉（ADR-040）。
+  按钮标题与提示走 `Text`，zh_CN 显示「地图编辑器」。
+* **主菜单按钮在无 PoL 数据时是自绘的**：`BTNSHNGL` 普通数据只有 20 帧，自绘招牌的配色与招牌美术不完全一致；
+  换到有 20/21/22 帧的数据会自动改用原版美术。
+* **新建地图未做**：`--scene editor` 必须有地图（缺省取第一张）；`Mp2MapFileBuilder` 能合成空图，但还没接进 UI。
+
+## E2 — 地图编辑器（改地形 + 撤销/重做）✅ 地形部分
+
+> **参考对象**：`Editor::Interface` 的输入分发（`editor_interface.cpp` 把左键送进当前 instrument、右键拖地图）
+> 与地形工具的重绘逻辑；撤销不是参考里的概念（它的编辑直接落地），所以撤销栈是我们自己的设计，理由见
+> **ADR-041**。里程碑见 `PLAN.md` 的 E2。
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| 地形笔刷 | ✅ | `MapEditSession.SetBrush/SetBrushByNumber`：九个地面各取区间首图（`MapGrounds.StartImageIndex`），**保留 shape 位**（渲染要靠它翻转）、清掉 beach 位（bit 2..4），对象字段原样保留 |
+| 笔划（stroke） | ✅ | 按下开笔、抬起结笔；同一格在这一笔里被刷多次只留「首次 before / 末次 after」，所以一次拖拽 = 一次 `Ctrl+Z` |
+| 撤销/重做 | ✅ | `List<MapStroke>` 双栈，200 笔上限（最旧丢弃）；新笔清空 redo；撤销会先把未结的笔关上再回退 |
+| `Mp2Map.SetTile / SetTileAt` | ✅ | 记录的唯一原地写：返回旧值，越界抛 `ArgumentOutOfRangeException`，`Tiles` 仍是对外只读视图 |
+| 输入重排 | ✅ | 左键 = 刷、右键按住 = 平移（`MapScrollController.SetPanButton`）、右键单击不拖 = 吸管、`1..9` 选地面、`Ctrl+Z` / `Ctrl+Y` 撤销重做；方向键 / `Home` / `G` / `Esc` 不变 |
+| 小地图重建 | ✅ | 编辑器里唯一的缓存：结笔、撤销、重做后 `Minimap.Build` 重烤；地图视图本来就是逐帧读 tile，改完立刻可见 |
+| `--editor-paint <x,y,w,h,ground>` | ✅ | 诊断开关：截图按不动鼠标，用它做一次脚本化矩形笔刷，`editor.png` 靠它守住「改 tile → 画面变」这条链路 |
+| `tests/.../MapEditSessionTests` | ✅ | 15 条：笔刷选择与非法地面、刷地形改 image/ground、shape 保留 beach 位清零、原地形重刷不算改动、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动 |
+| `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
+| `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
+| 像素基线 `editor.png` | ✅ | 现在多了一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块），雪地落在海岸线上，正好证明地形层被改写、对象层（船）仍压在上面 |
+
+### E2 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 223 / UI 145 / Game 127 全绿（新增 18）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png sha256 C2B13233…
+pwsh tools/scripts/Verify{Editor,Menu,Settings,Scenario,AdventureMap}Baseline.ps1 -SkipBuild → 六条全部 identical
+dotnet run -- --scene editor --editor-paint "50,50,8,5,Snow" → 日志 Painted 8x5 tiles of 'Snow' at (50; 50)
+```
+
+* 三条决定：
+  1. **tile 原地写 + 撤销栈**：不改 `Mp2Map` 的 record 语义就得每刷一格复制整张地图（108×108×20 B = 233 KB），
+     拖拽笔刷会变成 GC 抖动；撤销栈保存 `before/after`，改动照样可回退。只有 `SetTile` 能写，`Tiles` 仍只读。
+  2. **左键让给笔刷**：E1 里左键是拖动，但编辑器的主动作是画；参考同样是左键进 instrument、右键拖地图，
+     所以加 `SetPanButton` 让同一个状态机由右键驱动，冒险地图那边一行没动。
+  3. **只换地形图，不做相邻过渡**：参考的地形工具刷完会重算与四邻的接缝（`updateTerrain`），我们只把
+     `TerrainImageIndex` 设成区间首图，所以刷出来是硬边。宁可先给它一个诚实的硬边，也不假装做了过渡。
+
+### E2 已知遗留
+
+* **没有地形过渡/海岸自动衔接**：刷在草地上的一块雪是硬边方块，参考会自动接缝；这是下一个要补的渲染问题。
+* **笔刷只有 1×1**：参考有 1×1 / 2×2 / 3×3 / 圆刷。
+* **对象不能放、不能删**：`Paint` 明确不动对象字段（有测试守着），对象面板属于下一步。
+* **撤销深度不落盘**：200 笔内存栈，退出即丢。
+* **没有编辑器主菜单与新建地图**：`--scene editor` 仍必须有地图。
+* **保存 MP2 未做**：E3，走 `Maps::Map_Format::saveMap` 的对拍路线。
 

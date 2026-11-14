@@ -219,4 +219,31 @@ public sealed class MinimapTests
         Assert.Equal(0, target[9, 20]);
         Assert.Equal(0, target[10 + Minimap.PanelSize, 20]);
     }
+
+    [Fact]
+    public void TileAt_MapsThePanelOntoTiles()
+    {
+        // 72 tiles over 144 panel pixels: two pixels per tile, the integer division of the reference.
+        Minimap minimap = Minimap.Build(SyntheticMap.Create(72, 72, _ => Tile(30)));
+
+        Assert.Equal(new Point(0, 0), minimap.TileAt(new Point(0, 0)));
+        Assert.Equal(new Point(1, 1), minimap.TileAt(new Point(2, 2)));
+        Assert.Equal(new Point(35, 35), minimap.TileAt(new Point(71, 71)));
+
+        // The last pixel of the panel is the last tile, not one past the map.
+        Assert.Equal(new Point(71, 71), minimap.TileAt(new Point(Minimap.PanelSize - 1, Minimap.PanelSize - 1)));
+    }
+
+    [Fact]
+    public void TileAt_HandlesMapsOtherThanSeventyTwoTiles()
+    {
+        Minimap minimap = Minimap.Build(SyntheticMap.Create(108, 108, _ => Tile(30)));
+
+        Assert.Equal(new Point(0, 0), minimap.TileAt(new Point(0, 0)));
+        Assert.Equal(new Point(72, 72), minimap.TileAt(new Point(96, 96)));
+        Assert.Equal(new Point(107, 107), minimap.TileAt(new Point(Minimap.PanelSize - 1, Minimap.PanelSize - 1)));
+
+        // A point outside the panel is not clamped here: the view clamps the scroll it produces.
+        Assert.Equal(new Point(108, 108), minimap.TileAt(new Point(Minimap.PanelSize, Minimap.PanelSize)));
+    }
 }

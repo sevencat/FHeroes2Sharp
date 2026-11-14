@@ -46,7 +46,10 @@
 ```
 Run()     → SDL_Init(Video) / TTF_Init()；打开 AssetBundle（失败则记错误、ExitCode=1、使用灰度调色板继续）
             创建 SdlPresenter（窗口 + 渲染器 + 流式帧纹理 + 640×480 目标纹理）、SdlTextRenderer
-            CreateScenes()：DiagnosticsScene 总是建好，--scene menu 时再建 MainMenuScene（缺资源则为 null）
+            CreateScenes()：DiagnosticsScene 总是建好，--scene menu 时再建 MainMenuScene（缺资源则为 null），
+                            --scene editor 时直接建 EditorScene（ADR-040，没有菜单就在它后面）；
+                            EditorScene 持有 MapEditorView（光标/网格）与 MapEditSession（笔刷/笔划/撤销，
+                            ADR-041），两个都在 Game 层、都能脱离窗口测试
 Loop()    → PollEvent（ESC 退出、F2 切语言、F11 全屏、F12 截图、鼠标移动/按键 → MainMenuScene、窗口关闭）、
             FrameTimer、场景动画、smoke 帧数控制
 Draw()    → 组装 DiagnosticsState → 场景绘制 → 上传脏区 → 绑定目标纹理 → 帧纹理 1:1 → 覆盖层

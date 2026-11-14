@@ -8,4 +8,7 @@ public enum SceneKind
 
     /// <summary>The M0 diagnostics screen: palette strip, moving marker and font samples.</summary>
     Diagnostics = 1,
+
+    /// <summary>The map editor: an MP2 map with a tile grid, a highlighted tile and a status bar.</summary>
+    Editor = 2,
 }

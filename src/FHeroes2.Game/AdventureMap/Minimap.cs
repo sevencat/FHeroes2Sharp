@@ -202,6 +202,21 @@ public sealed class Minimap
     public byte ColorAt(int x, int y) => _colors[(y * Width) + x];
 
     /// <summary>
+    /// The map tile under <paramref name="panelPoint"/>, a point of the panel relative to its top
+    /// left corner: <c>( pt - rect.pos ) * world.size / rect.size</c> of
+    /// <c>Radar::QueueEventProcessing</c>, the integer division included.
+    /// </summary>
+    /// <param name="panelPoint">Point inside the 144x144 panel.</param>
+    /// <returns>The tile that a click there centres the map on.</returns>
+    /// <remarks>
+    /// The result is not clamped here: the reference passes it to <c>GameArea::SetCenter</c>, whose
+    /// offset clamp keeps a point outside the panel harmless, and a click on the border of the panel
+    /// has to reach the last tile rather than the one before it.
+    /// </remarks>
+    public Point TileAt(in Point panelPoint) =>
+        new(panelPoint.X * Width / PanelSize, panelPoint.Y * Height / PanelSize);
+
+    /// <summary>
     /// The rectangle that marks <paramref name="visibleTiles"/> on the panel, in panel pixels and
     /// relative to the top left corner of the panel. Empty when the viewport shows the whole map, which
     /// is when the reference hides the cursor instead of drawing a frame around everything.

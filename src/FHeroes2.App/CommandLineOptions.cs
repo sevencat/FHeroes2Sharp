@@ -1,5 +1,6 @@
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Game.AdventureMap;
 
 namespace FHeroes2.App;
 
@@ -7,9 +8,9 @@ namespace FHeroes2.App;
 /// Command line of the desktop client.
 ///
 /// <code>
-///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics] [--lang &lt;culture&gt;]
+///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics|editor] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
-///                 [--cursor &lt;x,y&gt;] [--right-button] [--freeze-animation]
+///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
@@ -47,6 +48,14 @@ public sealed class CommandLineOptions
     /// screenshot of one possible; it has no effect without <c>--cursor</c>.
     /// </summary>
     public bool RightButton { get; private set; }
+
+    /// <summary>
+    /// Clicks the left mouse button once at the position of <c>--cursor</c> right after the main menu
+    /// is built: press and release in the same frame. It is how a screenshot can walk through a
+    /// click-only path (the editor entrance) and how the log shows whether the hit test matched;
+    /// it has no effect without <c>--cursor</c>.
+    /// </summary>
+    public bool LeftClick { get; private set; }
 
     /// <summary>Window scale factor applied to the 640x480 logical resolution.</summary>
     public int WindowScale { get; private set; } = 2;
@@ -98,6 +107,14 @@ public sealed class CommandLineOptions
     /// </summary>
     public string? MapFile { get; private set; }
 
+    /// <summary>
+    /// Paints a rectangle of ground as soon as the editor opens (<c>--editor-paint
+    /// &lt;x,y,width,height,ground&gt;</c>). It exists because a brush stroke otherwise needs a real
+    /// mouse: a screenshot cannot show that changing a tile changes the frame, and the adventure map
+    /// view reads the tiles on every frame, so this is also the cheapest regression for that path.
+    /// </summary>
+    public EditorPaintRequest? EditorPaint { get; private set; }
+
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
 
@@ -148,8 +165,9 @@ public sealed class CommandLineOptions
                     {
                         "menu" => SceneKind.Menu,
                         "diagnostics" => SceneKind.Diagnostics,
+                        "editor" => SceneKind.Editor,
                         _ => throw new ArgumentException(
-                            $"'{argument}' expects 'menu' or 'diagnostics', got '{scene}'."),
+                            $"'{argument}' expects 'menu', 'diagnostics' or 'editor', got '{scene}'."),
                     };
 
                     break;
@@ -164,6 +182,10 @@ public sealed class CommandLineOptions
 
                 case "--right-button":
                     options.RightButton = true;
+                    break;
+
+                case "--left-click":
+                    options.LeftClick = true;
                     break;
 
                 case "--scale":
@@ -237,6 +259,10 @@ public sealed class CommandLineOptions
                     options.MapFile = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--editor-paint":
+                    options.EditorPaint = ParseEditorPaint(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -268,13 +294,15 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --data <dir>        Folder that contains 'Data/Heroes2.agg'.");
         Console.WriteLine("                      Defaults to the FHEROES2_DATA environment variable,");
         Console.WriteLine("                      the executable folder or a known local install.");
-        Console.WriteLine("  --scene <name>      'menu' (default) or 'diagnostics' (the M0 engine screen).");
+        Console.WriteLine("  --scene <name>      'menu' (default), 'diagnostics' (the M0 engine screen) or");
+        Console.WriteLine("                      'editor' (the map editor; pass --map to choose the map).");
         Console.WriteLine("  --lang <culture>    Interface language, e.g. 'zh_CN' or 'en'. A catalog must");
         Console.WriteLine("                      exist in <data>/files/lang; see BuildTranslations.ps1.");
         Console.WriteLine("  --cursor <x,y>      Puts the cursor at a logical pixel, e.g. to screenshot a hover.");
         Console.WriteLine("                      The position is synthetic: real mouse motion is ignored, so the");
         Console.WriteLine("                      hover state survives the physical pointer leaving the window.");
-        Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
+        Console.WriteLine("  --left-click        Clicks the left button once at --cursor, e.g. to open the editor from the menu.");
+    Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
         Console.WriteLine("                      of the sign under it (the original shows it only while pressed).");
         Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2).");
         Console.WriteLine("  --fullscreen        Starts in borderless fullscreen mode.");
@@ -287,6 +315,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");
         Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
+        Console.WriteLine("  --editor-paint <x,y,w,h,ground>  Paints that rectangle of tiles when the editor");
+        Console.WriteLine("                      opens, e.g. '50,50,6,4,Snow' (ground name or 1..9).");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -316,4 +346,46 @@ public sealed class CommandLineOptions
 
         throw new ArgumentException($"'{option}' expects '<x>,<y>', got '{value}'.");
     }
+
+    private static EditorPaintRequest ParseEditorPaint(string value, string option)
+    {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length == 5
+            && int.TryParse(parts[0], out int x)
+            && int.TryParse(parts[1], out int y)
+            && int.TryParse(parts[2], out int width)
+            && int.TryParse(parts[3], out int height)
+            && width > 0
+            && height > 0
+            && TryParseGround(parts[4], out MapGround ground))
+        {
+            return new EditorPaintRequest(new Point(x, y), width, height, ground);
+        }
+
+        throw new ArgumentException(
+            $"'{option}' expects '<x>,<y>,<width>,<height>,<ground>', got '{value}'. " +
+            "The ground is a name such as 'Snow' or a number from 1 (water) to 9 (beach).");
+    }
+
+    /// <summary>Reads a ground by its enum name or by the number the editor's keys use.</summary>
+    private static bool TryParseGround(string value, out MapGround ground)
+    {
+        if (int.TryParse(value, out int number))
+        {
+            ground = number is >= 1 and <= 9 ? (MapGround)number : MapGround.Unknown;
+            return ground != MapGround.Unknown;
+        }
+
+        return Enum.TryParse(value, ignoreCase: true, out ground) && ground != MapGround.Unknown;
+    }
 }
+
+/// <summary>
+/// The rectangle of tiles <c>--editor-paint</c> paints when the editor opens, plus the ground.
+/// A record rather than three loose options, so the host cannot receive a half parsed request.
+/// </summary>
+/// <param name="Tile">Top left tile of the rectangle.</param>
+/// <param name="Width">Width of the rectangle in tiles.</param>
+/// <param name="Height">Height of the rectangle in tiles.</param>
+/// <param name="Ground">Ground the brush paints.</param>
+public readonly record struct EditorPaintRequest(Point Tile, int Width, int Height, MapGround Ground);
