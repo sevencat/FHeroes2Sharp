@@ -18,7 +18,9 @@ namespace FHeroes2.UI.Dialogs;
 /// A row is a label on the left, its value on the right and a chevron on both sides: pressing the
 /// left half of a row selects the previous value, the right half the next one. The chevrons are
 /// drawn as pixel lines (<see cref="ChevronWidth"/>) because the <c>&lt;</c> and <c>&gt;</c> glyphs
-/// of <c>FONT.ICN</c> are three by four pixels and unreadable at that size.
+/// of <c>FONT.ICN</c> are three by four pixels and unreadable at that size. Both texts are clipped
+/// at <see cref="RowPadding"/>, so a translation wider than the window is cut off inside the frame
+/// instead of running over the label.
 /// </para>
 /// <para>
 /// Input mirrors the rest of the port: the scene feeds <see cref="SetCursor"/> and
@@ -214,9 +216,10 @@ public sealed class SettingsDialog
         for (int index = 0; index < _options.Length; ++index)
         {
             Rect row = OptionArea(index);
+            Rect text = TextArea(index);
 
-            GlyphText.DrawLine(_optionFont, target, new Point(row.X + RowPadding, row.Y), _options[index].Label);
-            GlyphText.DrawLine(_optionFont, target, new Point(ValueX(index), row.Y), _options[index].Value);
+            GlyphText.DrawLine(_optionFont, target, new Point(text.X, row.Y), _options[index].Label, text);
+            GlyphText.DrawLine(_optionFont, target, new Point(ValueX(index), row.Y), _options[index].Value, text);
 
             Rect left = LeftChevron(index);
             if (!left.IsEmpty)
@@ -291,7 +294,11 @@ public sealed class SettingsDialog
     /// <returns>Value of the button the key stands for, or <see cref="DialogButton.None"/>.</returns>
     public DialogButton ProcessHotKey(ButtonHotKey hotKey) => _buttons.ProcessHotKey(hotKey);
 
-    /// <summary>X of the value of row <paramref name="index"/>, right aligned inside the row.</summary>
+    /// <summary>
+    /// X of the value of row <paramref name="index"/>: right aligned inside the row, but never left
+    /// of the padding. A value too wide for the row is clipped by <see cref="TextArea"/> at its right
+    /// edge instead of running backwards over the label, which is what a long translation does.
+    /// </summary>
     private int ValueX(int index)
     {
         Rect row = OptionArea(index);
@@ -302,7 +309,19 @@ public sealed class SettingsDialog
             right -= ChevronWidth + ChevronGap;
         }
 
-        return right - GlyphText.Measure(_optionFont, _options[index].Value);
+        return Math.Max(right - GlyphText.Measure(_optionFont, _options[index].Value), row.X + RowPadding);
+    }
+
+    /// <summary>
+    /// The band row <paramref name="index"/> paints its label and value in: the row without the
+    /// horizontal paddings. Texts are clipped to it, so a translation that is wider than the window
+    /// is cut off at the padding instead of overwriting the label or the frame.
+    /// </summary>
+    private Rect TextArea(int index)
+    {
+        Rect row = OptionArea(index);
+
+        return new Rect(row.X + RowPadding, row.Y, Math.Max(0, row.Width - (2 * RowPadding)), row.Height);
     }
 
     /// <summary>

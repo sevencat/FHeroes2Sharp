@@ -172,6 +172,46 @@ public sealed class SettingsDialogTests
     }
 
     [Fact]
+    public void LongValue_DropsTheChevrons()
+    {
+        // Forty glyphs of six pixels are 240 px wide: no room left for the arrows in a 200 px row.
+        SettingsDialog dialog = CreateDialog(["Language"], out _, values: [new string('W', 40)]);
+
+        Assert.True(dialog.LeftChevron(0).IsEmpty);
+        Assert.True(dialog.RightChevron(0).IsEmpty);
+    }
+
+    [Fact]
+    public void LongText_StaysInsideTheRowPaddings()
+    {
+        // A translated label or value can be wider than the window; both are clipped at the
+        // paddings, so the frame and the space next to it keep their own pixels.
+        SettingsDialog dialog = CreateDialog(
+            [new string('W', 40)], out _, values: [new string('W', 40)]);
+
+        PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
+        dialog.Draw(target);
+
+        Rect row = dialog.OptionArea(0);
+        for (int y = row.Y; y < row.Bottom; ++y)
+        {
+            for (int x = row.X; x < row.X + SettingsDialog.RowPadding; ++x)
+            {
+                Assert.NotEqual((byte)2, target[x, y]);
+            }
+
+            for (int x = row.Right - SettingsDialog.RowPadding; x < row.Right; ++x)
+            {
+                Assert.NotEqual((byte)2, target[x, y]);
+            }
+        }
+
+        // The value is pushed back to the padding instead of running over the label, so the first
+        // pixel of the text band is painted.
+        Assert.Equal((byte)2, target[row.X + SettingsDialog.RowPadding, row.Y]);
+    }
+
+    [Fact]
     public void Option_RejectsAnUnknownRow()
     {
         SettingsDialog dialog = CreateDialog(["Language"], out _);
@@ -182,9 +222,10 @@ public sealed class SettingsDialogTests
 
     /// <summary>
     /// Builds a dialog with a content area of the given width, one row per label and a 60x25 OK
-    /// button.
+    /// button. Every row offers the same values, two short ones unless the caller passes others.
     /// </summary>
-    private static SettingsDialog CreateDialog(string[] labels, out Rect okayArea, int width = 200)
+    private static SettingsDialog CreateDialog(
+        string[] labels, out Rect okayArea, int width = 200, string[]? values = null)
     {
         IGlyphSource titleFont = new FakeGlyphSource(1);
         IGlyphSource optionFont = new FakeGlyphSource(2);
@@ -194,7 +235,8 @@ public sealed class SettingsDialogTests
 
         ButtonGroup buttons = ButtonGroup.CreateStandard(content, DialogButton.Ok, new FixedArtwork());
 
-        SettingsOption[] options = [.. labels.Select(label => new SettingsOption(label, ["English", "zh_CN"]))];
+        string[] rowValues = values ?? ["English", "zh_CN"];
+        SettingsOption[] options = [.. labels.Select(label => new SettingsOption(label, rowValues))];
 
         SettingsDialog dialog = new(window, buttons, titleFont, optionFont, "Settings", options);
 

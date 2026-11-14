@@ -37,7 +37,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M2 进行中（主菜单已可玩）**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
 `translations/zh_CN.po` + `tools/scripts/BuildTranslations.ps1` 生成并安装
-`<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 95 条，
+`<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 96 条，
 未翻译项回退英文）。文字颜色也已落地：`Core.Imaging.PaletteTable`（原版 13 张索引重映射表）+
 `BitmapFont.WithPalette` / `GlyphCoverageRamp.WithPalette`，白/黄/灰文字与 CJK 混排同色（ADR-020）。
 界面文本接的是真实字体：`CompositeGlyphSource` 把 `FONT.ICN`/`SMALFONT.ICN` 与内嵌 CJK 字体合成，
@@ -51,10 +51,19 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 两者都折行居中（ADR-024）。提示框只在右键按住期间存在，与参考实现的 `Dialog::ZERO` 语义一致。
 像素回归有了基线门禁：`tests/baselines/menu.png` 入库，`tools/scripts/VerifyMenuBaseline.ps1`
 用「冻结动画 + 人造光标」渲染一帧后逐像素比对（状态栏的 FPS/版本号由 `compare --ignore` 排除，ADR-023）。
-CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这个脚本做像素门禁：托管 runner 没有游戏数据，
+设置对话框单独入库，而且是**一种语言一份**：`settings.png`（`en`）与 `settings.zh_CN.png`，
+`VerifySettingsBaseline.ps1 -Culture <名字>` 自动认出该用哪张（ADR-029）。
+CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这些脚本做像素门禁：托管 runner 没有游戏数据，
 只校验基线文件本身（PNG 魔数 + 640×480），像素比对留给装了数据的自建 runner（仓库变量
 `FHEROES2_RUNNER` + `FHEROES2_DATA`）。
-待办：语言选择对话框、BGM、设置对话框（门已经会发光、右键也会弹提示框，点它还没反应）。
+点左下角的门会打开设置对话框：`StandardWindow` 边框 + 黄色标题 + 「标签 / 值」行（两侧自绘箭头，
+点左半行取上一个值、右半行取下一个，循环）+ 底部 `SYSTEM.ICN` 的 OK，Enter/OK 应用、Escape 取消。
+行文字超出内容区时按 `RowPadding` 裁掉，值的左端也不会越过左内边距，所以长译文不会跑到边框上。
+待办：语言选择对话框。
+
+音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
+`*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
+`--play-sound PICKUP01` 单独试一个音效。
 
 ## 快速开始
 
@@ -100,6 +109,11 @@ pwsh tools/scripts/CompareWithReference.ps1
 pwsh tools/scripts/VerifyMenuBaseline.ps1
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update      # 有意改了视觉后重建基线
 
+# 设置对话框基线：一种语言一份（settings.png / settings.zh_CN.png），-Culture 决定用哪张
+pwsh tools/scripts/VerifySettingsBaseline.ps1
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update
+
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
@@ -123,8 +137,8 @@ src/FHeroes2.App         SDL3 宿主、呈现、字体、场景
 tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
-tools/scripts            调色板表生成、程序图标生成、参考导出器编译、参考对拍、语言包编译、主菜单像素基线脚本
-tests/baselines          入库的回归基线 PNG（menu.png + 说明），像素门禁的期望图像
+tools/scripts            调色板表生成、程序图标生成、参考导出器编译、参考对拍、语言包编译、像素基线脚本
+tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + 说明），像素门禁的期望图像
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 assets/                  logo.png / logo.ico（图标源图与生成物）、banner.jpg、author.jpg、可再分发字体
 docs/                    计划、进度、决策与参考笔记

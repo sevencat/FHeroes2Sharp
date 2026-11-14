@@ -5,11 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Rendering / windowing: SDL3 bindings plus the native SDL3 and SDL3_ttf binaries
-         for every desktop target (win-x64/arm64, linux-x64/arm64, osx-x64/arm64). -->
+    <!-- Rendering / windowing / audio: SDL3 bindings plus the native SDL3, SDL3_ttf and SDL3_mixer
+         binaries for every desktop target (win-x64/arm64, linux-x64/arm64, osx-x64/arm64). The
+         Mixer bindings themselves ship inside SDL3-CS; only the native library is separate. -->
     <PackageVersion Include="SDL3-CS" Version="3.4.20" />
     <PackageVersion Include="SDL3-CS.Native" Version="3.4.2" />
     <PackageVersion Include="SDL3-CS.Native.TTF" Version="3.3.0" />
+    <PackageVersion Include="SDL3-CS.Native.Mixer" Version="3.2.0" />
   </ItemGroup>
 
   <ItemGroup>

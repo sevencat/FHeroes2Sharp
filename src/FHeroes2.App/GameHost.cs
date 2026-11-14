@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using FHeroes2.Assets;
+using FHeroes2.Assets.Audio;
+using FHeroes2.App.Audio;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
 using FHeroes2.App.Scenes;
@@ -35,6 +37,7 @@ public sealed class GameHost : IDisposable
     private SdlPresenter? _presenter;
     private SdlTextRenderer? _text;
     private GameFonts? _fonts;
+    private AudioPlayer? _audio;
     private IScene? _scene;
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
@@ -99,6 +102,7 @@ public sealed class GameHost : IDisposable
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
             CreateTextRenderer();
             CreateScenes();
+            StartAudio();
 
             GameLog.Info(
                 $"Presentation ready: {_presenter.OutputSize} output, x{_presenter.Viewport.Scale:0.##} scale, " +
@@ -135,6 +139,10 @@ public sealed class GameHost : IDisposable
         _presenter?.Dispose();
         _presenter = null;
 
+        // Music and sound effects own SDL resources of their own, cleaned up before SDL_Quit.
+        _audio?.Dispose();
+        _audio = null;
+
         _assets?.Dispose();
         _assets = null;
 
@@ -170,6 +178,7 @@ public sealed class GameHost : IDisposable
             previous = now;
 
             Update(elapsed);
+            _audio?.Update();
             Draw();
         }
     }
@@ -452,6 +461,37 @@ public sealed class GameHost : IDisposable
 
         _palette = Palette.FromGamePalette(paletteData);
         GameLog.Info($"Palette loaded from KB.PAL ({paletteData.Length} bytes, 6 bit VGA normalized).");
+    }
+
+    /// <summary>
+    /// Opens the audio device and starts the main menu theme. Everything is optional: a machine
+    /// without audio, or a player without the separate soundtrack files, only logs a message.
+    /// </summary>
+    private void StartAudio()
+    {
+        if (_options.NoAudio)
+        {
+            GameLog.Info("Audio disabled by --no-audio.");
+            return;
+        }
+
+        _audio = AudioPlayer.TryCreate(_assets);
+        if (_audio is null)
+        {
+            GameLog.Warn("Continuing without music and sound effects.");
+            return;
+        }
+
+        // The main menu theme is the only music track of M2; scenes from M3 on switch it.
+        if (!_audio.PlayMusic(MusicTrack.MainMenu))
+        {
+            GameLog.Info("The main menu theme is not available; the menu stays silent.");
+        }
+
+        if (_options.PlaySound is string soundName && !_audio.PlaySound(soundName))
+        {
+            GameLog.Warn($"The sound effect '{soundName}' could not be played.");
+        }
     }
 
     private void CreateTextRenderer()

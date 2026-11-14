@@ -10,6 +10,7 @@ namespace FHeroes2.App;
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--freeze-animation]
+///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
 /// </summary>
@@ -75,6 +76,20 @@ public sealed class CommandLineOptions
 
     /// <summary>Prints the archive contents and exits without opening a window.</summary>
     public bool ListAssets { get; private set; }
+
+    /// <summary>
+    /// Keeps the client silent (<c>--no-audio</c>): no music and no sound effects, not even an
+    /// attempt to open the audio device. Useful on machines without (or with a broken) audio setup,
+    /// and for the pixel baselines, which must not depend on a soundtrack.
+    /// </summary>
+    public bool NoAudio { get; private set; }
+
+    /// <summary>
+    /// Name of a sound effect of the original archives (for example <c>PICKUP01</c>) that is played
+    /// once after start up (<c>--play-sound</c>). It exists because M2 has no gameplay yet: this is
+    /// how the sound path is verified by ear without inventing a trigger.
+    /// </summary>
+    public string? PlaySound { get; private set; }
 
     public bool ShowHelp { get; private set; }
 
@@ -173,6 +188,14 @@ public sealed class CommandLineOptions
                     options.ListAssets = true;
                     break;
 
+                case "--no-audio":
+                    options.NoAudio = true;
+                    break;
+
+                case "--play-sound":
+                    options.PlaySound = RequireValue(arguments, ref i, argument);
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown argument '{argument}'.");
             }
@@ -207,6 +230,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
         Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");
+        Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
+        Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
         Console.WriteLine("  --help              Shows this help.");
     }

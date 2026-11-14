@@ -121,6 +121,7 @@ $appArguments = @(
     '--lang', $Culture,
     '--cursor', $Cursor,
     '--freeze-animation',
+    '--no-audio',
     '--screenshot-frame', '30',
     '--smoke-frames', $Frames,
     '--screenshot', $screenshot

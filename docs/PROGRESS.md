@@ -160,7 +160,29 @@ pwsh tools/scripts/CompareWithReference.ps1 -All → 958 个条目 / 15,025 个 
 | `assets/logo.ico` + `tools/scripts/GenerateAppIcon.ps1` | ✅ | 从 `assets/logo.png` 生成 7 张图（16/24/32/48/64 位图 + 128/256 PNG，240,361 字节）；同一份文件既是 exe 的 `<ApplicationIcon>` 又是嵌入资源（ADR-025） |
 | `Graphics.WindowIcon` + `SdlPresenter` 接线 | ✅ | 读嵌入的 `logo.ico` → `SDL_CreateSurfaceFrom`（64 px 为主图、128/256 为高 DPI 备选，`SDL_AddSurfaceAlternateImage`）→ `SDL_SetWindowIcon`；surface 与像素缓冲在 `SDL_DestroyWindow` 之后才释放 |
 | 仅 Windows x64 | ✅ | 客户端 `RuntimeIdentifier=win-x64`（不进输出路径，基线脚本路径不变）、`[assembly: SupportedOSPlatform("windows")]`、`Main` 首行平台检查；工具与测试项目不设 RID（ADR-025） |
-| 语言选择对话框、BGM 播放 | ⏳ | 未开始（语言目前由 `--lang` / `F2` 切换，没有 fheroes2 的选择界面；设置对话框只缺按钮组，`StandardWindow` 已就绪，见 ADR-024） |
+| 语言选择对话框（`dialog_language_selection.cpp`） | 🟡 | `UI.Dialogs.LanguageSelectionDialog` 的**对话框本体**已写好（参考布局、列表、滚动跟随、点击选择、OKAY/CANCEL），但**未接线、无测试、无 ADR**；剩余项见下方「语言选择对话框：剩余工作」 |
+| BGM / 音效播放 | 🟡 | `App.Audio.AudioPlayer`（SDL3_mixer 3.2.0）：主菜单循环播 `MUS::MAINMENU`（`homm2_41.ogg`，外部 `MUSIC/`），音效走 AGG 里的 `*.82M`（8 位 22050 Hz 单声道，`Assets.Audio.WaveSound` 补 44 字节 RIFF 头）；`Assets.Audio.MusicTrackCatalog` 支持 DOS/Windows/Mapped 三套命名，`--no-audio` / `--play-sound <NAME>` 供验证（ADR-030）。仍未做：XMI/MIDI 合成（没有外部音轨时的兜底）、音量设置、按场景切曲 |
+
+### M2 验证记录（音频）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx              → Core 167 / Assets 143 / UI 113，全部通过
+                                                （Assets 新增 17 条：MusicTrackCatalogTests 11、
+                                                  WaveSoundTests 6，其中 3 条要真实 AGG）
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --smoke-frames 30
+  → Audio ready: SDL3_mixer 3003000, 6 music folder(s) probed.
+  → Music playing: 'Main Menu' from 'homm2_41.ogg'.
+dotnet run … --play-sound PICKUP01           → 无警告（AGG 取 PICKUP01.82M → 补 RIFF 头 → 播）
+dotnet run … --play-sound NOSUCH             → WARNING Sound 'NOSUCH.82M' is not in the archive.
+dotnet run … --no-audio                      → Audio disabled by --no-audio.
+```
+
+* 音乐文件名是**算出来的**而不是查表猜的：`MUS::MAINMENU` = 42 + DOS 命名（减一）= `homm2_41`
+  ，与 GOG 版 `MUSIC/` 里实际存在的文件对得上；`MusicTrackCatalogTests` 同时钉住 Windows
+  （`Track42`）与 Mapped（`42 Main Menu.ogg`）两套命名。
+* 音效的 WAV 头是逐字段照 `LoadWAV` 写的（8 位 / 单声道 / 22050 Hz），`WaveSoundTests` 把 44
+  字节头的每个字段都断言了一遍，比「能听到声音」更早发现问题。
 
 ### M2 验证记录（对话框影像原语）
 
@@ -632,6 +654,69 @@ pwsh … -Baseline tools-output/settings-crop3.png（1050×435）→ error + 退
 * 与纯菜单的差异 42,680 个像素（状态栏已忽略）：其中 42,679 个落在窗口矩形
   （138,181 348×133）里，只剩 1 个在矩形外（阴影取整的边缘）。把矩形外的四块区域全 `--ignore`
   再比一次，仍然是这 42,679 个——所以「差异就在这张窗口上」是被测出来的，不是估的。
+
+
+### M2 验证记录（设置行文字裁剪与中文设置基线）
+
+```
+dotnet build FHeroes2Sharp.slnx          → 0 error / 0 warning
+dotnet test  FHeroes2Sharp.slnx          → Core 167 / Assets 120 / UI 113 = 400，全部通过
+                                            （UI 新增 2：超长值丢箭头 / 超长文字留在内边距里）
+pwsh tools/scripts/VerifySettingsBaseline.ps1        → settings.png identical（像素未变）
+pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN
+    → 96 translated messages（新增 msgid "Language"）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update
+    → update tests/baselines/settings.zh_CN.png（231,317 字节，sha256 E8E317A…DDD94C4）
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
+    → settings.zh_CN.png identical 640x480 7040 pixels ignored → match（退出码 0）
+```
+
+* 先修「行文字越界」：`ValueX` 把值的起点夹到 `row.X + RowPadding`，`Draw` 用 `TextArea()`（行去掉
+  左右内边距）当裁剪区。`en` 基线逐像素不变，说明这条是纯防御——译文装得下时一个像素都不动。
+* 中文界面上屏后才发现两件事：`zh_CN.po` 里没有 `msgid "Language"`（行标签还是英文），以及
+  `settings.png` 是 `en` 专用、脚本却只会写同一个文件名。前者补一条译文（95 → 96），后者按
+  `-Culture` 推导基线文件名（ADR-029），CI 因此跑三条命令。
+* `settings.zh_CN.png` 里能直接读到「设置 / 语言 / ◀ 简体中文 ▶ / OKAY」：CJK 走
+  `CompositeGlyphSource` 的内嵌字体，与 `FONT.ICN` 的拉丁字形同一行基线；OK 仍是 `SYSTEM.ICN`
+  第 1 帧（ADR-027 第 4 条）。
+* 状态栏（`88 FPS | 简体中文 (F2) | v0.1.0`）继续由 `--ignore 0,469,640,11` 排除在比对之外。
+* 新增的两条 UI 用例用 40 个字符宽的假译文（240 px > 200 px 的行）钉住行为：箭头先消失，文字只
+  落在这行的左右内边距之间。
+
+### 语言选择对话框：剩余工作（暂停，先做别的）
+
+`src/FHeroes2.UI/Dialogs/LanguageSelectionDialog.cs` 已经能编译，但还没人用它。要收尾还差：
+
+1. **场景接线**（`MainMenuScene`）：用 `StandardWindow.CreateCentered(chrome,
+   new Size(LanguageSelectionDialog.ContentWidth, LanguageSelectionDialog.GetRequiredHeight(lineHeight, count)),
+   true, frame.Size)` 开窗，`ButtonGroup.CreateStandard(..., DialogButton.Ok | DialogButton.Cancel, artwork)`；
+   `DrawFrame` 里画在设置对话框之后；`SetCursor` / `SetLeftButton` / `Select(char)` 加输入路由；
+   OK 后 `SetLanguage(dialog.SelectedIndex)` 并回写设置对话框那一行（`SettingsOption.Select`）。
+2. **入口**：`F2` 由「直接循环切换语言」改成开这个窗口（开不出来再退回 `NextLanguage()`）；
+   新增 `--open-language`（`CommandLineOptions` + `GameHost.CreateScenes` + 帮助文本）供截图。
+3. **键盘**：`GameHost.HandleKeyDown` 加 `Up` / `Down` → `MoveSelection(±1)`；Enter / Escape 走
+   `ProcessHotKey` / `Cancel`。
+4. **按钮贴图**：`SettingsArtwork` 目前只装 `SYSTEM.ICN` 的 1/2 帧（OKAY），要补 3/4 帧（CANCEL）
+   并让 `Get(DialogButton)` 按按钮返回对应的一对。
+5. **测试**（`tests/FHeroes2.UI.Tests/LanguageSelectionDialogTests.cs`）：行布局、点击选中、拖出行不改、
+   OK / Esc、移动选择循环、滚动跟随选择、至少 11 行、选中行与选中名用黄色字体。
+6. **文档**：`docs/DECISIONS.md` ADR-031（照参考布局；无滚动条贴图 `SCROLL.ICN`、无双击确认的取舍）、
+   `README.md` 的开关列表；若加 `tests/baselines/language.png` 基线，还要补 `VerifyLanguageBaseline.ps1`
+   与 CI 一步（照着 settings 那套抄）。
+7. **译文**：`translations/zh_CN.po` 加 `Select Game Language:`（现在只有主菜单/设置/状态栏的词条）。
+
+### M2 已知遗留（记下，暂不处理）
+
+* **超宽译文的降级**：目前是「看得见的截断」（ADR-029）。省略号、自动缩字号、按钮专用字体
+  （`BUTTON_*_FONT_*`）都没做；真有长译文需求时再回来。
+* **设置对话框只有语言一行**：分辨率、音量、动画速度、快捷键都还没有对应的设置模型（M8 的活）。
+* **像素基线只钉了默认光标态的 640×480 一帧**：hover / pressed / 右键提示框 / 语言选择窗口都没有
+  基线，靠 `tools-output/*.png` 人工核对。
+* **evil 界面**：`SURDRBKE` / `WINLOSEE` / `STONEBAK_EVIL` 与邪恶光标未接线（ADR-024）。
+* **语言选择窗口**：未接线，见上一节；另外它没有滚动条贴图（`SCROLL.ICN` 未移植）与双击即确认。
+* **BGM / 音效**：外部音轨能播（主菜单曲）、音效链路能播（`--play-sound`），但**没有 XMI/MIDI
+  合成**（没有 `MUSIC/` 的安装会静音）、**音量无 UI 入口**、**只有一条曲子**（M2 没有别的场景）。
+* **平台**：只保证 Windows x64（ADR-025）。
 
 
 

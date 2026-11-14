@@ -29,6 +29,7 @@
     <PackageReference Include="SDL3-CS" />
     <PackageReference Include="SDL3-CS.Native" />
     <PackageReference Include="SDL3-CS.Native.TTF" />
+    <PackageReference Include="SDL3-CS.Native.Mixer" />
   </ItemGroup>
 
   <ItemGroup>

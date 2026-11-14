@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Renders the settings dialog of the main menu (the one the street door opens) and compares the
-    640x480 frame with tests/baselines/settings.png, pixel by pixel. Data lookup, build, baseline
+    640x480 frame with a baseline in tests/baselines, pixel by pixel. Data lookup, build, baseline
     validation and the compare reporting are shared with VerifyMenuBaseline.ps1 through
     PixelBaseline.ps1; the same skip / -RequireData policy applies (ADR-010).
 
@@ -14,11 +14,16 @@
       --cursor 620,100    no hover state anywhere (the dialog sits at 138,181 348x133)
     The status bar is excluded for the same reason as in the menu baseline.
 
-    The rendered text is interface text, so the baseline is pinned to one language (-Culture,
-    'en' by default) and to the translation catalog that produced it; see tests/baselines/README.md.
+    The rendered text is interface text, so the language is part of the baseline: -Culture picks
+    the language and, when -Baseline is left out, the file that belongs to it - the English frame
+    is settings.png, every other language is settings.<culture>.png. Never overwrite one language
+    with another; see tests/baselines/README.md.
 
 .EXAMPLE
     pwsh tools/scripts/VerifySettingsBaseline.ps1
+
+.EXAMPLE
+    pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
 
 .EXAMPLE
     pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update    # after an intentional visual change
@@ -30,13 +35,17 @@ param(
     [Parameter(Mandatory = $false)]
     [string] $DataDirectory = '',
 
+    # Empty means "the baseline that belongs to -Culture": settings.png for 'en', otherwise
+    # settings.<culture>.png next to it.
     [Parameter(Mandatory = $false)]
-    [string] $Baseline = (Join-Path $PSScriptRoot '../../tests/baselines/settings.png'),
+    [string] $Baseline = '',
 
     [Parameter(Mandatory = $false)]
     [string] $WorkDirectory = (Join-Path $PSScriptRoot '../../tools-output/baseline'),
 
-    # Language of the interface; the dialog text is translated, so this is part of the baseline.
+    # Language of the interface; the dialog text is translated, so this is part of the baseline and,
+    # unless -Baseline names a file, it also picks the baseline: 'en' is settings.png, anything else
+    # is settings.<culture>.png.
     [Parameter(Mandatory = $false)]
     [string] $Culture = 'en',
 
@@ -75,7 +84,14 @@ $probeProject = Join-Path $root 'tools/FHeroes2.AssetProbe'
 $appExe = Join-Path $appProject 'bin/Debug/net10.0/FHeroes2Sharp.exe'
 $probeExe = Join-Path $probeProject 'bin/Debug/net10.0/FHeroes2.AssetProbe.exe'
 
-$Baseline = [System.IO.Path]::GetFullPath($Baseline)
+$Baseline = if ($Baseline) {
+    [System.IO.Path]::GetFullPath($Baseline)
+}
+else {
+    $name = if ($Culture -eq 'en') { 'settings.png' } else { "settings.$Culture.png" }
+    [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../../tests/baselines/$name"))
+}
+
 $WorkDirectory = [System.IO.Path]::GetFullPath($WorkDirectory)
 
 if (-not $Update) {
@@ -106,9 +122,9 @@ foreach ($executable in @($appExe, $probeExe)) {
 
 New-Item -ItemType Directory -Force -Path $WorkDirectory | Out-Null
 
-$screenshot = Join-Path $WorkDirectory 'settings.png'
+$screenshot = Join-Path $WorkDirectory "settings-$Culture.png"
 
-Write-Host "render settings    $data"
+Write-Host ("render settings    {0} ({1})" -f $data, $Culture)
 
 $appArguments = @(
     '--data', $data,
@@ -117,6 +133,7 @@ $appArguments = @(
     '--cursor', $Cursor,
     '--open-settings',
     '--freeze-animation',
+    '--no-audio',
     '--screenshot-frame', '30',
     '--smoke-frames', $Frames,
     '--screenshot', $screenshot

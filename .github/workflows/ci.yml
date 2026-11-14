@@ -64,8 +64,10 @@ jobs:
         with:
           global-json-file: global.json
 
-      # Both baselines run from one step: they share PixelBaseline.ps1 (data lookup, build, baseline
+      # The baselines run from one step: they share PixelBaseline.ps1 (data lookup, build, baseline
       # self check, compare) and only differ in the flags that make their frame reproducible.
+      # The settings dialog is pinned once per interface language because its text is part of the
+      # image (tests/baselines/README.md explains why a language gets its own file).
       # FHEROES2_DATA is a repository variable holding the data directory on the runner (for
       # example D:\game\fh2). Set FHEROES2_RUNNER to a self hosted runner label (for example
       # 'fh2-data') as well; without both, the run degrades to the baseline file check that each
@@ -84,9 +86,22 @@ jobs:
             Write-Host '::notice::repository variable FHEROES2_DATA is not set; the render step is skipped and only the baseline files are validated.'
           }
 
-          foreach ($script in @('VerifyMenuBaseline.ps1', 'VerifySettingsBaseline.ps1')) {
-            Write-Host "::group::$script"
-            ./tools/scripts/$script @splat
+          $runs = @(
+            @{ Script = 'VerifyMenuBaseline.ps1'; Culture = '' },
+            @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'en' },
+            @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'zh_CN' }
+          )
+
+          foreach ($run in $runs) {
+            $label = if ($run.Culture) { "$($run.Script) -Culture $($run.Culture)" } else { $run.Script }
+            Write-Host "::group::$label"
+
+            $arguments = $splat.Clone()
+            if ($run.Culture) {
+              $arguments.Culture = $run.Culture
+            }
+
+            ./tools/scripts/$($run.Script) @arguments
             $code = $LASTEXITCODE
             Write-Host '::endgroup::'
 
@@ -102,8 +117,7 @@ jobs:
         with:
           name: pixel-baseline-diff
           path: |
-            tools-output/baseline/menu.png
-            tools-output/baseline/settings.png
+            tools-output/baseline/*.png
             tools-output/baseline/diff/
           if-no-files-found: ignore
           retention-days: 14

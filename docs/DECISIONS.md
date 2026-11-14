@@ -790,3 +790,67 @@ ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
 * 设置基线拦得住窗口位置/尺寸、标题颜色、行距、箭头形状与按钮贴图的变化；它**不**拦语言内容
   （换语言就是换基线），也不拦 hover / pressed 态（光标固定在窗口外）。
 
+## ADR-029：设置行文字裁在行内边距里；设置基线按语言分文件
+
+**背景**：设置行是「标签 + 右对齐的值」。第一版把值画在 `row.Right - RowPadding - 值宽`，标签也不
+裁剪：译文一旦比内容区宽，值就会从右往左越过左内边距、压在标签上，甚至画到窗口边框外面。另一件事
+是 `settings.png` 只有 `en` 一份——中文界面上屏后（项目自带 `zh_CN.mo`）没有任何像素兜底，而脚本
+只会写同一个文件名，换语言就是覆盖掉另一种语言的基线。
+
+**决策**：
+
+1. 行文字只画在 `RowPadding` 之内：`GlyphText.DrawLine` 的裁剪区改成 `TextArea(row)`（行去掉左右
+   内边距），值的起点再夹到 `max(右对齐位置, row.X + RowPadding)`。译文过长时表现为「截断」，不会
+   压住标签或溢出窗口；行太窄时仍然先丢箭头（`ChevronsFit`）。
+2. `VerifySettingsBaseline.ps1` 的默认基线由 `-Culture` 推导：`en` → `settings.png`，其它 →
+   `settings.<culture>.png`；渲染出的临时图同样带语言后缀。`-Baseline` 仍可显式覆盖。
+3. CI 跑三条：菜单、设置 `en`、设置 `zh_CN`。`zh_CN.po` 顺手补上 `msgid "Language"`，让中文基线里
+   的行标签真的是中文（统计从 95 条变 96 条）。
+4. `tools-output/baseline/*.png` 整体作为失败 artifact 上传，不再逐个点名文件。
+
+**后果**：
+
+* `settings.png` 逐像素未变（`en` 行文字本来就装得下），证明裁剪是纯防御性的：只影响超宽的情况。
+* 加一种语言的基线 = 一句 `-Culture <名字> -Update` 加 CI 列表里的一行，不需要新脚本。
+* 取舍：超宽译文是「看得见的截断」，不是省略号也不是自动缩字号。参考实现把文字塞进按需生成的
+  按钮精灵里（`BUTTON_*_FONT_*` 那套按钮专用字体）；本项目连那套字体都没移植（ADR-027 第 4 条），
+  截断是当前信息量最大的降级方式，且不会破坏窗口框架。
+
+## ADR-030：音频走 SDL3_mixer；音轨只在 `MUSIC/` 里找，音效从 AGG 取原始 PCM
+
+**背景**：M2 只剩 BGM / 音效没做。参考实现的 `audio_manager.cpp` 有两条完全不同的链路：
+音乐是「外部文件优先（`.ogg/.mp3/.flac`，三套命名），否则解析 AGG 里的 XMI 并用 SDL_mixer 的
+MIDI 合成播放」，音效是「从 AGG 取 `<名字>.82M` 的裸 PCM，补 44 字节 WAV 头后当内存音频播」。
+XMI 解析 + MIDI 合成器是一个独立的大工程（`xmi.cpp` 外加 mt32/fluidsynth 之类的合成后端），
+而本机安装（GOG 版）的 `MUSIC/` 里 42 条 `homm2_NN.ogg` 是齐全的。
+
+**决策**：
+
+1. 后端用 SDL3_mixer 3.x：NuGet 上是 `SDL3-CS.Native.Mixer`（只有原生库），绑定已经在
+   `SDL3-CS` 包里（`SDL3.Mixer` 静态类），所以不引入新的绑定项目。`App.Audio.AudioPlayer`
+   独占 mixer 生命周期：`SDL_InitSubSystem(Audio)` → `MIX_Init` → `MIX_CreateMixerDevice`，
+   释放顺序反过来。
+2. 音乐只走外部文件。`Assets.Audio.MusicTrackCatalog` 把曲目 id 映射成文件名（DOS
+   `homm2_NN`、Windows `TrackNN`、Mapped `NN <描述>`，扩展名 `.ogg/.mp3/.flac`，顺序照抄
+   `MUS::getFileName` 与 `getExternalMusicFile`），搜索目录是数据目录本身、它的 `MUSIC`
+   子目录、以及数据目录**父级**的 `MUSIC`（GOG 版布局是 `Data/` 与 `MUSIC/` 平级）。没有
+   外部音轨时不放音乐，只记一条日志——不做 XMI/MIDI 兜底（留给后续里程碑）。
+3. 音效不抄 `m82.h` 的 300 项表：`Assets.Audio.GameSound` 把调用方给的名字（`PICKUP01`）
+   转成 AGG 条目（`PICKUP01.82M`），`WaveSound.FromGameSound` 补 RIFF 头（8 位、单声道、
+   22050 Hz，逐字段照 `LoadWAV`）。`AudioPlayer.PlaySound` 给每个音效单独建 track，播完在
+   `Update()` 里回收，避免互相打断。M2 还没有可点的玩法，所以 `--play-sound <NAME>` 是当前
+   唯一的验证入口（不发明「菜单点击音」，参考实现也没有这个音）。
+4. 一切都软失败：没有声卡、`MIX_Init` 失败、音轨缺失都只 `GameLog.Warn`，客户端继续跑。
+   `--no-audio` 连音频子系统都不初始化；两个像素基线脚本都带上它，回归渲染与有没有音轨、有没有
+   声卡彻底无关。
+
+**后果**：
+
+* 主菜单上屏即循环播 `homm2_41.ogg`（`MUS::MAINMENU` = 42，DOS 命名减一），换场景切曲要等
+  有第二个场景（M3）。
+* 音量还没有入口：`AudioPlayer.MusicVolume` / `SoundVolume` 已在（0..1，音乐用 track gain、
+  音效用各自 track 的 gain），设置对话框接上它们是 M8 的事。
+* 只支持外部音轨意味着「只有原版 CD/AGG 没有 `MUSIC/` 目录」的安装会是静音的；`PROGRESS.md`
+  把 XMI/MIDI 记为已知遗留，而不是假装做完了。
+
+
