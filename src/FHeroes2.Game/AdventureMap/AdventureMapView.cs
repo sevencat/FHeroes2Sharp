@@ -11,13 +11,13 @@ namespace FHeroes2.Game.AdventureMap;
 /// <para>
 /// The map is drawn one layer at a time over the whole viewport, never tile by tile: the ground
 /// image <c>GROUND32.TIL[ terrainImageIndex ]</c> mirrored by the two bit terrain shape first, then
-/// the four ground object layers in the order of the reference, the heroes on top of them and
-/// finally the top object parts.
+/// the four ground object layers in the order of the reference, the monsters, the boats and the
+/// heroes on top of them and finally the top object parts.
 /// </para>
 /// <para>
-/// Fog, the monsters, the boats and the interface panels are later milestones. Monsters and boats
-/// are not merely "not drawn yet": like heroes their sprites are split over several tiles by the
-/// engine, so they need their own renderer instead of the generic object path.
+/// Fog and the seven other directions of a boat, which only a sailing hero sets, are later milestones.
+/// Monsters and boats are not merely "not drawn yet": like heroes their sprites are split over several
+/// tiles by the engine, so they need their own renderer instead of the generic object path.
 /// </para>
 /// </summary>
 public sealed class AdventureMapView
@@ -46,10 +46,27 @@ public sealed class AdventureMapView
     /// <summary>Mines, forests, mountains and castles: the layer drawn last among the ground parts.</summary>
     public const int ObjectLayer = 0;
 
+    /// <summary>
+    /// Where a monster stands on its tile, the <c>monsterImageOffset</c> of the reference: 16 pixels
+    /// right and 30 pixels down, added before the offset stored in the frame itself.
+    /// </summary>
+    public static Point MonsterAnchor { get; } = new(16, 30);
+
+    /// <summary>
+    /// Where a boat floats on its tile, the <c>boatSpriteOffset</c> of the reference besides the
+    /// horizontal flip: <c>tileWidthPx - 11</c> pixels down and no horizontal offset, added before
+    /// the offset stored in the frame itself.
+    /// </summary>
+    public static Point BoatAnchor { get; } = new(0, 21);
+
     private readonly Mp2Map _map;
     private readonly TerrainTileSet _tiles;
     private readonly IObjectSpriteSource? _objects;
     private readonly IHeroSpriteSource? _heroes;
+    private readonly IMonsterSpriteSource? _monsters;
+    private readonly IBoatSpriteSource? _boats;
+    private readonly MapFog? _fog;
+    private readonly IFogSpriteSource? _fogSprites;
     private readonly Size _viewport;
 
     public AdventureMapView(
@@ -57,7 +74,11 @@ public sealed class AdventureMapView
         TerrainTileSet tiles,
         Size viewport,
         IObjectSpriteSource? objects = null,
-        IHeroSpriteSource? heroes = null)
+        IHeroSpriteSource? heroes = null,
+        IMonsterSpriteSource? monsters = null,
+        IBoatSpriteSource? boats = null,
+        MapFog? fog = null,
+        IFogSpriteSource? fogSprites = null)
     {
         ArgumentNullException.ThrowIfNull(map);
         ArgumentNullException.ThrowIfNull(tiles);
@@ -66,6 +87,10 @@ public sealed class AdventureMapView
         _tiles = tiles;
         _objects = objects;
         _heroes = heroes;
+        _monsters = monsters;
+        _boats = boats;
+        _fog = fog;
+        _fogSprites = fogSprites;
         _viewport = viewport;
         Scroll = new Point(0, 0);
     }
@@ -81,6 +106,21 @@ public sealed class AdventureMapView
 
     /// <summary>The hero sprites, <see langword="null"/> when heroes are left out.</summary>
     public IHeroSpriteSource? Heroes => _heroes;
+
+    /// <summary>The monster sprites, <see langword="null"/> when the map monsters are left out.</summary>
+    public IMonsterSpriteSource? Monsters => _monsters;
+
+    /// <summary>The boat sprites, <see langword="null"/> when the empty boats are left out.</summary>
+    public IBoatSpriteSource? Boats => _boats;
+
+    /// <summary>
+    /// The fog of war as the observer's colors see it, <see langword="null"/> when the map is drawn
+    /// without fog — the editor mode of the reference is fog free as well.
+    /// </summary>
+    public MapFog? Fog => _fog;
+
+    /// <summary>The fog sprites, <see langword="null"/> when the fog is left out.</summary>
+    public IFogSpriteSource? FogSprites => _fogSprites;
 
     /// <summary>Size of the visible area, which is the logical frame for now.</summary>
     public Size Viewport => _viewport;
@@ -151,8 +191,20 @@ public sealed class AdventureMapView
         ArgumentNullException.ThrowIfNull(target);
 
         DrawTerrain(target);
+        DrawSprites(target);
 
-        if (_objects is null && _heroes is null)
+        // The fog of war is the very last pass of the reference as well: it hides the terrain and
+        // everything that stands on it, and only the castles are painted over it afterwards.
+        DrawFog(target);
+    }
+
+    /// <summary>
+    /// Draws the object, hero, monster, boat and fog passes of the map, in the order of
+    /// <c>Interface::GameArea::Redraw()</c>.
+    /// </summary>
+    private void DrawSprites(PixelBuffer target)
+    {
+        if (_objects is null && _heroes is null && _monsters is null && _boats is null)
         {
             return;
         }
@@ -163,36 +215,44 @@ public sealed class AdventureMapView
 
             if (layer == ShadowLayer)
             {
-                // Shadows of the tile-unfit objects, then whatever a hero draws below its own tile.
+                // Shadows of the tile-unfit objects, then whatever a sprite draws below its own tile.
                 DrawHeroShadows(target);
-                DrawHeroes(target, HeroBand.BelowTile);
+                DrawBoatShadows(target);
+                DrawMonsters(target, TileBand.BelowTile);
+                DrawBoats(target, TileBand.BelowTile);
+                DrawHeroes(target, TileBand.BelowTile);
             }
 
-            // A hero's body and flag stand on its own tile: the "middle" part of the reference, drawn
-            // after OBJECT_LAYER and before the top layer.
+            // A monster stands on its tile, a boat floats on it and a hero's body and flag stand in
+            // front of both: the "middle" part of the reference, drawn after OBJECT_LAYER and before
+            // the top layer.
             if (layer == ObjectLayer)
             {
-                DrawHeroes(target, HeroBand.OnTile);
+                DrawMonsters(target, TileBand.OnTile);
+                DrawBoats(target, TileBand.OnTile);
+                DrawHeroes(target, TileBand.OnTile);
             }
         }
 
         DrawTopLayer(target);
 
-        // The rows of a hero sprite that reach over the tile above are drawn last of all, so a castle
-        // tower or the flag of a tall object never covers the hero's head.
-        DrawHeroes(target, HeroBand.AboveTile);
+        // The rows of a sprite that reach over the tile above are drawn last of all, so a castle tower
+        // or the flag of a tall object never covers the hero's head.
+        DrawMonsters(target, TileBand.AboveTile);
+        DrawBoats(target, TileBand.AboveTile);
+        DrawHeroes(target, TileBand.AboveTile);
     }
 
-    /// <summary>Which row range of a hero sprite is currently being drawn.</summary>
-    private enum HeroBand
+    /// <summary>Which row range of a sprite that is split over tiles is currently being drawn.</summary>
+    private enum TileBand
     {
-        /// <summary>Rows above the hero's tile, the <c>topImages</c> of the reference.</summary>
+        /// <summary>Rows above the tile, the <c>topImages</c> of the reference.</summary>
         AboveTile,
 
-        /// <summary>Rows inside the hero's tile, the <c>bottomImages</c> of the reference.</summary>
+        /// <summary>Rows inside the tile, the <c>bottomImages</c> of the reference.</summary>
         OnTile,
 
-        /// <summary>Rows below the hero's tile, the <c>heroBackgroundImages</c> of the reference.</summary>
+        /// <summary>Rows below the tile, the <c>heroBackgroundImages</c> of the reference.</summary>
         BelowTile,
     }
 
@@ -202,7 +262,7 @@ public sealed class AdventureMapView
     /// tile set of the hero's race and the flag from the tile set of its kingdom, both anchored on the
     /// tile the hero occupies.
     /// </summary>
-    private void DrawHeroes(PixelBuffer target, HeroBand band)
+    private void DrawHeroes(PixelBuffer target, TileBand band)
     {
         if (_heroes is null)
         {
@@ -211,11 +271,160 @@ public sealed class AdventureMapView
 
         foreach (Mp2MapHero hero in VisibleHeroes())
         {
+            // A hero under the fog is not drawn at all: the body of MINIHERO reaches over the tile
+            // above, which the fog of its own tile would not cover (isTileUnderFog in the reference).
+            if (IsUnderFog(hero.X, hero.Y))
+            {
+                continue;
+            }
+
             int left = (hero.X * _tiles.TileWidth) - Scroll.X;
             int top = (hero.Y * _tiles.TileHeight) - Scroll.Y;
 
-            BlitHeroSprite(target, _heroes.GetBody(hero.Race), left, top, band);
-            BlitHeroSprite(target, _heroes.GetFlag(hero.Color), left, top, band);
+            BlitTileSprite(target, _heroes.GetBody(hero.Race), left, top, Point.Zero, band);
+            BlitTileSprite(target, _heroes.GetFlag(hero.Color), left, top, Point.Zero, band);
+        }
+    }
+
+    /// <summary>
+    /// Draws the part of every map monster that falls into <paramref name="band"/>, the port of
+    /// <c>drawMonsterAnimation( tile, false )</c> for a monster that is not being attacked.
+    /// </summary>
+    /// <remarks>
+    /// The reference splits <c>MINIMON</c> into two images before drawing: the body (<c>transform</c>
+    /// clamped to 1, the shadow pixels left out) and the shadow (<c>transform</c> above 1), because the
+    /// shadow belongs under the objects of the tiles it covers. This port blits the frame of
+    /// <c>MINIMON</c> as it is, so the baked shadow of a monster travels with its body: the pixels are
+    /// the same as long as nothing else is drawn over the same tiles.
+    /// </remarks>
+    private void DrawMonsters(PixelBuffer target, TileBand band)
+    {
+        if (_monsters is null)
+        {
+            return;
+        }
+
+        int tileWidth = _tiles.TileWidth;
+        int tileHeight = _tiles.TileHeight;
+
+        foreach ((int column, int row) in VisibleSpriteTiles(1))
+        {
+            if (IsUnderFog(column, row))
+            {
+                continue;
+            }
+
+            int monsterId = Mp2ObjectData.MonsterOf(_map.Tile(column, row));
+            if (monsterId <= 0)
+            {
+                continue;
+            }
+
+            Sprite? sprite = _monsters.GetMonster(monsterId);
+            if (sprite is null)
+            {
+                continue;
+            }
+
+            int left = (column * tileWidth) - Scroll.X;
+            int top = (row * tileHeight) - Scroll.Y;
+
+            BlitTileSprite(target, sprite, left, top, MonsterAnchor, band);
+        }
+    }
+
+    /// <summary>
+    /// Draws the part of every empty boat that falls into <paramref name="band"/>, the port of
+    /// <c>getBoatSpritesPerTile</c>. The hull comes from <c>BOAT32</c> instead of the tile, because
+    /// <c>Maps::setInitialObjectInfo</c> replaces the editor frame of a boat with it.
+    /// </summary>
+    private void DrawBoats(PixelBuffer target, TileBand band)
+    {
+        if (_boats is null)
+        {
+            return;
+        }
+
+        Sprite? sprite = _boats.GetBoat();
+        if (sprite is null)
+        {
+            return;
+        }
+
+        int tileWidth = _tiles.TileWidth;
+        int tileHeight = _tiles.TileHeight;
+
+        foreach ((int column, int row) in VisibleSpriteTiles(2))
+        {
+            if (!Mp2ObjectData.IsBoat(_map.Tile(column, row)) || IsUnderFogWithUpperTile(column, row))
+            {
+                continue;
+            }
+
+            int left = (column * tileWidth) - Scroll.X;
+            int top = (row * tileHeight) - Scroll.Y;
+
+            BlitTileSprite(target, sprite, left, top, BoatAnchor, band);
+        }
+    }
+
+    /// <summary>
+    /// Draws the shadows of the empty boats, the port of <c>tileUnfit.shadowImages</c> filled by
+    /// <c>getBoatShadowSpritesPerTile</c>. A boat shadow lies on the water of the tile itself and the
+    /// one below, so it is drawn with the shadow layer as one piece.
+    /// </summary>
+    private void DrawBoatShadows(PixelBuffer target)
+    {
+        if (_boats is null)
+        {
+            return;
+        }
+
+        Sprite? shadow = _boats.GetShadow();
+        if (shadow is null)
+        {
+            return;
+        }
+
+        int tileWidth = _tiles.TileWidth;
+        int tileHeight = _tiles.TileHeight;
+
+        foreach ((int column, int row) in VisibleSpriteTiles(2))
+        {
+            if (!Mp2ObjectData.IsBoat(_map.Tile(column, row)) || IsUnderFogWithUpperTile(column, row))
+            {
+                continue;
+            }
+
+            int left = (column * tileWidth) - Scroll.X + BoatAnchor.X + shadow.OffsetX;
+            int top = (row * tileHeight) - Scroll.Y + BoatAnchor.Y + shadow.OffsetY;
+
+            ImageOps.BlitSprite(target, new Point(left, top), shadow);
+        }
+    }
+
+    /// <summary>
+    /// The tiles whose sprite can reach the viewport, the port of the <c>ScanAroundObject</c> range of
+    /// the renderer: a monster is anchored 16 pixels right and 30 pixels down from the corner of its
+    /// tile and a boat <c>tileWidthPx - 11</c> pixels down, so one row lower and one column either
+    /// side can still show a pixel — a boat is tall enough to need two.
+    /// </summary>
+    /// <param name="margin">Number of tiles the test is grown by on every side.</param>
+    private IEnumerable<(int Column, int Row)> VisibleSpriteTiles(int margin)
+    {
+        Rect area = VisibleTileArea;
+
+        int firstColumn = Math.Max(area.X - margin, 0);
+        int firstRow = Math.Max(area.Y - margin, 0);
+        int lastColumn = Math.Min(area.Right + margin - 1, _map.Width - 1);
+        int lastRow = Math.Min(area.Bottom + margin - 1, _map.Height - 1);
+
+        for (int row = firstRow; row <= lastRow; ++row)
+        {
+            for (int column = firstColumn; column <= lastColumn; ++column)
+            {
+                yield return (column, row);
+            }
         }
     }
 
@@ -248,32 +457,34 @@ public sealed class AdventureMapView
 
     /// <summary>
     /// Draws the rows of <paramref name="sprite"/> that belong to <paramref name="band"/>. The split
-    /// is the one of <c>DivideImageBySquares</c>: every 32 pixel row of the sprite belongs to the tile
-    /// its top edge falls into, and the three groups are painted at three different moments.
+    /// is the one of <c>DivideImageBySquares</c>: every row band of the sprite belongs to the tile its
+    /// top edge falls into, and the three groups are painted at three different moments.
+    /// <paramref name="anchor"/> is the offset of the sprite from the corner of its tile before the
+    /// anchor stored in the sprite itself, <c>( 16, 30 )</c> for a monster and nothing for a hero.
     /// </summary>
-    private void BlitHeroSprite(PixelBuffer target, Sprite? sprite, int left, int top, HeroBand band)
+    private void BlitTileSprite(PixelBuffer target, Sprite? sprite, int left, int top, Point anchor, TileBand band)
     {
         if (sprite is null)
         {
             return;
         }
 
-        int spriteLeft = left + sprite.OffsetX;
-        int spriteTop = top + sprite.OffsetY;
+        int spriteLeft = left + anchor.X + sprite.OffsetX;
+        int spriteTop = top + anchor.Y + sprite.OffsetY;
         int tileTop = top;
         int tileBottom = top + _tiles.TileHeight;
 
         int firstRow = band switch
         {
-            HeroBand.AboveTile => spriteTop,
-            HeroBand.OnTile => Math.Max(spriteTop, tileTop),
+            TileBand.AboveTile => spriteTop,
+            TileBand.OnTile => Math.Max(spriteTop, tileTop),
             _ => Math.Max(spriteTop, tileBottom),
         };
 
         int lastRow = band switch
         {
-            HeroBand.AboveTile => Math.Min(spriteTop + sprite.Height, tileTop),
-            HeroBand.OnTile => Math.Min(spriteTop + sprite.Height, tileBottom),
+            TileBand.AboveTile => Math.Min(spriteTop + sprite.Height, tileTop),
+            TileBand.OnTile => Math.Min(spriteTop + sprite.Height, tileBottom),
             _ => spriteTop + sprite.Height,
         };
 
@@ -345,7 +556,10 @@ public sealed class AdventureMapView
                 }
             }
 
-            if (tile.GroundLayer == layer)
+            // The ground part of a boat is the frame the original editor shows, not the boat: the
+            // reference throws it away and draws the hull out of BOAT32 instead (DrawBoats). A view
+            // that has no boat sprites — the map editor of this port — keeps the editor frame.
+            if (tile.GroundLayer == layer && !(_boats is not null && Mp2ObjectData.IsBoat(tile)))
             {
                 BlitPart(target, tile.GroundIcnType, tile.BottomIcnImageIndex, left, top);
             }
@@ -430,4 +644,111 @@ public sealed class AdventureMapView
 
         ImageOps.BlitSprite(target, new Point(left + sprite.OffsetX, top + sprite.OffsetY), sprite);
     }
+
+    /// <summary>
+    /// Whether every observer color still has the tile undiscovered, which is what
+    /// <c>Maps::Tile::isFog( colors )</c> means and the only case the fog hides.
+    /// </summary>
+    private bool IsUnderFog(int column, int row) =>
+        _fog is not null
+        && column >= 0 && column < _map.Width
+        && row >= 0 && row < _map.Height
+        && _fog.GetDirection(column, row) == FogDirections.All;
+
+    /// <summary>
+    /// Whether the tile and the tile above it are under the fog. A boat and a sailing hero reach over
+    /// the tile above, so the reference hides them only when that row is fogged as well
+    /// (<c>isTileUnderFog &amp;&amp; isUpperTileUnderFog</c>).
+    /// </summary>
+    private bool IsUnderFogWithUpperTile(int column, int row) =>
+        IsUnderFog(column, row) && (row == 0 || IsUnderFog(column, row - 1));
+
+    /// <summary>
+    /// Draws the fog of war over the visible tiles, the port of <c>Maps::drawFog</c> and of the pass
+    /// that re-draws the castles after it.
+    /// </summary>
+    /// <remarks>
+    /// A tile is either covered by one of the four <c>CLOF32</c> whole tiles or receives one
+    /// <c>CLOP32</c> piece, the boundary to the part of the tile that is already discovered. Castles
+    /// are the one thing the fog never hides: the reference draws <c>OBJNTWBA</c> and <c>OBJNTOWN</c>
+    /// again on every fogged tile, so the outline of a town is visible before it is scouted.
+    /// </remarks>
+    private void DrawFog(PixelBuffer target)
+    {
+        if (_fog is null || _fogSprites is null)
+        {
+            return;
+        }
+
+        foreach ((int column, int row, int left, int top, Mp2TileInfo tile) in VisibleTiles())
+        {
+            FogDirection direction = _fog.GetDirection(column, row);
+            if (direction == FogDirection.Unknown)
+            {
+                continue;
+            }
+
+            DrawFogTile(target, direction, column, row, left, top);
+
+            DrawObjectParts(target, tile, Mp2ObjectIcnType.ObjnTwba, left, top);
+            if (IsCastle(tile.ObjectType))
+            {
+                DrawObjectParts(target, tile, Mp2ObjectIcnType.ObjnTown, left, top);
+            }
+        }
+    }
+
+    /// <summary>Draws the fog piece of one tile, the sprite choice of <c>Maps::drawFog</c>.</summary>
+    private void DrawFogTile(PixelBuffer target, FogDirection direction, int column, int row, int left, int top)
+    {
+        FogFrame frame = FogFrames.Resolve(direction, column, row, _map.Width);
+
+        if (frame.IsFullTile)
+        {
+            PixelBuffer? image = _fogSprites!.GetFullTile(frame.Index);
+            if (image is not null)
+            {
+                ImageOps.Blit(target, new Point(left, top), image, image.Bounds);
+            }
+
+            return;
+        }
+
+        Sprite? sprite = _fogSprites!.GetBoundary(frame.Index, frame.Flipped);
+        if (sprite is null)
+        {
+            return;
+        }
+
+        // BlitOnTile( ..., revert ) mirrors the sprite inside the tile: the x offset is measured from
+        // the right edge and the pixels are flipped.
+        int x = frame.Flipped ? _tiles.TileWidth - sprite.OffsetX - sprite.Width : sprite.OffsetX;
+        ImageOps.BlitSprite(target, new Point(left + x, top + sprite.OffsetY), sprite);
+    }
+
+    /// <summary>
+    /// Draws the ground parts of one tile set type of a tile, the <c>drawByObjectIcnType</c> the
+    /// reference calls for the castles it paints over the fog.
+    /// </summary>
+    private void DrawObjectParts(PixelBuffer target, Mp2TileInfo tile, Mp2ObjectIcnType icnType, int left, int top)
+    {
+        foreach (int index in _map.EnumerateAddonChain(tile))
+        {
+            Mp2AddonInfo addon = _map.Addons[index];
+            if (addon.GroundIcnType == icnType)
+            {
+                BlitPart(target, addon.GroundIcnType, addon.BottomIcnImageIndex, left, top);
+            }
+        }
+
+        if (tile.GroundIcnType == icnType)
+        {
+            BlitPart(target, tile.GroundIcnType, tile.BottomIcnImageIndex, left, top);
+        }
+    }
+
+    /// <summary>Whether a tile holds a town, the <c>MP2::OBJ_CASTLE</c> family of the reference.</summary>
+    private static bool IsCastle(Mp2ObjectType type) =>
+        type is Mp2ObjectType.Castle or Mp2ObjectType.ActionCastle
+            or Mp2ObjectType.RandomCastle or Mp2ObjectType.ActionRandomCastle;
 }

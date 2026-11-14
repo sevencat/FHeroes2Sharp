@@ -133,6 +133,16 @@ public static class Mp2ObjectData
     }
 
     /// <summary>
+    /// Whether a tile holds a boat. The sprite of the tile is not the boat: an MP2 file stores the
+    /// frame of the water object set the original editor shows, and the reference replaces it with the
+    /// <c>BOAT32</c> hull on load, so the hull of a boat has to be drawn by its own renderer.
+    /// </summary>
+    /// <param name="tile">Tile to test.</param>
+    /// <returns><see langword="true"/> for the two boat object types.</returns>
+    public static bool IsBoat(Mp2TileInfo tile) =>
+        tile.ObjectType is Mp2ObjectType.Boat or Mp2ObjectType.ActionBoat;
+
+    /// <summary>
     /// Whether the data word of an object is the size of the troop stack on it, i.e. whether the
     /// reference keeps the word instead of clearing it.
     /// </summary>

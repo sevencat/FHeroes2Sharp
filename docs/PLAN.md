@@ -9,8 +9,13 @@
    包括名称哈希、条目顺序、裁剪/透明规则、字节序。
 2. **内部工程现代重构**：`readonly record struct` 几何类型、`sealed` 服务类、`Nullable=enable`、
    分层命名空间、显式依赖注入（无 DI 容器）、可单元测试。
-3. **不提交任何原版资源**：GPLv2 项目，仓库只含代码与可再分发字体。
-4. **每个里程碑都能运行、能验证**：可执行 + 测试 + 截图/日志证据。
+3. **参考逻辑函数级 1:1 移植**（ADR-057，细化 ADR-001）：新代码与参考**同名函数、同顺序、同常量**
+   （`updateTerrainTransitionOnTile`、`makeInstrumentPanelBackground` 这类名字直接沿用），允许结构差异
+   （分层、不可变类型、没有指针）。**不做行级 1:1**：行级翻译会继承宏、全局单例与 `SDL_Surface` 的
+   原地改写语义。全局状态用 `static X Current` 门面照抄（对应 `X::Get()`），第二版改 DI 只动门面赋值处。
+   推理顺序、常量、if/else 分支都要能逐条指回参考文件名与函数名（注释里写清）。
+4. **不提交任何原版资源**：GPLv2 项目，仓库只含代码与可再分发字体。
+5. **每个里程碑都能运行、能验证**：可执行 + 测试 + 截图/日志证据。
 
 ## 里程碑
 
@@ -54,6 +59,145 @@
 * **E2 有参考可对拍，E3 只能自证**：改 tile 按 `Editor::Interface` 移植；写 MP2 参考已经没有原版写出
   （只写它自己的压缩格式），所以保存走"只改 tile 区的原地补丁 + 字节差"自证（ADR-043）。`AssetProbe map` 与
   `Mp2MapFileBuilder` 是读侧的第一道闸门。撤销栈与保存点脏标记是参考没有的东西，属于本项目的补充设计。
+
+## 参考文件覆盖率（逐文件盘点）
+
+口径同原则 3：**已转** = 有对应实现、注释里能指回参考文件名与函数名；**部分** = 主体可用，括号里写明缺口；
+**未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
+`src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
+快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**。
+
+| 目录 | 文件数 | 已转 | 部分 | 未转 |
+| --- | --- | --- | --- | --- |
+| `engine` | 26 | 7 | 7 | 12 |
+| `agg` | 6 | 1 | 2 | 3 |
+| `ai` | 9 | 0 | 0 | 9 |
+| `army` | 4 | 0 | 0 | 4 |
+| `audio` | 1 | 0 | 0 | 1 |
+| `battle` | 18 | 0 | 0 | 18 |
+| `campaign` | 3 | 0 | 0 | 3 |
+| `castle` | 11 | 0 | 0 | 11 |
+| `dialog` | 29 | 2 | 3 | 24 |
+| `editor` | 18 | 1 | 4 | 13 |
+| `game` | 28 | 2 | 3 | 23 |
+| `gui` | 33 | 8 | 10 | 15 |
+| `h2d` | 1 | 0 | 0 | 1 |
+| `heroes` | 12 | 0 | 0 | 12 |
+| `kingdom` | 14 | 0 | 2 | 12 |
+| `maps` | 17 | 3 | 6 | 8 |
+| `monster` | 3 | 0 | 1 | 2 |
+| `resource` | 4 | 1 | 0 | 3 |
+| `spell` | 4 | 0 | 0 | 4 |
+| `system` | 3 | 0 | 2 | 1 |
+| `world` | 5 | 0 | 0 | 5 |
+| **合计** | **249** | **25** | **40** | **184** |
+
+### `engine`（26）
+
+* ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
+  `image_tool.cpp`→`IcnSpriteDecoder`+`PngWriter`/`PngReader`+`BmpWriter`+`MonoCursorFile`+TIL 负载读取；
+  `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32`；`timing.cpp`→`FrameTimer`
+* ◐ `image.cpp`（`Blit`/`Copy`/`Fill`/`ApplyTransform`/`Resize`/`CreateContour`/`Dithering` 已转，
+  `SubpixelResize` 与重采样分支未）；`screen.cpp`（只转了呈现层：`PresentationViewport` + `SdlPresenter`）；
+  `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
+  `translations.cpp`（只 `MOFile`→`MoCatalog`，`Translation::` 其余未）；`tools.cpp`（`Trim`/`GetString`
+  这类零散助力，用 BCL 替代）；`zzlib.cpp`（AGG 解压走 `ZLibStream`）
+* ❌ `audio_xmi2mid.cpp`、`core.cpp`、`dir.cpp`、`h2d_file.cpp`、`image_color_conversion.cpp`、
+  `math_tools.cpp`、`render_processor.cpp`、`serialize.cpp`、`smk_decoder.cpp`、`system.cpp`、
+  `thread.cpp`、`tinyconfig.cpp`
+
+### `agg`（6）
+
+* ✅ `agg.cpp`→`AssetBundle`（资料片优先/兜底）
+* ◐ `icn.cpp`（`getAnimatedIcnIndex` 与 `ICN::` 名称已转，`CopyICNWithPalette` 与字号派生挪到
+  `FontGlyphTable`；`GetString` 的枚举表未全）；`m82.cpp`（`MusicTrack` 只读元数据，播放未）
+* ❌ `bin_info.cpp`（`MINIMON` 帧号现在用 `(id-1)*9` 硬编码，BIN 表未解析）、`mus.cpp`、
+  `xmi.cpp`（XMI→MIDI 未做，`MusicTrackCatalog` 只读目录）
+
+### `dialog`（29）
+
+* ✅ `dialog_box.cpp`→`FrameBox`；`dialog_frameborder.cpp`→`FrameBoxChrome`
+* ◐ `dialog_game_settings.cpp`→`SettingsDialog`（只有 Language 一行）；`dialog_selectscenario.cpp`→
+  `ScenarioSelectionDialog`（列表/缩略图子集）；`dialog_language_selection.cpp`→`LanguageSelectionDialog`
+* ❌ 其余 24：`adventure`、`arena`、`armyinfo`、`artifact`、`audio`、`buyboat`、`chest`、`file`、
+  `gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、`interface_settings`、`levelup`、
+  `marketplace`、`quickinfo`、`random_map_generator`、`recruit`、`resolution`、`selectcount`、
+  `selectfile`、`selectitems`、`system_options`、`thievesguild`
+
+### `editor`（18）
+
+* ✅ `editor_ui_helper.cpp`→`EditorUiHelper`/`Checkbox`
+* ◐ `editor_interface.cpp`→`EditorScene`/`GameHost`（自研 MP2 编辑器，工具与笔刷子集）；
+  `editor_interface_panel.cpp`→`EditorPanel`；`history_manager.cpp`→`MapEditSession` 的撤销；
+  `editor_object_popup_window.cpp`→`EditorScene.ObjectInfoSummary`
+* ❌ 其余 13：`castle_details`、`daily_event_spec`、`daily_events`、`event_details`、`language_window`、
+  `mainmenu`、`map_specs`、`options`、`rumor`、`save_map`、`secondary_skill_selection`、
+  `spell_selection`、`sphinx`
+
+### `game`（28）
+
+* ✅ `game_mainmenu.cpp`→`MainMenuScene`（招牌/灯笼/门/右键提示）；`game_delays.cpp`→`IcnAnimation` 计时
+* ◐ `game_assets.cpp`→`Game.Assets` 门面 + 字体派生（`getImage`/`getICN`/`CopyICNWithPalette`/
+  `generateGradientFont` 已转，其余大量 `getXxx` 未）；`game_scenarioinfo.cpp`→`ScenarioSelectionDialog`；
+  `game_newgame.cpp`→`GameHost` 的 NEW GAME 流程
+* ❌ 其余 23：`difficulty`、`fheroes2`、`game_auto_playtest`、`game_campaign`、`game_credits`、
+  `game_exit`、`game_highscores`、`game_hotkeys`、`game_init`、`game_interface`、`game_intro`、
+  `game_invalid_assets`、`game_io`、`game_loadgame`、`game_mainmenu_ui`、`game_over`、
+  `game_startgame`、`game_static`、`game_string`、`game_tools`、`game_video`、`game`、`highscores`
+
+### `gui`（33）
+
+* ✅ `cursor.cpp`→`CursorTheme`/`CursorLayout`；`ui_button.cpp`→`Button`/`ButtonBase`/`ButtonSprite`/
+  `ButtonGroup`/`ButtonArtwork`/`DialogButtonTemplate`；`ui_dialog.cpp`→`MessageBox`；
+  `ui_window.cpp`→`StandardWindow`；`ui_text.cpp`→`Game.Gui.*` 全套；`ui_tool.cpp`→`MovableSprite`；
+  `ui_scrollbar.cpp`→`ScrollSlider`；`interface_font.cpp`→`CompositeGlyphSource`
+* ◐ `ui_font.cpp`（主体 + 修补 + 派生已转，`generateCP1250GoodButtonFont` 这类代码页补充未）；
+  `interface_gamearea.cpp`→`AdventureMapView.Draw`（地形/对象/英雄/怪物/船/雾已转，AUTO 组合与动画未）；
+  `interface_radar.cpp`→`Minimap`；`interface_icons.cpp`→`IconBar`/`IconSpriteSet`；
+  `interface_border.cpp`→`MapFrame`；`interface_buttons.cpp`→`ButtonsPanel`/`ButtonSpriteSet`；
+  `interface_cpanel.cpp`→状态栏占位；`interface_events.cpp`→`MapScrollController`；
+  `ui_monster.cpp`→`MonsterSpriteSet`；`statusbar.cpp`→占位
+* ❌ 其余 15：`interface_base`、`interface_focus`、`interface_status`、`player_info`、`skill_bar`、
+  `ui_base`、`ui_campaign`、`ui_castle`、`ui_keyboard`、`ui_kingdom`、`ui_mage_guild`、
+  `ui_map_interface`、`ui_map_object`、`ui_option_item`、`ui_slider`
+
+### `maps`（17）
+
+* ✅ `ground.cpp`→`MapGround`；`mp2.cpp`+`mp2_helper.cpp`→`Mp2Map`/`Mp2TileInfo`/`Mp2AddonInfo`/
+  `Mp2ObjectData`
+* ◐ `maps.cpp`（只 `drawFog`→`MapFog`/`DrawFog` 与部分 `ClearFog`）；`maps_fileinfo.cpp`→
+  `Mp2FileInfo`/`MapCatalog`；`maps_objects.cpp`→`Mp2ObjectPreset`/`Mp2ObjectName`（对象表子集）；
+  `maps_tiles.cpp`（`Tile` 结构与雾位已转，`isCoast`/`updateFogDirection` 部分）；
+  `maps_tiles_helper.cpp`（`updateFogDirectionsInArea`、`updateTerrainTransitionOnTile` 已转）；
+  `maps_tiles_render.cpp`（`drawByObjectIcnType`/`drawFog`/`drawMainObjectTiles` 已转）
+* ❌ `map_object_info.cpp`（`getMainObjectType`，拾取的前置）、`position.cpp`、`visit.cpp`、
+  `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
+  `map_random_generator.cpp`、`map_random_generator_helper.cpp`、`map_random_generator_info.cpp`
+
+### 其余目录
+
+* `ai`（9）、`army`（4）、`battle`（18）、`campaign`（3）、`castle`（11）、`heroes`（12）、`spell`（4）、
+  `world`（5）、`h2d`（1）、`audio`（1）：**全部未转**
+* `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`；❌ `experience`、
+  `kingdom_overview`、`kingdom`、`luck`、`morale`、`payment`、`profit`、`puzzle`、`resource_trading`、
+  `speed`、`view_world`、`week`
+* `monster`（3）：◐ `monster.cpp`（ID 与 `MINIMON` 帧号）；❌ `monster_anim`、`monster_info`
+* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；❌ `artifact`、`artifact_info`、
+  `artifact_ultimate`
+* `system`（3）：◐ `players.cpp`→`PlayerColor`/`HumanPlayers`、`settings.cpp`（只有语言与分辨率种子）；
+  ❌ `bitmodes`
+
+### 还差的主干（按依赖顺序）
+
+1. `maps/map_object_info.cpp` —— 拾取、信息框与 `ActionToObject` 的总闸；现在 `Mp2TileInfo.ObjectType`
+   直接用文件里的 `mapObjectType`。
+2. `heroes/heroes_move.cpp` + `world/world_pathfinding.cpp` + `maps/visit.cpp` —— 英雄移动与路径预览，
+   `MapFog` 的增量更新挂在这里。
+3. `world/world.cpp`、`world_loadmap.cpp`、`world_object_uid.cpp` —— 可变世界状态，`castle`/`kingdom`/
+   `army` 都依赖它。
+4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
+5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
+   `audio_manager.cpp`（音乐播放，现在只有元数据）。
 
 ## 依赖方向（单向，不允许反向引用）
 

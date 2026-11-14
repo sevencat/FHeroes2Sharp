@@ -93,16 +93,27 @@ jobs:
             @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'en' },
             @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'zh_CN' },
             @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en' },
+            # The Alteris view has no boat in it, so the boat layer needs its own frame.
+            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Map = 'Undeada.mp2'; Baseline = 'adventure-map-boats.png' },
             @{ Script = 'VerifyEditorBaseline.ps1'; Culture = 'en' }
           )
 
           foreach ($run in $runs) {
             $label = if ($run.Culture) { "$($run.Script) -Culture $($run.Culture)" } else { $run.Script }
+            if ($run.Map) { $label = "$label ($($run.Map))" }
             Write-Host "::group::$label"
 
             $arguments = $splat.Clone()
             if ($run.Culture) {
               $arguments.Culture = $run.Culture
+            }
+
+            if ($run.Map) {
+              $arguments.MapFile = $run.Map
+            }
+
+            if ($run.Baseline) {
+              $arguments.Baseline = Join-Path $PWD "tests/baselines/$($run.Baseline)"
             }
 
             ./tools/scripts/$($run.Script) @arguments

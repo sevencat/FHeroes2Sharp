@@ -7,7 +7,7 @@
 | `FHeroes2.Core` | 几何、随机数、二进制 IO、索引图像与调色板、精灵与变换层、重着色调色板表、PNG 导出/读回、BMP 导出、光标主题与热点、日志、计时、版本信息 | 无 |
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
-| `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
+| `FHeroes2.Game` | 世界状态、回合、AI、存档；含参考 `gui/` 里直接依赖 `Assets` 门面的那部分（`Gui/Text.cs` 排版层、`Editor/`），因为门面在 `FHeroes2.Game`，放 `Rendering` 会形成反向引用 | Core, Assets, Rendering |
 | `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox` / `Dialogs.ScenarioSelectionDialog`）、界面流转 | Core, Assets, Rendering, Game |
 | `FHeroes2.App` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
@@ -57,7 +57,75 @@ Draw()    → 组装 DiagnosticsState → 场景绘制 → 上传脏区 → 绑�
 Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF、SDL）
 ```
 
-不使用 DI 容器；所有依赖在构造函数中显式传入。
+不使用 DI 容器；依赖默认在构造函数中显式传入。唯一的例外是参考实现里做成单例的那批状态，
+它们走静态门面（见下一节），门面的 `Current` 只在组合根赋值。
+
+## 全局状态与门面（移植参考的单例）
+
+参考实现用单例和命名空间函数携带进程级状态，量出来是这样：
+
+```
+全局变量      3 个   World & world、logMutex、logFile
+单例类型     10 个   Settings / World / Cursor / AdventureMap / EditorInterface /
+                     BattlePlanner / Planner / Result / LocalEvent / CampaignSaveData
+::Get() 调用 832 处  业务层约 800 处：gui 150、game 136、battle 122、dialog 117、
+                     editor 85、heroes 78、ai 41、kingdom 23、castle 21、world 17 …
+```
+
+函数级 1:1 移植（ADR-057）要把这 832 处逐行搬过来，靠的就是门面。规矩只有四条：
+
+| 规则 | 说明 |
+|---|---|
+| 禁止可变 `static` 字段 | 静态成员只能是常量表或无状态纯函数（`MapSizes`、`PngWriter`、`GlyphText`）；状态必须挂在实例上 |
+| 只允许 `static X Current { get; set; }` | `Settings::Get().foo()` → `Settings.Current.Foo`，与参考逐字对应，grep 对照时不需要翻译 |
+| `Current` 只在组合根赋值 | `GameHost` 建场景 / 切场景 / 读档时赋值，业务代码只读 |
+| 数据不是服务 | `World`、`EditorInterface`、`BattlePlanner` 是会话数据，`Current` 指向有 owner 的实例；不给它们造 `IWorldProvider` 之类的接口 |
+
+第二版「改成 DI」的工作量因此被压到这两处：换 `Current` 指向的对象（或者把 `Current` 的 getter
+换成容器解析）。832 个调用点不用动。
+
+现有符号的对应关系：
+
+| 参考符号 | C# | 状态 |
+|---|---|---|
+| `World & world` | `Game.World.Current`（`WorldMap`） | 待建；M4 起随 `world.cpp` 一起移植 |
+| `Settings::Get()` | `Game.Settings.Current`（`SettingsData`） | 待建；`CommandLineOptions` 目前只覆盖命令行开关 |
+| `Cursor::Get()` | `Game.Cursor.Current`（`CursorState`） | 待建；光标状态现在由各场景自己持有 |
+| `LocalEvent` / `CampaignSaveData` | 同名门面 | 待建（M4 / 战役） |
+| `AdventureMap::Get()` | `App.AdventureMapScene`（实例，构造传参） | 已有；参考的 `redraw()` 对应场景的脏标记 |
+| `EditorInterface::Get()` | `App.EditorScene`（实例） | 已有 |
+| `BattlePlanner` / `Planner` / `Result` | — | 未移植（M5） |
+| `AGG::` 命名空间 | `Assets.AssetBundle`（实例，组合根持有） | 已有；打开归档、读条目 |
+| `Assets::getImage( ICN, frame )` | `Game.Assets.Current.GetImage( "CELLWIN.ICN", 2 )` | 已建；解码结果按 (文件, 帧) 缓存，换 `Current` 时清空 |
+| `AudioManager::` | `App.Audio.AudioPlayer`（实例） | 已有 |
+| `RNG::` | `Core.Random.Pcg32`（实例） | 已有 |
+| `logMutex` / `logFile` | `Core.Diagnostics.GameLog`（静态，自带锁） | 已有；唯一可变静态是 `MinimumLevel`，收进门面前先别再加别的 |
+
+门面不是万能的：已经有实例传参的地方（`AudioPlayer`、`Pcg32`、两个场景）不要为了「统一」再套一层
+门面——它们没有 832 处调用点要照顾，多一层只是多一个全局。`AssetBundle` 与 `Assets` 是两个东西：
+前者是「打开哪个归档」（实例，组合根持有、构造传参），后者是参考的 `Assets::getImage`（全局取图 + 缓存），
+所以后者是门面、前者不是。
+
+测试注意：静态门面在 xUnit 里是进程级共享状态，动到门面的测试要挂进同一个 collection（或
+`[CollectionDefinition(DisableParallelization = true)]`），否则并行跑会互相改写 `Current`。
+
+## 移植注释
+
+从参考搬过来的类型与函数，注释里写清出处。行号对应 `REFERENCE.md` 记的版本（`version.txt` = `1.1.18`，
+commit `6c51acfdc`），路径相对参考仓库根，固定以 `参考：` 起头，方便 grep：
+
+```csharp
+/// <remarks>参考：src/fheroes2/gui/ui_tool.h:48  class MovableSprite</remarks>
+
+/// <summary>...</summary>
+/// <remarks>参考：src/fheroes2/editor/editor_ui_helper.cpp:36  Editor::Checkbox::Checkbox</remarks>
+```
+
+* 类写 `h:行`（声明，连同里面顺手搬的小函数）与 `cpp:行`（实现）；函数写 `cpp:行`。
+* **行号不是主键，函数名才是**：上游升级后行号会漂，找的时候先按名字找，行号只帮着定位。
+* 只搬了一半的写清缺什么（比如「要 `Text::fitToOneRow`」），别让后来的人以为是漏抄。
+* 和参考有出入的地方，同一段里以 `差异：` 起头，写明改了什么、为什么（理由进 ADR）。
+* `REFERENCE.md` 的「已移植」表同步加行，表里只写文件级对应，函数级对应留在代码注释里。
 
 ## 文本
 

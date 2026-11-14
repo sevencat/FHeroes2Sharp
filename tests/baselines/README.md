@@ -10,7 +10,8 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）、底边框带上的状态栏 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）与八个命令按钮、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map-boats.png` | 冒险地图的第二个画面（M4，船）：`Undeada.mp2` 以「最靠地图中心的城堡」居中，城堡西南角的海面上停着一条空船 —— 船体取自 `BOAT32` 第 18 帧（`RIGHT`，62×56，比瓦片高 33 像素、向上伸两格），影子取自 `BOATSHAD` 第 18 帧（74×28），瓦片原来的 `OBJNWAT2` 帧被丢掉。`Alteris.mp2` 的视野里一条船都没有，所以船的像素只能靠这张图守住 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
@@ -39,7 +40,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 再 `dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
 渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
 `AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
-`diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+`diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_adventure-map-boats.png`、
+`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
 打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
 `-RequireData` 才把缺数据当失败。
 
@@ -90,6 +92,10 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   所以也不带时钟；英雄列全是空槽，因为 MP2 的 tile 里没有英雄身份（见 ADR-055）。
 * 状态栏（`16,466,608,11`）搬到了底边框带上，里面印着视口偏移与版本号，后者每次发版都会变，所以
   排除掉。地图内容本身是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
+* 战争迷雾（ADR-061）也不带时钟：初始侦察只有「人类颜色的英雄半径 4」与「聚焦城堡半径 5」两个圆盘，
+  方向掩码由 tile 的探索位一次算出，整瓦取 `CLOF32` 的 `(column+row)%4`、边界件取 `CLOP32`，都是静态美术。
+  所以两张冒险地图基线的可见区随数据固定；`Undeada.mp2` 的船在雾下只有当它与上一行都被雾遮住时才消失
+  （`AdventureMapView.IsUnderFogWithUpperTile`）。
 * 这张基线钉住的是「MP2 tile/addon 字段 → ICN/TIL 索引 → 像素」这条链：`Mp2MapTests` 钉住结构解析，
   `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，`HeroLayerTests`
   钉住英雄的三带切分与阴影次序，`MinimapTests` 钉住地面分段与方框几何，`IconBarTests` 钉住图标条的
@@ -120,7 +126,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   job 才会传 `-DataDirectory` 与 `-RequireData`（缺数据即失败，而不是静默 skip）。
 * 失败时 job 会把 `tools-output/baseline/*.png`（刚渲染的图，文件名带语言后缀）与
   `diff/` 目录（`diff_menu.png` / `diff_settings.png` / `diff_settings.zh_CN.png` /
-  `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png` / `diff_editor.png`）作为
+  `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png` /
+  `diff_adventure-map-boats.png` / `diff_editor.png`）作为
   artifact `pixel-baseline-diff` 上传。
 
 ## 为什么逐字节一致是可达的
@@ -155,12 +162,13 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 | 文件 | 字节数 | SHA-256 |
 | --- | --- | --- |
-| `menu.png` | 239,932 | `73C1A211A86C0BCD2C10B47C32F4B7537B007498F9D325ED9004FC26EFC1E563` |
-| `settings.png` | 231,545 | `AFBCFAEA28F4100423DA102E018FBEB0DBEB3BB44003691BA639E7AC6900DE32` |
-| `settings.zh_CN.png` | 231,317 | `E8E317A96E8849121C796B8FF237B49823A31F64792603C0E8B4BF234DDD94C4` |
-| `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
-| `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
-| `adventure-map.png` | 168,802 | `928C4C3AC5545BBD8C2A0497C237A14849400831825B187FB537E91BFC233724` |
+| `menu.png` | 238,763 | `362F9C7C2A2B8E246BC8297061CB67012224F9DEAAA260446F27C783C1ABE6F9` |
+| `settings.png` | 230,372 | `E184ECC915DB5B47A2DDA28036AB6D26D4F417B9A9E786EED95EFF2D235B3CF7` |
+| `settings.zh_CN.png` | 230,299 | `E8CA67D51C2327EFC714CFABC55116205A6B25BD979878E6AD2FEDDFCC057985` |
+| `scenario.png` | 211,122 | `1325565AC990BA21222E5C6DD3E0F1FE15E6649682D633FF8BE88A26E318727B` |
+| `scenario.zh_CN.png` | 211,461 | `E3F1F8261E501955897D05C896EBA28E4EDCF2B05F15F2FC1AC8695A139D2A2F` |
+| `adventure-map.png` | 136,059 | `D473DC562630D12640861B4C2CD53471F29ED5C744113B7EB0F666141AD2F223` |
+| `adventure-map-boats.png` | 128,054 | `35D1ECD81C50ACD7D0219BE6CC7FE86FEE9C48D61D155E55CDA5242731D278F8` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
 
 ## 更新基线的规矩

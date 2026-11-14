@@ -8,6 +8,27 @@ namespace FHeroes2.Game.Tests;
 /// </summary>
 internal static class SyntheticMap
 {
+    /// <summary>
+    /// A tile of grass with no object on it and no data word, the starting point of the tiles a test
+    /// puts an object on with <c>with</c>.
+    /// </summary>
+    public static Mp2TileInfo BlankTile() =>
+        new()
+        {
+            TerrainImageIndex = 1,
+            ObjectName1 = 0,
+            BottomIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+            Quantity1 = 0,
+            Quantity2 = 0,
+            ObjectName2 = 0,
+            TopIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+            TerrainFlags = 0,
+            ObjectType = Mp2ObjectType.None,
+            NextAddonIndex = 0,
+            Level1ObjectUid = 0,
+            Level2ObjectUid = 0,
+        };
+
     /// <summary>Creates a map of <paramref name="width"/> by <paramref name="height"/> empty tiles.</summary>
     /// <param name="width">Width in tiles.</param>
     /// <param name="height">Height in tiles.</param>

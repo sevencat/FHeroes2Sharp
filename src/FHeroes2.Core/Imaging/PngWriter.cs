@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using FHeroes2.Core.Io;
 
 namespace FHeroes2.Core.Imaging;
 
@@ -136,7 +137,7 @@ public static class PngWriter
         stream.Write(data);
 
         Span<byte> checksum = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(checksum, PngCrc32.Compute(type, data));
+        BinaryPrimitives.WriteUInt32BigEndian(checksum, Crc32.Compute(type, data));
         stream.Write(checksum);
     }
 }

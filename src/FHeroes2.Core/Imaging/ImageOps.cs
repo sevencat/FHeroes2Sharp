@@ -235,4 +235,127 @@ public static partial class ImageOps
 
     /// <summary>Converts <paramref name="target"/> through one of the original palettes.</summary>
     public static void ApplyPalette(PixelBuffer target, PaletteId id) => ApplyPalette(target, PaletteTable.Get(id));
+
+    /// <summary>
+    /// Nearest neighbour resampling of <paramref name="source"/> onto <paramref name="target"/>,
+    /// the single layer case of <c>fheroes2::Resize( const Image &amp;, Image &amp; )</c>
+    /// (<c>engine/image.cpp:3087</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考对「放大」就是对每个目标像素取 <c>x * widthIn / widthOut</c> 处的源像素，没有插值；
+    /// 尺寸相同时退化成一次拷贝。
+    /// </para>
+    /// <para>
+    /// 参考还有一条「输出层带透明度、输入层不带」的分支，会按 <c>transformTable</c> 反查调色板变换；
+    /// 这里没有 <c>transformTable</c> 的全量数据和「透明像素的调色板变换」这套语义，所以不实现。
+    /// </para>
+    /// </remarks>
+    public static void Resize(PixelBuffer source, PixelBuffer target)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (source.IsEmpty || target.IsEmpty)
+        {
+            return;
+        }
+
+        if (source.Width == target.Width && source.Height == target.Height)
+        {
+            source.Pixels.AsSpan(0, source.Height * source.Stride).CopyTo(target.Pixels);
+
+            return;
+        }
+
+        int sourceWidth = source.Width;
+        int sourceHeight = source.Height;
+        int targetWidth = target.Width;
+        int targetHeight = target.Height;
+
+        Span<int> column = targetWidth <= 256 ? stackalloc int[targetWidth] : new int[targetWidth];
+
+        for (int x = 0; x < targetWidth; ++x)
+        {
+            column[x] = (x * sourceWidth) / targetWidth;
+        }
+
+        ReadOnlySpan<byte> pixels = source.Pixels;
+        int stride = source.Stride;
+
+        for (int y = 0; y < targetHeight; ++y)
+        {
+            int sourceRow = ((y * sourceHeight) / targetHeight) * stride;
+            Span<byte> destinationRow = target.Row(y);
+
+            for (int x = 0; x < targetWidth; ++x)
+            {
+                destinationRow[x] = pixels[sourceRow + column[x]];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Nearest neighbour resampling of a sprite, transparency layer included:
+    /// <c>fheroes2::Resize( const Sprite &amp;, Sprite &amp; )</c> (<c>engine/image.cpp:3087</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在两层都带透明度时逐层最近邻拷贝，这里照做。<paramref name="source"/> 带透明度层而
+    /// <paramref name="target"/> 不带时无法表达结果，直接抛——`null` 的透明度层在 C# 侧表示「整块不透明」，
+    /// 静默丢透明信息只会让字形糊成一团。
+    /// </remarks>
+    public static void Resize(Sprite source, Sprite target)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+
+        Resize(source.Image, target.Image);
+
+        if (source.Transform is not { } sourceTransform)
+        {
+            return;
+        }
+
+        if (target.Transform is not { } targetTransform)
+        {
+            throw new ArgumentException(
+                "A source with a transform layer needs a target that has one too.", nameof(target));
+        }
+
+        ResizeLayer(
+            sourceTransform, source.Width, source.Height, targetTransform, target.Width, target.Height);
+    }
+
+    private static void ResizeLayer(
+        ReadOnlySpan<byte> source, int sourceWidth, int sourceHeight, Span<byte> target, int targetWidth, int targetHeight)
+    {
+        if (source.Length < sourceWidth * sourceHeight || target.Length < targetWidth * targetHeight)
+        {
+            throw new ArgumentException("A transform layer must cover the whole sprite.", nameof(source));
+        }
+
+        if (sourceWidth == targetWidth && sourceHeight == targetHeight)
+        {
+            source[..(sourceWidth * sourceHeight)].CopyTo(target);
+
+            return;
+        }
+
+        Span<int> column = targetWidth <= 256 ? stackalloc int[targetWidth] : new int[targetWidth];
+
+        for (int x = 0; x < targetWidth; ++x)
+        {
+            column[x] = (x * sourceWidth) / targetWidth;
+        }
+
+        for (int y = 0; y < targetHeight; ++y)
+        {
+            int sourceRow = ((y * sourceHeight) / targetHeight) * sourceWidth;
+
+            for (int x = 0; x < targetWidth; ++x)
+            {
+                target[(y * targetWidth) + x] = source[sourceRow + column[x]];
+            }
+        }
+    }
 }

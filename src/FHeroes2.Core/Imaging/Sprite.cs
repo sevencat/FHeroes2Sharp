@@ -76,6 +76,47 @@ public sealed class Sprite
     public Sprite Clone() => new(Image.Clone(), OffsetX, OffsetY, Transform is null ? null : (byte[])Transform.Clone());
 
     /// <summary>
+    /// Returns the sprite mirrored inside its own bounds, the <c>fheroes2::Flip</c> of the reference,
+    /// which <c>Interface::GameArea::BlitOnTile( ..., flip )</c> applies on the fly.
+    /// </summary>
+    /// <remarks>
+    /// The transform layer is mirrored with the image and must not be dropped: transparent pixels are
+    /// stored as transform <c>1</c>, so a sprite that kept only its image layer would paint those
+    /// pixels as palette index zero, i.e. as black.
+    /// </remarks>
+    public Sprite Flip(bool horizontal, bool vertical)
+    {
+        if (!horizontal && !vertical)
+        {
+            return this;
+        }
+
+        return new Sprite(
+            ImageOps.Flip(Image, horizontal, vertical),
+            OffsetX,
+            OffsetY,
+            Transform is null ? null : FlipLayer(Transform, Width, Height, horizontal, vertical));
+    }
+
+    private static byte[] FlipLayer(byte[] source, int width, int height, bool horizontal, bool vertical)
+    {
+        byte[] result = new byte[source.Length];
+
+        for (int y = 0; y < height; ++y)
+        {
+            int sourceY = vertical ? height - 1 - y : y;
+
+            for (int x = 0; x < width; ++x)
+            {
+                int sourceX = horizontal ? width - 1 - x : x;
+                result[(y * width) + x] = source[(sourceY * width) + sourceX];
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Returns the same image without a transform layer, i.e. <c>fheroes2::Image::_disableTransformLayer()</c>.
     /// The transform array is shared on purpose: callers only drop the layer once decoding is done.
     /// </summary>

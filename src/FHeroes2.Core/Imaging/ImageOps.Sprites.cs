@@ -110,6 +110,269 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Clears <paramref name="area"/> and turns it into the <paramref name="transformId"/> state, the
+    /// equivalent of <c>fheroes2::FillTransform()</c> (<c>engine/image.cpp:2273</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的名字只提变换层，其实颜色也一起清成 <c>0</c>：这块区域变成「透明 + 指定变换表」。
+    /// 字体修补用它擦掉字形里多余的白线，之后 <see cref="UpdateShadow"/> 再按新轮廓补阴影。
+    /// 单层图整段不动（参考也是直接 return）。
+    /// </remarks>
+    /// <param name="target">Sprite to change.</param>
+    /// <param name="area">Area to clear, clipped to the sprite.</param>
+    /// <param name="transformId">Transform id the cleared pixels get.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void FillTransform(Sprite target, in Rect area, byte transformId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        Rect clipped = area.Intersect(target.Image.Bounds);
+        if (clipped.IsEmpty)
+        {
+            return;
+        }
+
+        for (int y = 0; y < clipped.Height; ++y)
+        {
+            target.Image.Row(clipped.Y + y).Slice(clipped.X, clipped.Width).Clear();
+            transform.AsSpan(((clipped.Y + y) * target.Image.Stride) + clipped.X, clipped.Width).Fill(transformId);
+        }
+    }
+
+    /// <summary>
+    /// Recolours every pixel of <paramref name="colorId"/>, the equivalent of
+    /// <c>fheroes2::ReplaceColorId()</c> (<c>engine/image.cpp:2707</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只看颜色层，不看变换层——批量换色（按下的按钮字面就是这么从绿色变深、从绿变红的），
+    /// 半透明像素虽然画不出来，底色也一起换掉，和参考一致。
+    /// </remarks>
+    /// <param name="target">Sprite to change.</param>
+    /// <param name="colorId">Palette index to replace.</param>
+    /// <param name="newColorId">Palette index to write instead.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void ReplaceColorId(Sprite target, byte colorId, byte newColorId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (colorId == newColorId)
+        {
+            return;
+        }
+
+        for (int y = 0; y < target.Height; ++y)
+        {
+            Span<byte> row = target.Image.Row(y);
+
+            for (int x = 0; x < row.Length; ++x)
+            {
+                if (row[x] == colorId)
+                {
+                    row[x] = newColorId;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hides every pixel whose colour is <paramref name="colorId"/> behind
+    /// <paramref name="transformId"/>, <c>fheroes2::ReplaceColorIdByTransformId()</c>
+    /// (<c>engine/image.cpp:2724</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只改已经可见的像素（transform <c>0</c>），颜色本身留着不管——变换一旦不是 <c>0</c> 就不会以原色画出。
+    /// 归档里的 <c>FONT.ICN</c> 有 3 处像素误用了调色板索引 50，参考就是这么把它们修成阴影的。
+    /// </remarks>
+    /// <param name="target">Sprite to change; a single layer sprite is left alone.</param>
+    /// <param name="colorId">Palette index to hide.</param>
+    /// <param name="transformId">Table the hidden pixels use; above <c>15</c> the call does nothing.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void ReplaceColorIdByTransformId(Sprite target, byte colorId, byte transformId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (transformId > 15 || target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        int stride = target.Image.Stride;
+
+        for (int y = 0; y < target.Height; ++y)
+        {
+            Span<byte> row = target.Image.Row(y);
+
+            for (int x = 0; x < target.Width; ++x)
+            {
+                int index = (y * stride) + x;
+
+                if (transform[index] == 0 && row[x] == colorId)
+                {
+                    transform[index] = transformId;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws <paramref name="source"/> onto a <i>two layer</i> destination, the equivalent of
+    /// <c>fheroes2::Blit( const Image &amp; in, Image &amp; out )</c> when <c>out</c> keeps its
+    /// transform layer (<c>engine/image.cpp:1328</c>).
+    /// </summary>
+    /// <remarks>
+    /// Same rules as the <see cref="PixelBuffer"/> variant, plus one step: a pixel copied verbatim
+    /// copies its transform id too, so transparency travels with it. A transform over a destination
+    /// pixel that is already visible (id <c>0</c>) only recolours that destination pixel, which is how
+    /// shadows and light effects are stamped onto an assembled sprite.
+    /// </remarks>
+    /// <param name="destination">Sprite to draw on. Without a transform layer this is the single layer case.</param>
+    /// <param name="destinationOffset">Where the source rectangle lands.</param>
+    /// <param name="source">Sprite to draw.</param>
+    public static void BlitSprite(Sprite destination, Point destinationOffset, Sprite source)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (destination.Transform is not { } destinationTransform)
+        {
+            BlitSprite(destination.Image, destinationOffset, source);
+
+            return;
+        }
+
+        Rect destinationRect = new(destinationOffset, source.Image.Size);
+        Rect clipped = destinationRect.Intersect(destination.Image.Bounds);
+        if (clipped.IsEmpty)
+        {
+            return;
+        }
+
+        int skipX = clipped.X - destinationRect.X;
+        int skipY = clipped.Y - destinationRect.Y;
+        int sourceX = source.Image.Bounds.X + skipX;
+        int sourceY = source.Image.Bounds.Y + skipY;
+
+        ReadOnlySpan<byte> image = source.Image.AsSpan();
+        byte[]? sourceTransform = source.Transform;
+        int destinationStride = destination.Image.Stride;
+
+        for (int y = 0; y < clipped.Height; ++y)
+        {
+            int sourceRow = ((sourceY + y) * source.Image.Stride) + sourceX;
+            Span<byte> destinationRow = destination.Image.Row(clipped.Y + y);
+            int transformRow = ((clipped.Y + y) * destinationStride) + clipped.X;
+
+            for (int x = 0; x < clipped.Width; ++x)
+            {
+                int sourceIndex = sourceRow + x;
+                byte transformId = sourceTransform is null ? (byte)0 : sourceTransform[sourceIndex];
+
+                // 1 means "leave the destination alone"; everything else writes.
+                if (transformId == 1)
+                {
+                    continue;
+                }
+
+                int destinationIndex = clipped.X + x;
+
+                if (transformId > 0 && transformId < PaletteTransformTable.TransformCount
+                    && destinationTransform[transformRow + x] == 0)
+                {
+                    destinationRow[destinationIndex] =
+                        PaletteTransformTable.Apply(transformId, destinationRow[destinationIndex]);
+                }
+                else
+                {
+                    destinationRow[destinationIndex] = image[sourceIndex];
+                    destinationTransform[transformRow + x] = transformId;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws <paramref name="source"/> at the top left corner of a two layer
+    /// <paramref name="destination"/>, the <c>fheroes2::Blit( in, out )</c> overload that ignores the
+    /// sprite anchors.
+    /// </summary>
+    public static void BlitSprite(Sprite destination, Sprite source) =>
+        BlitSprite(destination, Point.Zero, source);
+
+    /// <summary>
+    /// Builds the one pixel outline around the visible pixels of <paramref name="source"/>, the
+    /// equivalent of <c>fheroes2::CreateContour( const Image &amp;, uint8_t )</c>
+    /// (<c>engine/image.cpp:1490</c>).
+    /// </summary>
+    /// <remarks>
+    /// A pixel of the contour is placed on every pixel that is not visible (transform <c>1</c>) or that
+    /// is a shadow (<c>2</c>..<c>5</c>) and that touches a visible pixel (<c>0</c>) on one of its four
+    /// sides. The result is a fresh sprite with everything else transparent, so it is meant to be
+    /// drawn <i>under or over</i> the source with <see cref="BlitSprite(Sprite, Sprite)"/> - that is how
+    /// the gradient font gets its two colour outline.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="source"/> is empty or has no transform layer, which the reference treats as a
+    /// programming error (<c>assert( 0 )</c>).
+    /// </exception>
+    public static Sprite CreateContour(Sprite source, byte value)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (source.Image.IsEmpty || source.Transform is not { } transform)
+        {
+            throw new ArgumentException(
+                "A contour can only be built for a non-empty image with a transform layer.", nameof(source));
+        }
+
+        Sprite contour = new(source.Width, source.Height);
+        contour.Reset();
+
+        int width = source.Width;
+        int height = source.Height;
+
+        if (width < 2 || height < 2)
+        {
+            return contour;
+        }
+
+        byte[] image = contour.Image.Pixels;
+        byte[] contourTransform = contour.Transform!;
+        int reducedWidth = width - 1;
+        int reducedHeight = height - 1;
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                int index = (y * width) + x;
+                byte transformId = transform[index];
+
+                // Visible pixels are already part of the shape; only the gap and the shadow rings grow.
+                if (transformId == 0 || transformId > 5)
+                {
+                    continue;
+                }
+
+                if ((x > 0 && transform[index - 1] == 0)
+                    || (x < reducedWidth && transform[index + 1] == 0)
+                    || (y > 0 && transform[index - width] == 0)
+                    || (y < reducedHeight && transform[index + width] == 0))
+                {
+                    image[index] = value;
+                    contourTransform[index] = 0;
+                }
+            }
+        }
+
+        return contour;
+    }
+
+    /// <summary>
     /// Writes one pixel, the equivalent of <c>fheroes2::SetPixel</c>. Coordinates outside the
     /// sprite are ignored, and a written pixel always becomes visible (transform <c>0</c>).
     /// </summary>

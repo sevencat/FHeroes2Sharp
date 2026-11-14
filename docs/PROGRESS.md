@@ -919,6 +919,22 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `tests/FHeroes2.Game.Tests/MapFrameTests` | ✅ | 7 条：640×480 下视口/雷达/面板/底边框带的四个矩形、面板底到画框边缘、小画框同比缩进、缺图时 `Draw` 铺满整屏与每个 bay、缺图时 `DrawPanel` 不动像素 |
 | `Game.AdventureMap.IconBar` + `IconSpriteSet` | ✅ | `Interface::IconsPanel` 的布局与落位：英雄列 `(480,176,56,128)`、城堡列 `(552,176,56,128)`、每格 56×32、图标内缩 `5,5`；帧表照 `fheroes2::getCastleIcnIndex`（`LOCATORS` 9…14 城堡 / 15…20 城镇）与空槽 `1 + i % 8`；随机种族返回 `null` 退回空槽（ADR-055） |
 | `AdventureMapScene` 图标条 | ✅ | 砖纹之后画城堡表的前四座城堡（右列）、左列四个空槽——MP2 的 hero tile 没有英雄身份，`MINIPORT` 取不了帧；图标缺失时该格留砖纹 |
+| `Game.AdventureMap.ButtonsPanel` + `ButtonSpriteSet` | ✅ | `Interface::ButtonsPanel` 的布局与落位：面板 `(480,320,144,72)`——图标列（176…304）下再空一条 16 px 砖边；4 列 × 2 行、每格 36×36、帧对 `2i / 2i+1`（`ADVBTNS.ICN` 的 16 帧）；禁用态是 released 帧套 `PaletteId.Darkening`（`ButtonBase::_getDisabled`）；移动按钮三套帧 2/3、16/17、18/19，本资材只有前 16 帧，缺帧留空，与参考 `Assets::getImage` 越界返回 `errorImage` 一致 |
+| `Game.AdventureMap.AdventureButtonStatus` | ✅ | `_setButtonStatus` 的数据化：五个无条件启用的按钮不占标志位，只记移动 / 施法 / 下一个英雄的启用与移动按钮的三个含义；`WithoutHero` 就是「没有聚焦英雄」的全 false 分支 |
+| `AdventureMapScene` 按钮面板 | ✅ | 图标条之后画八个按钮，状态取 `WithoutHero`——MP2 的 hero tile 没有英雄身份 |
+| `tests/FHeroes2.Game.Tests/ButtonsPanelTests` | ✅ | 11 条：面板与每格矩形、八个帧对、移动按钮三帧、`WithoutHero`、启用/禁用像素、按 `HeroMovementIcon` 取帧、缺帧留空、无精灵源不画；另 2 条真资材：36×36 与 16 帧、`DARKENING` 只改副本 |
+| `Game.AdventureMap.IMonsterSpriteSource` + `MonsterSpriteSet` | ✅ | `ICN::MINI_MONSTER_IMAGE` 的移植：帧号 `GetSpriteIndex() * 9` 即 `(id - 1) * 9`（站立帧，`UNKNOWN` 为 0 没有帧），`MINIMON.ICN` 走与对象层共用的 `IcnSpriteCache`；`id ≤ 0` 或越界给 `null` |
+| `AdventureMapView` 怪物三带绘制 | ✅ | 锚点 `MonsterAnchor = (16,30)`（`monsterImageOffset`）；与英雄一样按 32 px 行带分三批：`SHADOW_LAYER` 之后画瓦片下方部分、`OBJECT_LAYER` 之后画瓦片内部分、`TopLayer` 之后画伸到上一行的部分；可见格取视口左右各放 1 格（`ScanAroundObject`） |
+| `tests/FHeroes2.Game.Tests/MonsterLayerTests` | ✅ | 9 条：瓦片内绘制、下方行先于 ObjectLayer、上方行后于 TopLayer、被同格顶层对象遮挡、按瓦片怪物取帧、无精灵源不画、锚点 `(16,30)`；另 2 条真资材：帧号 `(id-1)*9`、农民 31×28 与 66 有帧 / 67 无帧 |
+| `Game.AdventureMap.IBoatSpriteSource` + `BoatSpriteSet` | ✅ | `getBoatSpritesPerTile` / `getBoatShadowSpritesPerTile` 的移植：`BOAT32` 第 18 帧（`RIGHT`，62×56，offset `(-8,-54)`）与 `BOATSHAD` 第 18 帧（74×28，offset `(-38,-28)`）；地图里的空船永远是这个帧，参考在装载时把编辑器的 `OBJNWAT2` 帧换掉 |
+| `AdventureMapView` 船层与船影子 | ✅ | 锚点 `BoatAnchor = (0,21)`（`tileHeightPx - 11`）；船体按 32 px 行带三批画，影子整张随 Shadow 层画；可见格放 2 格（船体向上伸 33 像素）；有船精灵源时不再画瓦片上的编辑器材 |
+| `tests/FHeroes2.Game.Tests/BoatLayerTests` | ✅ | 9 条：船的批次落位、编辑器帧被替换、下方行先于 ObjectLayer、上方行后于 TopLayer、影子先于船体、无精灵源保留编辑器帧、锚点 `(0,21)`；另 2 条真资材：两个帧的尺寸与偏移、无数据时没有集合 |
+| `Game.AdventureMap.MapFog` | ✅ | `Maps::Tile` 的雾状态与 `Maps::ClearFog` 的圆盘：每格一个「已探索颜色」字节，`IsFogged` 即 `( explored & colors ) == 0`（对应 `Tile::isFog` = `( fog & colors ) == colors`）；`Reveal` 用 `getSquaredScoutingRadiusLimit`（`(d+1)^2-d`，例外 `7→66`、`8→90`）；`UpdateDirections` 是 `updateFogDirectionsInArea` 的整图版本，`Unknown` 表示对该颜色可见（ADR-061） |
+| `Game.AdventureMap.FogDirection` / `FogFrames` | ✅ | `DIRECTION_*` 位与复合掩码（`All`、`CenterRow`、四角等）；`Resolve` 按参考 `drawFog` 的 if/else 原始顺序选帧：整瓦 `( column + row ) % 4`，其余落 `CLOP32` 的 34 帧边界表，`Flipped` 对应 `BlitOnTile( ..., revert )`；非法掩码回退整瓦 |
+| `Game.AdventureMap.IFogSpriteSource` + `FogSpriteSet` | ✅ | `CLOF32.TIL`（4 张 32×32）走 `TilFile`、`CLOP32.ICN`（34 帧）走共用的 `IcnSpriteCache`；镜像用 `ImageOps.Flip` 并保留 offset；缺数据或解码失败给 `null`，视图不画雾 |
+| `AdventureMapView` 雾层 | ✅ | `Draw` = 地形 → 精灵 → 雾；整瓦 `ImageOps.Blit`、边界件落位 `x = tileWidth - sprite.OffsetX - sprite.Width`；雾后对每格重画 `OBJNTWBA`、城堡再画 `OBJNTOWN`（`DrawObjectParts` 查 add-on 链与瓦片自身，只画 `GroundIcnType` 匹配的部件）；英雄/怪物在 `IsUnderFog` 时跳过，船用 `IsUnderFogWithUpperTile`（两格都被遮才跳过） |
+| `AdventureMapScene` 初始侦察 | ✅ | 观察者取 `map.Info.HumanPlayers`；英雄半径 4 的圆盘由 `MapFog.CreateForMap` 揭示，聚焦城堡再按半径 5 揭示一次（MP2 城堡无颜色，`AllCastles::Scout` 只能占位）；无人类玩家的地图不传 `MapFog`，不画雾 |
+| `tests/FHeroes2.Game.Tests/MapFogTests` + `FogFramesTests` + `FogSpriteSetTests` + `FogLayerTests` | ✅ | 57 条：圆盘几何与多颜色语义、地图边缘的雾掩码、`Unknown`、34 帧判定顺序与 `Flipped`、真资材的 4 张整瓦与 34 帧 offset、整瓦变体、已探索格不被覆盖、雾下英雄不留痕、城镇窗口在雾上重画 |
 
 ### M4 界面外壳 验证记录
 
@@ -944,7 +960,7 @@ pwsh tools/scripts/Verify{Menu,Settings,Scenario,Editor}Baseline.ps1 → 四条 
      确实 identical，说明抽出的几何与原来的 `RadarBay`/`PanelBay` 完全等价。
 
 * 一处遗留照旧：面板里还没有图标条、按钮与资源栏，砖纹只是把空槽铺成参考的底色；也没有雾与路径。
-  （图标条在紧接着的下一轮补上了，见下方「M4 面板图标条」。）
+  （图标条在紧接着的下一轮补上了，见下方「M4 面板图标条」；雾在「战争迷雾」一节补上。）
 
 ### M4 面板图标条 验证记录
 
@@ -1096,8 +1112,8 @@ dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --map …\Alteris.mp
   目前直接用文件里的 `mapObjectType`；拾取与信息框需要它时再补。
 * **雾、路径、面板内容都没有**：外壳已按参考落地（`ADVBORD.ICN`、448×448 @ (16,16) 视口、雷达槽、
   面板砖纹，ADR-054）。城堡图标条已有（`IconBar`，ADR-055），但它的**英雄列是空的**——MP2 的 tile 没有
-  英雄身份，要等 `MP2::HeroInfo` 解析出来才能取 `MINIPORT`；按钮面板、日期与资源栏也还没有。雾、
-  路径预览、拾取同样没做。状态栏是占位（底边框带里的诊断文字）。
+  英雄身份，要等 `MP2::HeroInfo` 解析出来才能取 `MINIPORT`；按钮面板、日期与资源栏也还没有。路径预览
+  与拾取同样没做（雾后来补上了，见「战争迷雾」，ADR-061）。状态栏是占位（底边框带里的诊断文字）。
 * **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
   `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。
@@ -1633,4 +1649,626 @@ Alteris.mp2 全量写出（一次性探针）→ header 428 字节与原文逐�
 * **信息块数量只写一对**：真实地图在那里存了一串历史值（Alteris 13 对），全量写出只写 `count+1` 加终止，
   读回等价但字节更短；补丁路径原样保留。
 
+## 函数级 1:1 起步（ADR-057）✅
 
+**决策**：移植粒度定在函数级（同名、同顺序、同常量），全局状态用静态门面 `static X Current` 照抄；
+不引入 DI 容器，第二版换实现只动 `Current` 的赋值点。数据见 ADR-057 与 `ARCHITECTURE.md` 的
+「全局状态与门面」一节（参考只有 3 个全局变量，10 个单例、832 处 `::Get()`，其中约 800 处在业务层）。
+备份点 `backup/pre-facade-2026-11-14`，工作在 `refactor/global-facade` 分支。
+
+**第一枪**：`src/fheroes2/editor/editor_ui_helper.cpp`（130 行）的前两块。
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 187 / UI 145 全绿
+pwsh tools/scripts/VerifyEditorBaseline.ps1  → editor.png identical（新代码还没接进渲染路径）
+```
+
+新增：
+
+* `Core/Imaging/MovableSprite.cs`：参考的 `fheroes2::MovableSprite`（位置 + 显隐）。`Sprite` 是
+  `sealed`，所以用组合而不是继承；默认隐藏、空图，和参考一致。
+* `Game/Assets.cs`：参考的 `Assets::getImage( ICN, frame )`。`Current` 指向归档包，解码结果按
+  (文件, 帧) 缓存，换 `Current` 时清空——参考的全局 ICN 缓存就是干这个的。
+* `Game/Editor/EditorUiHelper.cs`：`Checkbox`（构造里内联帧号 `NONE ? 1 : Color::GetIndex + 43`、
+  贴玩家色框、勾选标记落在 `+2,+2`）、`CreateColorCheckboxes`（步进 32）。公开面与参考一致：
+  只有构造、`getRect`、`getColor`、`toggle`；`_checkmark` 唯一一处暴露成 `Checkmark`，理由写在类注释里。
+* `EditorUiHelperTests` 6 条：帧号（None=1、六色 43…48）、色框整块像素与 `CELLWIN.ICN` 帧逐点相同、
+  框外不画、`Toggle` 两个方向、步进 32 与初始勾选、无归档时 `GetImage` 返回空、换 `Current` 清缓存。
+
+**两处没搬**（依赖还没移植）：`drawCheckboxWithText`（要 `Text::fitToOneRow`，本项目只有
+`GlyphText.WrapLines`）、`renderResources`（要 `Funds`）。下一枪是这两件：先补 `Text::fitToOneRow`。
+
+**基础设施缺口**：参考 UI 层的第一批基础件在 C# 侧并不齐（`MovableSprite` 之前没有，`fitToOneRow`
+也没有）。函数级 1:1 的成本结构因此是「先把基础件补齐，之后每个文件都是纯翻译」。静态门面在
+xUnit 里是进程级状态，`EditorUiHelperTests` 因此挂进 `GlobalArchiveCollection`（禁并行）。
+
+**1:1 收敛（同日）**：第一版自作主张加了几个参考没有的 API，已删——
+
+* `EditorUiHelper.ColorBoxFrame`：参考是在 `Checkbox` 构造里内联的一行（`cpp:40`），已内联回去；
+* `EditorUiHelper.FileName` 常量：参考直接写 `ICN::CELLWIN`，现按参考写两处 `"CELLWIN.ICN"`；
+* `Checkbox.IsChecked`：参考没有这个访问器，删（需要时看 `Checkmark.IsHidden`）；
+* `Assets.Reset()`：参考没有，删；清缓存就是 `Assets.Current = null`；
+* `Assets.GetIcn` 改私有：参考的 `loadICN`（`game_assets.cpp:655`）也是内部函数。
+
+反向补齐的只有 `MovableSprite( width, height, x, y )`（参考 `ui_tool.cpp:129`，`_isHidden` 取
+`width == 0 && height == 0`）。唯一保留的"参考没有的访问器"是 `Checkbox.Checkmark`：参考的勾选标记
+由 `MovableSprite::show` 自己画到 `Display`，本项目没有 Display 层，只能把精灵交给调用方；类注释里
+写明它是临时差异，Display 移植后删除。
+
+**出处注释**：每个从参考搬来的类型与函数都写 `参考：路径:行 函数名`，行号对应 `REFERENCE.md` 记的
+1.1.18 / `6c51acfdc`；与参考有出入的，同一段里以 `差异：` 起头。已补齐：
+`MovableSprite`（`gui/ui_tool.h:48`、`.cpp:123/137/152/165/177`）、`Assets`（`game/game_assets.h:33`、
+`game_assets.cpp:5817` 与 `:655` 的 `loadICN`）、`EditorUiHelper`/`Checkbox`
+（`editor/editor_ui_helper.h:42`、`.cpp:36/40/57/66`）。规范落在 `ARCHITECTURE.md` 的「移植注释」一节，
+`REFERENCE.md` 的「已移植」表同步加了三行。
+
+### 字体排版层（`ui_text.*`）✅
+
+`drawCheckboxWithText` 与 `renderResources` 都要 `fheroes2::Text`，所以先把排版层搬下来。查过之后发现
+它的依赖比想象中轻：**字形就是 `FONT.ICN` / `SMALFONT.ICN` 的逐帧图**（`getChar` 等价于
+`Assets::getImage( icn, character )`），不需要另造字体解码层，唯一的缺口是 `Assets::getImageCount`。
+
+* `Game/Assets.cs`：新增 `GetImageCount( fileName )`（`game_assets.cpp:5834`，`ui_text.cpp:143` 的
+  `getCharacterLimit` 用它量「这个字体有多少个字符」）；
+* `Game/Gui/FontType.cs`：`FontSize`、`FontColor`、`FontType`（默认 `NORMAL`+`WHITE`，工厂
+  `NormalWhite()` / `SmallWhite()` …）、`TextLineInfo`；
+* `Game/Gui/FontCharHandler.cs`：`FontCharHandler`（`isAvailable` / `getSprite` / `getWidth` /
+  空格宽 = `(M 宽 - 1) / 3`）+ `getFontHeight`（13/15/15/16/16）、`getCharacterLimit`、`getChar`；
+* `Game/Gui/TextAlgorithms.cs`：`ui_text.cpp` 匿名命名空间的 `getLineWidth`、`getTextLineArea`、
+  `getMaxCharacterCount`、`renderSingleLine`、`getMaxWordWidth`、`getTruncationSymbolWidth`；
+* `Game/Gui/TextBase.cs` + `Text.cs`：`width` / `height` / `rows` / `area` / `drawInRoi` / `draw` /
+  `fitToOneRow` / `set` / `keepLineTrailingSpaces`，核心是逐行搬来的 `_getTextLineInfos`（空格挂行尾、
+  连字符断行、整词下移、`_isUniformedVerticalAlignment` 的二分收敛）；
+* `Game/Editor/EditorUiHelper.cs`：`DrawCheckboxWithText`（`cpp:77`），21 行代码，直接吃上面的排版层。
+
+**位置**：放在 `FHeroes2.Game.Gui` 而不是 `FHeroes2.Rendering`。参考的 `ui_text.cpp` 直接调 `Assets`
+门面，而门面在 `FHeroes2.Game`；放 `Rendering` 会形成 `Rendering → Game` 的反向引用。等门面下沉到
+`FHeroes2.Assets` 项目后再迁。
+
+**未搬（都在注释里标了）**：`TextInput`、`MultiFontText`、`fitToArea`、`ui_language` 的语言切换、
+启动期生成的字体（`GRAY`/`YELLOW`/渐变/大号/按钮字体 → `NotSupportedException`）、`CELLWIN_EVIL`。
+`Text.text()` 改名 `Content`（C# 不允许成员名等于类型名）。
+
+**测试**：`TextTests` 9 条——字号表、空文本、宽度 = 逐字前进宽度之和、`fitToOneRow` 以 `...` 收尾且不超宽、
+长句换行、绘制落像素、`DrawCheckboxWithText` 的框/文字/勾选标记位置、`isEvil` 与未移植字体抛异常。
+写测试时发现一个参考行为：`FONT.ICN` 只有 96 帧（0x20–0x5F），所以小写字母宽度退化成 1px，测试文本
+一律用大写。
+
+### 资源层与编辑器资源面板（`resource.*` + `renderResources`）✅
+
+`renderResources` 是 `editor_ui_helper.cpp` 的最后一个函数，唯一前置是 `Funds`。C# 侧此前完全没有资源类型，
+所以这一轮把 `resource.h/.cpp` 的资源部分一起搬了：
+
+* `Game/Resources/Funds.cs`：`Resource` 常量（7 个位值 + `ALL`）、`Cost`、`Funds`。七字段顺序照抄参考
+  ——**ore 在第一位**（`Funds( _ore, _wood, _mercury, _sulfur, _crystal, _gems, _gold )`），这是全文件最容易
+  写错的地方，测试里专门对拍了这个顺序；运算符、`Max`、`Get`/`GetPtr`、`Trim`/`Reset`、
+  `GetValidItems`/`GetValidItemsCount`、`GetFirstValidResource`、`GetLowestQuotient`、
+  `Resource::CalculateEventResourceUpdate` 全部逐条翻译。
+* `Game/Editor/EditorUiHelper.cs`：`RenderResources`（`cpp:99`）——边缘 7、格 39×32、两行、
+  第二行起点 `+32+字体高+2`，金子在第二行横跨两格。
+
+**命名空间**：一开始叫 `FHeroes2.Game.Resource`，和 `Resource` 类同名，`FHeroes2.Game.Tests` 里的
+`Resource.Wood` 会被解析成命名空间而不是类型（CS0234）。改名 `FHeroes2.Game.Resources` 解决。
+
+**语言差异（全部写在注释里）**：
+
+* `operator=( const Cost & )` → `SetFrom`（C# 不能重载赋值）；
+* `GetPtr` → 静态 + `ref Funds` 参数：结构实例方法返回自身字段的引用是 CS8170 禁止的，`this` 只能显式传；
+* 参考用 `nullptr` 表示非法资源，C# 的 `ref` 不能为 null，改为 `ArgumentOutOfRangeException`；
+* 重载 `==` 时 C# 强制重写 `Equals`/`GetHashCode`（CS0660/CS0661）；
+* `String()` → `ToString()`（`object.ToString` 已存在，并存两个名字没有意义）。
+
+**未搬**：`Resource::String`（要 `Translation`）、`Resource::Rand`（要 `Rand::Get`）、
+`GetIndexSprite`/`FromIndexSprite`/`getIconIcnIndex`（要 ICN 序号映射）、`BoxSprite`（要 `Display`）、
+流序列化。
+
+**测试**：`FundsTests` 17 条（构造顺序、零值与未知类型、六种运算、比较、`Get`/`GetPtr`、`Max`、
+`Trim`/`Reset`、位标志、有效资源顺序、最低商、`Cost` 拷贝、事件资源裁剪、`ToString`），
+`EditorUiHelperTests` 加 2 条（两行七个图标的布局 + 图标逐像素对拍、`resourceRoi` 长度不足）。
+`editor_ui_helper.cpp` 至此全部搬完。
+
+### 混排文本（`MultiFontText`）✅
+
+`ui_text.*` 里剩下两块：`TextInput` 和 `MultiFontText`。先搬 `MultiFontText`——它只依赖已经搬好的
+`Text`，而 `TextInput` 还要 `Cursor` 和键盘事件。
+
+`Game/Gui/MultiFontText.cs`：`add` / `width` / `height` / `width( maxWidth )` / `height( maxWidth )` /
+`rows` / `area` / 两个 `drawInRoi` / `fitToOneRow` / `text` / `_getMultiFontTextLineInfos`，逐条对照
+`ui_text.cpp:1088–1331`。
+
+**两处语言差异**：
+
+* 参考靠 `friend class MultiFontText` 直接读 `Text::_text`、`_fontType` 并调私有 `_getTextLineInfos`。
+  C# 没有友元，改成同程序集的 `internal`（`Text.Bytes`、`Text.Font`、`Text.GetTextLineInfos`、
+  `Text.TruncateTo`），并把这些写进了注释。`Text.TruncateTo` 顺便让 `Text.FitToOneRow` 复用同一段截断代码。
+* 参考的 `add( Text text )` 按值接收再 move 进 `std::vector<Text>`，容器里存的是**副本**；C# 类是引用语义，
+  所以 `Add` 里显式 `Text.Clone()`，否则外部改原 `Text` 会串进去（`fitToOneRow` 会就地截断 `_texts`）。
+
+**一个参考里的怪行为**（测试里也注了）：`_getTextLineInfos` 在 `firstLineOffsetX > 0`（也就是「这一段接着
+上一段往下排」）且首字符放不下时，会先 `emplace_back` 一条**字符数为 0 的行记录**，再另起一行。所以
+`MultiFontText::rows()` 会比实际有字形的行数多 1；`height( maxWidth )` 仍是对的（它只看最后一行的
+`offsetY`）。
+
+**测试踩到的坑**：`FONT.ICN` 的 `.` 帧是 15×13，截断符号 `...` 宽 45 像素。一开始用 `maxWidth` 比 45 还小
+去测 `fitToOneRow`，那时参考本身也会产出超宽的 `...`（`getMaxCharacterCount` 的 `maxWidth > 0` 断言在
+debug 下会直接挂），测试改成留出 45 像素的余量。
+
+**测试**：`MultiFontTextTests` 6 条——空段被忽略且入容器的是副本、宽度求和而高度取最大、单行绘制与逐段
+单独绘制逐像素一致、小字号按 `( 最高 - 本段 ) / 2` 竖直居中、超过 `maxWidth` 时换行（含那条空行记录）、
+`fitToOneRow` 截断首段并丢掉后续段。
+
+### 输入框与 `fitToArea`（`TextInput`、`Text.fitToArea`）✅
+
+`Game/Gui/TextInput.cs` 逐条对照 `ui_text.cpp:702–1084`：`width`、`drawInRoi`、`fitToOneRow`（只挪可见窗口，
+不真的截断文本，这样光标周围还能继续编辑）、`getCursorPosition`（单行 / 多行两个分支）、
+`cursorArea`、`getCursorPositionInAdjacentLine`、`_updateCursorAreaInText`。
+`Text.fitToArea` 补在 `Text.cs`（`ui_text.cpp:524`）。
+
+**差异**：
+
+* 构造函数省掉参考的 `std::optional<SupportedLanguage>`（`ui_language.*` 尚未移植）。
+* 参考靠 `using Text::width` / `using Text::drawInRoi` 重新暴露被隐藏的重载；C# 按签名区分，不需要。
+* `Rect` 在 C# 是只读记录结构体，参考里的 `_cursorArea.x += ...` 改成局部变量算完再一次性赋值。
+* `Text` 去掉 `sealed`：参考的 `TextInput` 继承它。
+* `Text` 新增 `internal void SetBytes(...)`（参考的 `TextInput::set` 直接给 `_text` 赋值、不动字体）。
+* 两处参考会越界的地方加了界：`TextInput::fitToOneRow` 在 `maxWidth` 小于两倍截断符号宽时
+  `twiceTruncatedMaxWidth` 为负，会把 `_visibleTextBeginPos` 推过文本末尾；`Text::fitToArea` 的修剪循环在文本
+  只剩截断符号时会 `pop_back` 空串。两个都改成「退化成只剩省略号」而不是崩。
+
+### 修正：字体帧号少了 `0x20` 偏移 🐞
+
+写 `TextInput` 时量出 `FONT.ICN` 的 `'.'` 帧是 **15×13**、`'-'` 是 16×13，明显不是句点和连字符的尺寸。
+打印位图后确认：**归档里的帧 0 是 `' '`（0x20），帧 46 是 `'N'`、帧 33 是 `'A'`**，即
+`帧号 = ASCII - 0x20`。
+
+参考之所以看起来「帧号就等于字符码」，是因为 `game_assets.cpp:2555` 在加载 `FONT.ICN` / `SMALFONT.ICN` 时
+往数组前端插了 32 个空图，把下标对齐到 ASCII。C# 侧直接读 AGG 原始结构，没有这一步预处理，于是
+`FontCharHandler.GetChar( 'A' )` 查的是帧 65 —— 那其实是 `'a'`（`0x61 - 0x20`）的位置，**整体错位 32 个字符**，
+之前的测试全是自洽比较所以没暴露。
+
+修复：
+
+* `FontCharHandler.GlyphFrameOffset = 0x20`；`GetChar` 用 `character - GlyphFrameOffset` 取帧。
+* `GetCharacterLimit` 返回 `32 + Assets.GetImageCount( icn )`，与参考「预处理后的数组长度」一致，
+  这样 `IsValid` 的 `character <= _charLimit` 才等价。
+* 顺带补上 `GetWidth( byte )` 漏掉的 `isLineSeparator → 0` 分支，并去掉 `Math.Max( 1, ... )`
+  （参考就是原样返回 `image.x() + image.width()`），以及新增 `GetWidth( ReadOnlyStringView )` 重载
+  （`getCursorPositionInAdjacentLine` 要用）。
+
+`BitmapFont`（`FHeroes2.Assets.Fonts`，另一套给 App 用的渲染）本来就用 `IcnFirstCharacter = ' '` 做偏移，
+互相印证这个结论。
+
+1 条 `MultiFontText` 测试和 1 条新加的 `TextInput` 测试因为「截断符号宽 45 像素」的前提失效而调整
+（真实的 `...` 只有 3 个 3×4 的句点）。
+
+**测试**：`TextInputTests` 9 条（空输入框、短文本与纯 `Text` 逐像素一致、光标按前缀宽度移动、超宽截断、
+窄于截断符号不崩、多行宽度与 `width(maxWidth)` 一致、多行光标取行首、上下移动留在目标行内、
+点击换算最近边界）、`TextTests` 新增 3 条（`fitToArea` 高度预算、字形按 ASCII 取帧、字符上限含 32 个空帧）。
+
+### 黄色与灰色字体面（`FontGlyphTable`）✅
+
+`FontColor.Gray` / `FontColor.Yellow`（两种字号）现在可用。参考里这两个颜色**不是归档条目**：
+`game_assets.cpp:736` 的 `CopyICNWithPalette` 把 `FONT.ICN` / `SMALFONT.ICN` 逐帧复制一份、再把像素过一遍
+`PAL::GetPalette( YELLOW_FONT / GRAY_FONT )`，存进 `_icnVsSprite[ICN::YELLOW_FONT]` 等。
+
+C# 侧不重复搬 `pal.cpp` 的表，直接用已有的 `PaletteTable.Get( PaletteId.YellowFont / GrayFont )` +
+`ImageOps.ApplyPalette`，也就是 `FHeroes2.Assets.Fonts.BitmapFont.WithPalette` 已经在用的那套。
+
+`Game/Gui/FontGlyphTable.cs`：
+
+* 整表惰性生成并缓存，键是（`Assets.Current`, 字号, 颜色）——参考是启动时一次性生成，语义等价；
+  换归档包时键变了，旧表不再命中。
+* 转换时按**引用**去重（`ReferenceEqualityComparer`）：`FONT.ICN` 的若干帧在归档里指向同一张图，
+  同一张图过两次表就错色了（参考靠拷贝构造出独立对象，天然没这问题）。
+* 白色走 `PaletteId.Standard`，仍然直接返回归档缓存的那个 sprite（不复制），零开销。
+
+未搬的仍抛 `NotSupportedException`：渐变面要 `applyFontVerticalGradient` / `CreateContour`，
+`BUTTON_*_FONT` 要 `generateButtonAlphabet` 手工画字形 —— 全在 `ui_font.cpp`（七千多行，是独立的一大块）。
+
+**测试**：`TextTests` 新增 2 条（黄色/灰色面逐像素等于白色帧过调色板表、先取彩色面不污染归档缓存的白色帧），
+并把原来断言 `NormalYellow` 抛异常的用例改成断言渐变面仍然抛。
+
+### 大号字体面与 `ImageOps.Resize` ✅
+
+参考的 `WHITE_LARGE_FONT`（`game_assets.cpp:3054`）是把 `FONT.ICN` 每帧放大两倍、位置乘二，
+放大用的是 `fheroes2::Resize` / `SubpixelResize`（按画面缩放设置二选一）。
+
+`Fheroes2.Core/Imaging/ImageOps.cs` 新增两个 `Resize` 重载，对应 `engine/image.cpp:3087` 的最近邻路径：
+
+* `Resize( PixelBuffer, PixelBuffer )`：逐目标像素取 `x * widthIn / widthOut`，尺寸相同时退化成拷贝；
+* `Resize( Sprite, Sprite )`：在它之上再按同样的映射搬一遍透明度层。参考在「源有透明度层、目标没有」时
+  会按 `transformTable` 反查调色板变换，C# 侧没有全量 `transformTable`，这种情况直接抛而不是静默丢透明信息。
+
+`FontGlyphTable` 相应支持 `FontSize.Large`：文件仍是 `FONT.ICN`，`Enlarge` 造一张两倍大的 sprite 调 `Resize`；
+按调色板矩阵，大号只有白色（`ui_text.cpp:61` 里没有黄色/灰色大号），其余组合抛。
+`SubpixelResize` 未搬：它要把 RGB 重新映射回调色板索引（`GetPALColorId` 的 64³ 查表 + 游戏调色板），
+而 C# 侧没有「当前游戏调色板」的全局入口，画面本身也一律最近邻采样，所以这里固定用 `Resize`。
+
+**测试**：`SpriteOpsTests` +3 条（放大成块、透明度层同步放大、目标装不下透明度时报错）；
+`TextTests` +1 条（大号字形逐像素等于普通字形的 2 倍、位置乘二、黄色大号仍抛）。
+
+### 金色与银色渐变字体面（`generateGradientFont`）✅
+
+`FontColor.GoldenGradient` / `SilverGradient` 现在可用，普通号与大号都有。参考
+`game_assets.cpp:2433` 的 `generateGradientFont` 是四步：
+
+1. 每帧 `resize( w + 6, h + 6 )`，字形贴到 `( 3, 3 )`，位置 `setPosition( x - 2, y - 2 )`——那圈 3 像素的边是给描边留的；
+2. `applyFontVerticalGradient`（`ui_font.cpp:7151`）刷纵向渐变：只认可见像素（`transform == 0`），
+   索引小于 21 的是字身、按行取渐变色的当前行，大等于 21 的是白色基础字形自带的阴影、直接改成透明；
+   每行的颜色只由`|centerY - row|`决定，`centerY = max( 1, h / 2 - h % 2 )`；
+3. 依次 `Blit( CreateContour( out, 内描边色 ), out )`、`CreateContour( out, 0 )`、`CreateContour( out, 外描边色 )`——
+   顺序不能换，后画的一圈盖掉先画的一圈，最外面那圈才留得下来；
+4. 四组颜色参数按参考抄：金普通 `( 108, 133, 55, 62 )`、银普通 `( 10, 31, 29, 0 )`、
+   金大号 `( 108, 127, 55, 62 )`、银大号 `( 10, 26, 29, 0 )`。大号的渐变区间窄一点，
+   因为参考是从 `WHITE_LARGE_FONT`（已放大两倍的表）长的。
+
+为此 `Core/Imaging` 补了三个原语：
+
+* `ImageOps.BlitSprite( Sprite destination, Point, Sprite source )`——`fheroes2::Blit` 的**双层目标**分支
+  （`engine/image.cpp:1328`）：transparent 跳过；源像素带变换而目标像素可见时只把目标像素过一遍变换表；
+  其余情况连透明层一起拷。原来只有 `PixelBuffer` 目标那一条，描边叠不上去。
+* `ImageOps.CreateContour( Sprite, byte )`——`engine/image.cpp:1490`：给「不可见或阴影、且四邻里有可见像素」
+  的像素画一圈边，其余全透明。
+* `FontGlyphTable` 里的 `ApplyVerticalGradient` 与 `CreateGradientGlyph`（`applyFontVerticalGradient` /
+  `generateGradientFont` 的正文）。
+
+`SubpixelResize` 仍未搬：它要把 RGB 反查回调色板索引，而 C# 侧没有「当前游戏调色板」的全局入口。
+
+**测试**：`SpriteOpsTests` +3 条（描边只画在四邻、单层图报错、双层目标 blit 连透明层一起拷）；
+`TextTests` +1 条（四种渐变面的尺寸/锚点、可见像素只能是渐变区间或描边色、渐变确实有多个色阶；
+小号渐变仍抛），原来断言渐变面抛异常的用例改名 `UnportedFontSizesAreRejected`，只留按钮字体与「参考没有的面」。
+
+### 基础字形的启动期修补（`modifyBaseNormalFont` / `modifyBaseSmallFont`）✅
+
+归档里的英文字形有一批历史问题，参考在加载 `FONT.ICN` / `SMALFONT.ICN` 之后就地改一遍，改好的表再拿去派生
+黄/灰/大号/渐变面——所以修补必须发生在派生之前，这也是这轮的重点：`FontGlyphTable` 多了一层
+`GetBaseTable( size )`，白色面直接就是它，其余面从它派生，大号是它对每帧放大两倍。
+
+普通号（`ui_font.cpp:6852`）：
+
+* `$` 锚点 `( 0, 2 )`、`&` 锚点 `( 0, 1 )`、`-` 往下挪一像素（三者都重算阴影）；
+* `%` 左上两道多余的白线用 `FillTransform` 擦掉（`(5,0,5,1)`、`(6,2,2,1)`）；
+* `\` 归档里没有，新造 8×14 把 `/` 水平镜像到 `( 1, 0 )`，锚点抄 `/`；
+* 小写 `k` 先擦 `(4,1,5,8)`，再从 `K` 借五条横段拼回来；
+* `|` 也没有，新造 3×( `[` 高 + 3 )：上段抄 `[` 的竖笔，下段抄它带钩的尾巴。**注意它不重算阴影**。
+
+小号（`ui_font.cpp:7046`）：`$` 锚点 `( 0, -1 )`；`%` 擦两道白线——参考这里调的是**普通号**那套阴影参数
+（`(-1,2)` / `false`），照抄了这个不一致；`*` 归档里没有、用三条 `DrawLine` 手绘；`\` 把 `/` 的竖笔
+按行斜着抄四段；`k` 重拼（竖干抄 `l`、右下两笔抄 `X`、竖干右上那点抄 `a`）。
+
+顺带把同一加载分支里的 `ReplaceColorIdByTransformId( FONT.ICN, 50, 2 )` 也搬了：字形里有 3 个像素误用了
+调色板索引 50（正好是 UTF-8 里 `'2'` 的码），本该是阴影。
+
+为此 `Core/Imaging` 补了两个原语：
+
+* `ImageOps.FillTransform( Sprite, Rect, byte )`——`engine/image.cpp:2273`。名字只提变换层，其实颜色也一起清零，
+  这块变成「透明 + 指定变换表」；单层图整段不动。
+* `ImageOps.ReplaceColorIdByTransformId( Sprite, byte, byte )`——`engine/image.cpp:2724`。只改可见像素，
+  颜色留着不管，变换一旦不是 0 就不会以原色画出。
+
+修几个坑：`Sprite` 的构造函数**不会**把变换层置 1（只有 `Reset()` 会），新造的字形必须先 `Reset()`，
+否则整张图都是可见的黑色；`Sprite::resize` 不碰 `_x/_y`，所以参考里那些 `setPosition( x, x )` 是空操作，
+锚点沿用原帧。
+
+未搬（都在同一个加载分支，但需要本项目还没有的东西）：`replacePOLAssetWithSW`（波兰语资材的星号）、
+小号字体的 CRC 平移修补（要原始 ICN 数据算 CRC32）、CP1251 帧重排、两处
+`if ( getResourceLanguage() == french )`（法语资材把 `$`/`&`/`*` 换成了 CP1252 符号，要按 `DrawLine` 重画）。
+
+**测试**：`SpriteOpsTests` +2（`FillTransform` 连颜色一起清、`ReplaceColorIdByTransformId` 只碰可见像素）；
+`TextTests` +1（`\` 与 `/` 逐像素镜像、`|` 的尺寸与锚点、`$`/`&` 锚点、小号 `*`/`\`/`k` 的尺寸、
+派生面确实从修补后的表长出来、没点名的字形一个像素都没动）。
+
+### 按钮字体（`generateButtonAlphabet` / `updateButtonFont`）✅
+
+按钮字体不在归档里——`BUTTON_*_FONT` 不是 ICN 条目，参考是从零画的。这块搬完后，`FontCharHandler` 里
+再也没有 `NotSupportedException`，`ui_text.cpp:61` 那张「字号 × 颜色」矩阵算是全部落地。
+
+**基形**（`ui_font.cpp:4948` `generateGoodButtonFontBaseShape`）：64 个可打印 ASCII 字母，逐个用
+`DrawLine` / `SetPixel` / `Fill` 手绘，每个字母四周留 2 像素（`offset = 2`）给阴影和描边，整体左移 1 像素。
+这不是算法而是数据，共 295 条 `DrawLine`、64 条 `SetPixel`、1 条 `Fill`，所以是脚本从参考源码直接转写成
+`ButtonFontBaseShape.cs`（`offset`→`Offset`、`buttonGoodReleasedColor`→`GoodReleasedColour`，一一对应，
+可以并排比对），没有手抄。参考的 `resize( w + offset * 2, h + offset * 2 )` 后面固定跟一个 `reset()`，
+合并成 `Create( w, h, previous )`；每个字母是一个 `{ ... }` 块加一句 `released[N] = letter;`。
+
+**派生四面**（`ui_font.cpp:170` `updateButtonFont`）：白未按下加两层右下阴影 `(1,-1)` / `(2,-2)` 再套一圈
+`addContour` 描边和一层 `(-1,1)` 阴影；白按下把笔画 56→62、阴影翻到左上 `(1,-1)` / `(-1,1)` / `(-2,2)`；
+两个灰面在效果之后复制、只做 `ReplaceColorId`（56→30、62→36），所以灰面带着白面那圈描边。
+
+`addContour`（匿名命名空间的，`ui_font.cpp:96`）和 `CreateContour` 是两码事：它**不放大图**，
+只擦「离笔画一格」的透明像素，并跳过两个方向都没笔画的斜角，所以描边不会把阴影框住。它那套指针算术
+等价于「input 的下标比 output 少 `contourOffset.X + width * contourOffset.Y`」，循环上界保证不越界。
+
+**Core 补的原语**：`ImageOps.ReplaceColorId( Sprite, byte, byte )`——`engine/image.cpp:2707`，只看颜色层、
+不看变换层（半透明像素的底色也一起换）。
+
+**字号的索引约定**：位图字体加载时前置 32 个空帧，所以下标 = ASCII − 32；按钮字体本来就是整张 ASCII 表
+（`resize( asciiCharSetSize )`），下标 = 字符本身。`FontCharHandler.GetChar` 按字号选偏移，
+`GetCharacterLimit` 对按钮返回 128。顺带确认了参考只画大写：小写字母与 `$`、`@` 都是 1×1 透明占位。
+
+**测试**：`SpriteOpsTests` +1（`ReplaceColorId` 连半透明像素一起换）；
+`TextTests` 新增 `TheButtonFacesAreDrawnFromScratch`（`!` 的 6×14、四个面的笔画色 56/62/30/36、
+小写与 `$`/`@` 的 1×1 占位、上限 128、只有白面有描边），原来的 `UnportedFontSizesAreRejected`
+改名 `UnportedFontColoursAreRejected`，只剩「按钮没有黄/渐变」「参考本来没有灰色大号」两条。
+
+### 资材语言探测与译版字体修补（`getResourceLanguage` / `processICN`）✅
+
+字体加载分支里剩下的几条都挂在「这套资材是哪国语言版本」上，而参考没有语言标记文件，是把
+`FONT.ICN` 的**原始字节**算一遍 CRC32 去比一张已知表（`ui_language.cpp:41`）——认不出就是英文。
+
+**Core**：原来的 `PngCrc32` 私用工具提升成公开的 `Crc32`（`Io/Crc32.cs`，多项式 `0xEDB88320`、
+初值/末值取反同 zlib，与 `fheroes2::calculateCRC32` 一致），`PngReader` / `PngWriter` 跟着改调用点。
+`Compute` 支持分两段给数据，`Append` 暴露未取反的运行值。
+
+**资产层**：`Assets.TryReadRaw( name )` 对应 `AGG::getDataFromAggFile( name, false )`（解压后的原始条目，
+不缓存——调用方只有字体和语言探测几处）；`Assets.GetBaseArchiveImage( name, frame )` 对应
+`getDataFromAggFile( name, true )` 加一次解码，只走基础归档、绕开扩展包，供波兰资材换星号用。
+
+**探测**：`SupportedLanguage`（23 个值，顺序同参考）与 `ResourceLanguage`。后者缓存跟着
+`Assets.Current` 的引用走（参考是进程级静态量），没有归档或没有字体时返回英文。
+
+**`processICN` 的三类修补**（`game_assets.cpp:2461`，全部走 `Gui/FontAssetFixes`）：
+波兰 GoG 小号字体整体下移一像素（CRC `0xE9EC7A63`）；波兰资材的 `*` 被画成 `.`，从**基础归档**重取
+`42 - 32` 那一帧（只在小号不做，参考里那一步在 `assert( id == ICN::FONT )` 分支）；德语/意大利语资材用
+CP1252、俄语用 CP1251，帧序和 ASCII 对不上，要插空帧 + 对调 + 截断。
+
+**帧索引约定**：参考最后才在数组前插 32 个空帧让「字符码 = 帧号」，本项目用 `FontCharHandler.GlyphFrameOffset`
+偏移代替那一步，所以重排仍在「帧号 = 字符 − 0x20」空间里做，顺序是：CRC 分支（波兰下移 / 星号替换）→
+`modifyBase*Font`（修补）→ 重排 → 派生。`GetCharacterLimit` 因此下沉到 `FontGlyphTable`：它必须问**已排好**的
+表，否则俄语 224 帧 / 德语 221 帧 / 意大利语 218 帧的长度会算错。
+
+参考那几段是裸的 `insert` / `swap` / `erase`，数组短一点就越界（未定义行为），C# 侧按「表长得够不着那些下标
+就当没命中」处理，真实资材不会走到。
+
+**法语资材**（`ui_font.cpp:6897` / `7091`）：`$`、`&`、`*` 被换成 CP1252 符号，参考按 `DrawLine` 逐条重画；
+另外十个可打印字符（`#`、`<`、`>`、`@`、`^`、反引号、`{`、`}`、`~`、DEL）一律指到 `46 - 32` 那张 `.` 上。
+这也是数据不是算法，
+由一次性脚本从参考源码转写成 `Gui/FontFrenchRepairs.cs`（`icnVsSprite[N-32]` → 局部 `letter` 块），
+`FontRepairs.Apply` 多了 `SupportedLanguage` 参数，只在法语时调用。
+
+**测试**：`Core` 新增 `Crc32Tests`（zlib 校验值 `0xCBF43926`、空输入、分段拼装、`Append` 串接、单字节定值）；
+`Game` 新增 `FontAssetTests`（无归档时判英文、指纹就是原文 CRC、只有波兰 CRC 命中、星号帧号 10、
+`MoveUp` 抬锚点且共享图像、CP1251 的双对调与 162→224、字号参与 CP1251 判定、德语的 226→221 与七次对调、
+意大利语的 226→218 与借用字形、未命中返回原数组、法语普通号三符号重画 + 圆点、小号两符号重画 + 圆点）。
+
+### 面板按钮区（`Interface::ButtonsPanel`）✅
+
+图标条下面那一排按钮：`Game.AdventureMap.ButtonsPanel` 管布局与落位，`ButtonSpriteSet` 管帧的来源
+（`ButtonBase::_getReleased` / `_getDisabled`），`AdventureButtonStatus` 是 `_setButtonStatus` 的数据化。
+
+**几何**：参考的 `BorderWindow` 面积 `{0,0,144,72}`，四个 36×36 的按钮按 `area().width` 链着排第一行，
+第二行 `y += area().height`；起点是 `iconsArea.y + height + borderWidthPx`。`ADVBORD` 的这条边框是
+16 px，图标列 `176…304`，所以面板落在 `(480,320,144,72)`，底边 392，下面留空砖纹——与参考的
+`321…393`（bay 底 472）同构。
+
+**帧**：`ADVBTNS.ICN` 的 `2i / 2i+1`（`setICNInfo( icnbtn, 0..14, 1..15 )`），移动按钮另有三对：
+`2/3` 走路径、`16/17` 访问脚下对象、`18/19` 路径空闲。本资材只有 16 帧，后两对取不到——参考的
+`Assets::getImage` 越界也是返回空的 `errorImage`，所以那一格确实空着，不退回 2/3。
+
+**禁用**：`ButtonBase::_getDisabled` = 复制 released 帧 + `ApplyPalette( DARKENING )`；`ButtonSpriteSet`
+按帧号缓存副本，released 帧本身不动。五个按钮（王国 / 结束回合 / 冒险选项 / 文件 / 系统）参考从不禁用，
+只有移动 / 施法 / 下一个英雄看英雄状态，`WithoutHero` 就是全部 fallthrough 的那一支。
+
+**测试**：`ButtonsPanelTests` 9 条（面板与每格矩形、八个帧对、移动按钮三帧、`WithoutHero`、启用与禁用的
+落位颜色、按 `HeroMovementIcon` 取帧、缺帧留空、精灵源为空不画）+ `ButtonSpriteSetTests` 2 条真资材
+（36×36 与 16 帧且 `18` 号确实没有、`DARKENING` 只改副本）。基线 `adventure-map.png` 重建。
+
+### 怪物图层（`getMonsterSpritesPerTile` / `MINIMON`）✅
+
+冒险地图上那些游荡的怪物：`Game.AdventureMap.MonsterSpriteSet` 管帧的来源，`AdventureMapView` 管落位。
+参考里它们既不走对象层也不走英雄层，`maps_tiles_render.cpp` 专门有一段 `getMonsterSpritesPerTile`。
+
+**帧**：`MINI_MONSTER_IMAGE` 是 `MINIMON.ICN`，每只怪物九帧（站立 + 八个方向的攻击）。
+`Monster::GetSpriteIndex()` 是 `monsterId - 1`（`UNKNOWN` 是 0，没有自己的帧），所以站立帧号 =
+`( id - 1 ) * 9`，与英雄层的 `MINIHERO` 帧号 `/7`、`%7` 是同一路反解。瓦片这边拿不到怪物对象，只有数据字：
+`Mp2ObjectData.MonsterOf` 已按 `objectName1 >> 2 == Mons32` 判断并从 `BottomIcnImageIndex + 1` 取 id。
+
+**锚点**：`monsterImageOffset = (16, 30)`——先按 `( column * 32, row * 32 )` 定位瓦片左上角，再加锚点，
+最后加帧自带的 `offset`。这也是 `AdventureMapView.BlitTileSprite` 抽出 `Point anchor` 参数的原因：
+英雄传 `Point.Zero`，怪物传 `MonsterAnchor`。
+
+**三带**：怪物与英雄一样跨格（农民 31×28，站在 `(16,30)` 处会伸到下一行、右边一格），所以按 32 px 行带切
+三次画：`SHADOW_LAYER` 之后画「瓦片下方」的行、`OBJECT_LAYER` 之后画「瓦片内」的行、`TopLayer` 之后画
+「伸到上一行」的行。行带切分沿用的是英雄那套（`HeroBand` 顺势改名 `TileBand`），两条绘制路径共用
+`BlitTileSprite`。
+
+**可见范围**：`VisibleMonsterTiles` 取视口左右各放 1 格、上下各放 1 行（对应参考的 `ScanAroundObject`），
+再 clamp 到地图边界；怪物 id 为 0 的格子跳过。
+
+**与参考的偏差**：参考在 `drawMonsterAnimation` 里把 `MINIMON` 的帧劈成 body（`transform` 截到 1、去掉影子
+像素）和 shadow（`transform > 1`）两张，因为影子要压在所覆盖瓦片的对象**下面**。本移植直接整帧 blit，
+帧里烘焙好的影子跟着身体走——只要同一批瓦片上没有别的对象盖住影子，像素就一样（ADR-059）。
+
+**数据核对**：拿 `F:\game\fh2\maps` 前十张地图跑了一遍怪物 id 分布（临时探针，已删）：`Alteris.mp2`
+2335 个 `ActionMonster`，前四为 48 骷髅 964 / 49 僵尸 228 / 50 变异僵尸 222 / 57 骨龙 192；十张图里最大的
+id 是 65（火元素）。`MINIMON` 在本资材里到 66 还有帧、67 起就没有，所以现有地图全在覆盖范围内。
+
+**测试**：`MonsterLayerTests` 7 条（瓦片内绘制、下方行先于 ObjectLayer、上方行后于 TopLayer、
+被同格顶层对象遮挡、按瓦片怪物取帧、无精灵源不画、锚点常量）+ `MonsterSpriteSetTests` 2 条
+（帧号 `1→0 / 2→9 / 7→54 / 66→585`；真资材：农民 31×28、66 有帧、67 与 `UNKNOWN` 返回 `null`）。
+
+**基线**：`adventure-map.png` 重建（`170,810` → `183,591` 字节，sha256 `FC71E6B6…`）；与旧基线比
+17,819 / 307,200 个像素不同，差异图上的色块**全部**落在怪物身上，地形、对象、英雄、界面一处未动
+（`quantity1` 多为 0 的那批高 id 怪物也在 `MINIMON` 覆盖范围内）。
+
+### 空船（`getBoatSpritesPerTile` / `BOAT32` + `BOATSHAD`）✅
+
+水面上停着的空船。和怪物一样不属于对象层的通用路径：参考给它们单独一段
+`getBoatSpritesPerTile`，外加 `getBoatShadowSpritesPerTile` 负责影子。
+
+**编辑器帧与游戏帧**：MP2 文件里船的地面部件存的是**编辑器**用的水域图形——`Alteris.mp2` 里是
+`OBJNWAT2` 第 23 帧。参考在装载时把这个部件改写成 `BOAT32` 第 18 帧（`RIGHT` 方向，
+`Maps::setInitialObjectInfo`），所以游戏里那条 `OBJNWAT2` 帧根本不会被画。本移植照做：
+`Mp2ObjectData.IsBoat` 判断瓦片是船、`DrawGroundLayer` 跳过它的地面部件、`DrawBoats` 改画 `BOAT32`。
+**地图编辑器**（本项目自己的编辑器场景）不接船精灵源，于是保留编辑器帧——和原作编辑器的显示一致。
+
+**帧与锚点**：空船的帧是 `BOAT32` 第 18 帧，62×56，自带 offset `(-8,-54)`；锚点
+`BoatAnchor = (0, tileHeightPx - 11) = (0,21)`，所以船体相对瓦片左上角从 `y = -33` 开始——
+**比瓦片高 33 像素，向上伸两格**，这也是可见格要放 2 格、而不是像怪物那样只放 1 格的原因。
+
+**三带**：船体按 32 px 行带切成「瓦片下方 / 瓦片内 / 瓦片上方」三份，和怪物、英雄共用
+`BlitTileSprite`；`AboveTile` 那一支从精灵顶一直画到瓦片顶，所以跨两格也没问题。
+
+**影子**：`BOATSHAD` 第 18 帧，74×28，offset `(-38,-28)`——同样是 32 像素高的格子坐标系，
+锚点后落在 `(-38,-7)`，也就是船体左下、伸到左边一格。参考把它和别的 tile-unfit 影子一起放在
+`shadowImages`（Shadow 层之后、`OBJECT_LAYER` 之前），本移植在同一点整张 blit。
+
+**与参考的偏差**：参考按 `divideImageBySquares` 把船体和影子拆成若干格，逐格决定画或不画；本移植
+直接整张 blit（与英雄、怪物同一套取舍）。另外只画 `RIGHT` 一个方向：其余七个方向和左向的镜像帧由
+`Maps::Tile::setBoat` 在英雄上下船时设置，本项目还没有 `world`。
+
+**基线**：`Alteris.mp2` 的视野里一条船都没有（21 条船全在画面外），旧基线因此一模一样——`identical`。
+为了让船的像素有东西守住，新增第二张基线 `adventure-map-boats.png`：`Undeada.mp2` 以「最靠地图中心的
+城堡」居中，城堡西南角海面上正好停着一条空船（瓦片 `(37;38)`）。脚本的 `-MapFile` 现在也接受集合里的
+裸文件名，CI 里多一条同样参数的运行（结果写 `diff_adventure-map-boats.png`）。
+
+**测试**：`BoatLayerTests` 7 条（瓦片内落位、编辑器帧被替换、下方行先于 ObjectLayer、上方行后于
+TopLayer、影子先于船体、无精灵源保留编辑器帧、锚点常量）+ `BoatSpriteSetTests` 2 条（真资材：
+两个帧的尺寸与 offset、无数据时没有集合），全量 861 → 870。
+
+### 战争迷雾（`Maps::drawFog` / `CLOF32` + `CLOP32`）✅
+
+M4 的最后一块：雾。参考里雾不是一张覆盖图，而是**瓦片状态**——`Maps::Tile::_fogColors` 记每格对
+每种颜色是否已探索，`Tile::isFog( colors )` 是 `( fog & colors ) == colors`（对所有人类颜色都没
+探索才算雾），`drawFog()` 再按邻居的雾算出方向掩码来选边界件。三个新类型分工如下：
+
+* `MapFog`：每格一个字节（已探索的颜色位）+ 一份方向掩码。`Reveal` 是 `Maps::ClearFog` 的圆盘
+  （`getSquaredScoutingRadiusLimit` = `(d+1)^2 - d`，例外 `7→66`、`8→90`），`UpdateDirections` 是
+  `updateFogDirectionsInArea` 的整图版本（参考只刷脏矩形，那是缓存优化）。
+* `FogFrames`：`Resolve( direction, column, row, width )` 按参考 `drawFog` 的 if/else **原始顺序**
+  选帧——整瓦 `( column + row ) % 4`，其余落 `CLOP32` 的 34 帧边界表，`Flipped` 表示
+  `BlitOnTile( ..., revert )`。
+* `FogSpriteSet`：`CLOF32.TIL` 走 `TilFile`、`CLOP32.ICN` 走共用的 `IcnSpriteCache`；镜像用
+  `ImageOps.Flip` 并保留 offset，落位 `x = tileWidth - sprite.x() - sprite.width()`。
+
+**地图边界的雾会伸到地图外**：参考的 `updateFogDirection` 先把邻居缓存填 1、越界项不写，所以边缘
+瓦片始终认为自己外面还是雾。`IsFoggedOrOutside` 把这条写成了显式判断，`MapFogTests` 用「整张地图
+只有一格被揭示」的用例钉住四角与四边的掩码。
+
+**绘制顺序**：`AdventureMapView.Draw` = 地形 → 精灵（对象 / 怪物 / 英雄 / 船）→ **雾**。雾既然是最后
+一层，被它遮住的东西就不能等它来盖，必须先跳过：
+
+* 英雄、怪物：`IsUnderFog` → 不画（参考在 `Redraw` 里对两者都判 `isFog`）；
+* 船：`IsUnderFogWithUpperTile`，船体伸到上一格，只有两格都被遮才不画——否则半条船会浮在雾上。
+
+**雾上的城镇**：参考在雾之后对每个雾格调用 `drawByObjectIcnType( ..., OBJNTWBA )`，城堡再画
+`OBJNTOWN`，所以城镇轮廓在探明前就在雾上（精灵本体被雾「抹平」，只剩轮廓）。本移植的
+`DrawObjectParts` 遍历 add-on 链与瓦片自身，只画 `GroundIcnType` 匹配的部件。
+
+**初始侦察**：`MapFog.CreateForMap` 只揭示**人类颜色**的英雄半径 4 的圆盘（`AllHeroes::Scout`，
+`FogDiscoveryType::HEROES`）；`AdventureMapScene.CreateFog` 再把「聚焦城堡」按半径 5（`CASTLE`）揭示一次。
+参考的 `AllCastles::Scout` 会遍历所有城堡，但 MP2 的城堡表只有 x / y / 类型，`world_loadmap.cpp` 建
+出来的城堡全是 `PlayerColor::NONE`，没有归属可判，因此「聚焦城堡」是占位（与视口居中的占位规则同源）。
+
+**实测**：`Alteris.mp2`（`HumanPlayers = Blue`，Blue 英雄在 `(83;51)` 与 `(82;52)`）初始可见 **82** 格，
+包围盒 `(78;47)-(87;56)`，正是两个半径 4 的圆盘并集；截图里可见区是八边形、边界件接缝无空洞
+（另用合成地图 5×5 逐格验证过 `( column + row ) % 4` 与 34 帧边界件的几何）。
+
+**基线**：五张基线里只有两张冒险地图变了——雾把它们的大部分画面盖住：`adventure-map.png`
+183,591 → 136,059 字节、`adventure-map-boats.png` 175,095 → 128,054 字节；`editor.png`（不传 `MapFog`）
+与菜单 / 设置 / 场景三组**逐字节不变**。重建后立刻跑了不带 `-Update` 的校验，三张都是 `identical`。
+
+**测试**：`MapFogTests`（圆盘几何、`isFog` 的多颜色语义、边界掩码、`UpdateDirections` 的 `Unknown`）
++ `FogFramesTests`（整瓦与 34 帧边界件的判定顺序、`Flipped`）+ `FogSpriteSetTests`（真资材：`CLOF32`
+四张 32×32、`CLOP32` 34 帧与 offset）+ `FogLayerTests`（假雾瓦钉整瓦变体与「已探索格不被覆盖」；
+真资材钉「雾下英雄不留痕」与「城镇窗口在雾上重画」），共 57 条，全量 870 → **927**。
+
+**遗留**：没有脏矩形缓存（每次改雾要显式 `UpdateDirections`）；英雄移动、侦察兵与视野类法术的增量
+更新都还没有（等 `M7` 的英雄移动与 `world`）；MP2 没有雾位，「关雾」只能靠不传 `MapFog`，
+所以参考的「探索过但当前不可见」那一档暗雾也还没做。
+
+## 参考文件覆盖率盘点（2026-11-15 快照）
+
+M4 收尾时把参考源码逐文件核了一遍：`src/engine`（26 个）+ `src/fheroes2`（223 个）= **249** 个 `.cpp`，
+其中**已转 25、部分 40、未转 184**。`src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe`
+替代）。逐文件的落点、缺口说明与依赖顺序在 `docs/PLAN.md` 的「参考文件覆盖率（逐文件盘点）」；
+本处保留快照，**下次重算时新开一节，不改这张表**。
+
+| 目录 | 文件数 | 已转 | 部分 | 未转 |
+| --- | --- | --- | --- | --- |
+| `engine` | 26 | 7 | 7 | 12 |
+| `agg` | 6 | 1 | 2 | 3 |
+| `ai` | 9 | 0 | 0 | 9 |
+| `army` | 4 | 0 | 0 | 4 |
+| `audio` | 1 | 0 | 0 | 1 |
+| `battle` | 18 | 0 | 0 | 18 |
+| `campaign` | 3 | 0 | 0 | 3 |
+| `castle` | 11 | 0 | 0 | 11 |
+| `dialog` | 29 | 2 | 3 | 24 |
+| `editor` | 18 | 1 | 4 | 13 |
+| `game` | 28 | 2 | 3 | 23 |
+| `gui` | 33 | 8 | 10 | 15 |
+| `h2d` | 1 | 0 | 0 | 1 |
+| `heroes` | 12 | 0 | 0 | 12 |
+| `kingdom` | 14 | 0 | 2 | 12 |
+| `maps` | 17 | 3 | 6 | 8 |
+| `monster` | 3 | 0 | 1 | 2 |
+| `resource` | 4 | 1 | 0 | 3 |
+| `spell` | 4 | 0 | 0 | 4 |
+| `system` | 3 | 0 | 2 | 1 |
+| `world` | 5 | 0 | 0 | 5 |
+| **合计** | **249** | **25** | **40** | **184** |
+
+**已转 25 个**：`engine` 的 `agg_file` / `image_palette` / `image_tool` / `logging` / `pal` / `rand` /
+`timing`；`agg/agg`；`dialog/dialog_box` / `dialog_frameborder`；`editor/editor_ui_helper`；
+`game/game_mainmenu` / `game_delays`；`gui` 的 `cursor` / `ui_button` / `ui_dialog` / `ui_text` /
+`ui_tool` / `ui_window` / `ui_scrollbar` / `interface_font`；`maps/ground` / `mp2` / `mp2_helper`；
+`resource/resource`。
+
+**部分 40 个**：`engine` 的 `image` / `screen` / `localevent` / `audio` / `translations` / `tools` /
+`zzlib`；`agg/icn` / `m82`；`dialog` 的 `game_settings` / `selectscenario` / `language_selection`；
+`editor` 的 `interface` / `interface_panel` / `history_manager` / `object_popup_window`；`game` 的
+`assets` / `scenarioinfo` / `newgame`；`gui` 的 `ui_font` / `interface_gamearea` / `interface_radar` /
+`interface_icons` / `interface_border` / `interface_buttons` / `interface_cpanel` / `interface_events` /
+`ui_monster` / `statusbar`；`kingdom/color` / `race`；`maps` 的 `maps` / `maps_fileinfo` /
+`maps_objects` / `maps_tiles` / `maps_tiles_helper` / `maps_tiles_render`；`monster/monster`；`system`
+的 `players` / `settings`。
+
+**未转 184 个（按目录）**：
+
+* `engine`（12）：`audio_xmi2mid` `core` `dir` `h2d_file` `image_color_conversion` `math_tools`
+  `render_processor` `serialize` `smk_decoder` `system` `thread` `tinyconfig`
+* `agg`（3）：`bin_info` `mus` `xmi`
+* `ai`（9）：`ai_battle` `ai_battle_spell` `ai_common` `ai_hero_action` `ai_personality` `ai_planner`
+  `ai_planner_castle` `ai_planner_hero` `ai_planner_kingdom`
+* `army`（4）：`army` `army_bar` `army_troop` `army_ui_helper`
+* `audio`（1）：`audio_manager`
+* `battle`（18）：`battle_action` `battle_animation` `battle_arena` `battle_army` `battle_board`
+  `battle_bridge` `battle_catapult` `battle_cell` `battle_command` `battle_dialogs` `battle_grave`
+  `battle_interface` `battle_interface_settings` `battle_main` `battle_only` `battle_pathfinding`
+  `battle_tower` `battle_troop`
+* `campaign`（3）：`campaign_data` `campaign_savedata` `campaign_scenariodata`
+* `castle`（11）：`buildinginfo` `captain` `castle` `castle_building` `castle_building_info`
+  `castle_dialog` `castle_mageguild` `castle_tavern` `castle_town` `castle_well` `mageguild`
+* `dialog`（24）：`adventure` `arena` `armyinfo` `artifact` `audio` `buyboat` `chest` `file` `gameinfo`
+  `giftresources` `graphics_settings` `hotkeys` `interface_settings` `levelup` `marketplace` `quickinfo`
+  `random_map_generator` `recruit` `resolution` `selectcount` `selectfile` `selectitems`
+  `system_options` `thievesguild`
+* `editor`（13）：`castle_details` `daily_event_spec` `daily_events` `event_details` `language_window`
+  `mainmenu` `map_specs` `options` `rumor` `save_map` `secondary_skill_selection` `spell_selection`
+  `sphinx`
+* `game`（23）：`difficulty` `fheroes2` `game_auto_playtest` `game_campaign` `game_credits` `game_exit`
+  `game_highscores` `game_hotkeys` `game_init` `game_interface` `game_intro` `game_invalid_assets`
+  `game_io` `game_loadgame` `game_mainmenu_ui` `game_over` `game_startgame` `game_static`
+  `game_string` `game_tools` `game_video` `game` `highscores`
+* `gui`（15）：`interface_base` `interface_focus` `interface_status` `player_info` `skill_bar`
+  `ui_base` `ui_campaign` `ui_castle` `ui_keyboard` `ui_kingdom` `ui_mage_guild` `ui_map_interface`
+  `ui_map_object` `ui_option_item` `ui_slider`
+* `h2d`（1）：`h2d`
+* `heroes`（12）：`direction` `heroes` `heroes_action` `heroes_base` `heroes_dialog` `heroes_indicator`
+  `heroes_meeting` `heroes_move` `heroes_recruits` `heroes_spell` `route` `skill`
+* `kingdom`（12）：`experience` `kingdom_overview` `kingdom` `luck` `morale` `payment` `profit`
+  `puzzle` `resource_trading` `speed` `view_world` `week`
+* `maps`（8）：`map_format_helper` `map_format_info` `map_object_info` `map_random_generator`
+  `map_random_generator_helper` `map_random_generator_info` `position` `visit`
+* `monster`（2）：`monster_anim` `monster_info`
+* `resource`（3）：`artifact` `artifact_info` `artifact_ultimate`
+* `spell`（4）：`spell` `spell_book` `spell_info` `spell_storage`
+* `system`（1）：`bitmodes`
+* `world`（5）：`world` `world_loadmap` `world_object_uid` `world_pathfinding` `world_regions`
+
+**结论**：M4 之后缺的是 `world` + `kingdom` + `castle` + `army` + `battle` 这条主干，以及它前面的
+拾取与移动（`map_object_info` → `heroes_move` + `world_pathfinding` + `visit`）。`battle` 最大（18 个
+文件、约 620 KB），必须等 `army` 与 `castle` 落定才能动。两处与本期盘点同时修正的数字口径：合并
+`agg/xmi.cpp` 进未转（XMI→MIDI 没有对应实现，`MusicTrackCatalog` 只读目录），故 `agg` 是 1 / 2 / 3
+而不是早先口头报的 1 / 3 / 2；文件总数是 249（`src/engine` 26 + `src/fheroes2` 223），不是 248。

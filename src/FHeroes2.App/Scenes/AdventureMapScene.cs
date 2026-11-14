@@ -19,10 +19,12 @@ namespace FHeroes2.App.Scenes;
 /// The scene is deliberately thin: <see cref="AdventureMapView"/> knows how a tile becomes pixels,
 /// <see cref="MapFrame"/> owns the interface frame (<c>ADVBORD.ICN</c>, the 448x448 viewport, the radar
 /// bay and the panel bay), and the scene only puts them together. <see cref="IconBar"/> fills the top
-/// of the panel bay with the castle icons of the map; the buttons and the resource bar of the panel,
-/// fog, paths and the hero tiles are later milestones. The reference composition
-/// (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the interface) is what those
-/// will plug into.
+/// of the panel bay with the castle icons of the map and <see cref="ButtonsPanel"/> puts the eight
+/// interface buttons below them. The fog of war closes the map passes (<see cref="MapFog"/> over
+/// <c>CLOF32.TIL</c> / <c>CLOP32.ICN</c>), the resource bar, paths and the fog free reveal are later
+/// milestones.
+/// The reference composition (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the
+/// interface) is what those will plug into.
 /// </para>
 /// </summary>
 public sealed class AdventureMapScene : IScene
@@ -45,6 +47,8 @@ public sealed class AdventureMapScene : IScene
     private readonly MapFrame _mapFrame;
     private readonly IconBar _iconBar;
     private readonly IconSpriteSet? _iconSprites;
+    private readonly ButtonsPanel _buttons;
+    private readonly ButtonSpriteSet? _buttonSprites;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
@@ -60,7 +64,8 @@ public sealed class AdventureMapScene : IScene
         AdventureMapView view,
         Minimap minimap,
         MapFrame mapFrame,
-        IconSpriteSet? iconSprites)
+        IconSpriteSet? iconSprites,
+        ButtonSpriteSet? buttonSprites)
     {
         _frame = frame;
         _fonts = fonts;
@@ -70,6 +75,8 @@ public sealed class AdventureMapScene : IScene
         _mapFrame = mapFrame;
         _iconBar = new IconBar(mapFrame.Panel);
         _iconSprites = iconSprites;
+        _buttons = new ButtonsPanel(mapFrame.Panel);
+        _buttonSprites = buttonSprites;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
         _radar = mapFrame.Radar;
@@ -137,30 +144,40 @@ public sealed class AdventureMapScene : IScene
             // border, the radar and the panel bay never have to be repainted over it.
             MapFrame mapFrame = new(frame.Size, MapFrame.Load(assets));
 
+            // Without a kingdom there is no focus hero to start on, so the castle closest to the middle
+            // of the map stands in for the player's position; that is what makes the first screenshot of
+            // a map show its heart instead of an empty corner.
+            int middleX = map.Width / 2;
+            int middleY = map.Height / 2;
+            Mp2CastlePosition? focus = map.Castles
+                .OrderBy(castle => ((castle.X - middleX) * (castle.X - middleX))
+                                   + ((castle.Y - middleY) * (castle.Y - middleY)))
+                .FirstOrDefault();
+
+            // The fog of war is drawn for the colors the map declares as human, like Players::FriendColors()
+            // in the reference: a tile is fogged only when every one of them has not discovered it yet.
+            // A scenario with no human player at all (a map only meant for the editor) stays fog free.
+            PlayerColor observers = map.Info.HumanPlayers;
+            MapFog? fog = CreateFog(map, observers, focus);
+            FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
+
             // Both sets share one decoder cache, so keeping them apart is only about what they map.
             AdventureMapView view = new(
                 map,
                 tiles,
                 mapFrame.Viewport.Size,
                 objects,
-                HeroSpriteSet.TryCreate(assets));
+                HeroSpriteSet.TryCreate(assets),
+                MonsterSpriteSet.TryCreate(assets),
+                BoatSpriteSet.TryCreate(assets),
+                fog,
+                fogSprites);
 
             Minimap minimap = Minimap.Build(map);
 
-            // Without heroes there is no player position to centre on yet; the castle closest to the
-            // middle of the map takes that role, which is what makes the first screenshot of a map
-            // show its heart instead of an empty corner.
-            if (map.Castles.Count > 0)
+            if (focus is not null)
             {
-                int middleX = map.Width / 2;
-                int middleY = map.Height / 2;
-
-                Mp2CastlePosition nearest = map.Castles
-                    .OrderBy(castle => ((castle.X - middleX) * (castle.X - middleX))
-                                       + ((castle.Y - middleY) * (castle.Y - middleY)))
-                    .First();
-
-                view.CenterOn(nearest.X, nearest.Y);
+                view.CenterOn(focus.X, focus.Y);
             }
 
             AdventureMapScene scene = new(
@@ -169,12 +186,14 @@ public sealed class AdventureMapScene : IScene
                 view,
                 minimap,
                 mapFrame,
-                IconSpriteSet.TryCreate(assets));
+                IconSpriteSet.TryCreate(assets),
+                ButtonSpriteSet.TryCreate(assets));
 
             GameLog.Info(
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
                 $"{scene.View.MapPixelSize.Width}x{scene.View.MapPixelSize.Height} pixels, " +
-                $"{map.Castles.Count} castles, {map.Addons.Count} add-ons).");
+                $"{map.Castles.Count} castles, {map.Addons.Count} add-ons, " +
+                $"{scene.View.Fog?.CountFogged() ?? 0} tiles under the fog).");
 
             return scene;
         }
@@ -188,6 +207,36 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
     public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
+
+    /// <summary>
+    /// The fog of war at the start of a scenario, <see langword="null"/> when the map has no human
+    /// player and is therefore drawn without fog at all.
+    /// </summary>
+    /// <remarks>
+    /// The reference scouts around the heroes and the castles of the human colors
+    /// (<c>AllHeroes::Scout</c> and <c>AllCastles::Scout</c>). An MP2 castle carries no owner — the
+    /// castle table of the format is only <c>x</c>, <c>y</c> and the castle type, and
+    /// <c>world_loadmap.cpp</c> creates every one of them with <c>PlayerColor::NONE</c> — so the
+    /// kingdom is not modelled yet and <paramref name="focus"/> stands in for it: the tile the view
+    /// starts on is scouted with the castle radius, exactly what owning that castle would give.
+    /// </remarks>
+    private static MapFog? CreateFog(Mp2Map map, PlayerColor observers, Mp2CastlePosition? focus)
+    {
+        if (observers == PlayerColor.None)
+        {
+            return null;
+        }
+
+        MapFog fog = MapFog.CreateForMap(map, observers);
+
+        if (focus is not null)
+        {
+            fog.Reveal(focus.X, focus.Y, MapFog.CastleRevealDistance, observers);
+            fog.UpdateDirections(observers);
+        }
+
+        return fog;
+    }
 
     /// <summary>
     /// Paints the frame, the visible terrain, the icons of the panel, the minimap and the status bar.
@@ -205,6 +254,10 @@ public sealed class AdventureMapScene : IScene
         // The icons of the panel go on top of the brick: the bar starts at 176, one border below the
         // radar, which is where the brick starts as well.
         _iconBar.Draw(_frame.Pixels, _iconSprites, _view.Map.Castles);
+
+        // A scenario without a kingdom has no focused hero, which is the branch of _setButtonStatus
+        // that greys out the movement, the spell and the next hero button.
+        _buttons.Draw(_frame.Pixels, _buttonSprites, AdventureButtonStatus.WithoutHero);
 
         // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
         // of index 0 of KB.PAL and matches the empty border of the reference.

@@ -76,7 +76,7 @@ public static class PngReader
             uint storedCrc = BinaryPrimitives.ReadUInt32BigEndian(data[(position + 8 + length)..]);
             string name = Encoding.ASCII.GetString(type);
 
-            if (PngCrc32.Compute(type, payload) != storedCrc)
+            if (Crc32.Compute(type, payload) != storedCrc)
             {
                 throw new BinaryFormatException($"The PNG chunk '{name}' has an invalid CRC.");
             }

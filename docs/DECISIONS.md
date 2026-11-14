@@ -1816,3 +1816,218 @@ if (dirty.IsEmpty)
   怪物工具还没实现，按钮先画出来。
 * 九宫格按钮的悬停与按下反馈只有按下态（`_pressed` 用 `BrushSize` 与工具表判断），鼠标悬停没有做。
 
+## ADR-057：移植粒度定为函数级 1:1，全局状态用静态门面承接
+
+**背景**：ADR-001 定的是「资源解析逐字节对齐、工程结构重写」，实际执行时每个界面都要重新推断
+参考的布局意图（面板那次就是 `instrumentPanelHeight` 被写成 124 而不是 140），逐块对齐的成本高到
+「感觉不是办法」。于是量了一下两边：参考 478 个文件 / 179,135 行，本项目 222 个文件 / 34,395 行
+（生产 23,600 + 测试 10,778）；参考里 `goto` 0 处、`#define` 81 处、`template<` 64 处、类型转换 1542 处、
+`SDL_` 符号 234 个 / 406 处调用。语言与 SDL 的差异不是主要障碍，**全局状态才是**：3 个全局变量、
+10 个单例类型、832 处 `::Get()`，其中约 800 处在业务层。
+
+**决策**：
+
+1. **粒度定在函数级**：新代码与参考同名函数、同顺序、同常量（`updateTerrainTransitionOnTile`、
+   `makeInstrumentPanelBackground` 这类名字直接沿用），允许结构差异（分层、不可变类型、没有指针）。
+   不追求行级 1:1：行级翻译会继承宏、全局单例与 `SDL_Surface` 的原地改写语义，产物更难维护，
+   而且对拍需求一点没减。
+2. **全局状态第一版照抄，用静态门面**：`static X Current { get; set; }`，参考的
+   `Settings::Get().foo()` 写成 `Settings.Current.Foo`。第二版「改成 DI」的落点因此只剩门面的赋值处，
+   832 个调用点不动。
+3. **禁止可变 `static` 字段**（除门面的 `Current`）：状态挂在实例上，静态成员只能是常量表或纯函数。
+4. **只给参考里是单例的东西建门面**。已经是实例 + 构造函数传参的（`AssetBundle`、`AudioPlayer`、
+   `Pcg32`、`AdventureMapScene`、`EditorScene`）不再套门面——没有 832 处调用点要照顾，多一层只多一个全局。
+5. **不引入 DI 容器**：`Current` 由 `GameHost` 在组合根赋值，换实现就是换指针对；注入框架留在将来真有
+   需要时再说（游戏里每帧 new 的对象不适合容器解析）。
+
+**后果**：
+
+* 清单与四条规矩进 `ARCHITECTURE.md` 的「全局状态与门面」一节；数据类（`World`、`EditorInterface`、
+  `BattlePlanner`）不造 `IWorldProvider` 之类接口，`Current` 指向有 owner 的实例。
+* 粒度本身是**总纲级**约束，`PLAN.md` 的「总体原则」同步加了第 3 条（起初漏了，只在 ADR 与
+  `ARCHITECTURE.md` / `PROGRESS.md` / `REFERENCE.md` 里落过）。今后改移植粒度时，`PLAN.md` 与
+  `ARCHITECTURE.md` 必须一起改，ADR 的「后果」里要显式列出这两份文档。
+* 静态门面是进程级共享状态：动它的测试要挂进同一 collection，场景切换要显式重置 `Current`。
+* `GameLog.MinimumLevel` 是现存唯一可变静态，收进门面之前不再新增。
+* 备份点 `backup/pre-facade-2026-11-14`，改造在新分支 `refactor/global-facade` 上进行，`main` 保持可运行。
+* 全量行级 1:1 明确否决：参考 54% 的行数是业务逻辑（`battle`/`game`/`heroes`/`dialog`/`ai`），
+  逐行搬过来只会得到 9 万行无法测试的静态类。
+
+## ADR-058：按钮面板照 `interface_buttons.cpp` 摆八格——禁用就套 `DARKENING`，缺帧就留空
+
+**背景**：ADR-055 之后右侧面板只有图标条，按钮区（参考 `Interface::ButtonsPanel`）还是砖纹。
+参考里这块是八个 36×36 的 `Button`，两行四列，`ADVBTNS.ICN` 的 `2i / 2i+1` 帧对，外加一个只做
+拖动把手的 `BorderWindow`：
+
+* 构造：`setICNInfo( icnbtn, 0..14, 1..15 )`，`icnbtn` 是 `ADVBTNS` 或 `ADVEBTNS`（邪恶界面）。
+* 布局：`x = GetArea().x`、`y = GetArea().y`，第一行四个按钮按 `area().width` 链着排，第二行
+  `y += area().height` 再排四个；`BorderWindow` 的面积就是 `{0,0,144,72}`。
+* 位置：`game_interface.cpp` 里 `_buttonsPanel.SetPos( px, _iconsPanel.GetArea().y + _iconsPanel.GetArea().height + borderWidthPx )`。
+* 状态：`_setButtonStatus()` 每次重画都算一遍——没有聚焦英雄时，移动 / 施法 / 下一个英雄三个按钮
+  `disable()`，其余五个从不禁用。移动按钮还会在 `2/3`（走路径）、`16/17`（访问脚下对象）、
+  `18/19`（路径空闲）三对帧之间切换。
+* 禁用外观：`ButtonBase::_getDisabled()` = 复制 released 帧 + `ApplyPalette( DARKENING )`。
+
+**决策**：
+
+1. **`Game.AdventureMap.ButtonsPanel` 只做布局与落位**：`Area` = `(480,320,144,72)`，`AreaOf( button )`
+   给出每格 36×36；`BorderWindow` 的拖动把手、悬停、点击都留给以后的鼠标层——标准界面下参考也
+   不画边框，按钮直接落在砖纹上。
+2. **起点取图标列底 + 一条边框（320）**：图标列是 `176…304`，参考是
+   `iconsArea.y + iconsArea.height + borderWidthPx`，`ADVBORD` 的这条边框是 16 px，所以 304 + 16。
+   按钮区底 392，下面是空的砖纹，与参考一致（参考 `321…393`，bay 底 472）。
+3. **状态是数据**：`AdventureButtonStatus` 只记移动 / 施法 / 下一个英雄的启用与移动按钮的三个含义，
+   五个从不禁用的按钮不占标志位；`WithoutHero` 就是 `currentHero == nullptr` 时所有分支 fallthrough
+   的结果。参考在 `_redraw` 里现算，这里由调用方给——本场景还没有王国。
+4. **缺帧就留空，不退回 2/3**：`Assets::getImage` 越界返回空的 `errorImage`，参考于是画不出东西；
+   本项目 `IcnSpriteCache` 返回 `null`，`ButtonsPanel.Draw` 直接跳过。本资材的 `ADVBTNS.ICN` 只有
+   16 帧，所以没有英雄时移动按钮那一格是空的——这是「照着参考跑同一份资材」的真实结果，不是漏画。
+5. **禁用帧有缓存**：`ButtonSpriteSet` 按帧号存一份 `DARKENING` 副本，released 帧本身不动
+   （参考也是复制后再套调色板）。
+
+**后果**：
+
+* `adventure-map.png` 重建（`168,802` → `170,810` 字节，sha256 `AD9B2E39…`）：面板在图标条下多了
+  两行按钮，第一行第二个是空格，第三格城堡、第四格施法，第二行沙漏 / 帐篷 / 磁盘 / 电脑。
+* `ButtonsPanelTests` 11 条：面板与每格矩形、八个帧对、移动按钮三帧、`WithoutHero` 的五个 true /
+  三个 false、启用与禁用的落位颜色、按 `HeroMovementIcon` 取帧、缺帧留空、精灵源为空不画；
+  另 2 条真资材：36×36 与 16 帧（含 `18` 号帧确实没有）、`DARKENING` 只改副本。
+* 面板剩下的日期/资源状态栏（`Interface::StatusPanel`）仍空着，它要王国与 `world` 的日期。
+
+## ADR-059：怪物图层整帧 blit——锚点 `(16,30)`、帧号 `(id-1)*9`，影子跟着身体走
+
+**背景**：ADR-054 之后冒险地图的地形、对象层、英雄层与右侧面板都齐了，缺的是地图上那些游荡的怪物。
+参考里它们不属于对象层，`maps_tiles_render.cpp` 的 `getMonsterSpritesPerTile` 单独处理：
+
+* 瓦片性质是 `MP2::OBJ_MONSTER`，生物 id 来自 `bottomIcnImageIndex + 1`（`objectName1 >> 2 == Mons32`）。
+* 帧号是 `Monster::GetSpriteIndex() * 9`，即 `( monsterId - 1 ) * 9`——`MINIMON.ICN` 每只怪物九帧，
+  站立一帧、八个方向的攻击各一帧；`Monster::UNKNOWN` 是 0，没有自己的帧。
+* 落位锚点 `monsterImageOffset = ( 16, 30 )`：先按瓦片左上角定位，再加锚点，最后加帧自带的 `offset`。
+* 精灵跨格（农民 31×28 站在 `(16,30)`，会伸到右边一格和下一行），所以和英雄一样走
+  `DivideImageBySquares` 那套：按 32 px 行带切成「瓦片下方 / 瓦片内 / 瓦片上方」三份，分别画在
+  Shadow 层之后、`OBJECT_LAYER` 之后、`TopLayer` 之后。
+* `drawMonsterAnimation` 还会把帧劈成 body（`transform` 截到 1，去掉影子像素）与 shadow
+  （`transform > 1`）两张，因为影子要压在**它覆盖的瓦片上的对象下面**。
+* 被攻击时要播攻击动画，这需要知道周围英雄的位置；没有游戏状态时永远画站立帧。
+
+**决策**：
+
+1. **只做 `MonsterSpriteSet` 一层抽象**：`IMonsterSpriteSource.GetMonster( id )` 与英雄层的
+   `IHeroSpriteSource` 同构，共用 `IcnSpriteCache`（一个文件名解码一次）。`id ≤ 0`、越界、缺资材都给
+   `null`，`AdventureMapView` 遇到 `null` 直接跳过——与参考 `Assets::getImage` 越界返回空 `errorImage`
+   等价，与 ADR-058 的缺帧处理同一条规矩。
+2. **帧号按 `( id - 1 ) * 9` 现算，不做映射表**：`MonsterSpriteSet.FrameOf` 是纯函数
+   （`1→0 / 2→9 / 7→54 / 66→585`），`Mp2MonsterName` 的名字表只用于日志与探针，不参与取帧。
+3. **锚点做成 `AdventureMapView.MonsterAnchor` 常量，并把 `BlitTileSprite` 的锚点参数化**：
+   英雄传 `Point.Zero`，怪物传 `(16,30)`。原来英雄专用那条路径改名 `TileBand` / `BlitTileSprite`，
+   两条绘制路径共用同一份行带裁剪算术，不复制第二份。
+4. **整帧 blit，不拆 body / shadow**：`MINIMON` 帧里烘焙好的影子跟着身体一起画。像素等价的前提是
+   「同一批瓦片上没有别的对象压在影子上」；本移植还没有「怪物站在树/建筑前」这类逐像素遮挡需求，
+   拆帧要引入 `transform` 层复制、两次 blit 与两套行带，收益是影子的层次更准，代价是路径翻倍。
+   先在 `DrawMonsters` 的 XML 注释里写清前提与偏差，等真需要时再补。
+5. **只画站立帧**：攻击动画需要英雄位置，本项目还没有 `world`；参考在没有 `Game::GetFocus` 时也是站立帧。
+
+**后果**：
+
+* `adventure-map.png` 重建（`170,810` → `183,591` 字节，sha256 `FC71E6B6…`）。与旧基线的差异是
+  17,819 / 307,200 个像素，差异图（`tools-output/baseline/diff_adventure-map-en.png`）上的色块全在怪物
+  身上，地形 / 对象 / 英雄 / 界面一处未动，说明这次只多画了怪物。
+* `MonsterLayerTests` 7 条 + `MonsterSpriteSetTests` 2 条（真资材：农民 31×28、66 有帧、67 与
+  `UNKNOWN` 无帧），全量测试 852 → 861。
+* 数据核对：`Alteris.mp2` 有 2335 个 `ActionMonster`（48 骷髅 964、49 僵尸 228、50 变异僵尸 222、
+  57 骨龙 192），`F:\game\fh2\maps` 前十张图里最大 id 是 65（火元素）；本资材 `MINIMON` 到 66 还有帧，
+  现有地图全在覆盖范围内。
+* 剩下的怪物相关行为：被攻击时播动画（要英雄位置）、怪物在雷达上是另一套颜色（`Radar` 已按对象类型
+  取色）、点击怪物弹出对话框，都留到有 `world` 的里程碑。
+
+## ADR-060：空船用 `BOAT32`/`BOATSHAD` 第 18 帧，锚点 `(0,21)`，并新增一张守船的基线
+
+**背景**：冒险地图上还剩水面上的空船没画。它在 MP2 文件里长得和别的地面对象一样——地面部件存的是
+编辑器用的水域图形（`Alteris.mp2` 里是 `OBJNWAT2` 第 23 帧）——所以通用对象路径一直在画那张编辑器帧。
+参考的 `maps_tiles_render.cpp` 给它单独一条路径：
+
+* `getBoatSpritesPerTile`：帧号来自主对象部件的 `icnIndex`，`255` 视作 `18`，大于 `128` 表示左向的镜像帧，
+  实际帧号是 `icnIndex % 128`；落位 `boatSpriteOffset = ( sprite.x(), tileHeightPx - 11 + sprite.y() )`，
+  镜像时 x 换成 `tileWidthPx + 1 - sprite.x() - sprite.width()`。
+* `getBoatShadowSpritesPerTile`：影子来自 `BOATSHAD` 的同一帧号，落位 `( shadow.x(), tileHeightPx - 11 + shadow.y() )`。
+* 两者都走 `divideImageBySquares`：船体按行带分三段画（`bottomBackgroundImages` → `bottomImages` →
+  `topImages`），影子进 `shadowImages`。
+* 装载时 `Maps::setInitialObjectInfo` 把船的主对象部件改写成 `BOAT32`，所以文件里那个编辑器帧不会被画。
+
+**决策**：
+
+1. **空船固定用第 18 帧**。`setInitialObjectInfo` 对每一条从 MP2 读进来的船都写 `18`（`RIGHT`），文件里
+   并没有别的方向可用；其余七个方向和镜像帧只由 `Maps::Tile::setBoat` 在英雄上下船时写入，而本项目
+   还没有 `world`。`BoatSpriteSet.DefaultFrame = 18` 把这件事写在名字里，而不是去猜 `icnIndex % 128`。
+2. **`IBoatSpriteSource` 与影子成对**。`GetBoat()` / `GetShadow()` 各一个，与 `IHeroSpriteSource.GetShadow()`
+   同构；两个 ICN 共用 `IcnSpriteCache`。没有数据时 `TryCreate` 给 `null`，视图就不画船。
+3. **跳过编辑器帧只发生在有船精灵源的视图**。`DrawGroundLayer` 的条件是
+   `!(_boats is not null && Mp2ObjectData.IsBoat(tile))`：游戏视图用 `BOAT32` 顶替，本项目的编辑器场景
+   不传船精灵源，于是仍然显示编辑器帧——和原作编辑器看到的一致，也避免让编辑器基线无故变脸（ADR-051）。
+4. **锚点 `(0, 21)`、可见格放 2 格**。船体 offset `(-8,-54)` 加上锚点后从瓦片上方 33 像素开始，
+   比一格还高，所以 `VisibleSpriteTiles(2)`；影子落在 `(-38,-7)`，最多伸到左边两格，同样被 2 格覆盖。
+5. **影子整张 blit、和 Shadow 层一起画**。参考逐格拆分是为了在船上盖着别的对象时让影子先落地；
+   本移植的场景里船停在开阔水面上，整张画的结果逐像素相同（与 ADR-059 的取舍同理）。
+6. **新增第二张基线**。`Alteris.mp2` 居中后的视野里 21 条船一条都看不见，`adventure-map.png` 因此对船
+   完全没有约束力（改完仍是 `identical`）。用 `Undeada.mp2`（72×72，城堡 `(38;35)`，船在 `(37;38)`）
+   生成 `adventure-map-boats.png`，`VerifyAdventureMapBaseline.ps1` 的 `-MapFile` 接受集合内的裸文件名，
+   CI 里多一条带 `-MapFile` / `-Baseline` 的运行。
+
+**后果**：
+
+* 新文件 `adventure-map-boats.png`（`175,095` 字节，sha256 `D120E5BA…`），CI 比对 300,512 个像素、
+  忽略 6,688 个外壳像素，与 `adventure-map.png` 用的是同一套框架区域。
+* `adventure-map.png` 与 `editor.png` 都不变：前者视野里没有船，后者不接船精灵源。
+* `BoatLayerTests` 7 条 + `BoatSpriteSetTests` 2 条（真资材：`BOAT32[18]` 62×56/`(-8,-54)`、
+  `BOATSHAD[18]` 74×28/`(-38,-28)`），全量测试 861 → 870。
+* 遗留：英雄上下船时船要换方向、船体要有动画、`BOATSHAD` 的逐格遮挡（参考自己都标着 TODO），
+  这些都要等 `world` 与英雄移动。
+
+## ADR-061：战争迷雾按 `Maps::drawFog` 移植——`CLOF32` 整瓦 + `CLOP32` 边界件，雾后重画城镇
+
+**背景**：M4 的地形、对象、怪物、英雄与船都齐了，缺雾。参考里雾是**瓦片状态**而不是一层图像：
+`Maps::Tile::_fogColors` 存每格对每种颜色「已探索」的位，`Players::FriendColors()` 给观察者集合，
+`Tile::isFog( colors )` 是 `( fog & colors ) == colors`（对**所有**人类颜色都没探索才算雾）；
+`Maps::drawFog()`（`maps.cpp`）在 `GameArea::Redraw` 的最后一步盖 `CLOF32` 的 4 张整瓦与 `CLOP32`
+的 34 帧边界件，然后对每个雾格重画 `OBJNTWBA`，城堡再画 `OBJNTOWN`——所以城镇的轮廓在探明前就可见。
+本项目的 `Mp2TileInfo` 不带雾位，也没有 `Maps::Tile` 那种可变世界状态，雾必须自己建。
+
+**决策**：
+
+1. **`MapFog` 存「每格对每种颜色是否已探索」的字节，方向掩码另存一份**。`IsFogged( c, r, colors )`
+   就是 `Tile::isFog( colors )`；`GetDirection( c, r )` 是 `Tile::getFogDirection()`，`Unknown` 表示
+   该格对当前颜色可见、不画雾。参考的 `updateFogDirectionsInArea` 只更新脏矩形，那是缓存优化，
+   这里用 `UpdateDirections( colors )` 一次算全图（当前最大地图 144×144，可忽略）。
+2. **八个 `if` 的顺序与「地图外算已雾」都照 `maps_tiles_helper.cpp` 的 `updateFogDirection`**：
+   参考先把缓存填 1、越界项不写，所以边界瓦片的雾会「伸到地图外」；`IsFoggedOrOutside` 把这条写成
+   显式判断。`FogDirection` 的位与参考的 `DIRECTION_*` 一一对应（中心 + 八方向），`FogDirections`
+   给 `All`、`CenterRow`、四个角等常用复合掩码。
+3. **`FogFrames.Resolve` 保持参考 if/else 的原始判定顺序**：整瓦取 `( column + row ) % 4`，其余落
+   34 帧边界表；`Flipped` 对应 `BlitOnTile( ..., revert )`，落位 `x = tileWidth - sprite.x() - sprite.width()`。
+   非法掩码回退整瓦（参考的 `switch` 默认分支）。
+4. **`IFogSpriteSource` / `FogSpriteSet.TryLoad` 与 `IHeroSpriteSource` 同构**：`CLOF32.TIL` 走
+   `TilFile`、`CLOP32.ICN` 走共用的 `IcnSpriteCache`；镜像用 `ImageOps.Flip` 并保留 offset；缺数据或
+   解码失败给 `null`，视图不画雾（编辑器就是这样，见 ADR-058 的缺帧规矩）。
+5. **雾是最后一层，被它遮住的东西先跳过而不是靠覆盖**。`Draw` 的三段是地形 → 精灵（对象/怪物/英雄/船）
+   → 雾；英雄与怪物在 `IsUnderFog` 时 `continue`，船用 `IsUnderFogWithUpperTile`（船伸到上一格，
+   两格都被遮才跳过），与参考 `isTileUnderFog && isUpperTileUnderFog` 一致。
+6. **初始侦察 = 人类颜色英雄半径 4 的圆盘**（`AllHeroes::Scout`，`FogDiscoveryType::HEROES`）；
+   `AdventureMapScene.CreateFog` 再用半径 5（`CASTLE`）揭示一次「聚焦城堡」。参考的 `AllCastles::Scout`
+   对每个城堡都做，但 MP2 的城堡表只有 x / y / 类型，`world_loadmap.cpp` 建出来的城堡全是
+   `PlayerColor::NONE`，没有归属可判，所以只能把「玩家位置」当城堡用一次。
+7. **圆盘几何照 `getSquaredScoutingRadiusLimit`**：`( d + 1 ) ^ 2 - d`，例外 `7 → 66`、`8 → 90`
+   （神器能堆到的侦察值）。
+
+**后果**：
+
+* 两张冒险地图基线必须重建（雾改变了可见区）：`adventure-map.png` 183,591 → **136,059** 字节，
+  `adventure-map-boats.png` 175,095 → **128,054** 字节；`editor.png` 逐字节不变（编辑器不传 `MapFog`），
+  菜单/设置/场景三组也不变。重建后立即跑了不带 `-Update` 的校验，三张都是 `identical`。
+* 新增 `MapFogTests` / `FogFramesTests` / `FogSpriteSetTests` / `FogLayerTests` 共 **57** 条
+  （真资材：`CLOF32` 四张 32×32、`CLOP32` 34 帧与 offset；`FogLayerTests` 用假雾瓦钉住整瓦变体、
+  「已探索格不被覆盖」「雾下英雄不留痕」与「城镇窗口在雾上重画」）。全量测试 870 → **927**，0 警告。
+* 实测 `Alteris.mp2`（`HumanPlayers = Blue`，Blue 英雄在 `(83;51)` / `(82;52)`）：初始可见 **82** 格，
+  包围盒 `(78;47)-(87;56)`，即只有半径 4 的圆盘 + 聚焦城堡的半径 5。
+* 遗留：没有脏矩形缓存；英雄移动、侦察兵与视野类法术都没有增量更新（每次改 `MapFog` 要显式
+  `UpdateDirections`）；MP2 没有雾位，「关雾」只能靠不传 `MapFog`，所以还做不到参考的「探索过的雾变暗」。
+

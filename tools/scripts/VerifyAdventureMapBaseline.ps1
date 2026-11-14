@@ -36,6 +36,11 @@
 
 .EXAMPLE
     pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -RequireData -DataDirectory 'D:\HoMM2'
+
+.EXAMPLE
+    # The second frame: Undeada.mp2 centres on a castle next to an empty boat, which the Alteris view
+    # does not contain, so the boat layer needs a baseline of its own.
+    pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png
 #>
 param(
     [Parameter(Mandatory = $false)]
@@ -49,7 +54,8 @@ param(
     [Parameter(Mandatory = $false)]
     [string] $WorkDirectory = (Join-Path $PSScriptRoot '../../tools-output/baseline'),
 
-    # Map file the frame is built from; empty means the first installed map called Alteris.mp2.
+    # Map file the frame is built from, an absolute path or a file name below the map collection;
+    # empty means the first installed map called Alteris.mp2.
     [Parameter(Mandatory = $false)]
     [string] $MapFile = '',
 
@@ -120,19 +126,25 @@ if (-not $MapFile) {
     # The map collection lives in a folder whose name depends on the installation; the maps
     # themselves do not. Alteris ships with the original game, is 108x108 and has water, coast,
     # grass, dirt and sand in one frame, which makes it a good regression subject.
+    $MapFile = 'Alteris.mp2'
+}
+
+if (-not (Test-Path -LiteralPath $MapFile)) {
+    # A bare file name is looked up in the collection, so a second baseline can name a map that is
+    # somewhere else: the boat frame comes from Undeada.mp2, whose viewport holds an empty boat.
     $mapCandidates = @(
-        (Join-Path $data 'maps/Alteris.mp2'),
-        (Join-Path $data 'Maps/Alteris.mp2')
+        (Join-Path $data "maps/$MapFile"),
+        (Join-Path $data "Maps/$MapFile")
     )
 
     $MapFile = $mapCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $MapFile) {
         if ($RequireData) {
-            Write-Host ("error  'Alteris.mp2' was not found below '{0}'; pass -MapFile." -f $data)
+            Write-Host ("error  '{0}' was not found below '{1}'; pass -MapFile." -f $MapFile, $data)
             exit 1
         }
 
-        Write-Host 'skip   adventure map baseline (Alteris.mp2 is not installed; pass -MapFile)'
+        Write-Host ("skip   adventure map baseline ({0} is not installed; pass -MapFile)" -f $MapFile)
         exit 0
     }
 }
