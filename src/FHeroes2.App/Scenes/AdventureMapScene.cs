@@ -18,8 +18,9 @@ namespace FHeroes2.App.Scenes;
 /// <para>
 /// The scene is deliberately thin: <see cref="AdventureMapView"/> knows how a tile becomes pixels,
 /// <see cref="MapFrame"/> owns the interface frame (<c>ADVBORD.ICN</c>, the 448x448 viewport, the radar
-/// bay and the panel bay), and the scene only puts them together. The icons, the buttons and the
-/// resource bar of the panel, fog and heroes are later milestones; the reference composition
+/// bay and the panel bay), and the scene only puts them together. <see cref="IconBar"/> fills the top
+/// of the panel bay with the castle icons of the map; the buttons and the resource bar of the panel,
+/// fog, paths and the hero tiles are later milestones. The reference composition
 /// (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the interface) is what those
 /// will plug into.
 /// </para>
@@ -42,6 +43,8 @@ public sealed class AdventureMapScene : IScene
     private readonly Minimap _minimap;
     private readonly MapScrollController _mouse;
     private readonly MapFrame _mapFrame;
+    private readonly IconBar _iconBar;
+    private readonly IconSpriteSet? _iconSprites;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
@@ -56,7 +59,8 @@ public sealed class AdventureMapScene : IScene
         GameFonts? fonts,
         AdventureMapView view,
         Minimap minimap,
-        MapFrame mapFrame)
+        MapFrame mapFrame,
+        IconSpriteSet? iconSprites)
     {
         _frame = frame;
         _fonts = fonts;
@@ -64,6 +68,8 @@ public sealed class AdventureMapScene : IScene
         _minimap = minimap;
         _mouse = new MapScrollController(view);
         _mapFrame = mapFrame;
+        _iconBar = new IconBar(mapFrame.Panel);
+        _iconSprites = iconSprites;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
         _radar = mapFrame.Radar;
@@ -157,7 +163,13 @@ public sealed class AdventureMapScene : IScene
                 view.CenterOn(nearest.X, nearest.Y);
             }
 
-            AdventureMapScene scene = new(frame, fonts, view, minimap, mapFrame);
+            AdventureMapScene scene = new(
+                frame,
+                fonts,
+                view,
+                minimap,
+                mapFrame,
+                IconSpriteSet.TryCreate(assets));
 
             GameLog.Info(
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
@@ -177,7 +189,9 @@ public sealed class AdventureMapScene : IScene
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
     public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
 
-    /// <summary>Paints the frame, the visible terrain, the minimap and the status bar.</summary>
+    /// <summary>
+    /// Paints the frame, the visible terrain, the icons of the panel, the minimap and the status bar.
+    /// </summary>
     public void DrawFrame(in DiagnosticsState state)
     {
         // The frame is painted first and the map on top of it: ADVBORD already holds the border, the
@@ -187,6 +201,10 @@ public sealed class AdventureMapScene : IScene
         _frame.InvalidateAll();
         _mapFrame.Draw(_frame.Pixels, _dark);
         _mapFrame.DrawPanel(_frame.Pixels);
+
+        // The icons of the panel go on top of the brick: the bar starts at 176, one border below the
+        // radar, which is where the brick starts as well.
+        _iconBar.Draw(_frame.Pixels, _iconSprites, _view.Map.Castles);
 
         // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
         // of index 0 of KB.PAL and matches the empty border of the reference.

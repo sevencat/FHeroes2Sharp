@@ -1735,3 +1735,44 @@ if (dirty.IsEmpty)
 * 底边框带被状态栏占去 11 px，参考在那里放的是系统按钮；真按钮落地时状态栏要另找位置（或干脆
   只在调试模式下显示）。
 
+## ADR-055：面板图标条只画 `LOCATORS` 的帧——英雄列先空着，等英雄身份
+
+**背景**：`ADVBORD` 外壳落地后，右侧面板只有砖纹（ADR-054）。参考在这一列的上半部分放
+`Interface::IconsPanel`：左英雄、右城堡，各四格（640×480 下），点一格就跳到那座城 / 那位英雄。
+它的渲染散在 `gui/interface_icons.cpp`：
+
+* 几何：`iconsCursorWidth = 56`、`iconsCursorHeight = 32`，`setPos( rect.x + 72, rect.y )`（城堡列在
+  英雄列右边 72 px），`redrawItem( ox + 5, oy + 5 )`——图标贴在格子内缩 5 px 的地方。
+* 空槽：`IconsBar::redrawBackground` 在 `validItemCount` 之后按 `1 + i % 8` 取 `LOCATORS.ICN` 的帧，
+  每格 46×22，一个玩家色一帧。
+* 城堡：`fheroes2::drawCastleIcon` → `getCastleIcnIndex( race, isCastle )`：`9…14` 是六族的要塞城堡，
+  `15…20` 是六族的城镇，随机种族返回 `25 / 26`。
+* 英雄：`Heroes::PortraitRedraw( PORT_SMALL )`——`MINIPORT.ICN` 按**英雄身份**取帧，再叠 `PORTXTRA`
+  的背景与旗子。
+
+**决策**：
+
+1. **`Game.AdventureMap.IconBar` 只做布局与落位**：`Heroes` = `(480,176,56,128)`、`Castles` =
+   `(552,176,56,128)`，`SlotAt` 给出每格 56×32，`CastleFrame` / `EmptySlotFrame` 是两张帧表，
+   `Draw(frame, sprites, castles)` 把图标贴到 `slot + (5,5)`。列表、滚动、悬停高亮（`_sfMarker`）
+   都不做：四格放得下，参考里滚动条只在图标超过四格时出现。
+2. **起点取 `Panel.Y + BorderWidth`（176），与砖纹一致**：面板 bay 从雷达底 `160` 起，但图标条和
+   `Interface::IconsBar::redrawBackground` 一样从 `176` 起，中间那 16 px 留给砖纹。
+3. **帧表照参考，但随机种族返回 `null`**：`LOCATORS.ICN` 只有 25 帧（0…24），`25 / 26` 是编辑器
+   「随机城堡」的选项图，而地图文件里存的是已经落定的种族（`MapRace.Multiple` 也一样没有图）。
+   返回 `null` 时该格退回空槽，不画错帧。
+4. **英雄列暂时全是空槽**：MP2 的 hero tile 只存 `MINIHERO` 的帧号（32×50 的地图精灵，编辑器用的），
+   没有「这是哪位英雄」；身份在还没解析的 `MP2::HeroInfo` 信息块里。用 `MINIHERO` 硬塞进 46×22 的
+   格子会把它压扁，所以宁可空着——`IconBar.Draw` 里有一行注释指向这件事。
+5. **不画 `CSLMARKER` 的建设标记**：它回答「今天能否建造」，需要王国与它的建筑列表。
+
+**后果**：
+
+* `adventure-map.png` 重建（`160,793` → `168,802` 字节）：右列是 `Alteris` 城堡表的前四个城堡
+  （已要塞的种族图标），左列四个空槽帧 1…4。`editor.png` 不受影响——编辑器不用 `IconBar`。
+* `IconBarTests` 9 条：两列矩形、格距 32、六族 × 城堡/城镇的 12 个帧号、随机种族无图、空槽
+  1…8 循环、图标落在 `+5,+5`（格子角落仍是砖纹）、源为空或没有帧时面板不动。
+* 图标条的英雄列是这块面板里唯一「有位置没内容」的地方；等 `MP2::HeroInfo` 解析出来（或者开局
+  分配英雄），把 `IconBar.Draw` 的左列换成 `MINIPORT` + `PORTXTRA` 即可，几何不用动。
+* 面板剩下的按钮区与日期/资源栏仍空着，砖纹之外就是黑的。
+

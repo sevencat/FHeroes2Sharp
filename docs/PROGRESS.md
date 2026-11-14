@@ -917,6 +917,8 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `AdventureMapScene` 鼠标接线 | ✅ | `SetCursor` / `SetLeftButton` / `ScrollByWheel` / `Update`；按下落在雷达上就交给小地图（点击即居中、按住继续跟随，参考把两者放在同一分支），其余交给拖动；`GameHost` 的三处 `_adventure is null` 守卫改成转发，左键与滚轮都进地图 |
 | `tests/FHeroes2.Game.Tests/MapScrollControllerTests` | ✅ | 12 条：10 px 不算拖 / 11 px 算拖、方向、clamp、半 tick 不滚、角落双轴、拖动期间禁止边缘滚动、贴边返回 false、滚轮一格与 clamp |
 | `tests/FHeroes2.Game.Tests/MapFrameTests` | ✅ | 7 条：640×480 下视口/雷达/面板/底边框带的四个矩形、面板底到画框边缘、小画框同比缩进、缺图时 `Draw` 铺满整屏与每个 bay、缺图时 `DrawPanel` 不动像素 |
+| `Game.AdventureMap.IconBar` + `IconSpriteSet` | ✅ | `Interface::IconsPanel` 的布局与落位：英雄列 `(480,176,56,128)`、城堡列 `(552,176,56,128)`、每格 56×32、图标内缩 `5,5`；帧表照 `fheroes2::getCastleIcnIndex`（`LOCATORS` 9…14 城堡 / 15…20 城镇）与空槽 `1 + i % 8`；随机种族返回 `null` 退回空槽（ADR-055） |
+| `AdventureMapScene` 图标条 | ✅ | 砖纹之后画城堡表的前四座城堡（右列）、左列四个空槽——MP2 的 hero tile 没有英雄身份，`MINIPORT` 取不了帧；图标缺失时该格留砖纹 |
 
 ### M4 界面外壳 验证记录
 
@@ -942,6 +944,31 @@ pwsh tools/scripts/Verify{Menu,Settings,Scenario,Editor}Baseline.ps1 → 四条 
      确实 identical，说明抽出的几何与原来的 `RadarBay`/`PanelBay` 完全等价。
 
 * 一处遗留照旧：面板里还没有图标条、按钮与资源栏，砖纹只是把空槽铺成参考的底色；也没有雾与路径。
+  （图标条在紧接着的下一轮补上了，见下方「M4 面板图标条」。）
+
+### M4 面板图标条 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 175（+9）/ UI 145 全绿
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --map map\Alteris.mp2 --screenshot …
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update → adventure-map.png sha256 928C4C3A…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,Editor}Baseline.ps1 → 四条 still identical
+  → adventure-map-en.png identical 640x480 6688 pixels ignored
+```
+
+* 三处观察：
+  1. **`LOCATORS.ICN` 的帧分段是「格底板 / 空槽 / 城堡 / 城镇」**：帧 0 是 56×32 的整格底板（砖纹已经
+     铺过，不用），1…8 是 46×22 的空槽框（一色一帧），9…14 与 15…20 是六族的城堡与城镇。参考的
+     `getCastleIcnIndex` 对随机种族给 `25 / 26`，但那两帧文件里没有（是编辑器的「随机城堡」选项图），
+     所以这里返回 `null`、该格退回空槽。
+  2. **右列是地图数据直接给的**：`Alteris` 的城堡表前四座按 `RawType` 分出「城堡 / 城镇」与种族，
+     画出来正好是四种不同的要塞图标；左列四个空槽是 `1 + i % 8`，前四帧分别是四个玩家色的框。
+  3. **英雄列空着不是漏画**：MP2 的 hero tile 只存 `MINIHERO` 的帧号（32×50 的地图精灵），没有英雄
+     身份；参考的小肖像走 `MINIPORT`，按身份索引。把 32×50 塞进 46×22 会压扁，等 `MP2::HeroInfo`
+     解析出来再换。
+* 基线：`adventure-map.png` 从 `160,793` 变 `168,802` 字节（右列四个城堡图标 + 左列四个空槽），
+  `editor.png` 与其余四条逐像素不变——`IconBar` 只在 `AdventureMapScene` 里调用。
 
 ### M4 验证记录（结构层、地形层与对象层）
 
@@ -1068,8 +1095,9 @@ dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --map …\Alteris.mp
 * **主对象类型推断没做**：`Maps::getMainObjectType` 依赖 `map_object_info` 的对象表，`Mp2TileInfo.ObjectType`
   目前直接用文件里的 `mapObjectType`；拾取与信息框需要它时再补。
 * **雾、路径、面板内容都没有**：外壳已按参考落地（`ADVBORD.ICN`、448×448 @ (16,16) 视口、雷达槽、
-  面板砖纹，ADR-054），但面板里的东西还空着——城堡/英雄图标条（`Interface::IconsBar`）、按钮面板、
-  日期与资源栏都没有；雾、路径预览、拾取同样没做。状态栏是占位（底边框带里的诊断文字）。
+  面板砖纹，ADR-054）。城堡图标条已有（`IconBar`，ADR-055），但它的**英雄列是空的**——MP2 的 tile 没有
+  英雄身份，要等 `MP2::HeroInfo` 解析出来才能取 `MINIPORT`；按钮面板、日期与资源栏也还没有。雾、
+  路径预览、拾取同样没做。状态栏是占位（底边框带里的诊断文字）。
 * **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
   `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。
