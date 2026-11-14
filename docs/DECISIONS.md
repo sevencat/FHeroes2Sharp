@@ -1604,3 +1604,49 @@ if (dirty.IsEmpty)
 * 没移植：`getObjectInfoText` 的按类型文本、属性对话框（城堡、事件、斯芬克斯、日常事件、传闻）、
   右键弹框的手势（我们的右键另有用途）。
 
+## ADR-052：属性框说数据字**真正**代表的东西，而不是参考目录里的句子
+
+**背景**：ADR-051 把 tile 的 13 位数据字暴露给编辑器，框里印 `data N`，并留下「语义等对象目录」的缺口。
+下一步本应是搬 `map_object_info.cpp` + `MP2::StringObject`，把 `data N` 换成「500 黄金」「日产 2 宝石」。
+动手前先把参考读地图的那段代码翻出来核对（`Maps::setInitialObjectInfo`，`maps/maps_tiles_helper.cpp`），
+结论与 ADR-051 的假设不一样：
+
+* **只有怪物保留这个字**：`OBJ_MONSTER` 走 `setMonsterOnTile(tile, mons, tile.metadata()[0])`，字就是
+  兵堆数量。`OBJ_ARTIFACT` 只在卷轴形态下用字表示法术 id，随后又被神器 id 覆盖。
+* **资源堆与矿都不看字**：资源类型由精灵决定（`Resource::FromIndexSprite`：`OBJNRSRC` 帧 1/3/5/7/9/11/13
+  = 木/水银/矿/硫/水晶/宝石/金），矿的类型由 `EXTRAOVR` 覆盖层帧号决定（0 矿 / 1 硫 / 2 水晶 / 3 宝石 / 4 金）。
+* **数量与内容是开局掷出来的**：资源堆 `Rand::Get`（金 500～1000、木/矿 5～10、其它 3～6），宝箱
+  1000/1500/2000 金币或经验，墓地给随机神器，且都写进 **`metadata[1]`**。
+* **其余一律清零**：`setInitialObjectInfo` 的默认分支 `resetMetadata()`，注释写着 “All other objects
+  shall not have metadata”。
+
+也就是说「500 黄金」在参考里存在，但它活在参考**自己的地图格式**的扩展元数据块里（tile 的 13 位只是那个
+块的 UID），MP2 文件没有这一层。Alteris 的实测统计印证这一点：整张图里只有 `OBJ_MONSTER` 的格子上有
+非零字（250、30、40、4000…），资源堆、矿、宝箱的格子全是 0。
+
+**决策**：
+
+1. **说真话，不编数字**：新增 `FHeroes2.Assets.Maps.Mp2ObjectData`，把字翻成一句能站得住的话——怪物是
+   `the word is the troop count: 250 monsters`；资源堆按精灵报种类并说明「数量开局才定」；矿按覆盖层报
+   种类；宝箱与墓地说明内容是开局掷的；本类型不认字时直说「游戏会把它清掉」；`ContainsMetadata` 认得的
+   类型（神器、关卡、帐篷、扩张、终极神器的半径）报「这个版本还没读」。
+2. **资源名与掩码照参考**：`Mp2ResourceType` 用 `Resource::WOOD`=1 … `Resource::GOLD`=64、`All`=0x7F，
+   方便以后直接用参考里的掩码判断。
+3. **一句话，不是新控件**：只在 `data N` 下加一行，`[` / `]` 照旧逐 1 步进；怪物改完字数就跟着变，因为
+   两边读的是同一个字。
+4. **不搬对象目录**：`map_object_info.cpp`（4950 行）与 `MP2::StringObject`（744 行）的任务是「icn + 帧号
+   → 对象身份」，那是面板图标菜单、属性对话框与「500 黄金」句子的共同前提，但和 MP2 的数据字无关；
+   先做它会把这一轮变成一次没有终点的大搬用。等有对象身份以后，语义表可以直接扩进 `Mp2ObjectData`。
+5. **顺手改掉 `Mp2TileInfo.Metadata` 的错误注释**：原文写「资源堆的数量、宝箱的内容、矿的种类」，
+   那是参考自己格式的语义，不是 MP2 的。
+
+**后果**：
+
+* 属性框在原有的 `ground` / `top` / `data` / `[x; y]` 之间多一行说明；`editor.png` 不变（框不在基线里）。
+* `Mp2ObjectDataTests` 11 条新测试在 Assets 工程（纯解码，不需要 App）：`OBJNRSRC` 全帧表、矿覆盖层
+  0～4 与越界、主精灵优先、只有怪物保留字、各类句子、`All` 掩码。
+* 遗留改成「属性框写不出『500 黄金』」：要么改用参考的存档格式（E4）才有扩展元数据，要么在 MP2 之外
+  另存旁路数据（与别的编辑器不兼容）——这两条都是新决策，不在这里顺手定。
+* 参考编辑器本身也不给资源堆写数量到 tile：点资源对象弹 `Dialog::SelectCount`，写的是它自己格式的
+  `resourcesMetadata`，与 MP2 无关。
+

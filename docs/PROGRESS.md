@@ -1135,7 +1135,8 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `EditorPanel` 按钮阵列 | ✅ | `EDITBTNS` 的三个工具按钮（地形 / 对象 / 橡皮，按下是亮帧）、`EDITPANL` 裁出的九个 27×27 地面格（选中压 `TERRAINS` 第 9 帧的 30×30 黄框）、对象名字表，以及选择器下方五行状态/快捷键；面板底纹是 `STONEBAK`，点按钮/格子直接换工具与笔刷，缺资产时退回文字版（ADR-049） |
 | 笔刷尺寸 | ✅ | 四个尺寸照参考的 `EditorPanel::BrushSize`：`Small` 1×1、`Medium` 2×2（指针在左上角）、`Large` 4×4（以指针为中心）、`Area` 从按下那格拖成矩形；面板上是 `EDITBTNS` 第 24～31 帧的四个按钮（24×18，`x = 14 + 30·i`，`y = 113`），当前那个是按下帧，点一下就换；橡皮同样按面积清对象（ADR-050） |
 | `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象/笔刷尺寸与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
-| 对象属性（信息框 + 数据字） | ✅ | `I` 打开指针下那一格的属性框（参考右键弹出的 `Editor::showPopupWindow`）：对象名（编辑器放过的就是预设名）、`地面 icn:帧 layer`、`顶 icn:帧`、`data N`、`[x; y]`；`[` / `]` 逐 1 改这段 13 位数据字，一次一撤销。数据字就是 MP2 的 `quantity1/quantity2` 高位，写入时保留 `quantity1 & 0x07`（含地面层位）；空 tile 没有属性可改（ADR-051） |
+| 对象属性（信息框 + 数据字） | ✅ | `I` 打开指针下那一格的属性框（参考右键弹出的 `Editor::showPopupWindow`）：对象名（编辑器放过的就是预设名）、`地面 icn:帧 layer`、`顶 icn:帧`、`data N` 与**这句话的意思**、`[x; y]`；`[` / `]` 逐 1 改这段 13 位数据字，一次一撤销。数据字就是 MP2 的 `quantity1/quantity2` 高位，写入时保留 `quantity1 & 0x07`（含地面层位）；空 tile 没有属性可改（ADR-051、ADR-052） |
+| 数据字的语义 | ✅ | `Mp2ObjectData` 把 13 位字翻成一句话：怪物是「the word is the troop count: 250 monsters」，资源堆/矿的类型取自精灵（`OBJNRSRC` 帧 1/3/…/13、矿的 `EXTRAOVR` 帧 0～4），宝箱与墓地的内容是开局随机——因为参考的 `Maps::setInitialObjectInfo` 载入 MP2 时只保留怪物的字，其它一律清掉（ADR-052） |
 | `--editor-info <x,y>` / `--editor-data <x,y,value>` | ✅ | 属性框与数据字的脚本版：前者开框（截图即所见），后者在开场景前把某个对象的数据字写成 0～8191 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
@@ -1149,6 +1150,7 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | 保存切回整份写出 | ✅ | `_addonsChanged` 为真时 `SaveAs` 走 `WriteAll`：add-on 段变长，tile 补丁表达不了；其余情况仍是 ADR-043 的补丁 |
 | `--editor-object` / `--editor-place` | ✅ | 脚本化对象工具（名字或 1 起的序号 + `x,y;x,y`），截图与存盘回环靠它 |
 | `tests/.../Mp2ObjectPresetsTests` | ✅ | 7 条：预设都有可画的部分、名字/序号查找与越界、空名字拒绝、0 号占位补齐、非 List 表拒绝追加、`SetAddonAt` 边界、链写出后读回、UID 递增 |
+| `tests/.../Mp2ObjectDataTests` | ✅ | 11 条：`OBJNRSRC` 只有奇数帧是资源（0～15 全表）、矿按 `EXTRAOVR` 帧 0～4 认、主精灵优先于地面精灵、只有怪物保留字、怪物句子里有数量、资源堆/矿/宝箱/墓地的句子、无字可言的句子、空地的句子、资源名与 `All` 掩码 |
 | `tests/.../MapEditSessionTests` | ✅ | 新增 8 条：放置写 tile 与 add-on、重复放置不改动、擦除保留地面、空格擦除不成笔、撤销/重做带回对象、`Apply` 按工具分派、`O`/`1..9` 切工具与环绕、带 add-on 的保存走整份 |
 
 ### E2 验证记录
@@ -1239,6 +1241,38 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-paint 46,52,6,4,Snow --e
   3. **坐标分两层**：地图视图与 `MapEditorView` 只认视口像素，框架/雷达/面板认屏幕像素，`ViewportCursor`
      是唯一换算点。指针不在视口内就传 `null`，于是"视口外不画、不吸管、不滚边"三件事自动成立。
   4. **基线必换**：整个画面换了骨架，`editor.png` 从 108,862 字节变成 116,108 字节，雪块与接缝不变。
+
+### E2 对象属性语义 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 254 / Game 159 / UI 145 全绿（新增 11 条 Assets 测试）
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical（面板与地图没动）
+dotnet run -- --scene editor --map Alteris.mp2 --editor-object Resources --editor-place "40,40" \
+             --editor-data "40,40,300" --editor-info "40,40"
+  → Editor object: Resources (ActionRandomResource) ground ObjnRsrc:17 top - addons 0.
+  → Editor info: Resources at (40; 40), data 300.
+  → 框里第五行：a random pile: resource and amount are rolled when the map starts
+dotnet run -- --scene editor --map Alteris.mp2 --editor-object Mine --editor-place "60,60" --editor-info "60,60"
+  → 框里：the word means nothing to this object, the game clears it
+dotnet run -- --scene editor --map Alteris.mp2 --editor-info "76,6"
+  → Editor info: ActionMonster at (76; 6), data 250.
+  → 框里：the word is the troop count: 250 monsters
+```
+
+* 三处观察：
+  1. **MP2 里只有怪物保留数据字**：`Maps::setInitialObjectInfo`（`maps_tiles_helper.cpp`）对每个动作对象
+     重写 `metadata[0]`，唯一取原值的是 `OBJ_MONSTER`（`setMonsterOnTile(tile, mons, tile.metadata()[0])`）；
+     资源堆的类型来自 `Resource::FromIndexSprite`（`OBJNRSRC` 帧 1/3/5/7/9/11/13 = 木/水银/矿/硫/水晶/宝石/金），
+     矿的类型来自 `EXTRAOVR` 帧 0～4，宝箱与墓地的内容、资源堆的数量都是开局 `Rand::Get` 出来的，默认分支
+     用 `resetMetadata()` 把字清掉。Alteris 的实际统计也印证：只有 `OBJ_MONSTER`（152）的格子里有非零字
+     （250、30、40、4000…）。
+  2. **「500 黄金」不在 MP2 里**：参考自己的地图格式把数量写在 `metadata[1]`（扩展元数据块，tile 里的 13 位
+     只是那个块的 UID），MP2 没有这一层。所以属性框只能写「资源的种类来自精灵、数量开局才定」——把
+     `data N` 硬翻成「500 黄金」会是编出来的数字。参考编辑器同样不给资源堆设数量（点资源对象弹
+     `Dialog::SelectCount`，那是它自己格式的扩展元数据）。
+  3. **句子是「这句话的意思」，不是新的控件**：只是属性框多一行（`Mp2ObjectData.Describe`），`[` / `]`
+     照旧逐 1 改字；怪物的字改了数量就跟着变，因为那一行读的是同一个字。
 
 ### E2 对象属性 验证记录
 
@@ -1380,10 +1414,13 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
   我们保留这块地面并保持纯图。编辑器不该悄悄改用户刚画的东西，所以这是有意的差异。
 * ~~笔刷只有 1×1~~：E2 已补四个尺寸（ADR-050）。
 * ~~对象不能放、不能删~~：E2 的对象工具已做（`O` / `X`，见上表）。
-* **数据字有编辑入口、没有语义**：属性框里的 `data N` 就是 MP2 的 13 位字，`[` / `]` 能改，但资源堆
-  显示的还是数字而不是「500 黄金」，矿也不会写上归属。语义要等参考的**对象目录**
-  （`map_object_info.cpp`）与 `MP2::StringObject` 搬过来（ADR-051）；城堡表与可占领表同理，也不随
-  对象更新。
+* ~~数据字有编辑入口、没有语义~~：E2 已补上 MP2 真正支持的那部分语义（怪物数量、资源堆/矿的种类、
+  宝箱与墓地开局随机，ADR-052）。
+* **属性框写不出「500 黄金」**：MP2 的 tile 只存 13 位字，资源堆的数量与宝箱的内容在参考自己的格式里
+  是 `metadata[1]`（扩展元数据块），MP2 根本没有这一层。要写出数量只有两条路：改用参考的存档格式
+  （E4），或者在 MP2 之外另存一份旁路数据（会与别的编辑器不兼容）。参考那句按类型拼出来的
+  「日产 2 宝石」还要搬 `map_object_info.cpp` 的**对象目录**与 `MP2::StringObject` 才行；城堡表与可占领表
+  同理，也不随对象更新。
 * **对象目录只有 9 个、且几乎都是单格对象**：城镇、锯木厂这类多格建筑要按格拼装并处理 add-on 的
   相对偏移；面板的对象工具现在只是把这 9 个预设列成名字表，参考那套按对象类型分页的图标菜单要先有图标来源。
 * **面板少了参考的系统按钮行**：`EDITBTNS` 只有 35 帧（参考要 45+：undo / redo / 网格 / 视图 / 系统菜单），

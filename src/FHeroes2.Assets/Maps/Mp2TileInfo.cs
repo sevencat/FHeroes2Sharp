@@ -93,9 +93,9 @@ public readonly record struct Mp2TileInfo
 
     /// <summary>
     /// The 13 bit value the game keeps per tile, <c>((quantity2 &lt;&lt; 8) + quantity1) &gt;&gt; 3</c>.
-    /// In a save file it is the UID of the extended metadata block of the object; in an MP2 file it is
-    /// the object's own data, read differently by every object type: the amount of a resource pile,
-    /// the content of a chest, the kind of a mine.
+    /// In a save file it is the UID of the extended metadata block of the object. In an MP2 file it is
+    /// the object's own data, which only the monster objects keep (their troop count); everything else
+    /// is cleared when the map is loaded, see <see cref="Mp2ObjectData"/>.
     /// </summary>
     public uint Metadata => (((uint)Quantity2 << 8) + Quantity1) >> 3;
 

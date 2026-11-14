@@ -36,7 +36,8 @@ namespace FHeroes2.App.Scenes;
 /// cycles the objects of <see cref="Mp2ObjectPresets"/> and selects the object tool, <c>X</c> the eraser
 /// and <c>T</c> the terrain tool again. <c>I</c> opens the information box of the tile under the
 /// pointer, the popup the reference shows on a right click: what the object is, the parts it is drawn
-/// from, its data word and its coordinates, with <c>[</c> and <c>]</c> stepping the data word.
+/// from, its data word and what that word means for this object, and its coordinates, with <c>[</c>
+/// and <c>]</c> stepping the data word.
 /// <see cref="MapEditSession"/> owns what the instruments do; this scene only forwards input and
 /// paints the panel.
 /// </para>
@@ -533,8 +534,8 @@ public sealed class EditorScene : IScene
 
     /// <summary>
     /// Builds the text of the information box: what the object is, the parts it is drawn from, its
-    /// data word and the coordinates of its tile, which is the content of
-    /// <c>Editor::getObjectInfoText</c> in the reference.
+    /// data word with the sentence <see cref="Mp2ObjectData.Describe"/> gives it, and the coordinates
+    /// of its tile, which is the content of <c>Editor::getObjectInfoText</c> in the reference.
     /// </summary>
     /// <param name="tile">Tile to describe, must be inside the map.</param>
     /// <param name="data">Data word of the tile, read again by the caller to keep the box current.</param>
@@ -560,6 +561,7 @@ public sealed class EditorScene : IScene
         if (info.HasGroundObject || info.HasTopObject)
         {
             lines.Add(FormattableString.Invariant($"data {data}"));
+            lines.Add(Mp2ObjectData.Describe(info));
             lines.Add("[ ] change the data");
         }
         else
