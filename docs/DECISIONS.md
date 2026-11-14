@@ -1686,3 +1686,52 @@ if (dirty.IsEmpty)
 * 仍未做：参考按类型拼出来的整段正文（`getObjectInfoText`、`map_object_info.cpp`）与属性对话框；
   那些要有「icn + 帧号 → 对象身份」的目录才写得出。
 
+## ADR-054：冒险地图套上 `ADVBORD` 外壳——`MapFrame` 一处几何、视口独立缓冲、面板砖纹双起点
+
+**背景**：M4 第一版把地图直接画满 640×480，边框、雷达槽与右侧面板列都是空的。参考的
+`ADVBORD` 图像（`ICN::ADVBORD` 第 0 帧）本身就是一张 640×480 的完整外壳，它的布局散在三处：
+
+* `fheroes2::borderWidthPx = 16`——地图与窗口边缘之间的边宽，滚动判定与 `reset()` 都用它。
+* `Interface::EditorInterface::reset`（`editor/editor_interface.cpp`）——编辑器把地图放在
+  `16,16 448×448`，雷达在右上 `480,16 144×144`，面板从雷达底填到窗口底边。
+* `Interface::IconsBar::redrawBackground`（`gui/interface_icons.cpp`）——面板列不是「把雷达下方的
+  图块切下来贴」，而是取 `(icnAdv.width - radarWidthPx - borderWidthPx, radarWidthPx + 2*borderWidthPx,
+  radarWidthPx/2, 32)` = `(480,176,72,32)` 这一块半宽砖，向下、向右重复平铺。
+
+编辑器那边 `EditorScene` 已经用 `RadarBay` / `PanelBay` 两个私有方法算过同样的矩形，冒险地图若再抄
+一份，两边就会各改各的。
+
+**决策**：
+
+1. **抽 `Game.AdventureMap.MapFrame`**：一个类同时持有美术（`ADVBORD.ICN` 第 0 帧）与四个矩形
+   （`Viewport` / `Radar` / `Panel` / `BottomBorder`），`Load(AssetBundle?)` 读帧、`Draw(frame, bg)`
+   贴外壳（缺图时铺平色，布局不随数据在不在而变），`DrawPanel(frame)` 铺砖纹。编辑器与冒险地图
+   共用同一个实例类型，`EditorScene` 删掉 `LoadFrameChrome` / `RadarBay` / `PanelBay`。
+2. **整图一次 blit，不切边框**：参考的 `Interface::BorderWindow::Redraw` 把图切成上/下/左/右四条，
+   因为它的显示分辨率可以大于一块美术；这里的逻辑帧恰好等于图像尺寸（640×480），一次
+   `BlitSprite` 就够。将来窗口放大时再补拉伸，不提前搬切图逻辑。
+3. **地图画进 448×448 的 `PixelBuffer` 再贴到 `(16,16)`**：参考先画满屏再盖边框，两者最终像素
+   相同；独立缓冲让滚动换算继续用「地图像素」，也让视口裁剪由缓冲区尺寸天然保证，不必给
+   `AdventureMapView` 传偏移。
+4. **面板矩形与砖纹起点是两个数**：`Panel` 从雷达底 `160` 起（编辑器面板要占满这一列），砖纹却从
+   `176`（`radarWidthPx + 2*borderWidthPx`）起——参考的图标条本身就在第一条边框下面缩进一格。
+   两个常量各自带注释，免得下一个人把 160 当成平铺起点。
+5. **状态栏搬到底边框带**：原来压在窗口最底 `0,469,640,11`，那是地图/菜单的症状；有了外壳以后
+   中间那块 `16,464,608,16` 才是空出来的地方，状态栏改画在 `16,466,608,11`（深色条 + `SMALFONT`），
+   基线忽略区跟着改成这块矩形。菜单与设置/场景的忽略区不动。
+6. **砖纹用 `BlitSprite` 的子矩形，目标偏移要减去砖块原点**：`ImageOps.BlitSprite(dst, offset, src,
+   rect)` 的 `offset` 是相对于 `rect` 左上角的，直接传 `(x, y)` 会把整块砖推到面板外；传
+   `(x - brick.X, y - brick.Y)` 才是「把这一块放到 (x,y)」。
+
+**后果**：
+
+* 冒险地图与编辑器共用一套几何：`editor.png` 在抽取后逐像素不变（证明 `RadarBay` / `PanelBay` 与
+  `MapFrame` 等价），`adventure-map.png` 重建（`168,285` → `160,793` 字节，视口里同一批地形像素
+  换成 16px 边框与砖纹面板，忽略区从 `7040` 变 `6688` 像素）。
+* `MapFrameTests` 7 条钉住矩形（`(16,16,448,448)`、`(480,16,144,144)`、`(480,160,144,320)`、
+  `(16,464,608,16)`）、小画框的收缩、缺图时 `Draw` 铺满而 `DrawPanel` 不动像素。
+* 面板里的**内容**（城堡/英雄图标条、按钮面板、日期与资源栏）仍是空的：`Interface::IconsBar` 的
+  图标与交互属于后面那一轮，砖纹只是让它不像个洞。
+* 底边框带被状态栏占去 11 px，参考在那里放的是系统按钮；真按钮落地时状态栏要另找位置（或干脆
+  只在调试模式下显示）。
+

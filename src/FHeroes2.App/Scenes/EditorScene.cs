@@ -58,13 +58,13 @@ namespace FHeroes2.App.Scenes;
 public sealed class EditorScene : IScene
 {
     /// <summary>Width of the interface border on every side, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int BorderWidth = 16;
+    public const int BorderWidth = MapFrame.BorderWidth;
 
     /// <summary>Distance between the minimap and the top right corner, the border of the frame.</summary>
     public const int RadarMargin = BorderWidth;
 
     /// <summary>File of the interface frame, the <c>ADVBORD</c> of the reference.</summary>
-    public const string FrameFileName = "ADVBORD.ICN";
+    public const string FrameFileName = MapFrame.AssetName;
 
     private const int Padding = 6;
 
@@ -79,11 +79,11 @@ public sealed class EditorScene : IScene
     private readonly MapEditorView _editor;
     private readonly MapEditSession _edits;
     private readonly MapScrollController _mouse;
+    private readonly MapFrame _mapFrame;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
     private readonly Rect _panel;
-    private readonly Sprite? _chrome;
     private readonly EditorPanel? _panelView;
     private readonly FrameBoxChrome? _infoChrome;
     private readonly byte _dark;
@@ -123,7 +123,7 @@ public sealed class EditorScene : IScene
         MapEditSession edits,
         Minimap minimap,
         MapScrollController mouse,
-        Sprite? chrome,
+        MapFrame mapFrame,
         EditorPanel? panelView,
         FrameBoxChrome? infoChrome)
     {
@@ -133,52 +133,21 @@ public sealed class EditorScene : IScene
         _edits = edits;
         _minimap = minimap;
         _mouse = mouse;
-        _chrome = chrome;
+        _mapFrame = mapFrame;
         _panelView = panelView;
         _infoChrome = infoChrome;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
         // column below it, down to the bottom of the frame.
-        _viewport = new Rect(
-            BorderWidth,
-            BorderWidth,
-            Math.Max(frame.Size.Width - Minimap.PanelSize - (3 * BorderWidth), 0),
-            Math.Max(frame.Size.Height - (2 * BorderWidth), 0));
+        _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
 
-        _radar = RadarBay(frame.Size);
-        _panel = PanelBay(frame.Size);
+        _radar = mapFrame.Radar;
+        _panel = mapFrame.Panel;
 
         _dark = frame.Palette.FindDarkestIndex();
         _bright = frame.Palette.FindBrightestIndex();
-    }
-
-    /// <summary>The radar, in the top right corner inside the border.</summary>
-    /// <param name="size">Size of the logical frame.</param>
-    /// <returns>The 144x144 rectangle of the radar.</returns>
-    private static Rect RadarBay(Size size) => new(
-        size.Width - RadarMargin - Minimap.PanelSize,
-        RadarMargin,
-        Minimap.PanelSize,
-        Minimap.PanelSize);
-
-    /// <summary>
-    /// The bay below the radar, which the editor panel fills. The reference lays the panel out from
-    /// the bottom of the radar to the bottom of the frame, so the bay ends at the frame edge and not
-    /// at the border: its system buttons sit on the last rows of the display.
-    /// </summary>
-    /// <param name="size">Size of the logical frame.</param>
-    /// <returns>The rectangle of the panel bay.</returns>
-    private static Rect PanelBay(Size size)
-    {
-        Rect radar = RadarBay(size);
-
-        return new Rect(
-            radar.X,
-            radar.Bottom,
-            Minimap.PanelSize,
-            Math.Max(size.Height - radar.Bottom, 0));
     }
 
     /// <summary>The map being edited.</summary>
@@ -307,11 +276,12 @@ public sealed class EditorScene : IScene
 
     /// <summary>
     /// The bay below the radar for a frame of <paramref name="size"/>, the rectangle
-    /// <see cref="PanelArea"/> reports once the editor exists.
+    /// <see cref="PanelArea"/> reports once the editor exists. The geometry is the one of
+    /// <see cref="MapFrame"/>, so the host can hit test the panel before the editor is built.
     /// </summary>
     /// <param name="size">Size of the logical frame.</param>
     /// <returns>The rectangle of the panel bay.</returns>
-    public static Rect PanelBayOf(Size size) => PanelBay(size);
+    public static Rect PanelBayOf(Size size) => new MapFrame(size, null).Panel;
 
     /// <summary>
     /// Opens the editor on <paramref name="mapInfo"/>; <see langword="null"/> with an
@@ -416,14 +386,12 @@ public sealed class EditorScene : IScene
     {
         // The map only gets the area between the border and the radar column, as in the reference; the
         // scene blits it into the frame at ViewportArea.
-        Size viewport = new(
-            Math.Max(frame.Size.Width - Minimap.PanelSize - (3 * BorderWidth), 0),
-            Math.Max(frame.Size.Height - (2 * BorderWidth), 0));
+        MapFrame mapFrame = new(frame.Size, MapFrame.Load(assets));
 
         AdventureMapView view = new(
             map,
             tiles,
-            viewport,
+            mapFrame.Viewport.Size,
             ObjectSpriteSet.TryCreate(assets),
             HeroSpriteSet.TryCreate(assets));
 
@@ -439,8 +407,8 @@ public sealed class EditorScene : IScene
             edits,
             Minimap.Build(map),
             new MapScrollController(view),
-            LoadFrameChrome(assets),
-            EditorPanel.TryCreate(PanelBay(frame.Size), assets),
+            mapFrame,
+            EditorPanel.TryCreate(mapFrame.Panel, assets),
             LoadInfoChrome(assets));
     }
 
@@ -459,24 +427,6 @@ public sealed class EditorScene : IScene
         }
 
         return chrome;
-    }
-
-    /// <summary>
-    /// Reads the interface frame, <c>ADVBORD.ICN</c>: one 640x480 image that already holds the border,
-    /// the radar bay and the panel bay. The reference repeats its border patterns to fill larger
-    /// displays, but the logical frame is exactly that image, so a single blit is enough.
-    /// </summary>
-    /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
-    /// <returns>The frame, or <see langword="null"/> when the archive has none.</returns>
-    private static Sprite? LoadFrameChrome(AssetBundle? assets)
-    {
-        if (assets?.TryReadIcn(FrameFileName) is not { Count: > 0 } icn)
-        {
-            GameLog.Warn($"'{FrameFileName}' is not available, the editor draws flat borders instead.");
-            return null;
-        }
-
-        return icn.Sprites[0];
     }
 
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
@@ -1023,19 +973,7 @@ public sealed class EditorScene : IScene
     /// Paints the interface frame: the <c>ADVBORD</c> image when the archive has it, flat borders
     /// otherwise, so that the layout is the same with and without the artwork.
     /// </summary>
-    private void DrawFrameChrome()
-    {
-        if (_chrome is not null)
-        {
-            ImageOps.BlitSprite(_frame.Pixels, _chrome);
-            return;
-        }
-
-        ImageOps.FillRect(_frame.Pixels, _frame.Pixels.Bounds, _dark);
-        ImageOps.FillRect(_frame.Pixels, _viewport, _dark);
-        ImageOps.FillRect(_frame.Pixels, _radar, _dark);
-        ImageOps.FillRect(_frame.Pixels, _panel, _dark);
-    }
+    private void DrawFrameChrome() => _mapFrame.Draw(_frame.Pixels, _dark);
 
     /// <summary>
     /// Draws the tile borders of the visible area. The grid stops at the viewport, which the frame

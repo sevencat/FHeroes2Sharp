@@ -899,7 +899,7 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `App.Scenes.AdventureMapScene` | ✅ | 地形 + 对象层 + 底部 `SMALFONT` 状态栏（地图名/尺寸、视口偏移、版本）；无英雄时把视口居中到「最靠地图中心的城堡」（占位规则，见 ADR-035）；地图或 TIL 读不出来时回到主菜单并在状态栏留信息，不会黑屏 |
 | `GameHost` 接线 | ✅ | `NEW GAME → 场景窗口 → OKAY` 现在真的进入冒险地图；方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单；`--enter-map`（配合 `--scenario-select`）与 `--map <file>` 两个截图/冒烟入口；鼠标事件在冒险地图上不再转给菜单 |
 | `tests/FHeroes2.Game.Tests/ObjectLayerTests` + `Mp2ObjectIcnTypesTests` | ✅ | 9 个绘制用例（地面/顶部/层序/锚点/空帧/缺帧/无源/跨 tile 覆盖）+ 19 个 ICN 命名用例（枚举全覆盖不重名、PoL 开关、可绘制集合） |
-| 像素基线 `adventure-map.png` | ✅ | `--map Alteris.mp2` 直接开图，居中到地图中部城堡，忽略状态栏；`VerifyAdventureMapBaseline.ps1` 与另外四条基线共用 `PixelBaseline.ps1` |
+| 像素基线 `adventure-map.png` | ✅ | `--map Alteris.mp2` 直接开图，居中到地图中部城堡，忽略状态栏 `(16,466,608,11)`；`VerifyAdventureMapBaseline.ps1` 与另外四条基线共用 `PixelBaseline.ps1` |
 | `Assets.Maps.Mp2MapHero` / `Mp2MapHeroes` | ✅ | 英雄从 tile 反解而不是读信息块：`MINIHERO` 帧号 `/7` → 颜色（`heroColorsOrder`）、`%7` → 种族（`Race::IndexToRace`），越界抛 `BinaryFormatException`；`Mp2Map.Heroes` 按 tile 顺序列出 |
 | `Game.AdventureMap.IHeroSpriteSource` + `HeroSpriteSet` | ✅ | 按 (颜色, 种族) 取三张图集：身体 `KNGT32`/`BARB32`/`SORC32`/`WRLK32`/`WZRD32`/`NECR32`，旗帜 `B-FLAG32`…`P-FLAG32`，阴影 `SHADOW32`，一律取第 18 帧（朝右站立）；`Random` 种族没有身体，只出旗帜（ADR-037） |
 | `Game.AdventureMap.IcnSpriteCache` | ✅ | 对象层与英雄层共用的「按文件名解码一次」缓存，`ObjectSpriteSet` 改为复用它 |
@@ -908,12 +908,40 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `tools/FHeroes2.AssetProbe map` 英雄列表 | ✅ | 打印 `x,y 颜色 种族 MINIHERO 帧号`，`Alteris.mp2` 9 名英雄（1 黄野蛮人 / 2 蓝 / 6 紫亡灵） |
 | `Game.AdventureMap.MapGround` + `MapGrounds` | ✅ | `Maps::Ground` 的移植：九个 `*_START_IMAGE_INDEX`（30/92/146/208/262/321/361/415/432）把 terrain image index 反解成地面类型，越界给 `Unknown` |
 | `Game.AdventureMap.Minimap` | ✅ | `Interface::Radar` 的数据与缩放：每格一个调色板索引（地面色 / 山树 +3 / 道路 `0x7A` / 英雄王国色）、`Zoom = 144 / 宽`、「每 6 像素省一个」的虚线视口方框、视口覆盖全图时不画方框；输出 144×144 `PixelBuffer`（ADR-038） |
-| `AdventureMapScene` 雷达叠加 | ✅ | 雷达画在参考坐标 `(480,16)`，1 px 黑框圈住；面板美术 `ADVBORD.ICN` 与 448×448 视口属于界面外壳，仍未做 |
+| `AdventureMapScene` 雷达叠加 | ✅ | 雷达画在参考坐标 `(480,16)`，1 px 黑框圈住 |
+| `Game.AdventureMap.MapFrame` | ✅ | `ADVBORD.ICN` 一张 640×480 图 + 参考布局：视口 `(16,16,448,448)`、雷达 `(480,16,144,144)`、面板 `(480,160,144,320)`、底边框带 `(16,464,608,16)`；`Load` 读第 0 帧，缺图时 `Draw` 画平色兜底；`DrawPanel` 照 `Interface::IconsBar::redrawBackground` 把 `(480,176,72,32)` 的砖块往下、往右平铺满面板列（ADR-054） |
+| `AdventureMapScene` 外壳 | ✅ | 地图先画进 448×448 的 `_viewportPixels` 再贴到 `(16,16)`，`ADVBORD` 边框、雷达槽、面板砖纹都来自同一张图；状态栏移到底边框带里（`(16,466,608,11)`，深色条 + `SMALFONT`），基线忽略区随之改成这块矩形；`EditorScene` 改用同一个 `MapFrame`，`editor.png` 逐像素不变 |
 | `tests/FHeroes2.Game.Tests/MinimapTests` | ✅ | 35 条用例：19 条地形索引分段 + 8 条调色板常量 + 道路/山树/未知地面/英雄染色 + 缩放块对齐 + 方框几何（含贴边裁剪、全图时隐藏）+ 虚线步长 + 面板落位；另 2 条 `TileAt` 的整数除法（72 / 108 格两种缩放、越界不 clamp） |
 | `Game.AdventureMap.MapScrollController` | ✅ | 冒险地图的鼠标：`GameArea::QueueEventProcessing` 的拖动（10 px 严格阈值、位移 `last - current`、从按下点补位移）、`HumanTurn` 的 16 px 边框滚动（20 ms 一步、`2 << ScrollSpeed` = 8 px、拖动期间禁止、单帧最多 4 步）、滚轮（参考没有，自定一格 tile） |
 | `Minimap.TileAt` | ✅ | `Radar::QueueEventProcessing` 的面板像素 → tile 反算 `( pt - rect.pos ) * world / rect.size`，整数除法，越界交由视图 clamp |
 | `AdventureMapScene` 鼠标接线 | ✅ | `SetCursor` / `SetLeftButton` / `ScrollByWheel` / `Update`；按下落在雷达上就交给小地图（点击即居中、按住继续跟随，参考把两者放在同一分支），其余交给拖动；`GameHost` 的三处 `_adventure is null` 守卫改成转发，左键与滚轮都进地图 |
 | `tests/FHeroes2.Game.Tests/MapScrollControllerTests` | ✅ | 12 条：10 px 不算拖 / 11 px 算拖、方向、clamp、半 tick 不滚、角落双轴、拖动期间禁止边缘滚动、贴边返回 false、滚轮一格与 clamp |
+| `tests/FHeroes2.Game.Tests/MapFrameTests` | ✅ | 7 条：640×480 下视口/雷达/面板/底边框带的四个矩形、面板底到画框边缘、小画框同比缩进、缺图时 `Draw` 铺满整屏与每个 bay、缺图时 `DrawPanel` 不动像素 |
+
+### M4 界面外壳 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 166（+7）/ UI 145 全绿
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update → adventure-map.png sha256 881A597C…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,Editor}Baseline.ps1 → 四条 still identical
+  → adventure-map-en.png identical 640x480 6688 pixels ignored（= 608 × 11，新的状态栏矩形）
+```
+
+* 三处观察：
+  1. **参考是「画满屏再盖边框」，这里是「画进视口再贴过去」**：`Interface::BorderWindow::Redraw`
+     把 `ADVBORD` 切成四条边贴到显示器的边上，地图本身由 `GameArea` 画满整屏。我们的逻辑帧正好等于
+     一张图（640×480），所以先往 448×448 的缓冲里画地图、再贴到 `(16,16)`，屏幕上的像素与参考一致，
+     滚动算术还留在视口的坐标系里，不必做四边裁剪。
+  2. **面板列在参考里有两套起点**：编辑器面板从雷达底（160）开始 `Interface::EditorInterface::reset`；
+     冒险地图的图标条从 176 开始（`Interface::IconsBar::redrawBackground` 的 `radarWidthPx +
+     2 * borderWidthPx`），中间 16 px 是空档。`MapFrame.Panel` 取 160 给编辑器用，`DrawPanel` 取 176
+     开始平铺，两者都不越界。
+  3. **状态栏搬了位置**：原来是整屏底边 `(0,469,640,11)`，现在是底边框带里的 `(16,466,608,11)`，
+     基线忽略区跟着改；`editor.png` 因为 `EditorScene` 换用同一个 `MapFrame` 而必须逐像素不变——复核
+     确实 identical，说明抽出的几何与原来的 `RadarBay`/`PanelBay` 完全等价。
+
+* 一处遗留照旧：面板里还没有图标条、按钮与资源栏，砖纹只是把空槽铺成参考的底色；也没有雾与路径。
 
 ### M4 验证记录（结构层、地形层与对象层）
 
@@ -1039,8 +1067,9 @@ dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --map …\Alteris.mp
   `MONS32`（地图怪物）与 `BOAT32`（船）的精灵同样被引擎拆到多个 tile，专属渲染器还没写，仍是主动跳过。
 * **主对象类型推断没做**：`Maps::getMainObjectType` 依赖 `map_object_info` 的对象表，`Mp2TileInfo.ObjectType`
   目前直接用文件里的 `mapObjectType`；拾取与信息框需要它时再补。
-* **雾、路径、界面面板都没有**：雷达已经上屏（ADR-038），但右侧/底部控制面板（`ADVBORD.ICN`）、
-  英雄状态、日期与资源栏仍然缺；地图区还是整屏 640×480，参考是 448×448 @ (16,16)。状态栏是占位。
+* **雾、路径、面板内容都没有**：外壳已按参考落地（`ADVBORD.ICN`、448×448 @ (16,16) 视口、雷达槽、
+  面板砖纹，ADR-054），但面板里的东西还空着——城堡/英雄图标条（`Interface::IconsBar`）、按钮面板、
+  日期与资源栏都没有；雾、路径预览、拾取同样没做。状态栏是占位（底边框带里的诊断文字）。
 * **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
   `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。

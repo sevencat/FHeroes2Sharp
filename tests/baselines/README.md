@@ -10,7 +10,7 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图（M4，地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；右上角 144×144 雷达面板带视口虚线框 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板、底边框带上的状态栏 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板上是 `EDITBTNS` 的三个工具按钮、`EDITPANL` 的九个 27×27 地面格子（草压在 `TERRAINS` 第 9 帧的黄框里）、四个笔刷尺寸按钮（1×1 那个是按下的）与状态/快捷键五行（末行含 `I info`），底纹是 `STONEBAK` | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
@@ -81,10 +81,12 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 * 英雄同样不带时钟：身体、旗帜与阴影一律取第 18 帧（朝右站立，ADR-037），颜色与种族从 tile 里的
   `MINIHERO` 帧号反解，所以地图上的英雄位置与外观由地图文件唯一决定。
 * 小地图（`480,16`，144×144）只由 tile 字段与英雄列表算出（ADR-038）：地面色来自 terrain image
-  index，山树提亮三档，道路单色，英雄取王国色，视口方框由滚动偏移决定——没有时钟，也没有 `ADVBORD`
-  面板美术（那块属于界面外壳，还没移植）。
-* 状态栏（`0,469,640,11`）里印着视口偏移与版本号，后者每次发版都会变，所以排除掉。地图内容本身
-  是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
+  index，山树提亮三档，道路单色，英雄取王国色，视口方框由滚动偏移决定——没有时钟。
+* 外壳（ADR-054）：`ADVBORD.ICN` 第 0 帧整块 blit 到 `0,0`，地图先画进 448×448 的独立 `PixelBuffer`
+  再贴到视口 `16,16`；雷达下方的砖纹面板按 `(480,176,72,32)` 平铺同一帧的像素。三者都是静态美术，
+  只有位置来自 `MapFrame` 的常量，所以逐帧相同。
+* 状态栏（`16,466,608,11`）搬到了底边框带上，里面印着视口偏移与版本号，后者每次发版都会变，所以
+  排除掉。地图内容本身是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
 * 这张基线钉住的是「MP2 tile/addon 字段 → ICN/TIL 索引 → 像素」这条链：`Mp2MapTests` 钉住结构解析，
   `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，`HeroLayerTests`
   钉住英雄的三带切分与阴影次序，`MinimapTests` 钉住地面分段与方框几何，一起才能把这一屏钉死。
@@ -135,6 +137,9 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 是 **300,160** 个像素（307200 − 7040），即背景、灯体、光晕、招牌与对话框；状态栏本身靠人工看
 `tools-output/menu-hover.png` 之类的截图来核对。
 
+冒险地图的状态栏在 `ADVBORD` 的底边框带上（M4 外壳，ADR-054），不是窗口最底部，所以它用
+`--ignore 16,466,608,11`，参与比对的是 **300,512** 个像素（307200 − 6688）。
+
 ## 基线的数据版本
 
 当前七张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
@@ -151,7 +156,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `settings.zh_CN.png` | 231,317 | `E8E317A96E8849121C796B8FF237B49823A31F64792603C0E8B4BF234DDD94C4` |
 | `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
 | `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
-| `adventure-map.png` | 168,285 | `DCFAD127EA40D3062EE6BE40C54C5558303603D6544B64293204CAD93EDF89E4` |
+| `adventure-map.png` | 160,793 | `881A597CA4425822D2498E50356B180AB2DB6A2540E5F4F03D57079BB6A1C3AB` |
 | `editor.png` | 137,995 | `0A3FA38A515F909BC5FDC374B38C7BED4CF251ACB37005A10CA00D5AB1DE58D8` |
 
 ## 更新基线的规矩

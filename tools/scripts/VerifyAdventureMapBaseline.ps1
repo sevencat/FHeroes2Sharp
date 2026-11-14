@@ -16,8 +16,9 @@
     and the view is centred on the castle closest to the middle of the map, which is what
     AdventureMapScene.TryCreate does when there is no hero to centre on yet.
 
-    The status bar is excluded (0,469,640,11): it prints the viewport offset and the build version,
-    both of which move between builds.
+    The status bar is excluded (16,466,608,11): it prints the viewport offset and the build version,
+    both of which move between builds. It sits on the bottom border of the ADVBORD frame, one strip
+    below the map viewport.
 
     M4 draws the ground layer only. When the object layer lands, the same script starts checking it
     for free: it renders whatever the client draws.
@@ -64,7 +65,7 @@ param(
 
     # Areas the comparison skips, in logical pixels of the 640x480 frame.
     [Parameter(Mandatory = $false)]
-    [string[]] $Ignore = @('0,469,640,11'),
+    [string[]] $Ignore = @('16,466,608,11'),
 
     # Accepted difference in pixels; 0 means the render has to be byte for byte identical.
     [Parameter(Mandatory = $false)]

@@ -17,9 +17,11 @@ namespace FHeroes2.App.Scenes;
 ///
 /// <para>
 /// The scene is deliberately thin: <see cref="AdventureMapView"/> knows how a tile becomes pixels,
-/// the scene only owns the frame, the status bar and the keyboard. Fog, heroes and the interface
-/// panels are later milestones; the reference composition (<c>Maps::redrawBottomLayerObjects</c>
-/// followed by the top layer, then the interface) is what those will plug into.
+/// <see cref="MapFrame"/> owns the interface frame (<c>ADVBORD.ICN</c>, the 448x448 viewport, the radar
+/// bay and the panel bay), and the scene only puts them together. The icons, the buttons and the
+/// resource bar of the panel, fog and heroes are later milestones; the reference composition
+/// (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the interface) is what those
+/// will plug into.
 /// </para>
 /// </summary>
 public sealed class AdventureMapScene : IScene
@@ -28,7 +30,7 @@ public sealed class AdventureMapScene : IScene
     public const int StatusBarHeight = 11;
 
     /// <summary>Distance between the minimap and the top right corner, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int RadarMargin = 16;
+    public const int RadarMargin = MapFrame.BorderWidth;
 
     private const int StatusBarPadding = 8;
 
@@ -39,27 +41,41 @@ public sealed class AdventureMapScene : IScene
     private readonly AdventureMapView _view;
     private readonly Minimap _minimap;
     private readonly MapScrollController _mouse;
+    private readonly MapFrame _mapFrame;
+    private readonly Rect _viewport;
+    private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
     private readonly Rect _statusBar;
-    private readonly byte _statusBarColor;
+    private readonly byte _dark;
 
     private bool _leftHeld;
     private bool _radarGrabbed;
 
-    private AdventureMapScene(ScreenBuffer frame, GameFonts? fonts, AdventureMapView view, Minimap minimap)
+    private AdventureMapScene(
+        ScreenBuffer frame,
+        GameFonts? fonts,
+        AdventureMapView view,
+        Minimap minimap,
+        MapFrame mapFrame)
     {
         _frame = frame;
         _fonts = fonts;
         _view = view;
         _minimap = minimap;
         _mouse = new MapScrollController(view);
-        _radar = new Rect(
-            frame.Size.Width - RadarMargin - Minimap.PanelSize,
-            RadarMargin,
-            Minimap.PanelSize,
-            Minimap.PanelSize);
-        _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
-        _statusBarColor = frame.Palette.FindDarkestIndex();
+        _mapFrame = mapFrame;
+        _viewport = mapFrame.Viewport;
+        _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
+        _radar = mapFrame.Radar;
+
+        // The status line goes on the bottom border, where the frame art leaves the strip empty; the
+        // panel bay above it belongs to the interface buttons of later milestones.
+        _statusBar = new Rect(
+            mapFrame.BottomBorder.X,
+            mapFrame.BottomBorder.Y + 2,
+            mapFrame.BottomBorder.Width,
+            StatusBarHeight);
+        _dark = frame.Palette.FindDarkestIndex();
     }
 
     /// <summary>The map the scene draws.</summary>
@@ -77,7 +93,10 @@ public sealed class AdventureMapScene : IScene
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => _view.Map.Info.Name;
 
-    /// <summary>The status bar rectangle at the bottom of the logical frame.</summary>
+    /// <summary>
+    /// The status bar rectangle: a strip of the bottom border of the frame, which the artwork leaves
+    /// empty.
+    /// </summary>
     public Rect StatusBarArea => _statusBar;
 
     /// <summary>
@@ -108,8 +127,18 @@ public sealed class AdventureMapScene : IScene
             Mp2Map map = Mp2Map.Read(mapInfo.FilePath);
             ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
 
+            // The map is drawn into the viewport of the frame and not over the whole display, so the
+            // border, the radar and the panel bay never have to be repainted over it.
+            MapFrame mapFrame = new(frame.Size, MapFrame.Load(assets));
+
             // Both sets share one decoder cache, so keeping them apart is only about what they map.
-            AdventureMapView view = new(map, tiles, frame.Size, objects, HeroSpriteSet.TryCreate(assets));
+            AdventureMapView view = new(
+                map,
+                tiles,
+                mapFrame.Viewport.Size,
+                objects,
+                HeroSpriteSet.TryCreate(assets));
+
             Minimap minimap = Minimap.Build(map);
 
             // Without heroes there is no player position to centre on yet; the castle closest to the
@@ -128,7 +157,7 @@ public sealed class AdventureMapScene : IScene
                 view.CenterOn(nearest.X, nearest.Y);
             }
 
-            AdventureMapScene scene = new(frame, fonts, view, minimap);
+            AdventureMapScene scene = new(frame, fonts, view, minimap, mapFrame);
 
             GameLog.Info(
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
@@ -148,16 +177,23 @@ public sealed class AdventureMapScene : IScene
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
     public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
 
-    /// <summary>Paints the visible terrain, the minimap and the status bar.</summary>
+    /// <summary>Paints the frame, the visible terrain, the minimap and the status bar.</summary>
     public void DrawFrame(in DiagnosticsState state)
     {
-        // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
-        // of index 0 of KB.PAL and matches the empty border of the reference.
+        // The frame is painted first and the map on top of it: ADVBORD already holds the border, the
+        // radar bay and the panel bay, so the only work left is to put the map between them.
         // The map is written straight into the indexed pixels, which cannot report the change, so
         // the whole buffer has to be marked dirty or the presenter would skip the upload.
         _frame.InvalidateAll();
-        _frame.Pixels.Clear();
-        _view.Draw(_frame.Pixels);
+        _mapFrame.Draw(_frame.Pixels, _dark);
+        _mapFrame.DrawPanel(_frame.Pixels);
+
+        // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
+        // of index 0 of KB.PAL and matches the empty border of the reference.
+        _viewportPixels.Clear();
+        _view.Draw(_viewportPixels);
+        ImageOps.Blit(_frame.Pixels, _viewport.Position, _viewportPixels, _viewportPixels.Bounds);
+
         DrawMinimap();
         DrawStatusBar(state);
     }
@@ -237,15 +273,17 @@ public sealed class AdventureMapScene : IScene
 
     private void DrawMinimap()
     {
-        // The panel art (ADVBORD.ICN) and the buttons around the radar belong to the interface shell,
-        // which is still missing; a one pixel frame keeps the panel readable on top of the map.
+        // The radar bay of the frame is exactly the size of the minimap, so the picture covers it; the
+        // one pixel rectangle is what the reference draws around it as well.
         _minimap.Draw(_frame.Pixels, _radar.Position, _view.VisibleTileArea);
         ImageOps.DrawRect(_frame.Pixels, _radar, Minimap.BlackColor);
     }
 
     private void DrawStatusBar(in DiagnosticsState state)
     {
-        ImageOps.FillRect(_frame.Pixels, _statusBar, _statusBarColor);
+        // The line sits on the bottom border of the frame, over a dark strip of its own: the border art
+        // is too light for SMALFONT on its own, and this strip is the only row the frame leaves free.
+        ImageOps.FillRect(_frame.Pixels, _statusBar, _dark);
 
         if (_fonts is null)
         {
@@ -254,21 +292,22 @@ public sealed class AdventureMapScene : IScene
 
         IGlyphSource font = _fonts.Small;
         int top = _statusBar.Y;
+        int leftEdge = _statusBar.X + StatusBarPadding;
 
         string right = FormattableString.Invariant(
             $"viewport {_view.Scroll.X},{_view.Scroll.Y}  |  v{BuildInfo.Version}");
         int rightX = Math.Max(
-            _statusBar.Right - StatusBarPadding - GlyphText.Measure(font, right), StatusBarPadding);
+            _statusBar.Right - StatusBarPadding - GlyphText.Measure(font, right), leftEdge);
         GlyphText.DrawLine(font, _frame.Pixels, new Point(rightX, top), right);
 
         string left = $"{MapName}  {_view.Map.Width}x{_view.Map.Height}";
-        int width = Math.Max(rightX - StatusBarGap - StatusBarPadding, 0);
+        int width = Math.Max(rightX - StatusBarGap - leftEdge, 0);
         if (width <= 0)
         {
             return;
         }
 
-        Rect line = new(StatusBarPadding, top, width, _statusBar.Height);
+        Rect line = new(leftEdge, top, width, _statusBar.Height);
         GlyphText.DrawLine(font, _frame.Pixels, new Point(line.X, top), left, line);
     }
 }
