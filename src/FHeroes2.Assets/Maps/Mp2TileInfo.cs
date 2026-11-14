@@ -35,8 +35,8 @@ public readonly record struct Mp2TileInfo
     public required byte BottomIcnImageIndex { get; init; }
 
     /// <summary>
-    /// The top two bits hold the ground object layer (0…3), the bottom five are the low bits of
-    /// <see cref="Metadata"/>.
+    /// The low two bits hold the ground object layer (0…3) and sit outside <see cref="Metadata"/>;
+    /// bit two is unused, and the top five bits are the low five bits of <see cref="Metadata"/>.
     /// </summary>
     public required byte Quantity1 { get; init; }
 
@@ -92,8 +92,10 @@ public readonly record struct Mp2TileInfo
     public int GroundLayer => Quantity1 & 0x03;
 
     /// <summary>
-    /// The 13 bit value the game keeps per tile, <c>((quantity2 &lt;&lt; 8) + quantity1) &gt;&gt; 3</c>;
-    /// it is the UID of the extended metadata block for objects that need one.
+    /// The 13 bit value the game keeps per tile, <c>((quantity2 &lt;&lt; 8) + quantity1) &gt;&gt; 3</c>.
+    /// In a save file it is the UID of the extended metadata block of the object; in an MP2 file it is
+    /// the object's own data, read differently by every object type: the amount of a resource pile,
+    /// the content of a chest, the kind of a mine.
     /// </summary>
     public uint Metadata => (((uint)Quantity2 << 8) + Quantity1) >> 3;
 

@@ -525,6 +525,31 @@ public sealed class GameHost : IDisposable
     /// </summary>
     private bool HandleEditorKey(in SDL.KeyboardEvent key, EditorScene editor)
     {
+        // The information box is modal, like the popup the reference shows on a right click: the keys
+        // that step the data and the ones that close it are taken, and a key meant for the box cannot
+        // paint or undo behind it.
+        if (editor.IsObjectInfoOpen)
+        {
+            switch (key.Key)
+            {
+                case SDL.Keycode.I or SDL.Keycode.Escape when !key.Repeat:
+                    editor.HideObjectInfo();
+                    GameLog.Info("Editor info: closed.");
+                    break;
+
+                case SDL.Keycode.LeftBracket when !key.Repeat:
+                case SDL.Keycode.RightBracket when !key.Repeat:
+                    bool stepped = editor.AdjustObjectData(key.Key == SDL.Keycode.LeftBracket ? -1 : 1);
+
+                    GameLog.Info(
+                        $"Editor info: {(stepped ? "data changed" : "data unchanged")}, {editor.ObjectInfoSummary}.");
+
+                    break;
+            }
+
+            return false;
+        }
+
         if ((key.Mod & SDL.Keymod.Ctrl) != 0)
         {
             switch (key.Key)
@@ -581,6 +606,23 @@ public sealed class GameHost : IDisposable
 
             case SDL.Keycode.X when !key.Repeat:
                 editor.SetTool(EditorTool.Erase);
+                return false;
+
+            case SDL.Keycode.I when !key.Repeat:
+                if (editor.IsObjectInfoOpen)
+                {
+                    editor.HideObjectInfo();
+                    GameLog.Info("Editor info: closed.");
+                }
+                else if (editor.ToggleObjectInfo())
+                {
+                    GameLog.Info($"Editor info: {editor.ObjectInfoSummary}.");
+                }
+                else
+                {
+                    GameLog.Info("Editor info: the pointer is not over the map.");
+                }
+
                 return false;
 
             case SDL.Keycode.Left:
@@ -722,6 +764,31 @@ public sealed class GameHost : IDisposable
             {
                 scene.SetCursor(pointer);
             }
+        }
+
+        // --editor-data writes the data word of one tile: the property of an object is a number in the
+        // tile, and the information box below is the only way to see it, so the two belong together.
+        if (_options.EditorData is { } data)
+        {
+            GameLog.Info(
+                scene.SetObjectData(data.Tile, data.Value)
+                    ? $"Wrote data {data.Value} into the object at ({data.Tile.X}; {data.Tile.Y})."
+                    : $"Nothing at ({data.Tile.X}; {data.Tile.Y}) takes a data word.");
+
+            if (_options.Cursor is { } pointer)
+            {
+                scene.SetCursor(pointer);
+            }
+        }
+
+        // --editor-info opens the information box on one tile: the box is drawn over the map and the
+        // panel, so a screenshot of it shows what the I key reports.
+        if (_options.EditorInfoTile is { } infoTile)
+        {
+            GameLog.Info(
+                scene.ShowObjectInfo(infoTile)
+                    ? $"Editor info: {scene.ObjectInfoSummary}."
+                    : $"({infoTile.X}; {infoTile.Y}) is outside the map.");
         }
 
         // --editor-panel-click clicks the controls of the editor panel in order: the panel is drawn from

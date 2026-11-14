@@ -1559,3 +1559,48 @@ if (dirty.IsEmpty)
 * 没移植：八方向笔刷图标（`EDITBTNS` 里没有那组帧）、`Area` 的橡皮框预览、按数量而非面积定义的
   `Medium`/`Large` 变体。
 
+---
+
+## ADR-051：对象属性——先暴露 tile 里的数据字，语义等对象目录
+
+**背景**：参考的对象属性有两个面：右键弹出的信息框（`Editor::showPopupWindow` →
+`editor_object_popup_window.cpp`，正文来自 `Editor::getObjectInfoText`）和按对象类型分支的属性对话框
+（城堡细节、事件、斯芬克斯……）。这两者都建在参考自己的**对象目录**上：`map_object_info.cpp` 把
+`icn + 帧号 → 对象类型、名字、metadata 语义` 全表列好，`getObjectInfoText` 再按类型拼「500 黄金」
+「日产 2 宝石」这样的句子。本移植只有 9 个预设、没有目录，也没有 `MP2::StringObject`（744 行名字表）。
+
+同时 MP2 里对象属性只有一个落点：tile 的 `quantity1 / quantity2`，`metadata = (q2 << 8 + q1) >> 3`，
+13 位。参考的 `Maps::Tile::Init(mp2)` 就是把这 13 位原样搬进 `_metadata[0]`，语义由对象类型在读取时解释。
+
+**决策**：
+
+1. **属性 = 数据字**：`MapEditSession.ObjectData(Point)` 读 `Metadata`，`SetObjectData(Point?, int)`
+   写它，范围 0…`MaxObjectData`（0x1FFF），越界抛 `ArgumentOutOfRangeException`。
+2. **只动属于字的位**：写入算 `quantity1 = (q1 & 0x07) | ((data & 0x1F) << 3)`、
+   `quantity2 = data >> 5`。低三位在字外——其中两位是地面层位（`GroundLayer`）——必须原样保留，否则
+   改一个数字会把精灵的叠放顺序改掉。
+3. **空 tile 没有属性**：擦除写回的是 `Quantity1/Quantity2 = 0` 的空 tile，此时数据是空 tile 自己的
+   字节而不是「某个对象的属性」，`SetObjectData` 返回 `false` 而不是先把 tile 变成"有对象"。
+4. **信息框挂在 `I` 上，不挂右键**：参考用右键弹框，本移植的右键已经给了平移（按住）与吸管（单击）。
+   框里四到五行：名字（预设名 / `Mp2ObjectType` 名 / 地面名）、`ground icn:帧 layer`、`top icn:帧`、
+   `data N`、`[x; y]`——`[x; y]` 的写法照参考的 `getObjectInfoText` 收尾。
+5. **框是模态的**：开框时任何点击或按键都先关框（`[` / `]` 除外，它们改数据），不会顺手在背后刷一格、
+   撤销一步或换工具。参考的 `Dialog::Message` 同样挡住背后的编辑器。
+6. **`[` / `]` 逐 1 步进**：没有文本框控件，也不发明「+100」这类语义化的步长；一次按键一次撤销，
+   与其它编辑动作共用 `MapStroke`。
+7. **名字来自预设匹配**：`Mp2ObjectPresets.Match` 按 `ObjectType + ObjectName1 + icn + 帧号` 认预设，
+   **不比较数据字**——对象改名换不了身份，改数据也换不了名字。
+8. **脚本入口 `--editor-info` / `--editor-data`**：截图不能按键，所以开框与写数据各有一条命令行；
+   后者先写后开框，正好截出「框里显示刚写进去的数字」。
+
+**后果**：
+
+* `editor.png` 重建（138,002 → 137,995 字节）：面板第五行提示换成 `I info  ^Z/^Y Esc`，地图没动。
+* `MapEditSession` 多两个公开成员与一个常量；`EditorScene` 多一层 `MessageBox` 缓存（按 tile + 数据字
+  失效），`FHeroes2.App` 因此引用 `FHeroes2.UI` 的对话框（组合根本来就引）。
+* 缺口写在 PROGRESS 的已知遗留里：**数据字有编辑入口、没有语义**。下一步是搬 `map_object_info.cpp`
+  与 `MP2::StringObject`，把 `data N` 变成「500 黄金」「日产 2 宝石」，再据此做资源类型/数量的选择器、
+  归属、事件与守卫。
+* 没移植：`getObjectInfoText` 的按类型文本、属性对话框（城堡、事件、斯芬克斯、日常事件、传闻）、
+  右键弹框的手势（我们的右键另有用途）。
+

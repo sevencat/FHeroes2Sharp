@@ -616,6 +616,86 @@ public sealed class MapEditSessionTests
     }
 
     [Fact]
+    public void TheObjectOnATileCarriesADataWord()
+    {
+        MapEditSession session = CreateSession();
+        session.SelectObject(Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart));
+        session.PlaceObject(new Point(1, 1));
+
+        int before = session.ObjectData(new Point(1, 1));
+        int depth = session.UndoDepth;
+
+        Assert.True(session.SetObjectData(new Point(1, 1), 1234));
+        Assert.Equal(1234, session.ObjectData(new Point(1, 1)));
+        Assert.Equal(depth + 1, session.UndoDepth);
+
+        // The same value again is not a stroke: a drag passes a tile more than once.
+        Assert.False(session.SetObjectData(new Point(1, 1), 1234));
+        Assert.Equal(depth + 1, session.UndoDepth);
+
+        Assert.True(session.Undo());
+        Assert.Equal(before, session.ObjectData(new Point(1, 1)));
+    }
+
+    [Fact]
+    public void TheDataWordLeavesTheLayerBitsOfTheTileAlone()
+    {
+        MapEditSession session = CreateSession();
+        session.SelectObject(Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart));
+        session.PlaceObject(new Point(1, 1));
+
+        // The three low bits of quantity1 are outside the word: two of them are the layer the piece is
+        // drawn in, so writing the word must not touch them.
+        byte layers = (byte)(session.Map.Tile(1, 1).Quantity1 & 0x07);
+
+        Assert.True(session.SetObjectData(new Point(1, 1), MapEditSession.MaxObjectData));
+
+        Mp2TileInfo tile = session.Map.Tile(1, 1);
+
+        Assert.Equal(layers, (byte)(tile.Quantity1 & 0x07));
+        Assert.Equal((uint)MapEditSession.MaxObjectData, tile.Metadata);
+        Assert.Equal(0xFF, tile.Quantity2);
+    }
+
+    [Fact]
+    public void AnEmptyTileTakesNoDataWord()
+    {
+        MapEditSession session = CreateSession();
+
+        Assert.Equal(0, session.ObjectData(new Point(2, 2)));
+        Assert.False(session.SetObjectData(new Point(2, 2), 7));
+        Assert.False(session.IsDirty);
+        Assert.False(session.SetObjectData(null, 7));
+        Assert.False(session.SetObjectData(new Point(99, 99), 7));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetObjectData(new Point(2, 2), -1));
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => session.SetObjectData(new Point(2, 2), MapEditSession.MaxObjectData + 1));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.ObjectData(new Point(99, 99)));
+    }
+
+    [Fact]
+    public void TheEditorKnowsWhichPresetATileShows()
+    {
+        MapEditSession session = CreateSession();
+        Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart);
+
+        session.SelectObject(preset);
+        session.PlaceObject(new Point(1, 1));
+
+        Assert.Same(preset, Mp2ObjectPresets.Match(session.Map.Tile(1, 1)));
+
+        // The data word is not part of the identity of an object, so the name survives a change.
+        session.SetObjectData(new Point(1, 1), 99);
+        Assert.Same(preset, Mp2ObjectPresets.Match(session.Map.Tile(1, 1)));
+
+        // A tile of the bare map shows no preset.
+        Assert.Null(Mp2ObjectPresets.Match(session.Map.Tile(0, 0)));
+    }
+
+    [Fact]
     public void APlacedAddonMakesTheSaveWriteEverySection()
     {
         string filePath = Path.Combine(Path.GetTempPath(), $"fh2-editor-object-{Guid.NewGuid():N}.mp2");

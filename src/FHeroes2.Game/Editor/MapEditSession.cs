@@ -199,6 +199,90 @@ public sealed class MapEditSession
         return changed;
     }
 
+    /// <summary>
+    /// Largest value the data word of a tile holds: <c>quantity1</c> and <c>quantity2</c> are thirteen
+    /// bits once the three low bits of <c>quantity1</c> are taken out.
+    /// </summary>
+    public const int MaxObjectData = 0x1FFF;
+
+    /// <summary>
+    /// Reads the data word of the object on a tile, <c>MP2TileInfo.metadata</c>: one number per tile
+    /// whose meaning is the object's — the amount of a resource pile, the content of a chest, the kind
+    /// of a mine.
+    /// </summary>
+    /// <param name="tile">Tile to read, must be inside the map.</param>
+    /// <returns>The thirteen bit value, 0 for a tile without an object.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="tile"/> is outside the map.</exception>
+    public int ObjectData(Point tile)
+    {
+        if (!WithinMap(tile))
+        {
+            throw new ArgumentOutOfRangeException(nameof(tile), tile, "The tile is outside the map.");
+        }
+
+        return (int)Map.Tile(tile.X, tile.Y).Metadata;
+    }
+
+    /// <summary>
+    /// Writes the data word of the object on a tile, the property the information box of the editor
+    /// shows and the <c>[</c> and <c>]</c> keys step.
+    /// </summary>
+    /// <remarks>
+    /// The thirteen bits of the word are the top five bits of <c>quantity1</c> and all of
+    /// <c>quantity2</c>; the three low bits of <c>quantity1</c> are outside the word — two of them are
+    /// the ground layer the piece is drawn in — and stay as they are. A tile without an object has
+    /// nothing to describe and is left alone: the data of an empty tile is part of the empty tile, not
+    /// a property of an object.
+    /// </remarks>
+    /// <param name="tile">Tile to write, ignored when outside the map or <see langword="null"/>.</param>
+    /// <param name="data">Value to write, 0 to <see cref="MaxObjectData"/>.</param>
+    /// <returns>Whether the tile changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="data"/> does not fit thirteen bits.</exception>
+    public bool SetObjectData(Point? tile, int data)
+    {
+        if (data is < 0 or > MaxObjectData)
+        {
+            throw new ArgumentOutOfRangeException(nameof(data), data, "The data word holds thirteen bits.");
+        }
+
+        if (tile is not { } point || !WithinMap(point))
+        {
+            return false;
+        }
+
+        Mp2TileInfo before = Map.Tile(point.X, point.Y);
+
+        if (!before.HasGroundObject && !before.HasTopObject)
+        {
+            return false;
+        }
+
+        Mp2TileInfo after = before with
+        {
+            Quantity1 = (byte)((before.Quantity1 & 0x07) | ((data & 0x1F) << 3)),
+            Quantity2 = (byte)(data >> 5),
+        };
+
+        if (after == before)
+        {
+            return false;
+        }
+
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        int index = Map.TileIndex(point.X, point.Y);
+        Map.SetTileAt(index, after);
+        _stroke!.Record(index, before, after);
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return true;
+    }
+
     /// <summary>Steps through the object presets, the <c>O</c> key; also selects the object tool.</summary>
     /// <param name="delta">Presets to step; wraps around the list.</param>
     /// <returns>The object after the step.</returns>

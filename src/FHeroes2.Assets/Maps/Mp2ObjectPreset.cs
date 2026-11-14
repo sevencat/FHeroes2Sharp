@@ -165,6 +165,24 @@ public static class Mp2ObjectPresets
     public static int IndexOf(Mp2ObjectPreset? preset) =>
         preset is null ? -1 : Array.IndexOf(Presets, preset);
 
+    /// <summary>
+    /// Finds the preset a tile shows, i.e. the entry whose artwork the tile is drawn with, or
+    /// <see langword="null"/> when the tile holds something the editor does not place itself.
+    /// </summary>
+    /// <remarks>
+    /// The data word is not compared: it is what a map author changes on a placed object, and an
+    /// object keeps its identity — and its name — while its data moves.
+    /// </remarks>
+    /// <param name="tile">Tile to look up, usually one the editor placed earlier.</param>
+    /// <returns>The preset, <see langword="null"/> when no preset draws this tile.</returns>
+    public static Mp2ObjectPreset? Match(Mp2TileInfo tile) =>
+        Presets.FirstOrDefault(preset =>
+            preset.Template.ObjectType == tile.ObjectType
+            && preset.Template.ObjectName1 == tile.ObjectName1
+            && preset.Template.BottomIcnImageIndex == tile.BottomIcnImageIndex
+            && preset.Template.ObjectName2 == tile.ObjectName2
+            && preset.Template.TopIcnImageIndex == tile.TopIcnImageIndex);
+
     /// <summary>The ground part of an object, encoded the way a tile stores it.</summary>
     private static Mp2TileInfo Ground(
         Mp2ObjectType type, Mp2ObjectIcnType icn, int image, int quantity1 = 0) =>

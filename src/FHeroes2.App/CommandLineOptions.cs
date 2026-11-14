@@ -2,6 +2,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Editor;
 
 namespace FHeroes2.App;
 
@@ -16,7 +17,8 @@ namespace FHeroes2.App;
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
 ///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
-///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;]
+///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;] [--editor-info &lt;x,y&gt;]
+///                 [--editor-data &lt;x,y,value&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -164,6 +166,20 @@ public sealed class CommandLineOptions
     /// and then its picker, which a single click cannot do.
     /// </summary>
     public IReadOnlyList<Point> EditorPanelClicks { get; private set; } = [];
+
+    /// <summary>
+    /// Tile whose information box the editor opens at start up (<c>--editor-info &lt;x,y&gt;</c>), the
+    /// box the <c>I</c> key shows: the object on the tile, the parts it is drawn from, its data word
+    /// and its coordinates.
+    /// </summary>
+    public Point? EditorInfoTile { get; private set; }
+
+    /// <summary>
+    /// Data word an editor tile receives at start up (<c>--editor-data &lt;x,y,value&gt;</c>), the
+    /// scripted version of the <c>[</c> and <c>]</c> keys that step the same word while the
+    /// information box is open.
+    /// </summary>
+    public EditorDataRequest? EditorData { get; private set; }
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -337,6 +353,14 @@ public sealed class CommandLineOptions
                     options.EditorPanelClicks = ParsePointList(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--editor-info":
+                    options.EditorInfoTile = ParsePoint(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
+                case "--editor-data":
+                    options.EditorData = ParseEditorData(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -404,6 +428,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("                      there first. The map centres on the tile under the pointer.");
         Console.WriteLine("  --editor-panel-click <x,y[;x,y...]>  Clicks those points of the 144x320 editor panel");
         Console.WriteLine("                      in order when the editor opens, e.g. '0,0' for the terrain button.");
+        Console.WriteLine("  --editor-info <x,y>  Opens the information box of that tile, the box the I key shows;");
+        Console.WriteLine("                      it lists the object, its parts, its data word and the coordinates.");
+        Console.WriteLine("  --editor-data <x,y,value>  Writes that data word (0..8191) into the object on the tile");
+        Console.WriteLine("                      when the editor opens, the scripted version of the [ and ] keys.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -479,6 +507,30 @@ public sealed class CommandLineOptions
             $"'{option}' expects '<x>,<y>' or '<x1>,<y1>,<x2>,<y2>' in panel pixels, got '{value}'.");
     }
 
+    /// <summary>
+    /// Parses <c>--editor-data</c>: <c>x,y,value</c>, the data word the object on the tile receives.
+    /// </summary>
+    /// <param name="value">The option value.</param>
+    /// <param name="option">Name of the option, for the error message.</param>
+    /// <returns>The tile and the value to write into it.</returns>
+    /// <exception cref="ArgumentException">The value is not two coordinates and a number in range.</exception>
+    private static EditorDataRequest ParseEditorData(string value, string option)
+    {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length == 3
+            && int.TryParse(parts[0], out int x)
+            && int.TryParse(parts[1], out int y)
+            && int.TryParse(parts[2], out int data)
+            && data is >= 0 and <= MapEditSession.MaxObjectData)
+        {
+            return new EditorDataRequest(new Point(x, y), data);
+        }
+
+        throw new ArgumentException(
+            $"'{option}' expects '<x>,<y>,<value>' with a value from 0 to {MapEditSession.MaxObjectData}, " +
+            $"got '{value}'.");
+    }
+
     /// <summary>Parses a list of points: one or more <c>x,y</c> pairs, separated by semicolons.</summary>
     /// <param name="value">The option value.</param>
     /// <param name="option">Name of the option, for the error message.</param>
@@ -545,3 +597,11 @@ public readonly record struct EditorPaintRequest(Point Tile, int Width, int Heig
 /// <param name="Start">Point of the panel the press lands on.</param>
 /// <param name="DragTo">Point the pointer moves to while the button is held, or <see langword="null"/>.</param>
 public readonly record struct EditorRadarRequest(Point Start, Point? DragTo);
+
+/// <summary>
+/// The data word of <c>--editor-data</c>: which tile gets which value when the editor opens, so a map
+/// can be scripted into a state where the information box has something to show.
+/// </summary>
+/// <param name="Tile">Tile that receives the value, must hold an object.</param>
+/// <param name="Value">Data word to write, 0 to <c>MapEditSession.MaxObjectData</c>.</param>
+public readonly record struct EditorDataRequest(Point Tile, int Value);

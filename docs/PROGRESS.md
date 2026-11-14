@@ -1128,13 +1128,15 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | 输入重排 | ✅ | 左键 = 刷、右键按住 = 平移（`MapScrollController.SetPanButton`）、右键单击不拖 = 吸管、`1..9` 选地面、`Ctrl+Z` / `Ctrl+Y` 撤销重做；方向键 / `Home` / `G` / `Esc` 不变 |
 | 小地图重建 | ✅ | 编辑器里唯一的缓存：结笔、撤销、重做后 `Minimap.Build` 重烤；地图视图本来就是逐帧读 tile，改完立刻可见 |
 | `--editor-paint <x,y,w,h,ground>` | ✅ | 诊断开关：截图按不动鼠标，用它做一次脚本化矩形笔刷，`editor.png` 靠它守住「改 tile → 画面变」这条链路 |
-| `tests/.../MapEditSessionTests` | ✅ | 15+1 条：笔刷选择与非法地面、刷地形改 image/ground、shape 由接缝决定且 beach 位清掉、同地面刷两次只算一次、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动 |
+| `tests/.../MapEditSessionTests` | ✅ | 37 条：笔刷选择与非法地面、刷地形改 image/ground、shape 由接缝决定且 beach 位清掉、同地面刷两次只算一次、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动、四种笔刷面积、数据字读写与撤销、层位保留、空 tile 拒绝、`Mp2ObjectPresets.Match` 认预设 |
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
 | `ADVBORD` 外壳与 448×448 视口 | ✅ | 地图落在 16 px 边框与雷达列之间，雷达在右上角 (480,16)，雷达下方是面板槽 (480,160,144,304)；外壳就是 `ADVBORD.ICN` 那张 640×480 整图，缺资产时退化成纯色边框而布局不变（ADR-048） |
 | `EditorPanel` 按钮阵列 | ✅ | `EDITBTNS` 的三个工具按钮（地形 / 对象 / 橡皮，按下是亮帧）、`EDITPANL` 裁出的九个 27×27 地面格（选中压 `TERRAINS` 第 9 帧的 30×30 黄框）、对象名字表，以及选择器下方五行状态/快捷键；面板底纹是 `STONEBAK`，点按钮/格子直接换工具与笔刷，缺资产时退回文字版（ADR-049） |
 | 笔刷尺寸 | ✅ | 四个尺寸照参考的 `EditorPanel::BrushSize`：`Small` 1×1、`Medium` 2×2（指针在左上角）、`Large` 4×4（以指针为中心）、`Area` 从按下那格拖成矩形；面板上是 `EDITBTNS` 第 24～31 帧的四个按钮（24×18，`x = 14 + 30·i`，`y = 113`），当前那个是按下帧，点一下就换；橡皮同样按面积清对象（ADR-050） |
 | `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象/笔刷尺寸与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
+| 对象属性（信息框 + 数据字） | ✅ | `I` 打开指针下那一格的属性框（参考右键弹出的 `Editor::showPopupWindow`）：对象名（编辑器放过的就是预设名）、`地面 icn:帧 layer`、`顶 icn:帧`、`data N`、`[x; y]`；`[` / `]` 逐 1 改这段 13 位数据字，一次一撤销。数据字就是 MP2 的 `quantity1/quantity2` 高位，写入时保留 `quantity1 & 0x07`（含地面层位）；空 tile 没有属性可改（ADR-051） |
+| `--editor-info <x,y>` / `--editor-data <x,y,value>` | ✅ | 属性框与数据字的脚本版：前者开框（截图即所见），后者在开场景前把某个对象的数据字写成 0～8191 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
 | 像素基线 `editor.png` | ✅ | 一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块）把雪落在海岸线上：地形层被改写、雪块四周是真正的雪/草/水过渡、对象层（船）仍压在上面 |
@@ -1237,6 +1239,39 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-paint 46,52,6,4,Snow --e
   3. **坐标分两层**：地图视图与 `MapEditorView` 只认视口像素，框架/雷达/面板认屏幕像素，`ViewportCursor`
      是唯一换算点。指针不在视口内就传 `null`，于是"视口外不画、不吸管、不滚边"三件事自动成立。
   4. **基线必换**：整个画面换了骨架，`editor.png` 从 108,862 字节变成 116,108 字节，雪块与接缝不变。
+
+### E2 对象属性 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / Game 159 / UI 145 全绿（新增 4 条会话测试）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png 重建为 137,995 字节 / 0A3FA38A…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+dotnet run -- --scene editor --map Alteris.mp2 --editor-place "60,60" --editor-object Mine \
+             --editor-data "60,60,300" --editor-info "60,60"
+  → Wrote data 300 into the object at (60; 60). / Editor info: Mine at (60; 60), data 300.
+  → 框里四行：ground MtnMult:81 layer 0 / data 300 / [ ] change the data / [60; 60]
+dotnet run -- --scene editor --map Alteris.mp2 --editor-info "20,20"
+  → Editor info: Water at (20; 20), data 0.（框里是 Water / no object / [20; 20]）
+```
+
+* 四处观察：
+  1. **属性就是 tile 里那段 13 位字**：MP2 没有「属性块」，`quantity1` 的高五位与整个 `quantity2`
+     拼成 `metadata`。参考把这张表当对象目录用（资源类型、数量、守卫种类都从这里取），本移植先在
+     编辑器里把这段字暴露出来：`MapEditSession.ObjectData` 读、`SetObjectData` 写，写的时候把
+     `quantity1 & 0x07` 原样留下——那三位不在字里，其中两位还是地面层位（ADR-051）。
+  2. **空 tile 没有属性**：擦除写回的是 `Quantity1/Quantity2 = 0` 的空 tile，这时「数据」属于空 tile
+     而不是对象，`SetObjectData` 直接返回 `false`，不会把一块空白变成「有数据」的一格。
+  3. **名字取自预设表**：`Mp2ObjectPresets.Match` 按 `ObjectType + icn + 帧号` 认预设，不比较数据字，
+     所以改完数据名字还在；认不出来的对象退化成 `Mp2ObjectType` 的名字，空 tile 印地面名。参考用的是
+     整张对象目录（`getObjectInfoText` 里几百条分支），我们只有 9 个预设，这一层差异写进了已知遗留。
+  4. **框是模态的**：参考在右键上弹 `displayStandardPopupWindow`，我们右键已经给了平移与吸管，于是
+     挂在 `I` 上；框开着时点击或按其它键都只关框，不会顺手在背后刷一格或撤销一步——`[` / `]` 改数据
+     是框里唯一的编辑动作，一次一撤销。
+* 面板提示行重排为 `1-9 ground  G grid` / `O object  X erase` / `I info  ^Z/^Y Esc`，`I` 因此进了
+  `editor.png` 的像素：字节数 138,002 → 137,995，地图与雪块一个像素都没动。
+* 没做：`data` 的语义。资源堆该显示「500 黄金」、矿该显示日产多少、宝箱该显示金币，都要先把参考的
+  对象目录（`map_object_info.cpp`）与 `MP2::StringObject` 搬过来，那是独立的一步。
 
 ### E2 笔刷尺寸 验证记录
 
@@ -1343,10 +1378,12 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
 * ~~没有地形过渡/海岸自动衔接~~：E2 已补（`TerrainTransitions`，见上表与 ADR-046）。
 * **孤岛不会被同化**：参考刷出一块四面不接的孤岛时，会把这块地面改回邻居的地面（它找不到图就换地面）；
   我们保留这块地面并保持纯图。编辑器不该悄悄改用户刚画的东西，所以这是有意的差异。
-* **笔刷只有 1×1**：参考有 1×1 / 2×2 / 3×3 / 圆刷。
+* ~~笔刷只有 1×1~~：E2 已补四个尺寸（ADR-050）。
 * ~~对象不能放、不能删~~：E2 的对象工具已做（`O` / `X`，见上表）。
-* **对象只是外观**：矿、宝箱、资源放下去只改变画面与 `ObjectType`，`Quantity2` 里的资源类型、归属、
-  事件与守卫都没有编辑入口；城堡表与可占领表也不随对象更新——那是「对象属性」这一步的事。
+* **数据字有编辑入口、没有语义**：属性框里的 `data N` 就是 MP2 的 13 位字，`[` / `]` 能改，但资源堆
+  显示的还是数字而不是「500 黄金」，矿也不会写上归属。语义要等参考的**对象目录**
+  （`map_object_info.cpp`）与 `MP2::StringObject` 搬过来（ADR-051）；城堡表与可占领表同理，也不随
+  对象更新。
 * **对象目录只有 9 个、且几乎都是单格对象**：城镇、锯木厂这类多格建筑要按格拼装并处理 add-on 的
   相对偏移；面板的对象工具现在只是把这 9 个预设列成名字表，参考那套按对象类型分页的图标菜单要先有图标来源。
 * **面板少了参考的系统按钮行**：`EDITBTNS` 只有 35 帧（参考要 45+：undo / redo / 网格 / 视图 / 系统菜单），

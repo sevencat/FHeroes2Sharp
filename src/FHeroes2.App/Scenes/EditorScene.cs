@@ -8,6 +8,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Editor;
+using FHeroes2.UI.Dialogs;
 
 namespace FHeroes2.App.Scenes;
 
@@ -33,8 +34,11 @@ namespace FHeroes2.App.Scenes;
 /// <para>
 /// The instruments are keys for now: <c>1</c> to <c>9</c> pick a ground and the terrain tool, <c>O</c>
 /// cycles the objects of <see cref="Mp2ObjectPresets"/> and selects the object tool, <c>X</c> the eraser
-/// and <c>T</c> the terrain tool again. <see cref="MapEditSession"/> owns what they do; this scene only
-/// forwards input and paints the panel.
+/// and <c>T</c> the terrain tool again. <c>I</c> opens the information box of the tile under the
+/// pointer, the popup the reference shows on a right click: what the object is, the parts it is drawn
+/// from, its data word and its coordinates, with <c>[</c> and <c>]</c> stepping the data word.
+/// <see cref="MapEditSession"/> owns what the instruments do; this scene only forwards input and
+/// paints the panel.
 /// </para>
 ///
 /// <para>
@@ -45,9 +49,9 @@ namespace FHeroes2.App.Scenes;
 /// undo history.
 /// </para>
 /// <para>
-/// Not ported yet: the buttons and pickers of <c>EditorPanel</c>. The panel bay is already in its final
-/// place and carries the same facts as text, and the objects are a fixed list of presets instead of a
-/// panel of buttons.
+/// Not ported yet: the system buttons of <c>EditorPanel</c> (undo, redo, grid, view, menu) — this
+/// release of the game ships thirty-five frames of <c>EDITBTNS.ICN</c> and those buttons need more —
+/// and the property dialogs of the objects, which the information box only reports.
 /// </para>
 /// </summary>
 public sealed class EditorScene : IScene
@@ -80,11 +84,18 @@ public sealed class EditorScene : IScene
     private readonly Rect _panel;
     private readonly Sprite? _chrome;
     private readonly EditorPanel? _panelView;
+    private readonly FrameBoxChrome? _infoChrome;
     private readonly byte _dark;
     private readonly byte _bright;
 
     /// <summary>Baked colours of the map; rebuilt after a stroke because it does not read the tiles.</summary>
     private Minimap _minimap;
+
+    /// <summary>The information box the <c>I</c> key opens, kept between frames and rebuilt when stale.</summary>
+    private MessageBox? _info;
+
+    /// <summary>Tile and data word the box was built for, i.e. what it shows.</summary>
+    private (Point Tile, int Data)? _infoKey;
 
     /// <summary>Whether the paint button is held, i.e. the pointer keeps painting as it moves.</summary>
     private bool _painting;
@@ -101,6 +112,9 @@ public sealed class EditorScene : IScene
     /// <summary>Seconds left of the "saved" note in the status bar.</summary>
     private double _savedFlash;
 
+    /// <summary>The tile the information box describes, <see langword="null"/> when it is closed.</summary>
+    private Point? _infoTile;
+
     private EditorScene(
         ScreenBuffer frame,
         GameFonts? fonts,
@@ -109,7 +123,8 @@ public sealed class EditorScene : IScene
         Minimap minimap,
         MapScrollController mouse,
         Sprite? chrome,
-        EditorPanel? panelView)
+        EditorPanel? panelView,
+        FrameBoxChrome? infoChrome)
     {
         _frame = frame;
         _fonts = fonts;
@@ -119,6 +134,7 @@ public sealed class EditorScene : IScene
         _mouse = mouse;
         _chrome = chrome;
         _panelView = panelView;
+        _infoChrome = infoChrome;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
@@ -199,6 +215,94 @@ public sealed class EditorScene : IScene
 
     /// <summary>The size of the ground and eraser brush, as the panel names it.</summary>
     public string BrushSizeName => _edits.BrushSize.ToString();
+
+    /// <summary>Whether the information box of the object under the pointer is open.</summary>
+    public bool IsObjectInfoOpen => _infoTile is not null;
+
+    /// <summary>The tile the information box describes, <see langword="null"/> when it is closed.</summary>
+    public Point? ObjectInfoTile => _infoTile;
+
+    /// <summary>
+    /// One line about the tile the information box describes, for the log of a key press: the name of
+    /// what is on it, its coordinates and its data word.
+    /// </summary>
+    public string ObjectInfoSummary
+    {
+        get
+        {
+            if (_infoTile is not { } tile)
+            {
+                return "closed";
+            }
+
+            Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
+
+            return FormattableString.Invariant(
+                $"{DescribeTile(info)} at ({tile.X}; {tile.Y}), data {_edits.ObjectData(tile)}");
+        }
+    }
+
+    /// <summary>Opens or closes the information box of the hovered tile, the <c>I</c> key.</summary>
+    /// <returns>Whether the box is open after the call.</returns>
+    public bool ToggleObjectInfo()
+    {
+        if (_infoTile is not null)
+        {
+            HideObjectInfo();
+            return false;
+        }
+
+        return _editor.HoverTile is { } tile && ShowObjectInfo(tile);
+    }
+
+    /// <summary>
+    /// Opens the information box on one tile, the scripted entry point behind
+    /// <c>--editor-info</c>.
+    /// </summary>
+    /// <param name="tile">Tile to describe, ignored when it is outside the map.</param>
+    /// <returns>Whether the box opened.</returns>
+    public bool ShowObjectInfo(Point tile)
+    {
+        if (tile.X < 0 || tile.X >= Map.Width || tile.Y < 0 || tile.Y >= Map.Height)
+        {
+            return false;
+        }
+
+        _infoTile = tile;
+        _info = null;
+        return true;
+    }
+
+    /// <summary>Closes the information box, a click on the map or the <c>I</c> key.</summary>
+    public void HideObjectInfo()
+    {
+        _infoTile = null;
+        _info = null;
+    }
+
+    /// <summary>
+    /// Steps the data word of the tile the box describes, the <c>[</c> and <c>]</c> keys.
+    /// </summary>
+    /// <param name="delta">Amount to add, clamped to the range the format has.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool AdjustObjectData(int delta)
+    {
+        if (_infoTile is not { } tile)
+        {
+            return false;
+        }
+
+        int current = _edits.ObjectData(tile);
+        int next = Math.Clamp(current + delta, 0, MapEditSession.MaxObjectData);
+
+        return next != current && _edits.SetObjectData(tile, next);
+    }
+
+    /// <summary>Writes the data word of a tile, the scripted counterpart of the <c>[</c>/<c>]</c> keys.</summary>
+    /// <param name="tile">Tile to write, ignored when it holds no object or is outside the map.</param>
+    /// <param name="data">Value to write, 0 to <see cref="MapEditSession.MaxObjectData"/>.</param>
+    /// <returns>Whether the tile changed.</returns>
+    public bool SetObjectData(Point tile, int data) => _edits.SetObjectData(tile, data);
 
     /// <summary>
     /// The bay below the radar for a frame of <paramref name="size"/>, the rectangle
@@ -335,7 +439,25 @@ public sealed class EditorScene : IScene
             Minimap.Build(map),
             new MapScrollController(view),
             LoadFrameChrome(assets),
-            EditorPanel.TryCreate(PanelBay(frame.Size), assets));
+            EditorPanel.TryCreate(PanelBay(frame.Size), assets),
+            LoadInfoChrome(assets));
+    }
+
+    /// <summary>
+    /// Reads the frame of the information box, the dialogs of the reference use <c>BUYBUILD.ICN</c>.
+    /// </summary>
+    /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
+    /// <returns>The chrome, or <see langword="null"/> when the archive has none.</returns>
+    private static FrameBoxChrome? LoadInfoChrome(AssetBundle? assets)
+    {
+        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(assets?.TryReadIcn(FrameBoxChrome.AssetName)?.Sprites);
+
+        if (chrome is null)
+        {
+            GameLog.Warn($"'{FrameBoxChrome.AssetName}' is not available, the editor draws no information box.");
+        }
+
+        return chrome;
     }
 
     /// <summary>
@@ -383,6 +505,89 @@ public sealed class EditorScene : IScene
         DrawHover();
         DrawMinimap();
         DrawPanel();
+        DrawObjectInfo();
+    }
+
+    /// <summary>
+    /// Draws the information box of the tile the <c>I</c> key named, over the panel like the reference
+    /// draws its popup over everything else. The box is only rebuilt when the tile or its data word
+    /// moved, so holding a key does not relayout the text on every frame.
+    /// </summary>
+    private void DrawObjectInfo()
+    {
+        if (_infoTile is not { } tile || _fonts is null || _infoChrome is not { } chrome)
+        {
+            return;
+        }
+
+        int data = _edits.ObjectData(tile);
+
+        if (_info is null || _infoKey != (tile, data))
+        {
+            _info = ComposeObjectInfo(tile, data, chrome, _fonts.Small);
+            _infoKey = (tile, data);
+        }
+
+        _info.Draw(_frame.Pixels);
+    }
+
+    /// <summary>
+    /// Builds the text of the information box: what the object is, the parts it is drawn from, its
+    /// data word and the coordinates of its tile, which is the content of
+    /// <c>Editor::getObjectInfoText</c> in the reference.
+    /// </summary>
+    /// <param name="tile">Tile to describe, must be inside the map.</param>
+    /// <param name="data">Data word of the tile, read again by the caller to keep the box current.</param>
+    /// <param name="chrome">Frame of the box.</param>
+    /// <param name="font">Font of the text.</param>
+    /// <returns>The box, centred on the frame like every dialog of the reference.</returns>
+    private MessageBox ComposeObjectInfo(Point tile, int data, FrameBoxChrome chrome, IGlyphSource font)
+    {
+        Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
+        List<string> lines = [];
+
+        if (info.HasGroundObject)
+        {
+            lines.Add(FormattableString.Invariant(
+                $"ground {info.GroundIcnType}:{info.BottomIcnImageIndex} layer {info.GroundLayer}"));
+        }
+
+        if (info.HasTopObject)
+        {
+            lines.Add(FormattableString.Invariant($"top {info.TopIcnType}:{info.TopIcnImageIndex}"));
+        }
+
+        if (info.HasGroundObject || info.HasTopObject)
+        {
+            lines.Add(FormattableString.Invariant($"data {data}"));
+            lines.Add("[ ] change the data");
+        }
+        else
+        {
+            lines.Add("no object");
+        }
+
+        lines.Add(FormattableString.Invariant($"[{tile.X}; {tile.Y}]"));
+
+        return MessageBox.Create(DescribeTile(info), string.Join('\n', lines), chrome, font, font);
+    }
+
+    /// <summary>
+    /// Names what a tile holds: the preset of the editor when the tile shows one of its objects, the
+    /// object type when it does not, and the ground when there is no object at all.
+    /// </summary>
+    /// <param name="info">Tile to name.</param>
+    /// <returns>The name shown as the header of the information box.</returns>
+    private static string DescribeTile(Mp2TileInfo info)
+    {
+        if (Mp2ObjectPresets.Match(info) is { } preset)
+        {
+            return preset.Name;
+        }
+
+        return info.ObjectType != Mp2ObjectType.None
+            ? info.ObjectType.ToString()
+            : MapGrounds.FromTerrainImageIndex(info.TerrainImageIndex).ToString();
     }
 
     /// <summary>The editor draws all of its text with the game fonts.</summary>
@@ -463,6 +668,14 @@ public sealed class EditorScene : IScene
     {
         _leftHeld = down;
 
+        // The information box is modal the way a message of the reference is: a click anywhere takes it
+        // away and does nothing else, so a press meant to dismiss it cannot paint a tile as a side effect.
+        if (down && _infoTile is not null)
+        {
+            HideObjectInfo();
+            return false;
+        }
+
         if (down && _screenCursor is { } cursor && _radar.Contains(cursor))
         {
             _radarGrabbed = true;
@@ -519,6 +732,12 @@ public sealed class EditorScene : IScene
 
         if (down)
         {
+            if (_infoTile is not null)
+            {
+                HideObjectInfo();
+                return false;
+            }
+
             if (!onRadar)
             {
                 _mouse.SetPanButton(true);
@@ -975,7 +1194,7 @@ public sealed class EditorScene : IScene
 
         Line("1-9 ground  G grid");
         Line("O object  X erase");
-        Line("^Z/^Y  Esc menu");
+        Line("I info  ^Z/^Y Esc");
     }
 
     /// <summary>
@@ -1078,7 +1297,7 @@ public sealed class EditorScene : IScene
 
         Line("1-9 ground  T tool");
         Line("O object  X erase");
-        Line("G grid");
+        Line("I info  G grid");
         Line("^Z undo  ^Y redo");
         Line("arrows/wheel scroll");
         Line("Home start  Esc menu");
