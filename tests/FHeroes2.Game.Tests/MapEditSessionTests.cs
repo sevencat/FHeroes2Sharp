@@ -15,6 +15,9 @@ public sealed class MapEditSessionTests
     private const ushort Grass = MapGrounds.GrassStartImageIndex;
     private const ushort Snow = MapGrounds.SnowStartImageIndex;
 
+    private const MapGround GrassGround = MapGround.Grass;
+    private const MapGround SnowGround = MapGround.Snow;
+
     [Fact]
     public void TheBrushStartsOnGrassAndCanBePicked()
     {
@@ -96,6 +99,108 @@ public sealed class MapEditSessionTests
         Assert.False(session.Paint(new Point(0, -1)));
         Assert.False(session.Paint(new Point(4, 3)));
         Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void TheBrushStartsSmallAndTheSizeCanBePicked()
+    {
+        MapEditSession session = CreateSession();
+
+        Assert.Equal(BrushSize.Small, session.BrushSize);
+        Assert.True(session.SetBrushSize(BrushSize.Large));
+        Assert.Equal(BrushSize.Large, session.BrushSize);
+        Assert.False(session.SetBrushSize(BrushSize.Large));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetBrushSize((BrushSize)4));
+        Assert.Equal(BrushSize.Large, session.BrushSize);
+    }
+
+    [Fact]
+    public void TheMediumBrushPaintsTwoByTwoTiles()
+    {
+        MapEditSession session = CreateSession();
+        session.SetBrush(MapGround.Snow);
+        session.SetBrushSize(BrushSize.Medium);
+
+        Assert.True(session.Paint(new Point(1, 1)));
+
+        // The reference anchors the 2x2 square at the tile under the pointer, top left corner first.
+        Assert.Equal(SnowGround, GroundAt(session, 1, 1));
+        Assert.Equal(SnowGround, GroundAt(session, 2, 1));
+        Assert.Equal(SnowGround, GroundAt(session, 1, 2));
+        Assert.Equal(SnowGround, GroundAt(session, 2, 2));
+
+        // The stroke is one undo step whatever number of tiles it covers.
+        Assert.Equal(1, session.UndoDepth);
+        Assert.True(session.Undo());
+        Assert.Equal(GrassGround, GroundAt(session, 1, 1));
+        Assert.Equal(GrassGround, GroundAt(session, 2, 2));
+    }
+
+    [Fact]
+    public void TheLargeBrushIsCentredOnTheTileAndClippedByTheMap()
+    {
+        MapEditSession session = CreateSession();
+        session.SetBrush(MapGround.Snow);
+        session.SetBrushSize(BrushSize.Large);
+
+        // The map is 4x4, so a 4x4 square centred at (2,2) hangs over the right and the bottom edge:
+        // the tiles outside must be dropped instead of throwing.
+        Assert.True(session.Paint(new Point(2, 2)));
+
+        Assert.Equal(SnowGround, GroundAt(session, 1, 1));
+        Assert.Equal(SnowGround, GroundAt(session, 3, 3));
+        Assert.Equal(GrassGround, GroundAt(session, 0, 0));
+        Assert.Equal(GrassGround, GroundAt(session, 3, 0));
+    }
+
+    [Fact]
+    public void TheAreaBrushFillsTheRectangleOfTheDrag()
+    {
+        MapEditSession session = CreateSession();
+        session.SetBrush(MapGround.Snow);
+        session.SetBrushSize(BrushSize.Area);
+
+        session.BeginStroke();
+        session.Paint(new Point(2, 2));
+        session.Paint(new Point(0, 1));
+        session.EndStroke();
+
+        // The rectangle between the tile the stroke started on and the one the pointer is over, no
+        // matter which of the two is the top left corner.
+        Assert.Equal(SnowGround, GroundAt(session, 0, 1));
+        Assert.Equal(SnowGround, GroundAt(session, 2, 2));
+        Assert.Equal(SnowGround, GroundAt(session, 1, 1));
+        Assert.Equal(GrassGround, GroundAt(session, 0, 0));
+        Assert.Equal(GrassGround, GroundAt(session, 3, 0));
+
+        Assert.Equal(1, session.UndoDepth);
+    }
+
+    [Fact]
+    public void TheEraserClearsEveryTileOfTheBrushArea()
+    {
+        MapEditSession session = CreateSession();
+
+        for (int y = 1; y <= 2; ++y)
+        {
+            for (int x = 1; x <= 2; ++x)
+            {
+                session.Map.SetTile(x, y, Tile(Grass) with { ObjectType = Mp2ObjectType.TreasureChest, ObjectName1 = 7 });
+            }
+        }
+
+        session.SetBrushSize(BrushSize.Medium);
+        Assert.True(session.EraseObject(new Point(1, 1)));
+
+        for (int y = 1; y <= 2; ++y)
+        {
+            for (int x = 1; x <= 2; ++x)
+            {
+                Assert.Equal(Mp2ObjectType.None, session.Map.Tile(x, y).ObjectType);
+            }
+        }
+
+        Assert.Equal(Grass, session.Map.Tile(1, 1).TerrainImageIndex);
     }
 
     [Fact]
@@ -580,6 +685,10 @@ public sealed class MapEditSessionTests
 
         return new MapEditSession(new MapEditorView(new AdventureMapView(map, tiles, new Size(96, 96))));
     }
+
+    /// <summary>Reads the ground of one tile back, the way the panel names it.</summary>
+    private static MapGround GroundAt(MapEditSession session, int x, int y) =>
+        MapGrounds.FromTerrainImageIndex(session.Map.Tile(x, y).TerrainImageIndex);
 
     private static Mp2TileInfo Tile(ushort terrainImageIndex) =>
         new()

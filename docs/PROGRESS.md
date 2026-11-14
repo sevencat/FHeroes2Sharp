@@ -1132,8 +1132,9 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
 | `ADVBORD` 外壳与 448×448 视口 | ✅ | 地图落在 16 px 边框与雷达列之间，雷达在右上角 (480,16)，雷达下方是面板槽 (480,160,144,304)；外壳就是 `ADVBORD.ICN` 那张 640×480 整图，缺资产时退化成纯色边框而布局不变（ADR-048） |
-| `EditorPanel` 按钮阵列 | ✅ | `EDITBTNS` 的三个工具按钮（地形 / 对象 / 橡皮，按下是亮帧）、`EDITPANL` 裁出的九个 27×27 地面格（选中压 `TERRAINS` 第 9 帧的 30×30 黄框）、名字条、对象名字表，以及选择器下方五行状态/快捷键；面板底纹是 `STONEBAK`，点按钮/格子直接换工具与笔刷，缺资产时退回文字版（ADR-049） |
-| `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
+| `EditorPanel` 按钮阵列 | ✅ | `EDITBTNS` 的三个工具按钮（地形 / 对象 / 橡皮，按下是亮帧）、`EDITPANL` 裁出的九个 27×27 地面格（选中压 `TERRAINS` 第 9 帧的 30×30 黄框）、对象名字表，以及选择器下方五行状态/快捷键；面板底纹是 `STONEBAK`，点按钮/格子直接换工具与笔刷，缺资产时退回文字版（ADR-049） |
+| 笔刷尺寸 | ✅ | 四个尺寸照参考的 `EditorPanel::BrushSize`：`Small` 1×1、`Medium` 2×2（指针在左上角）、`Large` 4×4（以指针为中心）、`Area` 从按下那格拖成矩形；面板上是 `EDITBTNS` 第 24～31 帧的四个按钮（24×18，`x = 14 + 30·i`，`y = 113`），当前那个是按下帧，点一下就换；橡皮同样按面积清对象（ADR-050） |
+| `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象/笔刷尺寸与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
 | 像素基线 `editor.png` | ✅ | 一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块）把雪落在海岸线上：地形层被改写、雪块四周是真正的雪/草/水过渡、对象层（船）仍压在上面 |
@@ -1237,6 +1238,36 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-paint 46,52,6,4,Snow --e
      是唯一换算点。指针不在视口内就传 `null`，于是"视口外不画、不吸管、不滚边"三件事自动成立。
   4. **基线必换**：整个画面换了骨架，`editor.png` 从 108,862 字节变成 116,108 字节，雪块与接缝不变。
 
+### E2 笔刷尺寸 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / Game 155 / UI 145 全绿（新增 5 条会话测试）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png 重建为 138,002 字节 / 893EAA73…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "56,230"
+  → Panel click at (56; 230) hit BrushSize. Tool Terrain, ground Grass, size Medium, object 'Tree'.
+dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "120,90;116,230"
+  → 先命中橡皮按钮，再命中第 4 个尺寸：Tool Erase, …, size Area
+```
+
+* 四处观察：
+  1. **四个尺寸的矩形照抄 `getBrushArea()`**：`Small` 是 `(0,0,1,1)`、`Medium` 是 `(0,0,2,2)`（指针在
+     左上角）、`Large` 是 `(-1,-1,4,4)`（以指针为中心）、`Area` 返回空矩形——它的大小取决于拖动。
+     落笔时把这些偏移加到指针格上，再与地图边界求交，所以贴着边缘用 `Large` 不会越界。
+  2. **一次落笔只重算一次接缝**：以前是「写一格 + 重算它和八邻」，现在是「写整个面积 + 重算面积外扩
+     一圈」，`Large` 从 16 次写 + 144 次重算降到 16 次写 + 36 次重算，结果与逐格刷完相同。
+  3. **`Area` 是拖出来的矩形**：按住时以笔划起手那格为锚，当前格为另一角，取两点的包围盒；参考是拖动时
+     画橡皮框、松手才填，这里边拖边填（少一个「框」，语义相同）。往回拖不会「退填」，已经落下的格子留在
+     地图上——和刷子一样，撤销才是回退手段。
+  4. **名字条让位给尺寸按钮**：参考在 640×480 上根本不画名字（`drawInstrumentName` 只在面板高于 160 时
+     才画），那一行 `y = 113` 本来就是四个尺寸按钮的位置。ADR-049 把名字条画在那儿是为了补信息，现在
+     有了真正的按钮就撤掉，地面名仍在面板下方的状态文字里。
+* 边缘：`EDITBTNS` 缺帧（少于 32 帧）时尺寸按钮不画、也点不中，工具与选择器照常工作；`Area` 之外三个
+  尺寸的下标就是 `BrushSize` 的枚举值，和帧号的对应是 `24 + 2·i`（按下 +1），与参考的
+  `_brushSizeButtons[i]` 一致。
+* 基线只差面板那一行：字节数 137,834 → 138,002，地图与雪块一个像素都没动。
+
 ### E2 EditorPanel 按钮阵列 验证记录
 
 ```text
@@ -1254,7 +1285,8 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "72,18;50,14
      帧号 0 / 2 / 10（按下 +1），格子步进 `36×33`、按钮本身 `48×36`；地面选择器在按钮下方，
      九张 27×27 的图从 `EDITPANL` 的 `(30+29·col, 11+29·row)` 裁出，选中格压 `TERRAINS` 第 9 帧的
      30×30 黄框（相对格子偏 -2）。名字条裁自同表的 `(7,104,130,14)`，放在选择器下 9 px
-     （参考 `drawInstrumentName` 的 `panel.y + 113`），文字居中。
+     （参考 `drawInstrumentName` 的 `panel.y + 113`），文字居中——**这一行后来让给了笔刷尺寸按钮**，
+     见上面 ADR-050 那条记录。
   2. **`BlitSprite` 的源偏移会双计**：`BlitSprite(dest, Point, Sprite, sourceRect)` 会把 `Point` 和
      `sourceRect` 的原点相加，而参考的 `Blit` 是「目标位置」与「源图区域」两回事；所以 `BlitPart`
      传的是 `position - source`，否则整片地形图向右下偏 `(30,11)`。
@@ -1264,7 +1296,8 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "72,18;50,14
      也是参考在 640×480 的行为（`bottomBorderOffset` 只在显示比 480 高时才加）。
   4. **对象选择器只能是名字表**：`EDITBTNS` 只有 35 帧，参考那套对象图标（对象菜单）不在里面，
      `.mp2` 里也没有对象表；于是 9 个预设排成 `1 Tree` … `9 Resources`，选中行用面板亮色描一圈
-     （黄框是 30×30，套不进 136×14 的行）。名字条就只在工具/橡皮分支画——九行恰好占到名字条的位置。
+     （黄框是 30×30，套不进 136×14 的行）。名字条当时只在工具/橡皮分支画——九行恰好占到它的位置；
+     ADR-050 之后那一行换成尺寸按钮，对象工具依旧不画（对象不讲笔刷面积）。
     地面格的命中区是 27×27 的图本身，格与格之间的 9 px 空隙点不中，和参考的 `_terrainButtonsRect` 一样。
 * 边缘：`EDITBTNS` / `EDITPANL` / `TERRAINS` 任何一个缺失，`EditorPanel.TryCreate` 返回 `null`，
   面板退回 ADR-048 的文字版，`editor.png` 也随之变成文字版（这是有意的降级，不是崩溃）。
@@ -1318,6 +1351,8 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
   相对偏移；面板的对象工具现在只是把这 9 个预设列成名字表，参考那套按对象类型分页的图标菜单要先有图标来源。
 * **面板少了参考的系统按钮行**：`EDITBTNS` 只有 35 帧（参考要 45+：undo / redo / 网格 / 视图 / 系统菜单），
   所以面板下部写的是状态与快捷键文字，不是按钮（ADR-049）。
+* **笔刷默认 1×1、`Area` 边拖边填**：参考开局就是 `Medium`、`Area` 松手才填；本移植沿用「一格一刷」的旧
+  行为起步，`Area` 每移一格把矩形重刷一遍（ADR-050）。
 * **撤销深度不落盘**：200 笔内存栈，退出即丢。
 * **没有编辑器主菜单**：进编辑器只有主菜单按钮与 `--scene editor`；新建地图已由 `--editor-new` 提供（E3b）。
 

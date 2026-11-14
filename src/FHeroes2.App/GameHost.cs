@@ -737,7 +737,7 @@ public sealed class GameHost : IDisposable
 
                 GameLog.Info(
                     $"Panel click at ({panelPoint.X}; {panelPoint.Y}) hit {hit.Kind}. " +
-                    $"Tool {scene.Tool}, ground {scene.Brush}, object '{scene.ObjectName}'.");
+                    $"Tool {scene.Tool}, ground {scene.Brush}, size {scene.BrushSizeName}, object '{scene.ObjectName}'.");
             }
         }
 

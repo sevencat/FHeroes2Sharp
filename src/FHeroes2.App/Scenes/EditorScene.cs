@@ -197,6 +197,9 @@ public sealed class EditorScene : IScene
     /// <summary>The preset of the object tool, or <c>none</c> when no object is selected.</summary>
     public string ObjectName => _edits.ObjectBrush?.Name ?? "none";
 
+    /// <summary>The size of the ground and eraser brush, as the panel names it.</summary>
+    public string BrushSizeName => _edits.BrushSize.ToString();
+
     /// <summary>
     /// The bay below the radar for a frame of <paramref name="size"/>, the rectangle
     /// <see cref="PanelArea"/> reports once the editor exists.
@@ -563,9 +566,9 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>
-    /// Clicks a control of the panel: an instrument button, a terrain button or an object preset. The
-    /// reference routes the same click through <c>EditorPanel::_queueEvent</c>, which reads what the
-    /// control under the pointer selects.
+    /// Clicks a control of the panel: an instrument button, a terrain button, an object preset or a
+    /// brush size button. The reference routes the same click through <c>EditorPanel::_queueEvent</c>,
+    /// which reads what the control under the pointer selects.
     /// </summary>
     /// <param name="screen">Pointer in logical pixels.</param>
     /// <returns>What the point hit, <see cref="EditorPanelHit.None"/> when nothing; the change is applied.</returns>
@@ -590,6 +593,10 @@ public sealed class EditorScene : IScene
 
             case EditorPanelHitKind.Object:
                 _edits.SelectObject(Mp2ObjectPresets.All[hit.Index]);
+                break;
+
+            case EditorPanelHitKind.BrushSize:
+                _edits.SetBrushSize((BrushSize)hit.Index);
                 break;
 
             case EditorPanelHitKind.None:
@@ -907,6 +914,7 @@ public sealed class EditorScene : IScene
                 _edits.Tool,
                 _edits.Brush,
                 _edits.ObjectBrush,
+                _edits.BrushSize,
                 _bright);
             DrawPanelNotes(_fonts.Small);
 

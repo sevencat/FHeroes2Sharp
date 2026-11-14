@@ -24,6 +24,9 @@ internal enum EditorPanelHitKind
 
     /// <summary>One of the object presets; the index is the entry of <see cref="Mp2ObjectPresets.All"/>.</summary>
     Object,
+
+    /// <summary>One of the four brush size buttons; the index is the <see cref="BrushSize"/>.</summary>
+    BrushSize,
 }
 
 /// <summary>A click on the editor panel: what was hit and which entry of it.</summary>
@@ -40,7 +43,7 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 
 /// <summary>
 /// The instrument panel of the map editor, the counterpart of <c>Editor::EditorPanel</c>: three rows of
-/// tool buttons, the picker below them and the band that names what is selected.
+/// tool buttons, the picker below them and the row of brush size buttons under the picker.
 /// </summary>
 ///
 /// <remarks>
@@ -56,9 +59,16 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 /// <para>
 /// The terrain picker is the one of the reference down to the pixel offsets: nine 27x27 images cut out
 /// of <c>EDITPANL.ICN</c> frame 0 at (30 + 29 column, 11 + 29 row), laid out at 36x33 steps, with the
-/// 30x30 yellow rectangle of <c>TERRAINS.ICN</c> frame 9 over the selected one. The reference only
-/// names the selected terrain on displays taller than its instrument panel; the bay of this port is
-/// exactly that height and has room for the name band, so the name is always drawn.
+/// 30x30 yellow rectangle of <c>TERRAINS.ICN</c> frame 9 over the selected one. That sheet is a sheet
+/// of parts — the nine images, the name band the reference draws on taller displays, a few button
+/// faces — and must never be blitted whole: its 29 pixel grid disagrees with the 36 pixel grid the
+/// buttons are laid out on, and both sets would show, offset from each other.
+/// </para>
+/// <para>
+/// The brush row is the four size buttons of <c>EDITBTNS</c> frames 24 to 31 at (14 + 30 step, 113) of
+/// the instrument area, drawn for the ground and the eraser only. The reference also draws the name of
+/// the selected instrument in that row, but only on displays taller than 480; the logical frame of this
+/// port is exactly 480, so there is no band and the row belongs to the size buttons, as it does there.
 /// </para>
 /// <para>
 /// The object picker has no artwork to reuse: the nine presets are entries of the map format, not
@@ -120,13 +130,15 @@ internal sealed class EditorPanel
     private const int SourceTop = 11;
     private const int SourceStep = 29;
 
-    // The band is cut out of the sheet at (7,104) and laid out at 113 below the top of the picker:
-    // the reference draws it at _rectInstrumentPanel.y + 113, nine pixels under the last cell row.
-    private const int BandLeft = 7;
-    private const int BandSourceTop = 104;
-    private const int BandTop = 113;
-    private const int BandWidth = 130;
-    private const int BandHeight = 14;
+    // The brush size buttons of EDITBTNS are 24x18 (frames 24 to 31, a released and a pressed frame
+    // each), laid out at x = 14 + 30 * i and y = 113 of the instrument area, nine pixels under the last
+    // cell row and inside the height the reference clamps to (min(height - 27, 135)).
+    private const int BrushFrame = 24;
+    private const int BrushLeft = 14;
+    private const int BrushTop = 113;
+    private const int BrushStep = 30;
+    private const int BrushWidth = 24;
+    private const int BrushHeight = 18;
 
     private const int RowLeft = 4;
     private const int RowTop = 6;
@@ -196,14 +208,15 @@ internal sealed class EditorPanel
     }
 
     /// <summary>
-    /// Draws the buttons, the picker and the name band. Text is drawn with <paramref name="font"/>, the
-    /// small font of the interface.
+    /// Draws the tool buttons, the picker and the brush size row. Text is drawn with
+    /// <paramref name="font"/>, the small font of the interface.
     /// </summary>
     /// <param name="target">The frame buffer.</param>
     /// <param name="font">Font of the labels.</param>
     /// <param name="tool">The tool in use, its button is drawn pressed.</param>
     /// <param name="brush">The ground of the terrain tool.</param>
     /// <param name="objectBrush">The preset of the object tool.</param>
+    /// <param name="size">The brush size in use, its button is drawn pressed.</param>
     /// <param name="highlight">Palette index of the selection outline, the brightest colour of the frame.</param>
     public void Draw(
         PixelBuffer target,
@@ -211,6 +224,7 @@ internal sealed class EditorPanel
         EditorTool tool,
         MapGround brush,
         Mp2ObjectPreset objectBrush,
+        BrushSize size,
         byte highlight)
     {
         if (_background is not null)
@@ -239,8 +253,8 @@ internal sealed class EditorPanel
         switch (tool)
         {
             case EditorTool.Terrain:
-                DrawBand(target);
-                DrawTerrainPicker(target, font, brush);
+                DrawTerrainPicker(target, brush);
+                DrawBrushRow(target, size);
                 break;
 
             case EditorTool.Object:
@@ -248,24 +262,36 @@ internal sealed class EditorPanel
                 break;
 
             default:
-                DrawBand(target);
                 DrawEraseHint(target, font);
+                DrawBrushRow(target, size);
                 break;
         }
     }
 
     /// <summary>
-    /// Blits the name band of the sheet. <c>EDITPANL.ICN</c> is a sheet of parts — the nine terrain
-    /// images, the name band, the brush buttons — and not a panel to blit whole: copying it whole and
-    /// then drawing the parts over it leaves both sets visible, offset by the difference between the
-    /// sheet grid (29 pixels) and the button grid (36).
+    /// Blits the four size buttons of the brush, the selected one pressed. The reference draws them for
+    /// the instruments that paint (ground, landscape objects, detail) and for the eraser, which is the
+    /// same set this port has.
     /// </summary>
     /// <param name="target">The frame buffer.</param>
-    private void DrawBand(PixelBuffer target) =>
-        BlitPart(
-            target,
-            new Point(_area.X + BandLeft, _area.Y + PickerTop + BandTop),
-            new Rect(BandLeft, BandSourceTop, BandWidth, BandHeight));
+    /// <param name="size">The size in use.</param>
+    private void DrawBrushRow(PixelBuffer target, BrushSize size)
+    {
+        IReadOnlyList<BrushSize> sizes = BrushSizeExtensions.All;
+
+        for (int i = 0; i < sizes.Count; i++)
+        {
+            int index = BrushFrame + (i * 2) + (sizes[i] == size ? 1 : 0);
+
+            if (index < _buttons.Length)
+            {
+                ImageOps.BlitSprite(
+                    target,
+                    new Point(_area.X + BrushLeft + (i * BrushStep), _area.Y + PickerTop + BrushTop),
+                    _buttons[index]);
+            }
+        }
+    }
 
     /// <summary>
     /// Reports which control the point of the bay is over, in the coordinates of the frame.
@@ -328,6 +354,19 @@ internal sealed class EditorPanel
                 break;
         }
 
+        // The brush row comes last: the nine rows of the object picker reach down to it, and the
+        // object tool has no brush sizes to pick (an object is as big as its own artwork).
+        if (tool is EditorTool.Terrain or EditorTool.Erase)
+        {
+            for (int i = 0; i < BrushSizeExtensions.All.Count; i++)
+            {
+                if (BrushButton(i).Contains(picker))
+                {
+                    return new EditorPanelHit(EditorPanelHitKind.BrushSize, i);
+                }
+            }
+        }
+
         return EditorPanelHit.None;
     }
 
@@ -365,9 +404,13 @@ internal sealed class EditorPanel
     private static Rect Row(int index) =>
         new(RowLeft, RowTop + (index * RowHeight), RowWidth, RowHeight);
 
+    /// <summary>Rectangle of one brush size button inside the picker, the 24x18 artwork itself.</summary>
+    private static Rect BrushButton(int index) =>
+        new(BrushLeft + (index * BrushStep), BrushTop, BrushWidth, BrushHeight);
+
     private static int RowWidth => 136;
 
-    private void DrawTerrainPicker(PixelBuffer target, IGlyphSource font, MapGround brush)
+    private void DrawTerrainPicker(PixelBuffer target, MapGround brush)
     {
         int selected = -1;
 
@@ -402,8 +445,6 @@ internal sealed class EditorPanel
                 new Point(_area.X + cell.X - 2, _area.Y + PickerTop + cell.Y - 2),
                 _selection);
         }
-
-        DrawBandName(target, font, brush.ToString());
     }
 
     private void DrawObjectPicker(PixelBuffer target, IGlyphSource font, Mp2ObjectPreset brush, byte highlight)
@@ -436,36 +477,18 @@ internal sealed class EditorPanel
                 new Rect(position.X, position.Y, RowWidth, RowHeight));
         }
 
-        // No name band here: nine rows reach the band area of the terrain panel, and the selected
-        // preset is already the outlined one of the list.
     }
 
     private void DrawEraseHint(PixelBuffer target, IGlyphSource font)
     {
-        Point position = new(_area.X + 10, _area.Y + PickerTop + 16);
+        Point position = new(_area.X + BrushLeft, _area.Y + PickerTop + 16);
 
-        GlyphText.DrawLine(font, target, position, "click a tile to");
+        GlyphText.DrawLine(font, target, position, "click to clear the");
 
         GlyphText.DrawLine(
             font,
             target,
             new Point(position.X, position.Y + font.LineHeight),
-            "clear its object");
-
-        DrawBandName(target, font, EditorTool.Erase.ToString());
-    }
-
-    private void DrawBandName(PixelBuffer target, IGlyphSource font, string name)
-    {
-        // The reference centres the name in the band (drawInstrumentName), three pixels down.
-        int x = _area.X + BandLeft + ((BandWidth - GlyphText.Measure(font, name)) / 2);
-        Point position = new(x, _area.Y + PickerTop + BandTop + 3);
-
-        GlyphText.DrawLine(
-            font,
-            target,
-            position,
-            name,
-            new Rect(_area.X + BandLeft, position.Y, BandWidth, BandHeight));
+            "objects under it");
     }
 }

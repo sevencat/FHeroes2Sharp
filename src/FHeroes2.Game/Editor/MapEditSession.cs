@@ -46,6 +46,16 @@ public sealed class MapEditSession
     private MapStroke? _stroke;
     private MapGround _brush = MapGround.Grass;
 
+    /// <summary>
+    /// Size of the ground and eraser brush. The reference opens with its medium brush, this port with
+    /// the 1x1 one: the port painted one tile per step before sizes existed, and the keys of the editor
+    /// pick grounds, not sizes.
+    /// </summary>
+    private BrushSize _brushSize = BrushSize.Small;
+
+    /// <summary>Tile the current <see cref="BrushSize.Area"/> rectangle starts from, i.e. the first one painted.</summary>
+    private Point? _strokeAnchor;
+
     /// <summary>Instrument the left button uses; the ground brush until a key picks another one.</summary>
     private EditorTool _tool = EditorTool.Terrain;
 
@@ -82,6 +92,9 @@ public sealed class MapEditSession
 
     /// <summary>What the left button does: paint ground, place the object or erase it.</summary>
     public EditorTool Tool => _tool;
+
+    /// <summary>How many tiles the ground and eraser brushes cover, the brush buttons of the panel.</summary>
+    public BrushSize BrushSize => _brushSize;
 
     /// <summary>The object the object tool places.</summary>
     public Mp2ObjectPreset ObjectBrush => _object;
@@ -123,6 +136,29 @@ public sealed class MapEditSession
         _brush = ground;
         _tool = EditorTool.Terrain;
         return changed;
+    }
+
+    /// <summary>
+    /// Selects the size of the ground and eraser brushes, the four buttons under the picker of the
+    /// panel. The object tool ignores it: an object is as big as its own artwork, not as the brush.
+    /// </summary>
+    /// <param name="size">The size to use.</param>
+    /// <returns>Whether the size changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="size"/> is not a brush size.</exception>
+    public bool SetBrushSize(BrushSize size)
+    {
+        if (!Enum.IsDefined(size))
+        {
+            throw new ArgumentOutOfRangeException(nameof(size), size, "Unknown brush size.");
+        }
+
+        if (size == _brushSize)
+        {
+            return false;
+        }
+
+        _brushSize = size;
+        return true;
     }
 
     /// <summary>Selects what the left button does.</summary>
@@ -207,6 +243,7 @@ public sealed class MapEditSession
         }
 
         _stroke = new MapStroke();
+        _strokeAnchor = null;
         return true;
     }
 
@@ -216,6 +253,7 @@ public sealed class MapEditSession
     {
         MapStroke? stroke = _stroke;
         _stroke = null;
+        _strokeAnchor = null;
 
         if (stroke is null || stroke.Count == 0)
         {
@@ -241,15 +279,20 @@ public sealed class MapEditSession
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The tile gets the plain image of the brush and then the blend is recomputed for it and its eight
-    /// neighbours, because the images of those neighbours say how the tile ends against every other
-    /// ground: painting grass next to water has to change the water edge too. All nine tiles belong to
-    /// the same stroke, so one <c>Ctrl+Z</c> takes the whole edit back. See
+    /// Every tile of the brush area gets the plain image of the brush, then the blend is recomputed for
+    /// the area and its one tile border: the images of those neighbours say how a tile ends against
+    /// every other ground, so painting grass next to water has to change the water edge too. The whole
+    /// area belongs to the same stroke, so one <c>Ctrl+Z</c> takes the edit back. See
     /// <see cref="TerrainTransitions"/> for the table itself.
     /// </para>
     /// <para>
     /// The terrain shape and the beach bits of a painted tile are replaced by what the blend says: both
     /// describe the ground that is no longer there.
+    /// </para>
+    /// <para>
+    /// A <see cref="BrushSize.Area"/> brush paints the rectangle between the tile the stroke started on
+    /// and <paramref name="tile"/>, growing it as the pointer moves: the reference draws a rubber band
+    /// while dragging and fills the same rectangle when the button comes up, this port fills as it goes.
     /// </para>
     /// </remarks>
     /// <param name="tile">Tile to paint, ignored when it is outside the map or <see langword="null"/>.</param>
@@ -264,18 +307,17 @@ public sealed class MapEditSession
         bool ownStroke = _stroke is null;
         BeginStroke();
 
-        bool changed = WriteGround(point, TerrainTransitions.PlainImageIndex(_brush, point), 0);
+        Rect area = BrushArea(point);
+        bool changed = false;
 
-        for (int dy = -1; dy <= 1; ++dy)
+        foreach (Point painted in Tiles(area, 0))
         {
-            for (int dx = -1; dx <= 1; ++dx)
-            {
-                Point neighbour = new(point.X + dx, point.Y + dy);
-                if (WithinMap(neighbour))
-                {
-                    changed |= Blend(neighbour);
-                }
-            }
+            changed |= WriteGround(painted, TerrainTransitions.PlainImageIndex(_brush, painted), 0);
+        }
+
+        foreach (Point blended in Tiles(area, 1))
+        {
+            changed |= Blend(blended);
         }
 
         if (!changed)
@@ -294,6 +336,49 @@ public sealed class MapEditSession
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The tiles the current brush covers around <paramref name="tile"/>, clipped to the map.
+    /// </summary>
+    /// <param name="tile">Tile under the pointer, must be inside the map.</param>
+    /// <returns>The area in tile coordinates, never empty for <paramref name="tile"/> inside the map.</returns>
+    private Rect BrushArea(Point tile)
+    {
+        if (_brushSize != BrushSize.Area)
+        {
+            Rect offsets = _brushSize.Area();
+            return new Rect(tile.X + offsets.X, tile.Y + offsets.Y, offsets.Width, offsets.Height);
+        }
+
+        Point anchor = _strokeAnchor ??= tile;
+        int left = Math.Min(anchor.X, tile.X);
+        int top = Math.Min(anchor.Y, tile.Y);
+
+        return new Rect(left, top, Math.Max(anchor.X, tile.X) - left + 1, Math.Max(anchor.Y, tile.Y) - top + 1);
+    }
+
+    /// <summary>
+    /// Iterates the tiles of <paramref name="area"/> grown by <paramref name="border"/>, clipped to the map.
+    /// </summary>
+    /// <param name="area">Area in tile coordinates.</param>
+    /// <param name="border">How many tiles of margin to include, the blend needs one.</param>
+    /// <returns>The tiles to visit, in row-major order.</returns>
+    private IEnumerable<Point> Tiles(Rect area, int border)
+    {
+        Rect grown = new Rect(area.X - border, area.Y - border, area.Width + (2 * border), area.Height + (2 * border));
+        int left = Math.Max(0, grown.Left);
+        int top = Math.Max(0, grown.Top);
+        int right = Math.Min(Map.Width, grown.Right);
+        int bottom = Math.Min(Map.Height, grown.Bottom);
+
+        for (int y = top; y < bottom; ++y)
+        {
+            for (int x = left; x < right; ++x)
+            {
+                yield return new Point(x, y);
+            }
+        }
     }
 
     /// <summary>
@@ -428,15 +513,17 @@ public sealed class MapEditSession
     }
 
     /// <summary>
-    /// Clears the object of <paramref name="tile"/> and keeps its ground, the eraser of the editor.
+    /// Clears the objects under the brush and keeps their ground, the eraser of the editor.
     /// </summary>
     /// <remarks>
     /// The result is the empty tile a shipped map stores: no ICN type, sprite index 255 on both
     /// parts, a zeroed layer and metadata and UIDs of 0, with the terrain image and the terrain flags
-    /// untouched.
+    /// untouched. Every tile of the brush area is cleared, not just the pointed one: the reference
+    /// applies <c>getBrushArea()</c> of the eraser too, which is what the size buttons of the panel
+    /// are for.
     /// </remarks>
-    /// <param name="tile">Tile to clear, ignored when outside the map or <see langword="null"/>.</param>
-    /// <returns>Whether the tile changed.</returns>
+    /// <param name="tile">Tile under the pointer, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether anything changed.</returns>
     public bool EraseObject(Point? tile)
     {
         if (tile is not { } point || !WithinMap(point))
@@ -444,6 +531,39 @@ public sealed class MapEditSession
             return false;
         }
 
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        bool changed = false;
+
+        foreach (Point cleared in Tiles(BrushArea(point), 0))
+        {
+            changed |= EraseTile(cleared);
+        }
+
+        if (!changed)
+        {
+            if (ownStroke)
+            {
+                _stroke = null;
+            }
+
+            return false;
+        }
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return true;
+    }
+
+    /// <summary>Clears the object of one tile, the body of <see cref="EraseObject"/>.</summary>
+    /// <param name="point">Tile to clear, must be inside the map.</param>
+    /// <returns>Whether the tile changed.</returns>
+    private bool EraseTile(Point point)
+    {
         Mp2TileInfo before = Map.Tile(point.X, point.Y);
 
         if (!before.HasGroundObject
@@ -453,9 +573,6 @@ public sealed class MapEditSession
         {
             return false;
         }
-
-        bool ownStroke = _stroke is null;
-        BeginStroke();
 
         Mp2TileInfo after = before with
         {
@@ -474,12 +591,6 @@ public sealed class MapEditSession
         int tileIndex = Map.TileIndex(point.X, point.Y);
         Map.SetTileAt(tileIndex, after);
         _stroke!.Record(tileIndex, before, after);
-
-        if (ownStroke)
-        {
-            EndStroke();
-        }
-
         return true;
     }
 
