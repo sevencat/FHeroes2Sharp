@@ -125,4 +125,81 @@ public static class Mp2ObjectIcnTypes
 {
     /// <summary>Whether the tile set draws anything at all.</summary>
     public static bool IsKnown(Mp2ObjectIcnType type) => type != Mp2ObjectIcnType.Unknown;
+
+    /// <summary>
+    /// Whether the sprite of a ground or top part can be blitted straight onto its tile, the port of
+    /// <c>isObjectPartDirectRenderingRestricted</c> of the reference. The four excluded sets either
+    /// hold nothing usable (<c>UNKNOWN</c>), are split over several tiles by the engine
+    /// (<c>BOAT32</c>, <c>MINIHERO</c>) or are rendered by the monster renderer (<c>MONS32</c>).
+    /// </summary>
+    public static bool IsDrawnAsObjectPart(Mp2ObjectIcnType type) =>
+        type is not (Mp2ObjectIcnType.Unknown
+            or Mp2ObjectIcnType.Boat32
+            or Mp2ObjectIcnType.MiniHero
+            or Mp2ObjectIcnType.Mons32);
+
+    /// <summary>
+    /// The archive entry that holds the sprites of <paramref name="type"/>, i.e. the name behind
+    /// <c>ICN::getIcnIdFromObjectIcnType</c> plus <c>ICN::GetString</c> of the reference. Every
+    /// entry is the enum name in upper case with an <c>.ICN</c> suffix.
+    /// </summary>
+    /// <param name="type">Tile set of an object part.</param>
+    /// <param name="priceOfLoyaltySupported">
+    /// Whether <c>heroes2x.agg</c> is installed. The three <c>X_LOC*</c> sets only exist there, so
+    /// without it they cannot be drawn (the reference returns <c>ICN::UNKNOWN</c>).
+    /// </param>
+    /// <returns><see langword="null"/> when the part draws nothing or its entry is missing.</returns>
+    public static string? GetArchiveName(Mp2ObjectIcnType type, bool priceOfLoyaltySupported = false) =>
+        type switch
+        {
+            Mp2ObjectIcnType.Unknown => null,
+            Mp2ObjectIcnType.Boat32 => "BOAT32.ICN",
+            Mp2ObjectIcnType.ObjnHaun => "OBJNHAUN.ICN",
+            Mp2ObjectIcnType.ObjnArti => "OBJNARTI.ICN",
+            Mp2ObjectIcnType.Mons32 => "MONS32.ICN",
+            Mp2ObjectIcnType.Flag32 => "FLAG32.ICN",
+            Mp2ObjectIcnType.MiniMon => "MINIMON.ICN",
+            Mp2ObjectIcnType.MiniHero => "MINIHERO.ICN",
+            Mp2ObjectIcnType.MtnSnow => "MTNSNOW.ICN",
+            Mp2ObjectIcnType.MtnSwmp => "MTNSWMP.ICN",
+            Mp2ObjectIcnType.MtnLava => "MTNLAVA.ICN",
+            Mp2ObjectIcnType.MtnDsrt => "MTNDSRT.ICN",
+            Mp2ObjectIcnType.MtnDirt => "MTNDIRT.ICN",
+            Mp2ObjectIcnType.MtnMult => "MTNMULT.ICN",
+            Mp2ObjectIcnType.ExtraOvr => "EXTRAOVR.ICN",
+            Mp2ObjectIcnType.Road => "ROAD.ICN",
+            Mp2ObjectIcnType.MtnCrck => "MTNCRCK.ICN",
+            Mp2ObjectIcnType.MtnGras => "MTNGRAS.ICN",
+            Mp2ObjectIcnType.TreJngl => "TREJNGL.ICN",
+            Mp2ObjectIcnType.TreVil => "TREEVIL.ICN",
+            Mp2ObjectIcnType.ObjnTown => "OBJNTOWN.ICN",
+            Mp2ObjectIcnType.ObjnTwba => "OBJNTWBA.ICN",
+            Mp2ObjectIcnType.ObjnTwsh => "OBJNTWSH.ICN",
+            Mp2ObjectIcnType.ObjnTwrd => "OBJNTWRD.ICN",
+            Mp2ObjectIcnType.ObjnXtra => "OBJNXTRA.ICN",
+            Mp2ObjectIcnType.ObjnWat2 => "OBJNWAT2.ICN",
+            Mp2ObjectIcnType.ObjnMul2 => "OBJNMUL2.ICN",
+            Mp2ObjectIcnType.TreSnow => "TRESNOW.ICN",
+            Mp2ObjectIcnType.TreFir => "TREFIR.ICN",
+            Mp2ObjectIcnType.TreFall => "TREFALL.ICN",
+            Mp2ObjectIcnType.Stream => "STREAM.ICN",
+            Mp2ObjectIcnType.ObjnRsrc => "OBJNRSRC.ICN",
+            Mp2ObjectIcnType.ObjnGra2 => "OBJNGRA2.ICN",
+            Mp2ObjectIcnType.TreDeci => "TREDECI.ICN",
+            Mp2ObjectIcnType.ObjnWatr => "OBJNWATR.ICN",
+            Mp2ObjectIcnType.ObjnGras => "OBJNGRAS.ICN",
+            Mp2ObjectIcnType.ObjnSnow => "OBJNSNOW.ICN",
+            Mp2ObjectIcnType.ObjnSwmp => "OBJNSWMP.ICN",
+            Mp2ObjectIcnType.ObjnLava => "OBJNLAVA.ICN",
+            Mp2ObjectIcnType.ObjnDsrt => "OBJNDSRT.ICN",
+            Mp2ObjectIcnType.ObjnDirt => "OBJNDIRT.ICN",
+            Mp2ObjectIcnType.ObjnCrck => "OBJNCRCK.ICN",
+            Mp2ObjectIcnType.ObjnLav3 => "OBJNLAV3.ICN",
+            Mp2ObjectIcnType.ObjnMult => "OBJNMULT.ICN",
+            Mp2ObjectIcnType.ObjnLav2 => "OBJNLAV2.ICN",
+            Mp2ObjectIcnType.XLoc1 => priceOfLoyaltySupported ? "X_LOC1.ICN" : null,
+            Mp2ObjectIcnType.XLoc2 => priceOfLoyaltySupported ? "X_LOC2.ICN" : null,
+            Mp2ObjectIcnType.XLoc3 => priceOfLoyaltySupported ? "X_LOC3.ICN" : null,
+            _ => null,
+        };
 }

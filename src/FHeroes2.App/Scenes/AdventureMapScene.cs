@@ -11,14 +11,15 @@ using FHeroes2.Game.AdventureMap;
 namespace FHeroes2.App.Scenes;
 
 /// <summary>
-/// The adventure map of a started scenario, milestone M4. It shows the ground layer of the selected
-/// MP2 map, scrolls with the arrow keys and reports the map and the viewport in a status bar.
+/// The adventure map of a started scenario, milestone M4. It shows the ground and object layers of
+/// the selected MP2 map, scrolls with the arrow keys and reports the map and the viewport in a
+/// status bar.
 ///
 /// <para>
 /// The scene is deliberately thin: <see cref="AdventureMapView"/> knows how a tile becomes pixels,
-/// the scene only owns the frame, the status bar and the keyboard. Objects, fog, heroes, castles and
-/// the interface panels are later milestones; the reference composition (<c>Maps::redrawBottomLayer
-/// Objects</c> followed by the top layer, then the interface) is what those will plug into.
+/// the scene only owns the frame, the status bar and the keyboard. Fog, heroes and the interface
+/// panels are later milestones; the reference composition (<c>Maps::redrawBottomLayerObjects</c>
+/// followed by the top layer, then the interface) is what those will plug into.
 /// </para>
 /// </summary>
 public sealed class AdventureMapScene : IScene
@@ -83,7 +84,10 @@ public sealed class AdventureMapScene : IScene
         try
         {
             Mp2Map map = Mp2Map.Read(mapInfo.FilePath);
-            AdventureMapView view = new(map, tiles, frame.Size);
+            ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
+
+            // Both sets share one decoder cache, so keeping them apart is only about what they map.
+            AdventureMapView view = new(map, tiles, frame.Size, objects, HeroSpriteSet.TryCreate(assets));
 
             // Without heroes there is no player position to centre on yet; the castle closest to the
             // middle of the map takes that role, which is what makes the first screenshot of a map
@@ -106,7 +110,7 @@ public sealed class AdventureMapScene : IScene
             GameLog.Info(
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
                 $"{scene.View.MapPixelSize.Width}x{scene.View.MapPixelSize.Height} pixels, " +
-                $"{map.Castles.Count} castles).");
+                $"{map.Castles.Count} castles, {map.Addons.Count} add-ons).");
 
             return scene;
         }

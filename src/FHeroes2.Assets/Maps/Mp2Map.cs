@@ -110,6 +110,9 @@ public sealed record Mp2Map
     /// <summary>Non empty entries of the capturable object table.</summary>
     public required IReadOnlyList<Mp2CaptureObject> CaptureObjects { get; init; }
 
+    /// <summary>Heroes standing on the map, in tile order.</summary>
+    public required IReadOnlyList<Mp2MapHero> Heroes { get; init; }
+
     /// <summary>The obelisk counter stored right after the capturable object table.</summary>
     public int ObeliskCount { get; init; }
 
@@ -256,10 +259,29 @@ public sealed record Mp2Map
             Addons = addons,
             Castles = castles,
             CaptureObjects = captureObjects,
+            Heroes = FindHeroes(tiles, info.Width),
             ObeliskCount = obeliskCount,
             InfoBlocks = infoBlocks,
             LastObjectUid = lastObjectUid,
         };
+    }
+
+    /// <summary>
+    /// Collects the heroes of the map. Their position and sprite live on the tile, so this needs no
+    /// information block: everything else about a hero (army, spells, artifacts) does.
+    /// </summary>
+    private static List<Mp2MapHero> FindHeroes(IReadOnlyList<Mp2TileInfo> tiles, int width)
+    {
+        List<Mp2MapHero> heroes = [];
+        for (int index = 0; index < tiles.Count; ++index)
+        {
+            if (Mp2MapHeroes.TryRead(tiles[index], index % width, index / width, out Mp2MapHero hero))
+            {
+                heroes.Add(hero);
+            }
+        }
+
+        return heroes;
     }
 
     /// <summary>Same as <see cref="Read"/> but returns <see langword="false"/> on any read failure.</summary>

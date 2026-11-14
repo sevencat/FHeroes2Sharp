@@ -76,6 +76,16 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 所以中文图包的「矿山之战」与英文图的「Alteris」在同一个列表里都能读（ADR-034）。
 难度选择、`NEW GAME` 的「标准局 / 战役」分叉、进入冒险地图仍在 M4 之前。
 
+**M4 进行中（冒险地图已可走）**：`Assets.Maps.Mp2Map` 读完 MP2 的结构层（tile 20 字节、addon 15 字节、
+城堡表、捕获物表、方尖碑计数、信息块、尾部对象 UID），`Game.AdventureMap.TerrainTileSet` 载入
+`GROUND32.TIL` 并预生成 4 种 `shape` 翻转，`AdventureMapView` 按「地形 → 地面层 0/1/2/3 → 顶部层」
+逐层绘制可见范围（与 `Interface::GameArea::Redraw()` 同序），对象图来自 MP2 文件里的
+(ICN 类型, 帧号)，`ObjectSpriteSet` 按需解码并缓存。点 NEW GAME → 选中地图 → OKAY 现在会真的走进
+这张地图：方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单（ADR-035、ADR-036）。`--map <file>` 直接
+开一张图、`--enter-map` 让脚本从菜单一路点进去，`adventure-map.png` 是它的像素基线
+（`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、英雄/怪物/船、
+雾与路径、界面面板，清单见 `docs/PROGRESS.md`。
+
 音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
 `--play-sound PICKUP01` 单独试一个音效。
@@ -137,6 +147,11 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
 
+# 冒险地图基线：--map 直接开 Alteris.mp2，居中到地图中部的城堡（地形 + 对象层）
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile 'D:\HoMM2\maps\Beltway.mp2'
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update      # 有意改了视觉后重建基线
+
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
@@ -161,7 +176,7 @@ tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
 tools/scripts            调色板表生成、程序图标生成、参考导出器编译、参考对拍、语言包编译、像素基线脚本
-tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + 说明），像素门禁的期望图像
+tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + scenario*.png + adventure-map.png + 说明）
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 assets/                  logo.png / logo.ico（图标源图与生成物）、banner.jpg、author.jpg、可再分发字体
 docs/                    计划、进度、决策与参考笔记

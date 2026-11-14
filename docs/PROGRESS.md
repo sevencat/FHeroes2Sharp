@@ -836,16 +836,19 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update  # sha256 f
 | `AssetProbe map <file>` | ✅ | 打印摘要、对象类型直方图、地形图/`shape` 分布、城堡与捕获物表、最长 addon 链、信息块尺寸分布；定位「读错偏移」的第一现场 |
 | `tests/FHeroes2.Assets.Tests/Mp2MapTests` + `Mp2MapFileBuilder` | ✅ | 17 个用例：合成完整地图（默认空图）覆盖每个字段与每条拒绝路径（尺寸、截断、PoL、越界点）、`65/193` 归一化、addon 链与环、城堡种族（含 `0x80` 城墙位与未知种族）、捕获物映射、空信息块；末尾一条在真实数据上读 `Beltway.mp2`（缺数据即跳过） |
 | `Game.AdventureMap.TerrainTileSet` | ✅ | 载入 `GROUND32.TIL` 并预生成 4 个 shape（原图 / 上下 / 左右 / 两者），与参考 `getTileImage(TIL::GROUND32, index, shape)` 的 `Flip(horizontal = shape&2, vertical = shape&1)` 一致；越界索引返回 `null`（留黑，不崩） |
-| `Game.AdventureMap.AdventureMapView` | ✅ | 像素级滚动 + clamp（`max(0, map - viewport)`）、`TileAt`、`VisibleTileArea`（含被探到一半的边界 tile）、`Draw` 只画可见 tile；`CenterOn` 供视口定位 |
-| `App.Scenes.AdventureMapScene` | ✅ | 地形层 + 底部 `SMALFONT` 状态栏（地图名/尺寸、视口偏移、版本）；无英雄时把视口居中到「最靠地图中心的城堡」（占位规则，见 ADR-035）；地图或 TIL 读不出来时回到主菜单并在状态栏留信息，不会黑屏 |
+| `Assets.Maps.Mp2ObjectIcnTypes.GetArchiveName` | ✅ | `MP2::ObjectIcnType` → AGG 条目名（`OBJNGRAS.ICN` 等），即 `ICN::getIcnIdFromObjectIcnType` + `ICN::GetString`；`X_LOC*` 需要资料片；`Unused*` / `Unknown` 返回 `null`；附 `IsDrawnAsObjectPart`（`isObjectPartDirectRenderingRestricted`）排除 `UNKNOWN`/`BOAT32`/`MINIHERO`/`MONS32` |
+| `Game.AdventureMap.IObjectSpriteSource` + `ObjectSpriteSet` | ✅ | 按 (ICN 类型, 帧号) 取图；`ObjectSpriteSet` 懒加载并缓存 ICN，缺失/损坏记一次就够（不让每 tile 重试）；接口让绘制逻辑可以脱离游戏数据测试 |
+| `Game.AdventureMap.AdventureMapView` | ✅ | 像素级滚动 + clamp（`max(0, map - viewport)`）、`TileAt`、`VisibleTileArea`（含被探到一半的边界 tile）、`CenterOn`；绘制按**层**遍历而不是按 tile：地形 → 地面部件 0/1/2/3 → 顶部部件，与 `Interface::GameArea::Redraw()` 一致；部件按 ICN 帧自带锚点落位（`BlitOnTile(..., sprite.x(), sprite.y())`） |
+| `App.Scenes.AdventureMapScene` | ✅ | 地形 + 对象层 + 底部 `SMALFONT` 状态栏（地图名/尺寸、视口偏移、版本）；无英雄时把视口居中到「最靠地图中心的城堡」（占位规则，见 ADR-035）；地图或 TIL 读不出来时回到主菜单并在状态栏留信息，不会黑屏 |
 | `GameHost` 接线 | ✅ | `NEW GAME → 场景窗口 → OKAY` 现在真的进入冒险地图；方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单；`--enter-map`（配合 `--scenario-select`）与 `--map <file>` 两个截图/冒烟入口；鼠标事件在冒险地图上不再转给菜单 |
+| `tests/FHeroes2.Game.Tests/ObjectLayerTests` + `Mp2ObjectIcnTypesTests` | ✅ | 9 个绘制用例（地面/顶部/层序/锚点/空帧/缺帧/无源/跨 tile 覆盖）+ 19 个 ICN 命名用例（枚举全覆盖不重名、PoL 开关、可绘制集合） |
 | 像素基线 `adventure-map.png` | ✅ | `--map Alteris.mp2` 直接开图，居中到地图中部城堡，忽略状态栏；`VerifyAdventureMapBaseline.ps1` 与另外四条基线共用 `PixelBaseline.ps1` |
 
-### M4 验证记录（结构层与地形层）
+### M4 验证记录（结构层、地形层与对象层）
 
 ```text
 dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
-dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 186 / UI 139 / Game 15 全绿（新增 32）
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 205 / UI 139 / Game 24 全绿（新增 51）
 dotnet run --project tools/FHeroes2.AssetProbe -- map F:\game\fh2\maps\Alteris.mp2 --limit 8
 # Map Alteris: 108x108 tiles, 11664 tiles, 1684 add-ons (1239 tiles with add-ons),
 # ground objects 4480, top objects 866, castles 12, capturable 59, obelisks 7,
@@ -856,24 +859,31 @@ dotnet run --project tools/FHeroes2.AssetProbe -- map F:\game\fh2\maps\Alteris.m
 dotnet run --project src/FHeroes2.App -- --map F:\game\fh2\maps\Beltway.mp2 \
     --screenshot tools-output\map-direct.png --smoke-frames 30 --freeze-animation --lang en
 # [INFO] Terrain ready: 432 images of 32x32 from 'GROUND32.TIL' (4 shapes).
-# [INFO] Adventure map opened: 'Beltway' (72x72, 2304x2304 pixels, 13 castles).
+# [INFO] Adventure map opened: 'Beltway' (72x72, 2304x2304 pixels, 13 castles, 1684 add-ons).
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update
-# update tests/baselines/adventure-map.png  sha256 40178086…600cf
+# update tests/baselines/adventure-map.png  sha256 21023d95…f5b0c
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild
 # verify tests/baselines/adventure-map.png → identical
 ```
 
-* 画面外核对：`Beltway` 第一屏能看到草地、泥土、水域、海岸线与沙滩；`Alteris` 居中到中部城堡后同框出现
-  海岸、草地与沙地。地形图里内嵌的树、花、礁石、小船会照原样画出来——参考也一样
-  （`TIL` 的图自带这些装饰，与对象层无关）。
+* 画面核对：`Alteris` 居中那一屏现在能同框看到城镇（城墙、门楼、城内的草地）、盗贼营地、山脊、树林、
+  沉船、海岸线与被沙地包围的小屋；`Beltway` 第一屏有草地、泥土、水域与岸边礁石。地形图里内嵌的树、花、
+  礁石、小船照原样出现——参考也一样（`TIL` 的图自带这些装饰，与对象层无关）。
 * `GROUND32.TIL` 共 432 张 32×32，与参考 `GetMaximumTILIndex` 的输出一致；`shape` 分布说明翻转真的用上了。
 * 结构层与参考逐项对齐：tile 20 字节、addon 15 字节、城堡表 72 条、捕获物表 144 条都在同一偏移读出，
   `Beltway` 的 13 座城镇与信息块里 15 个 70 字节城堡结构（13 城 + 2 个随机城）数量自洽。
+* 对象层与参考对齐的部分：ICN 条目名（64 项全覆盖、无重名）、部件跳过规则、四层地面部件 + 顶部部件的
+  绘制顺序、ICN 帧自带锚点、`255` 表示无图。`Alteris` 全图共用到 26 个对象 ICN 条目（`AssetProbe map`
+  的 `Object ICN types` 一行），一屏只会解码其中一部分；从进程启动到首帧约 3.2 s。
 
 ### M4 已知遗留
 
-* **对象层还没画**：地面/顶部对象、addon 部件、层排序（`sortObjectParts`）与主对象类型推断都没移植，
-  所以城镇、英雄、资源、矿场现在只是「地形」。这是 M4 的下一半，也是鼠标交互（信息框、拾取）的前提。
+* **对象层没有动画与超大对象**：帧号直接用 MP2 里存的静态帧，参考的 `map_object_info` 动画表（火焰、旗帜、
+  水面波纹、烟）与 `tileUnfit`（超过 1×1 tile 的对象整体上移绘制）都没移植，见 ADR-036。
+* **英雄、怪物、船不画**：它们的精灵被引擎拆到多个 tile（`MINIHERO`/`MINIMON`/`BOAT32`），需要专属渲染器，
+  通用部件路径会画成错位的碎片，所以主动跳过；`MONS32`（编辑器里的静态怪物）同样跳过。
+* **主对象类型推断没做**：`Maps::getMainObjectType` 依赖 `map_object_info` 的对象表，`Mp2TileInfo.ObjectType`
+  目前直接用文件里的 `mapObjectType`；拾取与信息框需要它时再补。
 * **雾、路径、旗帜、界面面板都没有**：没有右侧/底部控制面板、没有英雄状态、没有小地图，状态栏只是占位。
 * **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、

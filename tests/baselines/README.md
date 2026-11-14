@@ -10,7 +10,7 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图地形层（M4）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含沙地/草地/海岸/水域 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map.png` | 冒险地图（M4，地形 + 对象层）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇、树林、山脊、海岸与沙滩 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -22,6 +22,8 @@ pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update   # 有意�
 pwsh tools/scripts/VerifyScenarioBaseline.ps1               # 场景选择（en）：0 = 一致
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update       # 有意改了视觉后重建场景基线
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1           # 冒险地图：0 = 一致
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update   # 有意改了视觉后重建冒险地图基线
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData      # 自建 runner 上把「没数据」当失败
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素漂移
 ```
@@ -71,10 +73,12 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   的占位规则，因此滚动偏移由地图文件唯一决定。
 * 地形图来自 `GROUND32.TIL`，四个 shape 变体（原图 / 上下 / 左右 / 两者）在启动时预生成再拷贝，
   不经过任何时钟，所以同一台机器上逐帧相同。
+* 对象层不带时钟：`--freeze-animation` 下帧号直接用 MP2 文件里存的静态帧（参考的动画表还没移植，
+  ADR-036），所以城镇、树林、山脊的位置与帧号也逐字节稳定。
 * 状态栏（`0,469,640,11`）里印着视口偏移与版本号，后者每次发版都会变，所以排除掉。地图内容本身
   是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
-* 这张基线钉住的是「MP2 tile 字段 → TIL 索引 → 像素」这条链：`Mp2MapTests` 与
-  `AdventureMapViewTests` 钉住结构解析与滚动数学，两者一起才能把地形层钉死。
+* 这张基线钉住的是「MP2 tile/addon 字段 → ICN/TIL 索引 → 像素」这条链：`Mp2MapTests` 钉住结构解析，
+  `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，一起才能把这一屏钉死。
 
 ## CI 怎么接
 
@@ -87,7 +91,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   （例如 `fh2-data`）、`FHEROES2_DATA` 设成数据目录（例如 `D:\game\fh2`）。两个变量都在时，
   job 才会传 `-DataDirectory` 与 `-RequireData`（缺数据即失败，而不是静默 skip）。
 * 失败时 job 会把 `tools-output/baseline/*.png`（刚渲染的图，文件名带语言后缀）与
-  `diff/` 目录（`diff_menu.png` / `diff_settings.png` / `diff_settings.zh_CN.png`）作为
+  `diff/` 目录（`diff_menu.png` / `diff_settings.png` / `diff_settings.zh_CN.png` /
+  `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png`）作为
   artifact `pixel-baseline-diff` 上传。
 
 ## 为什么逐字节一致是可达的
@@ -110,7 +115,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 ## 基线的数据版本
 
-当前三张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
+当前六张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
 `heroes2x.agg`，`AssetBundle` 优先取后者，因此 `HEROES.ICN` 是 *The Price of Loyalty* 横幅版本。
 只有基础版数据（原版街景背景）时基线必然对不上——那种情况应当另存一份（例如
 `menu-classic.png`）而不是覆盖它。`settings.zh_CN.png` 还额外依赖 `files/lang/zh_CN.mo`
@@ -122,6 +127,9 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `menu.png` | 239,932 | `73C1A211A86C0BCD2C10B47C32F4B7537B007498F9D325ED9004FC26EFC1E563` |
 | `settings.png` | 231,545 | `AFBCFAEA28F4100423DA102E018FBEB0DBEB3BB44003691BA639E7AC6900DE32` |
 | `settings.zh_CN.png` | 231,317 | `E8E317A96E8849121C796B8FF237B49823A31F64792603C0E8B4BF234DDD94C4` |
+| `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
+| `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
+| `adventure-map.png` | 175,388 | `21023D95E2F7A7C885F033AD3DFA294DA8220E8F9A008201FBC85A77CDA67393` |
 
 ## 更新基线的规矩
 

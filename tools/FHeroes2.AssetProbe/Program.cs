@@ -685,6 +685,28 @@ internal static class Program
             Console.WriteLine($"  shape {shape} {map.Tiles.Count(tile => tile.TerrainShape == shape)} tiles");
         }
 
+        // One entry per ICN file the renderer has to open for this map, so a missing tile set shows
+        // up here before it shows up as an invisible object on screen.
+        Console.WriteLine(
+            $"Object ICN types ({map.Tiles.Select(tile => tile.GroundIcnType).Concat(map.Tiles.Select(tile => tile.TopIcnType)).Distinct().Count(type => Mp2ObjectIcnTypes.IsDrawnAsObjectPart(type))} drawn):");
+        foreach (IGrouping<Mp2ObjectIcnType, Mp2TileInfo> group in map.Tiles
+                     .Where(tile => Mp2ObjectIcnTypes.IsDrawnAsObjectPart(tile.GroundIcnType))
+                     .GroupBy(tile => tile.GroundIcnType)
+                     .OrderByDescending(group => group.Count())
+                     .Take(limit))
+        {
+            Console.WriteLine($"  {group.Key,-32} {group.Count()} tiles");
+        }
+
+        // Heroes come out of the tiles themselves (MINIHERO frame), so this list is complete without
+        // parsing a single information block.
+        Console.WriteLine($"Heroes ({map.Heroes.Count}):");
+        foreach (Mp2MapHero hero in map.Heroes)
+        {
+            Console.WriteLine(
+                $"  {hero.X},{hero.Y}  {hero.Color} {hero.Race}  MINIHERO {hero.SpriteIndex}");
+        }
+
         Console.WriteLine($"Castles ({map.Castles.Count}):");
         foreach (Mp2CastlePosition castle in map.Castles)
         {

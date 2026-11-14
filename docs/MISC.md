@@ -138,10 +138,20 @@ dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --lang en --cursor 6
 同一套做法还钉住了场景选择窗口：`tests/baselines/scenario.png` +
 `tools/scripts/VerifyScenarioBaseline.ps1`，只是把 `--open-settings` 换成 `--open-scenario`，
 光标仍停在窗口外（`620,100`），`--screenshot-frame 30` 让列表、详情与 OKAY 都处于静止态。
-三个脚本共用 `tools/scripts/PixelBaseline.ps1`——数据目录查找、`dotnet build`、基线自检、
+四个脚本共用 `tools/scripts/PixelBaseline.ps1`——数据目录查找、`dotnet build`、基线自检、
 `AssetProbe compare` 与容差判定只有一份代码，脚本自己只决定「哪些开关让这一帧可复现」和
 「哪块区域要忽略」。基线里的文字是界面文字，所以**语言是基线的一部分**（默认 `-Culture en`，
 换 `zh_CN` 应当另存而不是覆盖）。
+
+冒险地图的基线改用另一条入口：`--map <file>` 直接打开一个 MP2 文件，不经过菜单与场景列表
+（`VerifyAdventureMapBaseline.ps1`，默认 `Alteris.mp2`）。这让基线只依赖**一个**地图文件，
+而不是整份地图清单的顺序。`--enter-map` 则是端到端入口：它替你点「NEW GAME → OKAY」，
+配合 `--scenario-select <n>` 能进到任意一张图的冒险地图：
+
+```powershell
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --scenario-select 0 --enter-map `
+    --smoke-frames 30 --freeze-animation --screenshot tools-output\adventure.png
+```
 
 `--scenario-select <n>` 是场景窗口的第二个截图钩子：它顺带开窗并选中第 n 张图（未过滤列表里
 的序号），用来给列表末尾的行拍图。中文图包的名字排在后半段，`--open-scenario` 只能拍到开头的
@@ -157,10 +167,11 @@ pwsh tools/scripts/VerifySettingsBaseline.ps1           # 0 = 逐像素一致；
 pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update   # 有意改了视觉后重建 settings.png
 pwsh tools/scripts/VerifyScenarioBaseline.ps1           # 场景选择窗口
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1       # 冒险地图（--map Alteris.mp2）
 ```
 
 CI 里的用法：`.github/workflows/ci.yml` 有两个 job，`build`（还原 → 编译 → `dotnet test`）在任何
-机器上都能跑，`menu-baseline` 依次跑五份基线（job 名是历史原因，它现在不只管菜单）。像素比对
+机器上都能跑，`menu-baseline` 依次跑六份基线（job 名是历史原因，它现在不只管菜单）。像素比对
 需要原版数据（不能入库），所以数据和 runner 通过仓库变量接线：
 
 
