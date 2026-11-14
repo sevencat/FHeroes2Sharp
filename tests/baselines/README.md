@@ -11,7 +11,7 @@
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
 | `adventure-map.png` | 冒险地图（M4，地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；右上角 144×144 雷达面板带视口虚线框 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
-| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，顶部 `MAP EDITOR` 工具条、光标双线高亮、tile 网格、小地图，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
+| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方面板槽）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -150,7 +150,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
 | `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
 | `adventure-map.png` | 168,285 | `DCFAD127EA40D3062EE6BE40C54C5558303603D6544B64293204CAD93EDF89E4` |
-| `editor.png` | 108,862 | `46B35BD4B26E18745368FEF686A5D98B2305A9BA325EB3AAAB778ECF88051CE3` |
+| `editor.png` | 116,108 | `12CEAB70F160D54C7182326C5F02D22FABC55CD1DE930A54BF7179770701A9DF` |
 
 ## 更新基线的规矩
 

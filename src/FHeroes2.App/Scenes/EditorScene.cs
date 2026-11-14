@@ -21,14 +21,20 @@ namespace FHeroes2.App.Scenes;
 /// <c>Game::MainMenu()</c>) and it draws the map through the same <c>GameArea</c> as the adventure
 /// map: <c>Editor::Interface</c> only repositions that area. This scene follows the same split - the
 /// rendering is <see cref="AdventureMapView"/>, so whatever the adventure map learns about objects,
-/// heroes and layers shows up here for free, while the grid, the highlighted tile, the toolbar and
-/// the status bar are the editor's own.
+/// heroes and layers shows up here for free, while the frame, the grid, the highlighted tile and the
+/// panel are the editor's own.
+/// </para>
+/// <para>
+/// The layout is the one of <c>Interface::EditorInterface::reset()</c>: the map sits in a viewport
+/// between a 16 pixel border and the radar column, the radar is in the top right corner, and the panel
+/// fills the column below it. The frame is <c>ADVBORD.ICN</c>, the same image the reference cuts its
+/// border patterns from, blitted whole because the logical frame is exactly 640x480.
 /// </para>
 /// <para>
 /// The instruments are keys for now: <c>1</c> to <c>9</c> pick a ground and the terrain tool, <c>O</c>
 /// cycles the objects of <see cref="Mp2ObjectPresets"/> and selects the object tool, <c>X</c> the eraser
 /// and <c>T</c> the terrain tool again. <see cref="MapEditSession"/> owns what they do; this scene only
-/// forwards input and paints the bars.
+/// forwards input and paints the panel.
 /// </para>
 ///
 /// <para>
@@ -39,28 +45,28 @@ namespace FHeroes2.App.Scenes;
 /// undo history.
 /// </para>
 /// <para>
-/// Not ported yet: the <c>ADVBORD</c> interface frame and the <c>EditorPanel</c> instruments. Until
-/// those exist the map fills the logical frame and the two bars are painted over it, instead of the
-/// reference's 448x448 viewport between the frame and the panel, and the objects are a fixed list of
-/// presets instead of a panel of buttons.
+/// Not ported yet: the buttons and pickers of <c>EditorPanel</c>. The panel bay is already in its final
+/// place and carries the same facts as text, and the objects are a fixed list of presets instead of a
+/// panel of buttons.
 /// </para>
 /// </summary>
 public sealed class EditorScene : IScene
 {
-    /// <summary>Height of the toolbar, one line of <c>SMALFONT.ICN</c> plus its frame.</summary>
-    public const int ToolbarHeight = 13;
+    /// <summary>Width of the interface border on every side, <c>fheroes2::borderWidthPx</c>.</summary>
+    public const int BorderWidth = 16;
 
-    /// <summary>Height of the status bar, one line of <c>SMALFONT.ICN</c>.</summary>
-    public const int StatusBarHeight = 11;
+    /// <summary>Distance between the minimap and the top right corner, the border of the frame.</summary>
+    public const int RadarMargin = BorderWidth;
 
-    /// <summary>Distance between the minimap and the top right corner, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int RadarMargin = 16;
+    /// <summary>File of the interface frame, the <c>ADVBORD</c> of the reference.</summary>
+    public const string FrameFileName = "ADVBORD.ICN";
 
     private const int Padding = 6;
 
-    private const int Gap = 10;
+    /// <summary>Height of the decorated header of the panel bay in <c>ADVBORD.ICN</c>.</summary>
+    private const int PanelHeaderHeight = 16;
 
-    /// <summary>How long the status bar shows "saved" after a successful save, in seconds.</summary>
+    /// <summary>How long the panel shows "saved" after a successful save, in seconds.</summary>
     private const double SavedFlashSeconds = 2.0;
 
     private readonly ScreenBuffer _frame;
@@ -68,9 +74,11 @@ public sealed class EditorScene : IScene
     private readonly MapEditorView _editor;
     private readonly MapEditSession _edits;
     private readonly MapScrollController _mouse;
-    private readonly Rect _toolbar;
-    private readonly Rect _statusBar;
+    private readonly Rect _viewport;
+    private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
+    private readonly Rect _panel;
+    private readonly Sprite? _chrome;
     private readonly byte _dark;
     private readonly byte _bright;
 
@@ -86,6 +94,9 @@ public sealed class EditorScene : IScene
     /// <summary>Whether the press started on the minimap, which owns the pointer until it is released.</summary>
     private bool _radarGrabbed;
 
+    /// <summary>The pointer in logical pixels, which the radar and the frame are laid out in.</summary>
+    private Point? _screenCursor;
+
     /// <summary>Seconds left of the "saved" note in the status bar.</summary>
     private double _savedFlash;
 
@@ -95,7 +106,8 @@ public sealed class EditorScene : IScene
         MapEditorView editor,
         MapEditSession edits,
         Minimap minimap,
-        MapScrollController mouse)
+        MapScrollController mouse,
+        Sprite? chrome)
     {
         _frame = frame;
         _fonts = fonts;
@@ -103,13 +115,30 @@ public sealed class EditorScene : IScene
         _edits = edits;
         _minimap = minimap;
         _mouse = mouse;
-        _toolbar = new Rect(0, 0, frame.Size.Width, ToolbarHeight);
-        _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
+        _chrome = chrome;
+
+        // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
+        // and the radar column, the radar sits in the top right corner, and the editor panel fills the
+        // column below it.
+        _viewport = new Rect(
+            BorderWidth,
+            BorderWidth,
+            Math.Max(frame.Size.Width - Minimap.PanelSize - (3 * BorderWidth), 0),
+            Math.Max(frame.Size.Height - (2 * BorderWidth), 0));
+        _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
+
         _radar = new Rect(
             frame.Size.Width - RadarMargin - Minimap.PanelSize,
             RadarMargin,
             Minimap.PanelSize,
             Minimap.PanelSize);
+
+        _panel = new Rect(
+            _radar.X,
+            _radar.Bottom,
+            Minimap.PanelSize,
+            Math.Max(frame.Size.Height - _radar.Bottom - BorderWidth, 0));
+
         _dark = frame.Palette.FindDarkestIndex();
         _bright = frame.Palette.FindBrightestIndex();
     }
@@ -129,11 +158,11 @@ public sealed class EditorScene : IScene
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => Map.Info.Name;
 
-    /// <summary>The toolbar rectangle at the top of the logical frame.</summary>
-    public Rect ToolbarArea => _toolbar;
+    /// <summary>The rectangle the map is drawn into, between the border and the radar column.</summary>
+    public Rect ViewportArea => _viewport;
 
-    /// <summary>The status bar rectangle at the bottom of the logical frame.</summary>
-    public Rect StatusBarArea => _statusBar;
+    /// <summary>The instrument panel below the radar, the <c>EditorPanel</c> of the reference.</summary>
+    public Rect PanelArea => _panel;
 
     /// <summary>
     /// Opens the editor on <paramref name="mapInfo"/>; <see langword="null"/> with an
@@ -236,10 +265,16 @@ public sealed class EditorScene : IScene
     private static EditorScene Assemble(
         ScreenBuffer frame, GameFonts? fonts, Mp2Map map, TerrainTileSet tiles, AssetBundle? assets)
     {
+        // The map only gets the area between the border and the radar column, as in the reference; the
+        // scene blits it into the frame at ViewportArea.
+        Size viewport = new(
+            Math.Max(frame.Size.Width - Minimap.PanelSize - (3 * BorderWidth), 0),
+            Math.Max(frame.Size.Height - (2 * BorderWidth), 0));
+
         AdventureMapView view = new(
             map,
             tiles,
-            frame.Size,
+            viewport,
             ObjectSpriteSet.TryCreate(assets),
             HeroSpriteSet.TryCreate(assets));
 
@@ -249,7 +284,31 @@ public sealed class EditorScene : IScene
         MapEditSession edits = new(editor);
 
         return new EditorScene(
-            frame, fonts, editor, edits, Minimap.Build(map), new MapScrollController(view));
+            frame,
+            fonts,
+            editor,
+            edits,
+            Minimap.Build(map),
+            new MapScrollController(view),
+            LoadFrameChrome(assets));
+    }
+
+    /// <summary>
+    /// Reads the interface frame, <c>ADVBORD.ICN</c>: one 640x480 image that already holds the border,
+    /// the radar bay and the panel bay. The reference repeats its border patterns to fill larger
+    /// displays, but the logical frame is exactly that image, so a single blit is enough.
+    /// </summary>
+    /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
+    /// <returns>The frame, or <see langword="null"/> when the archive has none.</returns>
+    private static Sprite? LoadFrameChrome(AssetBundle? assets)
+    {
+        if (assets?.TryReadIcn(FrameFileName) is not { Count: > 0 } icn)
+        {
+            GameLog.Warn($"'{FrameFileName}' is not available, the editor draws flat borders instead.");
+            return null;
+        }
+
+        return icn.Sprites[0];
     }
 
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
@@ -270,12 +329,15 @@ public sealed class EditorScene : IScene
     {
         _frame.InvalidateAll();
         _frame.Pixels.Clear();
-        _editor.Map.Draw(_frame.Pixels);
+        DrawFrameChrome();
+
+        _editor.Map.Draw(_viewportPixels);
+        ImageOps.Blit(_frame.Pixels, _viewport.Position, _viewportPixels, _viewportPixels.Bounds);
+
         DrawGrid();
         DrawHover();
         DrawMinimap();
-        DrawToolbar();
-        DrawStatusBar(state);
+        DrawPanel();
     }
 
     /// <summary>The editor draws all of its text with the game fonts.</summary>
@@ -308,8 +370,12 @@ public sealed class EditorScene : IScene
     /// <param name="cursor">Pointer in logical pixels, or <see langword="null"/> outside the window.</param>
     public void SetCursor(Point? cursor)
     {
-        _editor.SetCursor(cursor);
-        _mouse.SetCursor(cursor);
+        _screenCursor = cursor;
+
+        // The map view and its scroll work in viewport pixels: a pointer over the border, the radar or
+        // the panel is outside the map, which is what Interface::EditorInterface reports as no tile.
+        _editor.SetCursor(cursor is { } screen ? ViewportCursor(screen) : null);
+        _mouse.SetCursor(cursor is { } inside ? ViewportCursor(inside) : null);
 
         if (_radarGrabbed && _leftHeld)
         {
@@ -328,6 +394,16 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>
+    /// Converts a pointer position to viewport pixels, the coordinates the map view and the editor
+    /// session work in.
+    /// </summary>
+    /// <param name="screen">Pointer in logical pixels.</param>
+    /// <returns>Point inside the viewport, or <see langword="null"/> when the pointer is not over it.</returns>
+    private Point? ViewportCursor(Point screen) => _viewport.Contains(screen)
+        ? new Point(screen.X - _viewport.X, screen.Y - _viewport.Y)
+        : null;
+
+    /// <summary>
     /// Records the left button, which paints in the editor: a press opens a stroke, a release closes
     /// it and rebuilds the minimap, because the minimap holds baked colours of the old tiles.
     /// </summary>
@@ -342,7 +418,7 @@ public sealed class EditorScene : IScene
     {
         _leftHeld = down;
 
-        if (down && _mouse.Cursor is { } cursor && _radar.Contains(cursor))
+        if (down && _screenCursor is { } cursor && _radar.Contains(cursor))
         {
             _radarGrabbed = true;
             CentreOnRadar(cursor);
@@ -386,7 +462,7 @@ public sealed class EditorScene : IScene
     /// <returns>Whether the release took the brush from the map.</returns>
     public bool SetRightButton(bool down)
     {
-        bool onRadar = _mouse.Cursor is { } cursor && _radar.Contains(cursor);
+        bool onRadar = _screenCursor is { } cursor && _radar.Contains(cursor);
 
         if (down)
         {
@@ -457,22 +533,13 @@ public sealed class EditorScene : IScene
     /// the ground, places the object or clears the tile.
     /// </summary>
     /// <remarks>
-    /// A click on the toolbar, the status bar or the minimap does nothing: the panels cover the map, so
-    /// the tile behind them is highlighted and hovered, but it is not what the user pointed at. The
-    /// reference does not have this problem because its panels are outside the 448x448 map area, and a
-    /// stroke that starts on the map and is dragged across the minimap keeps painting there.
+    /// Nothing is painted while the pointer is outside the viewport: the editor session only knows
+    /// viewport pixels, and the frame, the radar and the panel are not map. The reference gets the same
+    /// result from its <c>isMouseCursorPosInArea</c> test, and a stroke that runs from the map across
+    /// the panel simply stops painting at the edge.
     /// </remarks>
     /// <returns>Whether the tile changed.</returns>
-    public bool Paint()
-    {
-        if (_editor.Cursor is { } cursor
-            && (_toolbar.Contains(cursor) || _statusBar.Contains(cursor) || _radar.Contains(cursor)))
-        {
-            return false;
-        }
-
-        return _edits.Apply(_editor.HoverTile);
-    }
+    public bool Paint() => _edits.Apply(_editor.HoverTile);
 
     /// <summary>
     /// Paints a rectangle of tiles as one stroke, the scripted version of a drag that
@@ -636,35 +703,51 @@ public sealed class EditorScene : IScene
     public void ScrollByWheel(int columns, int rows) => _mouse.ScrollByWheel(columns, rows);
 
     /// <summary>
-    /// Draws the tile borders of the visible area. The grid stays between the two bars so that it
-    /// never paints over their text.
+    /// Paints the interface frame: the <c>ADVBORD</c> image when the archive has it, flat borders
+    /// otherwise, so that the layout is the same with and without the artwork.
+    /// </summary>
+    private void DrawFrameChrome()
+    {
+        if (_chrome is not null)
+        {
+            ImageOps.BlitSprite(_frame.Pixels, _chrome);
+            return;
+        }
+
+        ImageOps.FillRect(_frame.Pixels, _frame.Pixels.Bounds, _dark);
+        ImageOps.FillRect(_frame.Pixels, _viewport, _dark);
+        ImageOps.FillRect(_frame.Pixels, _radar, _dark);
+        ImageOps.FillRect(_frame.Pixels, _panel, _dark);
+    }
+
+    /// <summary>
+    /// Draws the tile borders of the visible area. The grid stops at the viewport, which the frame
+    /// already cuts out: a line drawn past it would paint over the border.
     /// </summary>
     private void DrawGrid()
     {
-        int top = _toolbar.Y + _toolbar.Height;
-        int height = _statusBar.Y - top;
-
-        if (height <= 0)
+        if (_viewport.Width <= 0 || _viewport.Height <= 0)
         {
             return;
         }
 
         foreach (int column in _editor.GridColumns())
         {
-            ImageOps.VLine(_frame.Pixels, column, top, height, _dark);
+            ImageOps.VLine(_frame.Pixels, _viewport.X + column, _viewport.Y, _viewport.Height, _dark);
         }
 
         foreach (int row in _editor.GridRows())
         {
-            if (row >= top && row < _statusBar.Y)
-            {
-                ImageOps.HLine(_frame.Pixels, 0, row, _frame.Size.Width, _dark);
-            }
+            ImageOps.HLine(_frame.Pixels, _viewport.X, _viewport.Y + row, _viewport.Width, _dark);
         }
     }
 
     /// <summary>Outlines the tile under the pointer, bright outside and dark inside, so that the tile
     /// reads on both the light and the dark grounds of a map.</summary>
+    /// <remarks>
+    /// The outline is clipped to the viewport: the tile under a pointer that sits on the last visible
+    /// row still reaches into the border, and the frame must not be painted over.
+    /// </remarks>
     private void DrawHover()
     {
         if (_editor.HoverArea is not { } area)
@@ -672,18 +755,35 @@ public sealed class EditorScene : IScene
             return;
         }
 
-        ImageOps.DrawRect(_frame.Pixels, area, _bright);
+        Rect clipped = new Rect(
+            _viewport.X + area.X,
+            _viewport.Y + area.Y,
+            area.Width,
+            area.Height).Intersect(_viewport);
 
-        if (area.Width > 2 && area.Height > 2)
+        if (clipped.IsEmpty)
         {
-            ImageOps.DrawRect(_frame.Pixels, new Rect(area.X + 1, area.Y + 1, area.Width - 2, area.Height - 2), _dark);
+            return;
+        }
+
+        ImageOps.DrawRect(_frame.Pixels, clipped, _bright);
+
+        if (clipped.Width > 2 && clipped.Height > 2)
+        {
+            ImageOps.DrawRect(
+                _frame.Pixels,
+                new Rect(clipped.X + 1, clipped.Y + 1, clipped.Width - 2, clipped.Height - 2),
+                _dark);
         }
     }
 
+    /// <summary>
+    /// Draws the radar map into its bay. The bay itself is part of the frame, so the minimap does not
+    /// outline it any more.
+    /// </summary>
     private void DrawMinimap()
     {
         _minimap.Draw(_frame.Pixels, _radar.Position, _editor.Map.VisibleTileArea);
-        ImageOps.DrawRect(_frame.Pixels, _radar, _dark);
     }
 
     /// <summary>
@@ -692,93 +792,110 @@ public sealed class EditorScene : IScene
     /// </summary>
     private void RebuildMinimap() => _minimap = Minimap.Build(Map);
 
-    private void DrawToolbar()
+    /// <summary>
+    /// Writes the state of the instruments into the bay below the radar. The reference fills that bay
+    /// with the buttons and pickers of <c>EditorPanel</c>; until those exist it carries the same facts
+    /// as text, so the layout is final and only the controls are missing.
+    /// </summary>
+    private void DrawPanel()
     {
-        ImageOps.FillRect(_frame.Pixels, _toolbar, _dark);
-        ImageOps.HLine(
-            _frame.Pixels, 0, _toolbar.Y + _toolbar.Height - 1, _frame.Size.Width, _bright);
-
         if (_fonts is null)
         {
             return;
         }
 
-        IGlyphSource font = _fonts.Small;
+        // The bay of the frame carries a decorated header and recessed slots for the buttons of the
+        // reference. The header stays, and the slots are cleared to a dark card that the text can be
+        // read on: a text line over the slot borders reads as noise.
+        Rect card = new Rect(
+            _panel.X + 4,
+            _panel.Y + PanelHeaderHeight,
+            Math.Max(_panel.Width - 8, 0),
+            Math.Max(_panel.Height - PanelHeaderHeight - 4, 0));
+        ImageOps.FillRect(_frame.Pixels, card, _dark);
 
-        // The tool and the object it places do not fit next to the hints at the narrowest logical
-        // width, so the bar keeps its name and the status bar reports the instrument.
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(Padding, _toolbar.Y), "MAP EDITOR");
+        Rect text = card.Inflate(-4, -4);
 
-        string right = "1-9 ground  O obj  X del  ^Z/^Y  G grid  Esc";
-
-        int rightX = Math.Max(
-            _toolbar.Right - Padding - GlyphText.Measure(font, right), Padding);
-
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(rightX, _toolbar.Y), right);
-    }
-
-    private void DrawStatusBar(in DiagnosticsState state)
-    {
-        ImageOps.FillRect(_frame.Pixels, _statusBar, _dark);
-
-        if (_fonts is null)
+        if (text.IsEmpty)
         {
             return;
         }
 
         IGlyphSource font = _fonts.Small;
-        int top = _statusBar.Y;
+        int y = text.Y;
 
-        string right = FormattableString.Invariant(
-            $"undo {_edits.UndoDepth}  scroll {_editor.Map.Scroll.X},{_editor.Map.Scroll.Y}  |  v{BuildInfo.Version}");
-        int rightX = Math.Max(
-            _statusBar.Right - Padding - GlyphText.Measure(font, right), Padding);
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(rightX, top), right);
-
-        string left = FormattableString.Invariant($"{MapName}  {Map.Width}x{Map.Height}");
-        int leftEdge = Padding + GlyphText.Measure(font, left);
-
-        if (leftEdge + Gap >= rightX)
+        void Line(string value)
         {
+            if (y + font.LineHeight > text.Bottom)
+            {
+                return;
+            }
+
             GlyphText.DrawLine(
-                font, _frame.Pixels, new Point(Padding, top), left,
-                new Rect(Padding, top, Math.Max(rightX - Padding - Gap, 0), _statusBar.Height));
-            return;
+                font,
+                _frame.Pixels,
+                new Point(text.X, y),
+                value,
+                new Rect(text.X, y, text.Width, font.LineHeight));
+
+            y += font.LineHeight + 2;
         }
 
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(Padding, top), left);
+        Line("MAP EDITOR");
+        Line(FormattableString.Invariant($"{MapName} {Map.Width}x{Map.Height}"));
 
-        string tool = _edits.Tool switch
+        Line(_edits.Tool switch
         {
             EditorTool.Object => FormattableString.Invariant($"object {_edits.ObjectBrush.Name}"),
             EditorTool.Erase => "erase",
-            _ => FormattableString.Invariant($"brush {_edits.Brush}"),
-        };
-
-        string hover = _editor.HoverTile is { } tile
-            ? FormattableString.Invariant($"{tool}  {tile.X},{tile.Y}  {_editor.HoverGround}")
-            : FormattableString.Invariant($"{tool}  no tile");
+            _ => FormattableString.Invariant($"ground {_edits.Brush}"),
+        });
 
         if (_edits.IsDirty)
         {
-            hover += "  edited";
+            Line("edited");
         }
         else if (_savedFlash > 0.0)
         {
-            hover += "  saved";
+            Line("saved");
+        }
+        else
+        {
+            Line("clean");
+        }
+
+        Line(_editor.HoverTile is { } tile
+            ? FormattableString.Invariant($"{tile.X},{tile.Y} {_editor.HoverGround}")
+            : "no tile");
+
+        if (_editor.Hover is { } info && info.ObjectType != Mp2ObjectType.None)
+        {
+            Line(info.ObjectType.ToString());
         }
 
         if (_editor.GridEnabled)
         {
-            hover += "  grid";
+            Line("grid on");
         }
 
-        if (_editor.Hover is { } info && info.ObjectType != Mp2ObjectType.None)
-        {
-            hover = FormattableString.Invariant($"{hover}  {info.ObjectType}");
-        }
+        Line(FormattableString.Invariant($"undo {_edits.UndoDepth}"));
+        Line(FormattableString.Invariant($"scroll {_editor.Map.Scroll.X},{_editor.Map.Scroll.Y}"));
 
-        Rect middle = new(leftEdge + Gap, top, Math.Max(rightX - leftEdge - Gap, 0), _statusBar.Height);
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(middle.X, top), hover, middle);
+        // The hints sit at the bottom of the bay, where the reference keeps its pickers: the state
+        // above them grows with one line (an object name), the hints do not move.
+        const int Hints = 6;
+        int step = font.LineHeight + 2;
+        int hintsTop = text.Bottom - (Hints * step) + (step - font.LineHeight) - 2;
+
+        y = Math.Max(hintsTop - step + 1, y + step);
+        ImageOps.HLine(_frame.Pixels, text.X, y, text.Width, _dark);
+        y = hintsTop;
+
+        Line("1-9 ground  T tool");
+        Line("O object  X erase");
+        Line("G grid");
+        Line("^Z undo  ^Y redo");
+        Line("arrows/wheel scroll");
+        Line("Home start  Esc menu");
     }
 }

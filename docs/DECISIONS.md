@@ -1439,3 +1439,40 @@ if (dirty.IsEmpty)
   把地图拖出边界。
 * 参考的雷达可以拖动面板本身（`BorderWindow`）与"世界地图视图"里的滚轮缩放，编辑器不需要这两样，没有移植。
 
+
+---
+
+## ADR-048：编辑器套上 `ADVBORD` 外壳——448×448 视口、整图贴框架、面板槽先写文字
+
+**背景**：编辑器此前把地图铺满整个 640×480 逻辑帧，再用自绘的顶部工具条与底部状态栏压在上面。参考的
+`Interface::EditorInterface::reset()` 不是这样：地图只占 16 px 边框与雷达列之间的 448×448，雷达在右上角
+(480,16)，雷达下方是 `EditorPanel` 的 144 宽面板槽，外壳是 `ADVBORD.ICN` 的界面图。
+
+**决策**：
+
+1. **按参考的布局切视口**。`_viewport = (16,16, frame.Width − 144 − 3×16, frame.Height − 2×16)` = 448×448，
+   雷达 `(frame.Width − 16 − 144, 16)` = (480,16)，面板 `(480, 160, 144, 304)`。与
+   `reset()` 里 `_radar.SetPos( xOffset, borderWidthPx )`、`gameArea.SetAreaPosition( 16, 16, 448, 448 )` 一致。
+2. **框架整张贴，不学参考的重复拼**。`ADVBORD.ICN` 只有一个 640×480 的 sprite（探针确认：1 张，640×480，
+   transform 层），参考 `BorderWindow::_redraw` 从里面裁 16 px 花纹再 `repeatPattern`，是为了把界面拉到
+   640×480 以上的分辨率。我们的逻辑帧就是 640×480，整贴一次即可，且边框、雷达槽、面板槽的坐标天然对齐。
+3. **两级坐标**。地图视图（`AdventureMapView`）、`MapEditorView`、`MapScrollController` 只认视口像素；
+   框架、雷达、面板认屏幕像素。换算只发生在 `EditorScene.ViewportCursor`：指针不在视口内就是 `null`。
+   这一个 `null` 同时给出参考的三种行为——不更新高亮格、不落笔、不做边缘滚动。
+4. **面板槽先写文字**。参考的面板是按钮与选择器阵列；在它们移植之前，槽里写工具、光标格/地面/对象、
+   `clean`/`edited`/`saved`、`undo`、`scroll` 与快捷键。槽里有按钮凹槽的边框花纹，文字会像噪声，所以先把
+   槽清成黑卡（保留 16 px 的装饰头与外围凹槽线）。
+5. **缺资产时退化成纯色边框**，布局不变：`LoadFrameChrome` 拿不到 `ADVBORD.ICN` 就打一条警告，`DrawFrameChrome`
+   填暗色块。这样 `--data` 指向缺文件的目录时，截图仍是同一套骨架。
+
+**后果**：
+
+* 边缘滚动、`Home`、`CenterOn` 的尺度都跟着视口变：`CenterOn` 让格子落正中，视口从 640×480 收窄到 448×448
+  后，同一个 tile 的 scroll 反而变大（Alteris 上雷达点 (20,20) 从 (160;240) 变成 (256;256)）。
+  `--editor-radar-click` 的期望值已同步。
+* 视口变小，可视 tile 从 20×15 变成 14×14；`MapScrollController` 的 16 px 边缘带仍是 16 px，相对占比更大，
+  但语义与参考一致（参考的 game area 也是 448×448）。
+* 基线 `editor.png` 整体重建（108,862 → 116,108 字节）。面板文字是英文常量，和此前工具条/状态栏一样，
+  中文化要等面板按钮一起做。
+* 没移植：参考的面板按钮、雷达拖动面板本身、`BorderWindow` 的 9 段拼接（只在非 640×480 下需要）。
+

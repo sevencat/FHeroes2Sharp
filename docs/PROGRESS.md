@@ -1131,6 +1131,8 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `tests/.../MapEditSessionTests` | ✅ | 15+1 条：笔刷选择与非法地面、刷地形改 image/ground、shape 由接缝决定且 beach 位清掉、同地面刷两次只算一次、越界与 `null` 忽略、一笔多格一次撤销、同格来回刷合并、重做、空历史、新笔清 redo、无显式笔划自成一笔、撤销先结笔、吸管、对象字段不动 |
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
+| `ADVBORD` 外壳与 448×448 视口 | ✅ | 地图落在 16 px 边框与雷达列之间，雷达在右上角 (480,16)，雷达下方是面板槽 (480,160,144,304)；外壳就是 `ADVBORD.ICN` 那张 640×480 整图，缺资产时退化成纯色边框而布局不变（ADR-048） |
+| 面板槽 | ✅（文字版） | 槽里写工具、光标格/地面/对象、`clean`/`edited`/`saved`、`undo`、`scroll` 与快捷键；参考 `EditorPanel` 的按钮阵列未做 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
 | 像素基线 `editor.png` | ✅ | 一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块）把雪落在海岸线上：地形层被改写、雪块四周是真正的雪/草/水过渡、对象层（船）仍压在上面 |
@@ -1213,6 +1215,27 @@ dotnet run -- --scene editor --editor-new 36 --editor-paint "2,2,3,3,Grass"
   4. **变体必须确定**：参考用 `Rand::Get(3)` 选同组里的三张之一。编辑器要可复现——同一笔刷出同样的字节，
      截图基线不能随机——所以换成坐标哈希（`MapGrounds.VariantOffset`）。差异图证明同一次编辑每次都一样。
 
+### E2 ADVBORD 外壳 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / UI 145 / Game 150 全绿
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png 重建为 116,108 字节 / 12CEAB70…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 match
+dotnet run -- --scene editor --editor-new 72 → 72x72 新图落在 448×448 视口内，面板报 scroll 928,928
+dotnet run -- --scene editor --map Alteris.mp2 --editor-paint 46,52,6,4,Snow --editor-save rt.mp2
+  → 重开对比：165 px 差异，全在面板（saved → clean、undo 1 → 0），地图逐像素相同
+```
+
+* 四处观察：
+  1. **`ADVBORD.ICN` 只有一张 640×480**：参考把它裁成 16 px 花纹再重复，是为了适配比 640×480 更大的显示；
+     逻辑帧正好是它本身，一次整贴就对——边框、雷达槽 (480,16)、面板槽 (480,160) 的坐标天然吻合。
+  2. **面板槽要先清成黑卡**：槽里是参考给按钮留的凹槽边框，文字直接压上去像噪声；清成黑底后 6 行状态 +
+     6 行快捷键可读，槽边框仍露在外面。
+  3. **坐标分两层**：地图视图与 `MapEditorView` 只认视口像素，框架/雷达/面板认屏幕像素，`ViewportCursor`
+     是唯一换算点。指针不在视口内就传 `null`，于是"视口外不画、不吸管、不滚边"三件事自动成立。
+  4. **基线必换**：整个画面换了骨架，`editor.png` 从 108,862 字节变成 116,108 字节，雪块与接缝不变。
+
 ### E2 小地图导航 验证记录
 
 ```text
@@ -1220,12 +1243,14 @@ dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
 dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / UI 145 / Game 150 全绿（这条逻辑在 App 层，不加测试）
 pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 match
 dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "20,20"
-  → "Minimap click at (20; 20) put the view at (160; 240)"：tile (15;15) 居中，小地图白框移到左上
+  → "Minimap click at (20; 20) put the view at (256; 256)"：tile (15;15) 居中，小地图白框移到左上
 dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "20,20,100,100"
-  → "Minimap drag at (20; 20) put the view at (2080; 2160)"：tile (75;75) 居中，状态栏 `undo 0`（拖动没开笔划）
+  → "Minimap drag at (20; 20) put the view at (2176; 2176)"：tile (75;75) 居中，面板 `undo 0`（拖动没开笔划）
 dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
-  → (2816; 2976)：点右下角被 `CenterOn` 钳在地图边界
+  → (3008; 3008)：点右下角被 `CenterOn` 钳在地图边界（3456−448）
 ```
+
+（数值是 448×448 视口下的；视口收窄成 `ADVBORD` 框架之前每条各少 96，见 ADR-048。）
 
 * 四处观察：
   1. **参考里点击与拖动是同一个分支**：`MouseClickLeft(rect) || isMouseLeftButtonPressedInArea(rect)` 都直接
