@@ -155,6 +155,22 @@ Escape 取消、OK/Enter 应用（ADR-027）。这一帧同时是入库的第二
 `FillSprite` / `SetPixel` / `DrawLine`），它们写颜色时把 transform 字节清 0，因此拼装出来的精灵
 可以直接交给 `BlitSprite`。
 
+## 地图文件头（M3 的起点）
+
+场景列表不需要地图内容，只需要原版写进 MP2 文件最前面 428 字节的那份「名片」。这段读取属于资源层：
+
+```
+Assets.Maps.Mp2FileInfo.Read(path)     428 字节信息块 → 名字/描述/宽度/高度/难度/
+                                        三组六色(王国·人类·电脑)/初始种族/胜负条件与参数
+Assets.Maps.MapCatalog.Scan(roots, n)  找 maps 目录 → TryRead → 按 n 名人类玩家过滤/收窄 → 按场景名排序
+AssetProbe maps                        把结果打成一张表（含被跳过的文件与「延迟改写」计数）
+```
+
+目录规则与 `Settings::FindFiles("maps", …)` 一致，但多了一条：只有当前目录真的是数据目录
+（含 `Heroes2.agg`）才去它的父级找 `Maps/`，否则用户顺手指一个临时目录就会去扫无关位置。
+tile / addon / 对象表仍归 M4 的地图加载器（`world_loadmap.cpp` / `map_object_info.cpp`），
+`Mp2FileInfo` 不假装自己是一张地图（ADR-032）。
+
 
 ## 错误处理
 
