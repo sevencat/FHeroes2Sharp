@@ -231,6 +231,21 @@ public sealed class GameHost : IDisposable
 
                     break;
 
+                case SDL.EventType.MouseWheel:
+                    // SDL reports a positive y when the wheel turns away from the user, which rolls
+                    // a list up. The dialog ignores the event when the pointer is outside of it.
+                    if (!_syntheticCursor && _adventure is null && _menu?.Scenario is not null)
+                    {
+                        int rows = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
+
+                        if (rows != 0)
+                        {
+                            _menu.ScrollScenario(-rows);
+                        }
+                    }
+
+                    break;
+
                 default:
                     break;
             }

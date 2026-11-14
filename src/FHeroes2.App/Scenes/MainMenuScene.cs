@@ -676,6 +676,10 @@ public sealed class MainMenuScene : IScene
     /// <summary>Moves the selection of the open scenario list by <paramref name="pages"/> pages.</summary>
     public void MoveScenarioPage(int pages) => _scenario?.MovePage(pages);
 
+    /// <summary>Rolls the open scenario list by <paramref name="rows"/> rows, the mouse wheel.</summary>
+    /// <param name="rows">Positive scrolls down; the selection does not change.</param>
+    public void ScrollScenario(int rows) => _scenario?.ScrollBy(rows);
+
     /// <summary>Selects the first row of the open scenario list (the Home key).</summary>
     public void SelectFirstScenario() => _scenario?.Select(0);
 

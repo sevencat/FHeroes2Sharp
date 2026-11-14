@@ -27,6 +27,9 @@ public sealed class AdventureMapScene : IScene
     /// <summary>Height of the status bar, one line of <c>SMALFONT.ICN</c>.</summary>
     public const int StatusBarHeight = 11;
 
+    /// <summary>Distance between the minimap and the top right corner, <c>fheroes2::borderWidthPx</c>.</summary>
+    public const int RadarMargin = 16;
+
     private const int StatusBarPadding = 8;
 
     private const int StatusBarGap = 10;
@@ -34,14 +37,22 @@ public sealed class AdventureMapScene : IScene
     private readonly ScreenBuffer _frame;
     private readonly GameFonts? _fonts;
     private readonly AdventureMapView _view;
+    private readonly Minimap _minimap;
+    private readonly Rect _radar;
     private readonly Rect _statusBar;
     private readonly byte _statusBarColor;
 
-    private AdventureMapScene(ScreenBuffer frame, GameFonts? fonts, AdventureMapView view)
+    private AdventureMapScene(ScreenBuffer frame, GameFonts? fonts, AdventureMapView view, Minimap minimap)
     {
         _frame = frame;
         _fonts = fonts;
         _view = view;
+        _minimap = minimap;
+        _radar = new Rect(
+            frame.Size.Width - RadarMargin - Minimap.PanelSize,
+            RadarMargin,
+            Minimap.PanelSize,
+            Minimap.PanelSize);
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
     }
@@ -51,6 +62,12 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>Scrolling view of the terrain.</summary>
     public AdventureMapView View => _view;
+
+    /// <summary>The minimap panel in the top right corner.</summary>
+    public Minimap Minimap => _minimap;
+
+    /// <summary>Where the minimap is drawn, the radar area of the reference layout.</summary>
+    public Rect RadarArea => _radar;
 
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => _view.Map.Info.Name;
@@ -88,6 +105,7 @@ public sealed class AdventureMapScene : IScene
 
             // Both sets share one decoder cache, so keeping them apart is only about what they map.
             AdventureMapView view = new(map, tiles, frame.Size, objects, HeroSpriteSet.TryCreate(assets));
+            Minimap minimap = Minimap.Build(map);
 
             // Without heroes there is no player position to centre on yet; the castle closest to the
             // middle of the map takes that role, which is what makes the first screenshot of a map
@@ -105,7 +123,7 @@ public sealed class AdventureMapScene : IScene
                 view.CenterOn(nearest.X, nearest.Y);
             }
 
-            AdventureMapScene scene = new(frame, fonts, view);
+            AdventureMapScene scene = new(frame, fonts, view, minimap);
 
             GameLog.Info(
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
@@ -127,13 +145,14 @@ public sealed class AdventureMapScene : IScene
     {
     }
 
-    /// <summary>Paints the visible terrain and the status bar.</summary>
+    /// <summary>Paints the visible terrain, the minimap and the status bar.</summary>
     public void DrawFrame(in DiagnosticsState state)
     {
         // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
         // of index 0 of KB.PAL and matches the empty border of the reference.
         _frame.Pixels.Clear();
         _view.Draw(_frame.Pixels);
+        DrawMinimap();
         DrawStatusBar(state);
     }
 
@@ -151,6 +170,14 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>scrolls the view back to the top left corner, which is where a scenario starts without heroes.</summary>
     public void ScrollToStart() => _view.ScrollTo(0, 0);
+
+    private void DrawMinimap()
+    {
+        // The panel art (ADVBORD.ICN) and the buttons around the radar belong to the interface shell,
+        // which is still missing; a one pixel frame keeps the panel readable on top of the map.
+        _minimap.Draw(_frame.Pixels, _radar.Position, _view.VisibleTileArea);
+        ImageOps.DrawRect(_frame.Pixels, _radar, Minimap.BlackColor);
+    }
 
     private void DrawStatusBar(in DiagnosticsState state)
     {

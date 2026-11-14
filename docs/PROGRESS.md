@@ -808,6 +808,63 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update            # sha256 278483
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update  # sha256 fca0dc30…83bc67
 ```
 
+### M3 修正记录（列表列的 x 基准）
+
+上一版把列表行的**所有**列都从列表区左边缘（`rt.x + 55`）算起，于是玩家数/尺寸/类型图标、名字列、
+胜利与失败图标整体右移 55 px：名字挤到列表右半边，失败图标落在滚动条上（`rt.x+285+55 = 340` 与
+槽 `rt.x+328` 重叠 12 px）。原版截图里名字明显靠左、两列条件图标与滚动条之间留空，就是这处差异。
+
+根因在参考的 `ScenarioListBox`：
+
+```cpp
+explicit ScenarioListBox( const fheroes2::Point & pt )
+    : Interface::ListBox<Maps::FileInfo>( pt )
+    , _offsetX( pt.x )   // 对话框的 x，不是列表区的 x
+{}
+```
+
+`RedrawItem` 只把**行 y**（`rtAreaItems.y + i*175/9`）传下去，`_renderScenarioListItem` 里的
+`_offsetX + 48/67/86/104/266/285` 全部以对话框左边为基准；`SetAreaItems( { rt.x + 55, … } )` 的 55
+只参与点击命中与滚动。两者基准不同是参考本来的写法，不是笔误。
+
+* `DrawRows` 的图标原点改成 `_area.X`，名字矩形改成 `_area.X + RowNameOffsetX`，行 y 仍取 `RowArea(i).Y`；
+  `RowArea` 保留为**点击区域**（`rt.x+55, 270, 175`），注释写明它为什么不能直接拿来画。
+* `Drawing_PaintsTheIconsOfEveryRow` 原来用 `row.X` 取像素，等于把这个 bug 写进了断言，改成
+  `dialog.Area.X`；`RowArea` 的 XML 注释补上「绘制用面板 x、命中用列表 x」。
+* 基线重建：`scenario.png` → `3312FB28…`，`scenario.zh_CN.png` → `5CB8299F…`，两条 verify 均 identical。
+
+### M3 修正记录（列表滚轮、滑块拖拽与箭头语义）
+
+上一版的列表只能靠方向键、PageUp/PageDown 和上下箭头滚动：槽里的滑块**画**出来了却没人接鼠标，
+滚轮事件在宿主层根本没有分支（`GameHost.PumpEvents` 只处理 Motion / Button / Key），所以右键菜单
+外的滚轮整台机器都不响应。三处都补上：
+
+* **拖拽**（`ScenarioSelectionDialog`）：按下时若指针在 `ScrollBarArea` 内就进入拖拽态并立刻按
+  `Scrollbar::moveToPos` 的公式定位（`offset = clamp(y - thumb/2 - groove.y, 0, travel)`，
+  `index = (steps * offset + travel / 2) / travel`），点槽空白处等同于跳转到该段；拖拽中的位置
+  来自 `SetCursor`（SDL 拖动时只有 Motion），释放时跳过行命中，避免松手误选一行。
+  滑块长度与绘制共用 `CreateThumb()`，保证手感与看到的一致。
+* **滚轮**：`ScrollBy(rows)` 只改可见顶部（对应参考的 `--_topId` / `++_topId`），不动选中，并按
+  `isMouseWheelInArea` 的规则只在指针位于列表或滚动条内时生效；`GameHost` 新增
+  `SDL.EventType.MouseWheel` 分支（`IntegerY` 优先、`Y` 的符号兜底），方向取反后转给
+  `MainMenuScene.ScrollScenario`。
+* **箭头按钮**：上一版点一下就走 `MoveSelection(±1)`，改的是选中行；参考的 PgUp/PgDn 分支只动
+  `_topId`，于是同一个"滚动"动作出现两套语义（箭头带走选中、滚轮/拖拽只滚视图）。改成
+  `ScrollRows(±1)` 后三者一致：拖的是视图，选中只由点击行和键盘改变。`ScrollBy` 负责光标区域
+  判断，`ScrollRows` 是唯一的夹取点。
+* UI 测试新增 6 条：滚轮只滚视图不动选中、滚轮上下都夹在范围内、指针在列表外时滚轮无效、
+  点槽底部跳到最后、按住滑块拖到底并确认松手不选行、点上下箭头只滚视图不动选中；
+  UI 测试 139 → 145。
+
+```
+dotnet build -c Release → 0 警告 / 0 错误
+dotnet test  -c Release → Core 167 / Assets 221 / Game 86 / UI 145 全绿
+VerifyScenarioBaseline.ps1 (-SkipBuild, en + zh_CN) → identical
+dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps listed, 截图正常
+```
+
+
+
 ### M3 已知遗留
 
 * ~~**地图名按 Latin-1 解码**~~：已在「M3 修正记录」里用 `MapTextCodec` 解决（GBK 探测，见 ADR-034）。
@@ -838,11 +895,21 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update  # sha256 f
 | `Game.AdventureMap.TerrainTileSet` | ✅ | 载入 `GROUND32.TIL` 并预生成 4 个 shape（原图 / 上下 / 左右 / 两者），与参考 `getTileImage(TIL::GROUND32, index, shape)` 的 `Flip(horizontal = shape&2, vertical = shape&1)` 一致；越界索引返回 `null`（留黑，不崩） |
 | `Assets.Maps.Mp2ObjectIcnTypes.GetArchiveName` | ✅ | `MP2::ObjectIcnType` → AGG 条目名（`OBJNGRAS.ICN` 等），即 `ICN::getIcnIdFromObjectIcnType` + `ICN::GetString`；`X_LOC*` 需要资料片；`Unused*` / `Unknown` 返回 `null`；附 `IsDrawnAsObjectPart`（`isObjectPartDirectRenderingRestricted`）排除 `UNKNOWN`/`BOAT32`/`MINIHERO`/`MONS32` |
 | `Game.AdventureMap.IObjectSpriteSource` + `ObjectSpriteSet` | ✅ | 按 (ICN 类型, 帧号) 取图；`ObjectSpriteSet` 懒加载并缓存 ICN，缺失/损坏记一次就够（不让每 tile 重试）；接口让绘制逻辑可以脱离游戏数据测试 |
-| `Game.AdventureMap.AdventureMapView` | ✅ | 像素级滚动 + clamp（`max(0, map - viewport)`）、`TileAt`、`VisibleTileArea`（含被探到一半的边界 tile）、`CenterOn`；绘制按**层**遍历而不是按 tile：地形 → 地面部件 0/1/2/3 → 顶部部件，与 `Interface::GameArea::Redraw()` 一致；部件按 ICN 帧自带锚点落位（`BlitOnTile(..., sprite.x(), sprite.y())`） |
+| `Game.AdventureMap.AdventureMapView` | ✅ | 像素级滚动 + clamp（`max(0, map - viewport)`）、`TileAt`、`VisibleTileArea`（含被探到一半的边界 tile）、`CenterOn`；绘制按**层**遍历而不是按 tile：地形 → 地面部件 3/1/2/0 → 顶部部件，与 `Interface::GameArea::Redraw()` 一致（升序会把道路画到树和城镇上面）；部件按 ICN 帧自带锚点落位（`BlitOnTile(..., sprite.x(), sprite.y())`） |
 | `App.Scenes.AdventureMapScene` | ✅ | 地形 + 对象层 + 底部 `SMALFONT` 状态栏（地图名/尺寸、视口偏移、版本）；无英雄时把视口居中到「最靠地图中心的城堡」（占位规则，见 ADR-035）；地图或 TIL 读不出来时回到主菜单并在状态栏留信息，不会黑屏 |
 | `GameHost` 接线 | ✅ | `NEW GAME → 场景窗口 → OKAY` 现在真的进入冒险地图；方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单；`--enter-map`（配合 `--scenario-select`）与 `--map <file>` 两个截图/冒烟入口；鼠标事件在冒险地图上不再转给菜单 |
 | `tests/FHeroes2.Game.Tests/ObjectLayerTests` + `Mp2ObjectIcnTypesTests` | ✅ | 9 个绘制用例（地面/顶部/层序/锚点/空帧/缺帧/无源/跨 tile 覆盖）+ 19 个 ICN 命名用例（枚举全覆盖不重名、PoL 开关、可绘制集合） |
 | 像素基线 `adventure-map.png` | ✅ | `--map Alteris.mp2` 直接开图，居中到地图中部城堡，忽略状态栏；`VerifyAdventureMapBaseline.ps1` 与另外四条基线共用 `PixelBaseline.ps1` |
+| `Assets.Maps.Mp2MapHero` / `Mp2MapHeroes` | ✅ | 英雄从 tile 反解而不是读信息块：`MINIHERO` 帧号 `/7` → 颜色（`heroColorsOrder`）、`%7` → 种族（`Race::IndexToRace`），越界抛 `BinaryFormatException`；`Mp2Map.Heroes` 按 tile 顺序列出 |
+| `Game.AdventureMap.IHeroSpriteSource` + `HeroSpriteSet` | ✅ | 按 (颜色, 种族) 取三张图集：身体 `KNGT32`/`BARB32`/`SORC32`/`WRLK32`/`WZRD32`/`NECR32`，旗帜 `B-FLAG32`…`P-FLAG32`，阴影 `SHADOW32`，一律取第 18 帧（朝右站立）；`Random` 种族没有身体，只出旗帜（ADR-037） |
+| `Game.AdventureMap.IcnSpriteCache` | ✅ | 对象层与英雄层共用的「按文件名解码一次」缓存，`ObjectSpriteSet` 改为复用它 |
+| `AdventureMapView` 英雄三带绘制 | ✅ | `AboveTile` / `OnTile` / `BelowTile` 按 32 px 行带切精灵，分别在地面层 `SHADOW_LAYER` 之后、四层全部画完之后、顶部层之后绘制；阴影单独一批、位于对象之下；可见性判定左右各放 2 格 |
+| `tests/FHeroes2.Game.Tests/HeroLayerTests` + `HeroSpriteSetTests` + `Mp2MapHeroesTests` | ✅ | 8 条绘制用例（盖住本格对象、上带/下带行位、阴影先于对象、缺旗帜仍有身体）+ 18 条图集映射用例（6 种族 / 6 色 / 缺省 / 真实数据负锚点）+ 16 条帧号解析用例（颜色、7 帧种族、越界、tile 过滤、整图收集） |
+| `tools/FHeroes2.AssetProbe map` 英雄列表 | ✅ | 打印 `x,y 颜色 种族 MINIHERO 帧号`，`Alteris.mp2` 9 名英雄（1 黄野蛮人 / 2 蓝 / 6 紫亡灵） |
+| `Game.AdventureMap.MapGround` + `MapGrounds` | ✅ | `Maps::Ground` 的移植：九个 `*_START_IMAGE_INDEX`（30/92/146/208/262/321/361/415/432）把 terrain image index 反解成地面类型，越界给 `Unknown` |
+| `Game.AdventureMap.Minimap` | ✅ | `Interface::Radar` 的数据与缩放：每格一个调色板索引（地面色 / 山树 +3 / 道路 `0x7A` / 英雄王国色）、`Zoom = 144 / 宽`、「每 6 像素省一个」的虚线视口方框、视口覆盖全图时不画方框；输出 144×144 `PixelBuffer`（ADR-038） |
+| `AdventureMapScene` 雷达叠加 | ✅ | 雷达画在参考坐标 `(480,16)`，1 px 黑框圈住；面板美术 `ADVBORD.ICN` 与 448×448 视口属于界面外壳，仍未做 |
+| `tests/FHeroes2.Game.Tests/MinimapTests` | ✅ | 35 条用例：19 条地形索引分段 + 8 条调色板常量 + 道路/山树/未知地面/英雄染色 + 缩放块对齐 + 方框几何（含贴边裁剪、全图时隐藏）+ 虚线步长 + 面板落位 |
 
 ### M4 验证记录（结构层、地形层与对象层）
 
@@ -876,18 +943,87 @@ pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild
   绘制顺序、ICN 帧自带锚点、`255` 表示无图。`Alteris` 全图共用到 26 个对象 ICN 条目（`AssetProbe map`
   的 `Object ICN types` 一行），一屏只会解码其中一部分；从进程启动到首帧约 3.2 s。
 
+### M4 验证记录（英雄层）
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 221 / UI 139 / Game 51 全绿
+dotnet run --project tools/FHeroes2.AssetProbe -- map F:\game\fh2\maps\Alteris.mp2
+# Heroes (9):
+#    2,4    Yellow Barbarian  MINIHERO 22
+#   83,51  Blue Sorceress    MINIHERO 2
+#   82,52  Blue Warlock      MINIHERO 3
+#   48,72  Purple Necromancer MINIHERO 40
+#   96,75 / 77,90 / 68,98 / 49,99 / 105,102  Purple Necromancer  MINIHERO 40
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild
+# DIFF 4495 of 307200 pixels differ（7040 ignored），diff 图存 tools-output/baseline/diff_adventure-map-en.png
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild -Update
+# update tests/baselines/adventure-map.png  176,818 字节  sha256 FC51E000…C34EAC3
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild   → match（逐字节相同）
+pwsh tools/scripts/VerifyMenuBaseline.ps1 -SkipBuild           → match
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -SkipBuild       → match
+pwsh tools/scripts/VerifySettingsBaseline.ps1 -SkipBuild       → match
+```
+
+* 基线那一屏的视口是 `1216,2062`（状态栏里印着），覆盖 tile `x 38…57 / y 64…79`，9 名英雄里**只有
+  `(48,72)` 那名紫色亡灵在视口内**——它正站在城镇门口，放大四倍能看到骑马的紫色英雄（截图
+  `tools-output/cmp-forest.png` 是旧/新渲染的上下对照）。所以 4,495 个差异像素分成两类：
+  *(a)* 城镇门口那一块是英雄本体 + 旗帜 + 左移的阴影；
+  *(b)* 树林、山脊、海岸处的零散小块是**层序修正**：地面层从升序 0/1/2/3 改成参考的 3/1/2/0，
+  旧顺序把道路与水纹画在树、山、礁石之上。那些位置没有英雄（见上一条），所以差异只可能来自层序。
+* 图层本身没有错位：`(48,72)` 的英雄正落在城镇门前的道路上（放大图里脚踩路面、旗帜在 tile 上方、
+  阴影从英雄脚下向左铺开），说明 `BlitHeroSprite` 与 `BlitOnTile` 用的是同一套「tile 左上角 + 精灵锚点」
+  语义。`SHADOW32` 第 18 帧实测 `63×26`、锚点 `−40,−20`（`AssetProbe sprites SHADOW32.ICN`）。
+* `HeroLayerTests` 的 8 条用例是这一层的硬证据：英雄盖住本格 `OBJECT_LAYER` 的对象、
+  英雄跨到上一格的行**在顶部层之后**才画（所以塔楼不吃掉英雄的头）、跨到下一格的行**在对象层之前**
+  画（所以路面/树能盖住脚）、阴影在 `SHADOW_LAYER` 之后出现（用 40 号色值单独识别）。
+* `HeroSpriteSetTests` 把 6 个种族 6 个颜色的条目名逐一钉住（`KNGT32.ICN` … `P-FLAG32.ICN`），
+  真实数据用例确认身体宽 32 px 且 `OffsetY < 0`（头伸到上一格）、`FLAG32` 第 18 帧同样 `OffsetY < 0`
+  （旗杆在 tile 上方）、`SHADOW32` 有第 18 帧且图集没有缺失条目。
+* `Mp2MapHeroesTests` 钉住帧号语义：`/7` 颜色（第 6 个王国起一律紫）、`%7` 种族且第 7 帧是
+  `Random`、负帧号抛异常、`Hero` 与 `ActionHero` 两种对象类型都收、非英雄 tile 一律不收。
+* 其余五张基线逐字节不变：这次只动了冒险地图的绘制路径，菜单/设置/场景三张基线没受影响。
+
+### M4 验证记录（小地图雷达）
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 221 / UI 139 / Game 86 全绿（新增 35）
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild
+# DIFF 20551 of 307200 pixels differ（7040 ignored），first at 480,16
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild -Update
+# update tests/baselines/adventure-map.png  168,285 字节  sha256 DCFAD12…EDF89E4
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild   → match
+pwsh tools/scripts/VerifyMenu/Scenario/SettingsBaseline.ps1 -SkipBuild → 全部 match
+```
+
+* 差异被雷达矩形**完全包住**：`first at 480,16`，且 640×480 里除 `(480,16,144,144)` 以外的像素逐字节
+  不变——雷达是纯叠加，没有动地形、对象与英雄的绘制路径。放大图 `tools-output/radar-zoom.png` 里能
+  看到：左半屏是大片水（`0x4D`）、右下角草地（`0x62`）与提亮三档的山树、海岸线是沙滩色（`0x29`）、
+  左下角一个黄色方块正是 `(2,4)` 的黄野蛮人、右侧几个紫色小点是紫色亡灵，中间那圈虚线方框就是视口。
+* 方框几何对得上：视口 `1216,2062`、640×480 → tile `(38,64)` 起 21×16 格；`Alteris` 是 108×108，
+  `Zoom = 144/108 = 1.333`，于是方框在面板上落在 `(50,85)`、`28×21` 像素——`MinimapTests` 里
+  「缩放块对齐」「方框贴边裁剪」两条用例把这个换算钉死。
+* `MinimapTests` 的 35 条里有 19 条是地形索引分段的边界（`29/30`、`91/92` … `431/432`），因为
+  `MapGrounds.FromTerrainImageIndex` 是分段函数，写错一个边界只会在某张图上偶尔错一格，看基线看不出来。
+* 其余五张基线不变：只改了 `AdventureMapScene` 的绘制顺序（地形 → 雷达 → 状态栏）。
+
 ### M4 已知遗留
 
 * **对象层没有动画与超大对象**：帧号直接用 MP2 里存的静态帧，参考的 `map_object_info` 动画表（火焰、旗帜、
   水面波纹、烟）与 `tileUnfit`（超过 1×1 tile 的对象整体上移绘制）都没移植，见 ADR-036。
-* **英雄、怪物、船不画**：它们的精灵被引擎拆到多个 tile（`MINIHERO`/`MINIMON`/`BOAT32`），需要专属渲染器，
-  通用部件路径会画成错位的碎片，所以主动跳过；`MONS32`（编辑器里的静态怪物）同样跳过。
+* **英雄不动、怪物与船不画**：英雄已按三带绘制（ADR-037），但旗帜飘动与行走方向没做（一律朝右第 18 帧）；
+  `MONS32`（地图怪物）与 `BOAT32`（船）的精灵同样被引擎拆到多个 tile，专属渲染器还没写，仍是主动跳过。
 * **主对象类型推断没做**：`Maps::getMainObjectType` 依赖 `map_object_info` 的对象表，`Mp2TileInfo.ObjectType`
   目前直接用文件里的 `mapObjectType`；拾取与信息框需要它时再补。
-* **雾、路径、旗帜、界面面板都没有**：没有右侧/底部控制面板、没有英雄状态、没有小地图，状态栏只是占位。
+* **雾、路径、界面面板都没有**：雷达已经上屏（ADR-038），但右侧/底部控制面板（`ADVBORD.ICN`）、
+  英雄状态、日期与资源栏仍然缺；地图区还是整屏 640×480，参考是 448×448 @ (16,16)。状态栏是占位。
 * **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
 * **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
   `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。
 * **没有存档/退出确认**：`Esc` 直接回主菜单，参考会先弹系统对话框。
 * **滚动只有键盘**：鼠标拖屏、边缘滚动、小地图点击都未实现；滚动步长固定 1 tile。
+* **地图编辑器一期不做**（**不是遗留，是范围外**）：参考实现不含编辑器，MP2 的写路径没有可对拍的 C++
+  代码，所以一期只读 `.mp2`、不写。M9 验收标准里的「编辑器可保存地图」已删除，理由见 ADR-039 与
+  `PLAN.md` 的「一期范围之外」。
 

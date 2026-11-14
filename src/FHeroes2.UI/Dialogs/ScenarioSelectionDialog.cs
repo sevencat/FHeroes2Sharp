@@ -218,6 +218,8 @@ public sealed class ScenarioSelectionDialog
     private int _scroll;
     private Point? _cursor;
     private Point? _pressPosition;
+    private bool _leftHeld;
+    private bool _thumbDragged;
 
     /// <summary>Composes the dialog over the given map list.</summary>
     /// <param name="artwork">The panel, the icons and the button frames the dialog is drawn with.</param>
@@ -314,13 +316,21 @@ public sealed class ScenarioSelectionDialog
     /// <summary>The selected map, or <see langword="null"/> when the list is empty.</summary>
     public Mp2FileInfo? Selected => _selected >= 0 && _selected < _maps.Count ? _maps[_selected] : null;
 
-    /// <summary>Area of the visible row <paramref name="row"/> (0…8), the columns excluded.</summary>
+    /// <summary>Click area of the visible row <paramref name="row"/> (0…8), the columns excluded.</summary>
     /// <param name="row">Zero based index of the visible row.</param>
     /// <remarks>
+    /// <para>
     /// Row <c>i</c> starts at <c>i * 175 / 9</c> - the truncation of <c>ListBox::Redraw()</c>, which
     /// spreads nine 19.44 pixel rows over the 175 pixel column instead of using a fixed pitch of 19.
     /// Using a fixed pitch drifts three pixels by the last row and makes the click area disagree
     /// with what the player sees.
+    /// </para>
+    /// <para>
+    /// This is the hit area of <c>SetAreaItems( { rt.x + 55, rt.y + 55, 270, 175 } )</c>, so its x
+    /// is the list edge. The <b>drawn</b> columns of a row are not: the reference blits them at
+    /// <c>ScenarioListBox::_offsetX</c>, which is the dialog's x, so paint them at
+    /// <see cref="_area"/>.X and take only the row's y from here.
+    /// </para>
     /// </remarks>
     public Rect RowArea(int row)
     {
@@ -343,6 +353,12 @@ public sealed class ScenarioSelectionDialog
     /// <summary>Area of the scroll bar groove the thumb moves in.</summary>
     public Rect ScrollBarArea =>
         new(_area.X + ScrollBarOffsetX, _area.Y + ScrollBarOffsetY, ScrollBarWidth, ScrollBarHeight);
+
+    /// <summary>
+    /// Area of the whole list, <c>SetAreaItems( { rt.x + 55, rt.y + 55, 270, 175 } )</c>: the rows
+    /// and the wheel target, the columns of a row excluded.
+    /// </summary>
+    public Rect ListArea => new(_area.X + ListOffsetX, _area.Y + ListOffsetY, ListWidth, ListHeight);
 
     /// <summary>
     /// Shows only the maps of <paramref name="filter"/>; the selection moves to the first row when
@@ -437,6 +453,14 @@ public sealed class ScenarioSelectionDialog
 
         _cursor = cursor;
         _buttons.SetCursor(cursor);
+
+        // A drag of the thumb moves without a button event: the motion is the only position source,
+        // exactly like the reference, which calls moveToPos() from its mouse loop while the button
+        // is held.
+        if (_thumbDragged && _leftHeld && cursor is { } point)
+        {
+            ScrollToCursor(point);
+        }
     }
 
     /// <summary>
@@ -453,8 +477,28 @@ public sealed class ScenarioSelectionDialog
 
         if (down)
         {
+            _leftHeld = true;
             _pressPosition ??= _cursor;
+
+            // The reference calls moveToPos() as soon as the groove is pressed: a click next to the
+            // thumb jumps there and a press on the thumb starts the drag.
+            if (!_thumbDragged && _cursor is { } grab && IsScrollBarHit(grab))
+            {
+                _thumbDragged = true;
+                ScrollToCursor(grab);
+            }
+
             return DialogButton.None;
+        }
+
+        _leftHeld = false;
+
+        if (_thumbDragged)
+        {
+            // Releasing a drag must not click the row that happens to be under the cursor.
+            _thumbDragged = false;
+            _pressPosition = null;
+            return clicked;
         }
 
         Point? pressPosition = _pressPosition;
@@ -471,15 +515,18 @@ public sealed class ScenarioSelectionDialog
             return DialogButton.None;
         }
 
+        // The arrows of the reference move _topId only (see the PgUp / PgDn branch of
+        // ListBox::ActionListPress): a click rolls the view one row and leaves the selection alone,
+        // exactly like the wheel and the thumb.
         if (IsInside(_scrollUp, press) && IsInside(_scrollUp, cursor))
         {
-            MoveSelection(-1);
+            ScrollRows(-1);
             return DialogButton.None;
         }
 
         if (IsInside(_scrollDown, press) && IsInside(_scrollDown, cursor))
         {
-            MoveSelection(1);
+            ScrollRows(1);
             return DialogButton.None;
         }
 
@@ -491,6 +538,41 @@ public sealed class ScenarioSelectionDialog
         }
 
         return DialogButton.None;
+    }
+
+    /// <summary>
+    /// Rolls the list by <paramref name="rows"/> rows without touching the selection - the mouse
+    /// wheel of the reference, which moves <c>_topId</c> only. Only a wheel over the list or over
+    /// the scroll bar counts, which is the <c>isMouseWheelInArea</c> check of the reference.
+    /// </summary>
+    /// <param name="rows">Rows to scroll down; negative scrolls up.</param>
+    public void ScrollBy(int rows)
+    {
+        if (rows == 0 || _maps.Count <= VisibleRowCount)
+        {
+            return;
+        }
+
+        if (_cursor is { } cursor && !ListArea.Contains(cursor) && !ScrollBarArea.Contains(cursor))
+        {
+            return;
+        }
+
+        ScrollRows(rows);
+    }
+
+    /// <summary>Moves the first visible row by <paramref name="rows"/>, clamped to the list.</summary>
+    /// <param name="rows">Rows to scroll down; negative scrolls up.</param>
+    private void ScrollRows(int rows)
+    {
+        int steps = _maps.Count - VisibleRowCount;
+
+        if (rows == 0 || steps <= 0)
+        {
+            return;
+        }
+
+        _scroll = Math.Clamp(_scroll + rows, 0, steps);
     }
 
     /// <summary>
@@ -533,6 +615,65 @@ public sealed class ScenarioSelectionDialog
     /// <summary>Whether <paramref name="point"/> is inside the area of <paramref name="button"/>.</summary>
     private static bool IsInside(ButtonBase? button, Point point) => button is not null && button.Area.Contains(point);
 
+    /// <summary>Whether a press on <paramref name="point"/> grabs the scroll bar.</summary>
+    private bool IsScrollBarHit(Point point) =>
+        _maps.Count > VisibleRowCount && (_scrollUp is not null || _scrollDown is not null || _artwork.Slider is not null)
+        && ScrollBarArea.Contains(point);
+
+    /// <summary>
+    /// Moves the list so that the thumb centres on <paramref name="point"/>, a port of
+    /// <c>Scrollbar::moveToPos</c>: the index is the pressed offset inside the free travel of the
+    /// groove, rounded to the nearest row.
+    /// </summary>
+    private void ScrollToCursor(Point point)
+    {
+        int steps = _maps.Count - VisibleRowCount;
+
+        if (steps <= 0)
+        {
+            _scroll = 0;
+            return;
+        }
+
+        Rect groove = ScrollBarArea;
+        int thumbLength = ThumbLength();
+        int travel = groove.Height - thumbLength;
+
+        if (travel <= 0)
+        {
+            _scroll = 0;
+            return;
+        }
+
+        int offset = Math.Clamp(point.Y - (thumbLength / 2) - groove.Y, 0, travel);
+        _scroll = ((steps * offset) + (travel / 2)) / travel;
+    }
+
+    /// <summary>Length of the thumb along the groove, the height <see cref="CreateThumb"/> produces.</summary>
+    private int ThumbLength() => CreateThumb()?.Height ?? ScrollBarHeight;
+
+    /// <summary>
+    /// Builds the thumb of the scroll bar, or <see langword="null"/> when the list fits - the same
+    /// artwork <see cref="ScrollSlider.Create"/> gives the painter, so the drag uses the length that
+    /// is on screen.
+    /// </summary>
+    private Sprite? CreateThumb()
+    {
+        if (_artwork.Slider is not { } slider || _maps.Count <= VisibleRowCount)
+        {
+            return null;
+        }
+
+        return ScrollSlider.Create(
+            slider,
+            horizontal: false,
+            ScrollBarHeight,
+            VisibleRowCount,
+            _maps.Count,
+            new Rect(0, 0, slider.Width, 8),
+            new Rect(0, 7, slider.Width, 8));
+    }
+
     /// <summary>
     /// Paints the whole dialog: the shadow, the panel, the nine rows, the details of the selection,
     /// the scroll bar thumb and the buttons. The panel is redrawn from scratch, so a caller only has
@@ -572,10 +713,14 @@ public sealed class ScenarioSelectionDialog
             Rect area = RowArea(row);
             Mp2FileInfo map = _maps[index];
 
+            // The reference measures the x of a row from the panel edge (ScenarioListBox::_offsetX
+            // is the dialog position) and only the y from the list area. Adding ListOffsetX to the
+            // x as well shifts every column 55 pixels to the right, which pushes the condition
+            // icons onto the scroll bar.
             DrawIcons(
                 target,
                 map,
-                new Point(area.X, area.Y + RowIconOffsetY),
+                new Point(_area.X, area.Y + RowIconOffsetY),
                 RowPlayerIconOffsetX,
                 RowSizeIconOffsetX,
                 RowTypeIconOffsetX,
@@ -586,7 +731,7 @@ public sealed class ScenarioSelectionDialog
                 target,
                 map.Name,
                 index == _selected ? _selectedFont : _font,
-                new Rect(area.X + RowNameOffsetX, area.Y + RowTextOffsetY, RowNameWidth, _font.LineHeight));
+                new Rect(_area.X + RowNameOffsetX, area.Y + RowTextOffsetY, RowNameWidth, _font.LineHeight));
         }
     }
 
@@ -772,21 +917,12 @@ public sealed class ScenarioSelectionDialog
     /// <summary>Paints the thumb of the scroll bar when the list is longer than the dialog.</summary>
     private void DrawScrollBar(PixelBuffer target)
     {
-        if (_artwork.Slider is not { } slider || _maps.Count <= VisibleRowCount)
+        if (CreateThumb() is not { } thumb)
         {
             return;
         }
 
         Rect groove = ScrollBarArea;
-
-        Sprite thumb = ScrollSlider.Create(
-            slider,
-            horizontal: false,
-            ScrollBarHeight,
-            VisibleRowCount,
-            _maps.Count,
-            new Rect(0, 0, slider.Width, 8),
-            new Rect(0, 7, slider.Width, 8));
 
         Point position = ScrollSlider.SliderPosition(
             groove, thumb.Height, _scroll, VisibleRowCount, _maps.Count, horizontal: false);

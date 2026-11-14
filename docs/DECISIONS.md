@@ -1039,3 +1039,108 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
 * 主对象类型推断缺失意味着**拾取与信息框还开不了工**：那两者要看「这个 tile 的 main object 是什么」，
   到时候需要 `map_object_info` 的对象表——但只需要其中「ICN 类型 + 帧号 → 对象类型」的映射，
   不需要动画帧数，可以按需生成一张小表。
+
+## ADR-037：英雄按「三带」绘制，身体取种族图集、旗帜取 `<色>-FLAG32`、阴影取 `SHADOW32`
+
+**背景**：英雄（连同船、地图怪物）在 MP2 里不是普通对象：每个 tile 只留一个 `MINIHERO` 帧号，
+真正的像素来自三张不同的图集——身体按种族取 `KNGT32`/`BARB32`/`SORC32`/`WRLK32`/`WZRD32`/`NECR32`，
+旗帜按王国颜色取 `B-FLAG32`/`G-FLAG32`/`R-FLAG32`/`Y-FLAG32`/`O-FLAG32`/`P-FLAG32`，阴影取
+`SHADOW32`；`MINIHERO` 本身属于编辑器，只用来表达「谁站在哪」。参考实现
+（`Interface::GameArea::Redraw()` 的 `redrawHeroes`）因此不把英雄当成一层，而是把一张精灵
+**按 32 px 行带切成三段**，分别塞进三个批次里画。
+
+**决策**：
+
+1. **颜色与种族从 `MINIHERO` 帧号反解**，不再单独存：`frame / 7` 给颜色（蓝绿红黄橙紫，与
+   `MP2::heroColorsOrder` 同序）、`frame % 7` 给种族（`Race::IndexToRace` 的 0…6），读取集中在
+   `Mp2MapHeroes.FromSpriteIndex`；越界帧号直接抛 `BinaryFormatException`，不做静默兜底。
+   每张图集是「六个方向 × 9 帧 + 转身 9 帧」，静止英雄朝右，所以身体、旗帜与阴影一律取第 18 帧
+   （`HeroSpriteSet.StandingFrame`）——与参考 `Heroes::_direction` 的默认值一致。
+2. **三段按行切，不按图切**（`AdventureMapView.HeroBand`）：`AboveTile`（英雄自己那格之上）、
+   `OnTile`（本格）、`BelowTile`（本格之下）。绘制时机照参考的三处插入点：
+   地面层 3/1/2/0 里画到 `SHADOW_LAYER`(2) 之后 → 英雄阴影 + `BelowTile`；四层全部画完 → `OnTile`；
+   顶部层画完 → `AboveTile`。
+   于是「塔楼压住旗、英雄盖住自己格上的路」这类遮挡关系自动成立，不需要给每个对象标
+   「谁和英雄抢像素」。
+3. **阴影单独一层且按 40 px 左移**：`SHADOW32` 帧自带 `OffsetX ≈ -40` 的锚点，直接按 tile 落位即可，
+   它排在 `SHADOW_LAYER`(2) 之后、`OBJECT_LAYER`(0) 之前——参考把影子放进 `tileUnfit.shadowImages`
+   就是为了让路、草、水波先铺好再压影子，而树、山、城堡又能盖住影子。
+4. **图集与对象层共用一个解码缓存**（`IcnSpriteCache`）：`ObjectSpriteSet` 与 `HeroSpriteSet` 都从
+   `AssetBundle.TryReadIcn` 后缓存在同一个字典里，`GROUND32.TIL` 那套「载入一次、按帧取」的约定不变。
+5. **视口裁剪扩到 2 tile**：英雄精灵高约 1.5 格、阴影再往左伸一格，所以 `VisibleHeroes()` 在
+   `VisibleTileArea` 基础上左右各放 2 格再测试，超出部分交给 `ImageOps.BlitSprite` 的裁剪。
+
+**后果**：
+
+* `MINIHERO` 不再进入对象部件循环（`Mp2ObjectIcnTypes.IsDrawnAsObjectPart` 已经把它排掉），所以
+  以前「英雄会画成错位碎片」的问题从根上消失；`MONS32`（编辑器静态怪物）与 `BOAT32`（船）虽然也被
+  同一套规则排掉，但它们还没接专属渲染器，暂时**不可见**。
+* 英雄**不参与动画**：参考的旗帜飘动、英雄待机帧依赖 `animationFrame` 与 `map_object_info`，
+  与 ADR-036 同一批遗留，`--freeze-animation` 的基线不受影响。
+* 种族为 `Random` 的英雄（帧号 `%7 == 6`，即每个王国的第 7 帧）没有身体图集，只有旗帜会被画出来。
+  参考在开局后会把随机种族落成具体种族，本端口还没有「玩家 → 英雄」这一步，先保持「不猜」。
+* 一名英雄占一格，`Mp2MapHeroes` 按 tile 顺序输出；两英雄同格的地图不存在（参考同一位置只允许
+  一个英雄），所以不做叠放排序。
+* 像素基线随这次改动重建：`adventure-map.png` 的 4,495 个像素差全部落在英雄与「层序」两处，
+  见 `PROGRESS.md` 的 M4 英雄层验证记录。
+
+## ADR-038：小地图的颜色从 tile 字段直接算，不依赖对象表；面板先叠加在占位布局上
+
+**背景**：参考的雷达（`Interface::Radar`）把整张地图压成 144×144 的方块：每格一个调色板索引，
+地面色按 `Maps::Ground::getGroundByImageIndex` 从 terrain image index 反解，山与树提亮三档，道路单独
+一色，英雄与城堡用王国色，再叠一个标出当前视口的虚线方框。颜色本可以查 `map_object_info` 的
+`objectType`，但那张大表正是 ADR-036 里刻意没移植的东西。
+
+**决策**：
+
+1. **只用 tile 里已有的字段**：地面类型由 `TerrainImageIndex` 落在
+   `[0,30) [30,92) [92,146) [146,208) [208,262) [262,321) [321,361) [361,415) [415,432)` 的哪一段决定
+   （`MapGrounds.FromTerrainImageIndex`，与参考的九个 `*_START_IMAGE_INDEX` 一一对应）；道路看
+   `GroundIcnType == Road`，山与树看 `Mp2ObjectIcnTypes.IsMountain/IsTree`，英雄看 `Mp2MapHeroes`
+   （`Mp2MapHero` 已经有颜色）。**因此小地图先于对象表落地**，等 ADR-037 那条遗留（主对象类型推断）
+   补上时，这里只需要把「山/树」换成 `OBJ_MOUNTAINS`/`OBJ_TREES` 判断。
+2. **城堡与矿暂不着色**：MP2 文件里没有城堡归属、也没有矿主（两者都由玩家与对象表在后来的
+   `Kingdom` 阶段确定），所以雷达上它们落在地面色里。参考对无主对象画白点，这里选择**不画**，避免
+   把「未知」画成「白色王国」。
+3. **缩放就是最近邻**：`Zoom = 144 / map.Width`（参考 `SetZoom` 用 `rect.width / world.width` 的浮点
+   除法），雷达像素 `p` 取 tile `floor(p / Zoom)`。参考用 `memset` 把 tile `x` 铺进
+   `[floor(x*Zoom), floor((x+1)*Zoom))`，两者逐像素等价。
+4. **视口方框按参考的虚线画**：`fheroes2::DrawBorder(..., 6)` 是「每 6 个像素省一个」的 1 px 边框，
+   颜色 `RADARCOLOR = 0xB5`；视口覆盖整张地图时**不画**（否则整圈边框反而误导）。
+5. **布局先叠加，不抢占地图**：参考的地图区是 448×448 @ (16,16)，右侧与底部被 `ADVBORD.ICN` 面板
+   占掉。本端口还没有面板美术（ADR 待补），所以雷达放在参考坐标 (480,16) 上**盖住地图右上角**，并
+   用 1 px 黑框圈住面板。等界面外壳落地时，只改 `AdventureMapScene` 的布局常量，`Minimap` 本身不动。
+
+**后果**：
+
+* `Minimap` 是纯数据 + 一个 144×144 的 `PixelBuffer`，与地图、场景都解耦：`ColorAt(x, y)` 给测试用，
+  `CursorArea(visibleTiles)` 给点击居中与调试用（点击交互要等鼠标事件管线，现在还没有）。
+* 迷雾不存在，所以「全部可见」就是参考在迷雾揭开前的行为，`revealOnlyVisible` 的分支等迷雾落地再补。
+* 每帧多一次 144×144 的 blit（约 2 万像素），与地形绘制不在一个量级，不做缓存失效判断。
+* 像素基线再次重建：`adventure-map.png` 的 20,551 个差异像素全部落在雷达矩形 `(480,16,144,144)` 里
+  （`first at 480,16`），其余 640×480 区域逐字节不变，见 `PROGRESS.md` 的 M4 小地图验证记录。
+
+## ADR-039：地图编辑器一期不做
+
+**背景**：`PLAN.md` 的 M9 原本把「地图编辑器」与战役、视频并列，验收标准写着「编辑器可保存地图」。
+但参考实现 fheroes2 1.1.18 **本身不含地图编辑器**（它是游戏引擎，地图由原版 `h2maped` 与第三方编辑器
+生成），所以这条路径上没有任何 C++ 代码可以逐字节对拍。
+
+**决策**：
+
+1. **一期不做地图编辑器**，M9 只保留战役、音频完善、SMK 视频与 NativeAOT 评估。`PLAN.md` 的 M9 验收
+   标准删掉「编辑器可保存地图」，并新增「一期范围之外」一节说明这件事。
+2. **理由是对拍纪律而不是工作量**：本项目的第一条原则是「外部资源格式逐字节一致」，而每一处一致都是
+   靠 `tools/reference` 把参考源码编成导出器、再 `AssetProbe compare` 逐字节比对钉出来的（ADR-015）。
+   MP2 的**写**路径没有参考可对拍，只能靠「自己写 → 自己读 → 自己比」，这种自证循环没有说服力；
+   与其含糊地做，不如明确不做。
+3. **读路径的成果照常保留**：`Mp2Map` / `Mp2TileInfo` / addon 链 / 城堡与捕获物表都已解析（M3/M4），
+   `AssetProbe map` 能打印整张图的结构，`Mp2MapFileBuilder` 能合成完整 MP2 给测试用。将来若要写地图，
+   这两样正是「写出来能不能被自己读回」的第一道闸门，属于现成基础，不额外投入。
+
+**后果**：
+
+* 一期的范围收敛为「**能完整打一局**」：M5 回合与英雄 → M6 城镇 → M7 战斗 → M8 存档/设置 → M9 战役与
+  收尾。编辑器若要做，单独立项，并且先补「写 MP2 的最小闭环 + 与原版编辑器的产物对拍」再谈界面。
+* 文档里不再出现「编辑器可保存地图」这类验收措辞，避免读者以为一期会交付它。
+* 玩家侧的诉求（改地图、造地图）一期由用户自带的原版编辑器满足：我们只读 `.mp2`，不写。

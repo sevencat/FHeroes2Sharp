@@ -127,6 +127,32 @@ public static class Mp2ObjectIcnTypes
     public static bool IsKnown(Mp2ObjectIcnType type) => type != Mp2ObjectIcnType.Unknown;
 
     /// <summary>
+    /// Whether the set belongs to a mountain, which the reference reports as
+    /// <c>MP2::OBJ_MOUNTAINS</c> and draws darker on the minimap.
+    /// </summary>
+    public static bool IsMountain(Mp2ObjectIcnType type) =>
+        type is Mp2ObjectIcnType.MtnSnow
+            or Mp2ObjectIcnType.MtnSwmp
+            or Mp2ObjectIcnType.MtnLava
+            or Mp2ObjectIcnType.MtnDsrt
+            or Mp2ObjectIcnType.MtnDirt
+            or Mp2ObjectIcnType.MtnMult
+            or Mp2ObjectIcnType.MtnCrck
+            or Mp2ObjectIcnType.MtnGras;
+
+    /// <summary>
+    /// Whether the set belongs to a tree, which the reference reports as <c>MP2::OBJ_TREES</c> and
+    /// draws darker on the minimap.
+    /// </summary>
+    public static bool IsTree(Mp2ObjectIcnType type) =>
+        type is Mp2ObjectIcnType.TreJngl
+            or Mp2ObjectIcnType.TreVil
+            or Mp2ObjectIcnType.TreSnow
+            or Mp2ObjectIcnType.TreFir
+            or Mp2ObjectIcnType.TreFall
+            or Mp2ObjectIcnType.TreDeci;
+
+    /// <summary>
     /// Whether the sprite of a ground or top part can be blitted straight onto its tile, the port of
     /// <c>isObjectPartDirectRenderingRestricted</c> of the reference. The four excluded sets either
     /// hold nothing usable (<c>UNKNOWN</c>), are split over several tiles by the engine

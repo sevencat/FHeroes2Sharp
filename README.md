@@ -21,6 +21,8 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
   `Core.Imaging.PaletteTable`（原版 `PAL::GetPalette` 的索引重映射表，ADR-020），所以中英文混排同色。
 * 分辨率：内部逻辑分辨率固定 **640×480**，按整数倍放大并加黑边（默认 2x = 1280×960）。
 * 策略：解析层对原版资源格式 **逐字节一致**，工程结构用现代 C# 分层重写。
+* 范围：**只做游戏本体，地图编辑器一期不做**——参考实现不含编辑器，MP2 的写路径没有可对拍的 C++
+  代码，一期只读 `.mp2`、不写（ADR-039，`docs/PLAN.md` 的「一期范围之外」）。改地图请继续用原版编辑器。
 * NativeAOT：**暂不作为支持目标**，但已开启 AOT / 裁剪分析器（`IsAotCompatible`，`IL2xxx`/`IL3xxx`
   为错误），代码保持「反射自由」以便将来切换（见 ADR-011）。
 
@@ -78,13 +80,18 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 
 **M4 进行中（冒险地图已可走）**：`Assets.Maps.Mp2Map` 读完 MP2 的结构层（tile 20 字节、addon 15 字节、
 城堡表、捕获物表、方尖碑计数、信息块、尾部对象 UID），`Game.AdventureMap.TerrainTileSet` 载入
-`GROUND32.TIL` 并预生成 4 种 `shape` 翻转，`AdventureMapView` 按「地形 → 地面层 0/1/2/3 → 顶部层」
+`GROUND32.TIL` 并预生成 4 种 `shape` 翻转，`AdventureMapView` 按「地形 → 地面层 3/1/2/0 → 顶部层」
 逐层绘制可见范围（与 `Interface::GameArea::Redraw()` 同序），对象图来自 MP2 文件里的
-(ICN 类型, 帧号)，`ObjectSpriteSet` 按需解码并缓存。点 NEW GAME → 选中地图 → OKAY 现在会真的走进
-这张地图：方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单（ADR-035、ADR-036）。`--map <file>` 直接
-开一张图、`--enter-map` 让脚本从菜单一路点进去，`adventure-map.png` 是它的像素基线
-（`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、英雄/怪物/船、
-雾与路径、界面面板，清单见 `docs/PROGRESS.md`。
+(ICN 类型, 帧号)，`ObjectSpriteSet` 按需解码并缓存。英雄也已经上屏：颜色与种族从 tile 里的
+`MINIHERO` 帧号反解，身体取种族图集（`KNGT32`…`NECR32`）、旗帜取 `<色>-FLAG32`、阴影取 `SHADOW32`，
+精灵按 32 px 行带切成「上面 / 本格 / 下面」三段，分别在地面层的影子层之后、四层之后与顶部层之后画，
+所以塔楼盖不住英雄的头、英雄又能踩住自己格上的路（ADR-037）。右上角是小地图：144×144 的雷达把每格
+压成「地面色 / 山树提亮三档 / 道路 / 英雄王国色」一个像素块，再叠一圈标出当前视口的虚线框，颜色全部
+从 tile 字段算出、不依赖对象表（ADR-038）。点 NEW GAME → 选中地图 → OKAY 现在会真的走进这张地图：
+方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单（ADR-035、ADR-036）。`--map <file>` 直接开一张图、
+`--enter-map` 让脚本从菜单一路点进去，`adventure-map.png` 是它的像素基线
+（`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、地图怪物与船、
+雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `docs/PROGRESS.md`。
 
 音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
@@ -147,7 +154,7 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
 
-# 冒险地图基线：--map 直接开 Alteris.mp2，居中到地图中部的城堡（地形 + 对象层）
+# 冒险地图基线：--map 直接开 Alteris.mp2，居中到地图中部的城堡（地形 + 对象层 + 英雄层 + 小地图）
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile 'D:\HoMM2\maps\Beltway.mp2'
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update      # 有意改了视觉后重建基线

@@ -77,6 +77,106 @@ public sealed class ScenarioSelectionDialogTests
     }
 
     [Fact]
+    public void ScrollingByTheWheel_RollsTheRowsWithoutMovingTheSelection()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+        Rect list = dialog.ListArea;
+
+        dialog.SetCursor(new Point(list.X + 40, list.Y + 40));
+        dialog.ScrollBy(4);
+
+        Assert.Equal(4, dialog.Scroll);
+        Assert.Equal(0, dialog.SelectedIndex);
+
+        dialog.ScrollBy(-2);
+        Assert.Equal(2, dialog.Scroll);
+    }
+
+    [Fact]
+    public void ScrollingByTheWheel_ClampsToTheList()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+        Rect list = dialog.ListArea;
+
+        dialog.SetCursor(new Point(list.X + 40, list.Y + 40));
+
+        dialog.ScrollBy(-5);
+        Assert.Equal(0, dialog.Scroll);
+
+        dialog.ScrollBy(100);
+        Assert.Equal(30 - ScenarioSelectionDialog.VisibleRowCount, dialog.Scroll);
+    }
+
+    [Fact]
+    public void ScrollingByTheWheel_IgnoresAPointerOutsideTheList()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+
+        // The reference only answers a wheel inside the list or the scroll bar.
+        dialog.SetCursor(new Point(dialog.Area.X + 5, dialog.Area.Y + 5));
+        dialog.ScrollBy(3);
+
+        Assert.Equal(0, dialog.Scroll);
+    }
+
+    [Fact]
+    public void ClickingTheGroove_JumpsToThatPartOfTheList()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+        Rect groove = dialog.ScrollBarArea;
+
+        dialog.SetCursor(new Point(groove.X + 4, groove.Y + groove.Height - 1));
+        dialog.SetLeftButton(true);
+        dialog.SetLeftButton(false);
+
+        Assert.Equal(30 - ScenarioSelectionDialog.VisibleRowCount, dialog.Scroll);
+        Assert.Equal(0, dialog.SelectedIndex);
+    }
+
+    [Fact]
+    public void DraggingTheThumb_ScrollsWithThePointer()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+        Rect groove = dialog.ScrollBarArea;
+
+        dialog.SetCursor(new Point(groove.X + 4, groove.Y + 2));
+        dialog.SetLeftButton(true);
+        dialog.SetCursor(new Point(groove.X + 4, groove.Y + groove.Height - 1));
+        dialog.SetLeftButton(false);
+
+        Assert.Equal(30 - ScenarioSelectionDialog.VisibleRowCount, dialog.Scroll);
+
+        // Releasing a drag must not pick the row that is under the pointer.
+        Assert.Equal(0, dialog.SelectedIndex);
+    }
+
+    [Fact]
+    public void ClickingTheScrollArrows_RollsTheViewWithoutMovingTheSelection()
+    {
+        ScenarioSelectionDialog dialog = CreateDialog(CreateMaps(30), out _);
+        Point up = new(
+            PanelOrigin.X + ScenarioSelectionDialog.ScrollUpOffsetX + 7,
+            PanelOrigin.Y + ScenarioSelectionDialog.ScrollUpOffsetY + 7);
+        Point down = new(
+            PanelOrigin.X + ScenarioSelectionDialog.ScrollUpOffsetX + 7,
+            PanelOrigin.Y + ScenarioSelectionDialog.ScrollDownOffsetY + 7);
+
+        dialog.SetCursor(down);
+        dialog.SetLeftButton(true);
+        dialog.SetLeftButton(false);
+
+        Assert.Equal(1, dialog.Scroll);
+        Assert.Equal(0, dialog.SelectedIndex);
+
+        dialog.SetCursor(up);
+        dialog.SetLeftButton(true);
+        dialog.SetLeftButton(false);
+
+        Assert.Equal(0, dialog.Scroll);
+        Assert.Equal(0, dialog.SelectedIndex);
+    }
+
+    [Fact]
     public void WithoutFilter_EveryMapIsListed()
     {
         Mp2FileInfo[] maps = CreateMaps();
@@ -249,13 +349,15 @@ public sealed class ScenarioSelectionDialogTests
 
         Rect row = dialog.RowArea(0);
 
+        // The row columns are drawn from the panel edge, only the row's y comes from the list area
+        // (ScenarioListBox::_offsetX is the dialog position in the reference).
         // The fake icon table fills sprite n with colour IconColorBase + n, so the player count icon
         // of a two kingdom map is the one at index 21.
         Assert.Equal(IconColorBase + 21,
-            target[row.X + ScenarioSelectionDialog.RowPlayerIconOffsetX,
+            target[dialog.Area.X + ScenarioSelectionDialog.RowPlayerIconOffsetX,
                 row.Y + ScenarioSelectionDialog.RowIconOffsetY]);
         Assert.Equal(IconColorBase + ScenarioDialogArtwork.MapSizeIconIndex,
-            target[row.X + ScenarioSelectionDialog.RowSizeIconOffsetX,
+            target[dialog.Area.X + ScenarioSelectionDialog.RowSizeIconOffsetX,
                 row.Y + ScenarioSelectionDialog.RowIconOffsetY]);
     }
 

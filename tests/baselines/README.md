@@ -10,7 +10,7 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图（M4，地形 + 对象层）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇、树林、山脊、海岸与沙滩 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map.png` | 冒险地图（M4，地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；右上角 144×144 雷达面板带视口虚线框 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -75,10 +75,16 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   不经过任何时钟，所以同一台机器上逐帧相同。
 * 对象层不带时钟：`--freeze-animation` 下帧号直接用 MP2 文件里存的静态帧（参考的动画表还没移植，
   ADR-036），所以城镇、树林、山脊的位置与帧号也逐字节稳定。
+* 英雄同样不带时钟：身体、旗帜与阴影一律取第 18 帧（朝右站立，ADR-037），颜色与种族从 tile 里的
+  `MINIHERO` 帧号反解，所以地图上的英雄位置与外观由地图文件唯一决定。
+* 小地图（`480,16`，144×144）只由 tile 字段与英雄列表算出（ADR-038）：地面色来自 terrain image
+  index，山树提亮三档，道路单色，英雄取王国色，视口方框由滚动偏移决定——没有时钟，也没有 `ADVBORD`
+  面板美术（那块属于界面外壳，还没移植）。
 * 状态栏（`0,469,640,11`）里印着视口偏移与版本号，后者每次发版都会变，所以排除掉。地图内容本身
   是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
 * 这张基线钉住的是「MP2 tile/addon 字段 → ICN/TIL 索引 → 像素」这条链：`Mp2MapTests` 钉住结构解析，
-  `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，一起才能把这一屏钉死。
+  `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，`HeroLayerTests`
+  钉住英雄的三带切分与阴影次序，`MinimapTests` 钉住地面分段与方框几何，一起才能把这一屏钉死。
 
 ## CI 怎么接
 
@@ -129,7 +135,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `settings.zh_CN.png` | 231,317 | `E8E317A96E8849121C796B8FF237B49823A31F64792603C0E8B4BF234DDD94C4` |
 | `scenario.png` | 212,376 | `278483E27CD589F995131ECC8E45559083D2890947440F1F5A1AB4ECE82A2E25` |
 | `scenario.zh_CN.png` | 212,398 | `FCA0DC303A70C94C29A6610A620FB2A628EC66F5730EEBE3B3352D0A7183BC67` |
-| `adventure-map.png` | 175,388 | `21023D95E2F7A7C885F033AD3DFA294DA8220E8F9A008201FBC85A77CDA67393` |
+| `adventure-map.png` | 168,285 | `DCFAD127EA40D3062EE6BE40C54C5558303603D6544B64293204CAD93EDF89E4` |
 
 ## 更新基线的规矩
 
