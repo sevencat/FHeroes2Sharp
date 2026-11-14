@@ -31,7 +31,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M1 已完成**：ICN 精灵与 TIL 图块的逐字节移植解码（含变换层与调色板转换表）、变换层感知的
 `sprite` 贴图、单色光标与光标主题/热点、PNG 读写与 BMP 导出、逐像素比对工具（`AssetProbe compare`），
-以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 159 + Assets 120 + UI 45 = 324 个测试）。
+以及钉住真实资源解码结果的摘要测试（当前套件规模 Core 167 + Assets 162 + UI 113 = 442 个测试）。
 导出结果已与原版 C++ 实现**逐字节对拍**：`tools/reference` 把引擎源码编成参考导出器，
 `tools/scripts/CompareWithReference.ps1` 默认比对 14 个条目 / 1204 个 BMP，全部相同。
 
@@ -59,7 +59,13 @@ CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这些脚本�
 点左下角的门会打开设置对话框：`StandardWindow` 边框 + 黄色标题 + 「标签 / 值」行（两侧自绘箭头，
 点左半行取上一个值、右半行取下一个，循环）+ 底部 `SYSTEM.ICN` 的 OK，Enter/OK 应用、Escape 取消。
 行文字超出内容区时按 `RowPadding` 裁掉，值的左端也不会越过左内边距，所以长译文不会跑到边框上。
-待办：语言选择对话框。
+待办：语言选择对话框（剩余清单见 `docs/PROGRESS.md`）。
+
+**M3 开始（先做场景列表的数据层）**：`Assets.Maps.Mp2FileInfo` 读 MP2 文件最前面的 428 字节信息块
+（名字、描述、尺寸、难度、六种颜色的王国/人类/电脑归属、初始种族、胜负条件与参数），
+`Assets.Maps.MapCatalog` 照 `Maps::getAllMapFileInfos` 的规则在数据目录与 `Maps/` 子目录里找地图、
+丢掉当前玩家数玩不了的图、按场景名排序；`AssetProbe maps` 能一次打出整份清单（本机 112 张可玩，
+1 张因为要求 2 名人类玩家被跳过）。场景选择对话框本身还没开始（ADR-032）。
 
 音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
@@ -100,6 +106,9 @@ dotnet run --project tools/FHeroes2.AssetProbe -- sprites ADVMCO.ICN tools-outpu
 
 # 逐像素比对两个 PNG 文件或两个目录（0 = 全同、3 = 有差异）
 dotnet run --project tools/FHeroes2.AssetProbe -- compare tools-output/tiles tools-output/tiles-ref
+
+# 列出可玩的地图（读 MP2 文件头：名字、尺寸、难度、玩家颜色、胜负条件）
+dotnet run --project tools/FHeroes2.AssetProbe -- maps
 
 # 与原版 C++ 实现逐字节对拍（需要 MSYS2 UCRT64 的 g++ 与一份 fheroes2 源码，见 docs/MISC.md）
 pwsh tools/scripts/BuildReferenceTool.ps1

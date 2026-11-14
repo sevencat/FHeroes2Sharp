@@ -854,3 +854,46 @@ XMI 解析 + MIDI 合成器是一个独立的大工程（`xmi.cpp` 外加 mt32/f
   把 XMI/MIDI 记为已知遗留，而不是假装做完了。
 
 
+## ADR-032：M3 从「地图文件头」开始，先读信息块再谈地图加载器
+
+**背景**：M3 的验收是「能创建新对局并进入冒险地图（占位渲染）」，起点是原版的场景选择对话框
+（`dialog_selectscenario.cpp`）。它需要的信息全部来自 MP2 文件的前 428 字节（`MP2_MAP_INFO_SIZE`）：
+名字、描述、尺寸、难度、六种颜色的王国／人类／电脑归属、初始种族、胜负条件与其参数。真正的
+tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象表 400 KB 的
+`map_object_info.cpp`）是后面冒险地图渲染的活，与「列出一张地图的摘要」没有依赖关系。
+
+**决策**：
+
+1. 先做纯数据层：`Assets.Maps.Mp2FileInfo.Read` 只读文件头，逐字段照 `readMP2Map`（字节偏移、
+   LE/BE、`seek(29)` 之后那段胜利／失败条件、`seek(58)` 名字 16 字节、`seek(118)` 描述 200 字节），
+   `FileInfo` 的派生量（`HumanOnlyColors` / `ComputerOnlyColors` / `AllowCompHumanColors`）用同一个
+   位集合语义实现。文件不是合法地图时抛 `Core.Io.BinaryFormatException`，扫描用 `TryRead` 吞掉。
+2. 枚举值照抄参考实现：`PlayerColor`（`color.h` 的 1/2/4/8/16/32）、`MapRace`（0…7 →
+   KNGT/BARB/SORC/WRLK/WZRD/NECR/MULT/RAND）、`GameDifficulty`（0…4，MP2 只存 0…3，
+   `IMPOSSIBLE` 只出现在玩家选择里）、`MapVictoryCondition` / `MapLossCondition`、
+   `MapVersion`（`.mp2` = 原作，`.mx2`/`.hxc` = 资料片）。
+3. 目录搜索照 `Maps::getAllMapFileInfos`：数据目录本身、它的 `maps` 子目录，另外**只有**当这个目录
+   真的是数据目录（含 `Heroes2.agg`）时才看它的父级——GOG 版布局是 `Data/` 与 `Maps/` 平级，
+   而写死父级会在用户随手指一个临时目录时去扫无关目录。有效性过滤（`getValidMaps`）与「人类颜色
+   正好等于玩家数时收窄可选颜色」的规则都照搬，被丢掉的文件的理由记在 `MapScanResult.Rejected`。
+4. 诊断入口是 `AssetProbe maps`，不往客户端加命令：M3 的 UI 还没写，先保证数据层能对着真实安装
+   （本机 112 张可玩图）看输出。
+
+**已知偏差**（写进 `PROGRESS.md`，不假装做完）：
+
+* 地图字符串按 Latin-1 解码。原版编辑器用的是卖家的 DOS 代码页，本机中文图的 GBK 名字会显示成
+  乱码；要正确显示得在文本层做代码页探测，那是接 UI 时的事。
+* `readMP2Map` 里「单人类玩家 + 失去某英雄即败 + 该英雄站在电脑颜色格子上」会把胜利条件改写成
+  `VICTORY_DEFEAT_OTHER_SIDE` 并建立盟友。它需要读 tile 数据与英雄精灵颜色表（`HEROES.ICN`
+  前 42 帧的分组），等地图加载器落地后再补；本机 4 张图受影响，`AssetProbe maps` 会把这个数字
+  打出来，避免静默分叉。
+
+**后果**：
+
+* 场景选择对话框可以直接从 `MapCatalog.ReadAll(...)` 拿数据，不必等 `world_loadmap`。
+* `.fh2m`（fheroes2 自己的地图格式）不支持，`MapVersion.Resurrection` 只是占位；
+  战役场景的 `campaign_scenariodata.cpp` 同样要等 MP2 tile 解析。
+* 文件头之外的数据（tile、addon、城堡／英雄／事件结构）仍必须由 M4 的地图加载器读，
+  `Mp2FileInfo` 不是「地图」本身，只是它的名片。
+
+

@@ -2,6 +2,7 @@ using FHeroes2.Assets;
 using FHeroes2.Assets.Agg;
 using FHeroes2.Assets.Cursor;
 using FHeroes2.Assets.Icn;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Assets.Til;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
@@ -56,6 +57,7 @@ internal static class Program
                 "cursor" => ExportCursor(arguments),
                 "effects" => ExportEffects(arguments),
                 "window" => ExportWindow(arguments),
+                "maps" => ListMaps(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -595,6 +597,44 @@ internal static class Program
         return Palette.FromGamePalette(raw);
     }
 
+    private static int ListMaps(ProbeArguments arguments)
+    {
+        string dataDirectory = AssetLocator.Resolve(arguments.DataDirectory)
+            ?? throw new DirectoryNotFoundException(
+                "No game data directory found. Use --data <dir> or set " +
+                $"{AssetLocator.DataDirectoryEnvironmentVariable}.");
+
+        MapScanResult scan = MapCatalog.Scan([dataDirectory]);
+
+        Console.WriteLine($"# {dataDirectory}: {scan.Maps.Count} playable maps, {scan.Rejected.Count} skipped");
+
+        foreach (Mp2FileInfo map in scan.Maps)
+        {
+            Console.WriteLine(string.Join(
+                '\t',
+                Path.GetFileName(map.FilePath),
+                map.Name,
+                $"{map.Width}x{map.Height}",
+                map.Difficulty,
+                $"players {map.PlayerCount}: human {PlayerColors.Describe(map.HumanPlayers)}" +
+                $" / computer {PlayerColors.Describe(map.ComputerPlayers)}",
+                $"races {string.Join('/', map.PlayerRaces)}",
+                $"win {map.VictoryCondition}",
+                $"loss {map.LossCondition}"));
+        }
+
+        // The reference implementation rewrites the victory condition of this rare map layout after
+        // looking at the hero sprites. The port defers that until the map loader exists; report how
+        // many of the maps of this installation are affected.
+        int deferred = scan.Maps.Count(map =>
+            map.LossCondition == MapLossCondition.LoseHero
+            && map.VictoryCondition == MapVictoryCondition.DefeatEveryone
+            && map.HumanPlayerCount == 1);
+        Console.WriteLine($"# maps with a deferred hero-loss victory rewrite: {deferred}");
+
+        return 0;
+    }
+
     private static int Unknown(string command)
     {
         Console.Error.WriteLine($"error: unknown command '{command}'.");
@@ -638,6 +678,7 @@ internal static class Program
         Console.WriteLine("  cursor  <NAME.BMP> <dir> [--palette <NAME>]           Exports one monochrome cursor.");
         Console.WriteLine("  effects <dir> [--palette <NAME>]                     Renders the dialog effects preview.");
         Console.WriteLine("  window  <dir> [--palette <NAME>]                     Renders the standard dialog windows.");
+        Console.WriteLine("  maps    [--data <dir>]                               Lists the playable map files.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
         Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
         Console.WriteLine("                      bar shows a live FPS counter.");

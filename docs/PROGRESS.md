@@ -723,3 +723,49 @@ pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
 见 [PLAN.md](PLAN.md)。M1 的条目已全部完成，并且已经用**原版 C++ 实现**对拍过
 （`tools/scripts/CompareWithReference.ps1`，默认 14 个条目 / 1204 个 BMP 逐字节相同）；
 `AssetProbe compare` 仍然保留，用于 PNG 视觉回归与差异图输出。
+
+## M3 — 新游戏/场景设置（进行中）
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `Assets.Maps.Mp2FileInfo` | ✅ | MP2 地图文件**信息块**（前 428 字节）读取，逐字段对齐 `Maps::FileInfo::readMP2Map`：BE 魔数 `0x5C000000`、难度 LE16、宽/高、王国/人类/电脑三组六色、`seek(29)` 起的胜负条件块（类型 + 电脑也算赢 + 普通胜利 + 两个参数）、`seek(58)` 的 16 字节名字、`seek(118)` 的 200 字节描述；派生量 `HumanOnlyColors` / `ComputerOnlyColors` / `SharedColors` / `HumanPlayerCount` 按位集合语义；非法文件抛 `Core.Io.BinaryFormatException`，`TryRead` 吞掉（ADR-032） |
+| `Assets.Maps.PlayerColor` / `MapRace` / `GameDifficulty` / `MapVictoryCondition` / `MapLossCondition` / `MapVersion` | ✅ | 头里出现的枚举与换算：颜色位（1/2/4/8/16/32，`color.h`）、种族索引 0…7 → KNGT/BARB/SORC/WRLK/WZRD/NECR/MULT/RAND（`Race::IndexToRace`）、难度 0…4（MP2 只存 0…3）、`MapVersion`（`.mp2` = 原作，`.mx2`/`.hxc` = 资料片） |
+| `Assets.Maps.MapCatalog` | ✅ | `Maps::getAllMapFileInfos` + `getValidMaps`：数据目录本身、`maps` 子目录（大小写不敏感），**且只有**该目录含 `Heroes2.agg` 时才看父级（GOG 版 `Data/` 与 `Maps/` 平级）；`*.mp2`/`*.mx2` 去重、按路径排序；按人类玩家数过滤（人类独占色多于需求、或共享色不够都被丢掉），人类独占色正好等于需求时收窄可选颜色；被丢的文件进 `MapScanResult.Rejected` |
+| `AssetProbe maps` | ✅ | 打印 `文件名 / 场景名 / 宽x高 / 难度 / 玩家数与颜色 / 种族 / 胜负条件`，末尾打「延迟的英雄落败改写」张数 |
+| `tests/FHeroes2.Assets.Tests/Mp2FileInfoTests` + `MapCatalogTests` | ✅ | 19 个用例：合成 MP2 头覆盖每个字段、魔数/难度/无人类颜色/无名字/截断文件/缺文件的拒绝路径、`forEditor`、颜色子集与收窄、种族索引换算、目录搜索与排序、`.mx2` 版本、真实数据（本机 112 张）抽样 `Beltway` |
+| 场景选择对话框 / 新游戏流程 | ⏳ | 未开始（下一步） |
+
+### M3 验证记录（地图文件头）
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 162 / UI 113 全绿（新增 19）
+dotnet run --project tools/FHeroes2.AssetProbe -- maps --data F:\game\fh2
+# F:\game\fh2\Data: 112 playable maps, 1 skipped
+Alteris.mp2     Alteris         108x108 Hard    players 3: human Blue / computer Yellow, Purple …
+Beltway.mp2     Beltway          72x72  Normal  players 3: human Red, Yellow, Purple / computer Red, Yellow, Purple …
+Betrayal.mp2    Betrayal        144x144 Normal  players 6: human Blue, Green / computer Blue … Purple win DefeatOtherSide
+DdDragon.mp2    Dead Dragons    144x144 Hard    players 6: human Red / computer Blue … Purple     win CaptureTown loss LoseTown
+WIZLAND1.MP2    Wizard's Land 1  72x72  Expert  players 2: human Blue / computer Orange          win KillHero    loss LoseHero
+Slugfes.mp2     ¼¤Õ½            36x36  Normal  players 6: human Blue … Purple                   win DefeatEveryone
+…
+# maps with a deferred hero-loss victory rewrite: 4
+```
+
+* 唯一被跳过的是 `GateHell.mp2`（人类独占色 2 种，而扫描默认按 1 名人类玩家算）；
+  `FHEROES2_LOG_LEVEL=Debug` 时 `[DEBUG] Map '…\maps\GateHell.mp2' requires 2 human players and is skipped.`
+* 画面外的核对：`Beltway` 72×72 / `Normal` / 3 个王国 / `DefeatEveryone`、`DdDragon` 144×144 且
+  失败条件是 `LoseTown`，与原版场景选择框里看到的摘要一致。
+
+### M3 已知遗留
+
+* **地图名按 Latin-1 解码**：本机几张中文图的 GBK 名字显示成 `¼¤Õ½` 一类的乱码。原版编辑器用的是
+  卖家本地代码页，正确处理需要文本层做代码页探测（先看字节是否落在 GBK 双字节区），等场景列表 UI
+  开始画字时一起做。
+* **英雄落败改写没做**：`readMP2Map` 对「单人类玩家 + 失去某英雄即败 + 该英雄站在电脑色格子上」会把
+  胜利条件改写成 `VICTORY_DEFEAT_OTHER_SIDE` 并结盟，这需要读 tile 数据与 `HEROES.ICN` 前 42 帧的
+  颜色分组；本机 4 张图受影响（`WIZLAND1/2/3`、`Whoam`），`AssetProbe maps` 末尾会打张数，避免静默分叉。
+* **只读信息块**：tile / addon / 城堡 / 英雄 / 事件结构都没有解析，真正进冒险地图（M4）要另写地图加载器。
+* **`.fh2m` 不支持**：fheroes2 自己的地图格式没有移植，`MapVersion.Resurrection` 只是占位。
+* **场景选择对话框、难度选择、`NEW GAME` 分叉**（标准局 / 战役）都没有开始。
+
