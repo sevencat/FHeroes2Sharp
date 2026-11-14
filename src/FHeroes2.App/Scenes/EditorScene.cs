@@ -756,7 +756,14 @@ public sealed class EditorScene : IScene
         switch (hit.Kind)
         {
             case EditorPanelHitKind.Tool:
-                _edits.SetTool(EditorPanel.ToolAt(hit.Index));
+                // The second row of instruments is drawn but not ported: clicking one of those
+                // buttons keeps the tool that is in use, as the reference would if the instrument
+                // had nothing to paint with.
+                if (EditorPanel.ToolAt(hit.Index) is { } tool)
+                {
+                    _edits.SetTool(tool);
+                }
+
                 break;
 
             case EditorPanelHitKind.Ground:
@@ -771,12 +778,39 @@ public sealed class EditorScene : IScene
                 _edits.SetBrushSize((BrushSize)hit.Index);
                 break;
 
+            case EditorPanelHitKind.System:
+                ClickSystemButton(EditorPanel.SystemAt(hit.Index));
+                break;
+
             case EditorPanelHitKind.None:
             default:
                 break;
         }
 
         return hit;
+    }
+
+    /// <summary>
+    /// Runs one of the six system buttons of the panel. Undo and redo are the two that the port can
+    /// answer; the magnifier needs a zoom, and the specifications, the file and the menu dialogs are
+    /// later milestones, so their buttons do nothing yet.
+    /// </summary>
+    /// <param name="button">The button whose cell was clicked.</param>
+    private void ClickSystemButton(EditorSystemButton button)
+    {
+        switch (button)
+        {
+            case EditorSystemButton.Undo:
+                Undo();
+                break;
+
+            case EditorSystemButton.Redo:
+                Redo();
+                break;
+
+            default:
+                break;
+        }
     }
 
     /// <summary>
@@ -1076,66 +1110,11 @@ public sealed class EditorScene : IScene
                 _edits.ObjectBrush,
                 _edits.BrushSize,
                 _bright);
-            DrawPanelNotes(_fonts.Small);
 
             return;
         }
 
         DrawPanelText();
-    }
-
-    /// <summary>
-    /// Writes the state of the instruments and the keys under the picker, where the reference keeps its
-    /// system buttons: the two rows there hold magnify, undo, redo, specs, file and system, and none of
-    /// them can be done here yet — undo and redo have no artwork in this release of the game either.
-    /// </summary>
-    /// <param name="font">Font of the labels.</param>
-    private void DrawPanelNotes(IGlyphSource font)
-    {
-        Rect notes = new(
-            _panel.X + 6,
-            _panel.Y + EditorPanel.PickerTop + EditorPanel.PickerHeight + 4,
-            Math.Max(_panel.Width - 12, 0),
-            Math.Max(_panel.Height - EditorPanel.PickerTop - EditorPanel.PickerHeight - 4, 0));
-
-        if (notes.IsEmpty)
-        {
-            return;
-        }
-
-        int step = font.LineHeight + 2;
-        int y = notes.Y;
-
-        void Line(string value)
-        {
-            if (y + font.LineHeight > notes.Bottom)
-            {
-                return;
-            }
-
-            GlyphText.DrawLine(
-                font,
-                _frame.Pixels,
-                new Point(notes.X, y),
-                value,
-                new Rect(notes.X, y, notes.Width, font.LineHeight));
-
-            y += step;
-        }
-
-        Line(_editor.HoverTile is { } tile
-            ? FormattableString.Invariant($"{tile.X},{tile.Y} {_editor.HoverGround}")
-            : "no tile");
-
-        Line(_edits.IsDirty
-            ? FormattableString.Invariant($"undo {_edits.UndoDepth} edited")
-            : _savedFlash > 0.0
-                ? "saved"
-                : "clean");
-
-        Line("1-9 ground  G grid");
-        Line("O object  X erase");
-        Line("I info  ^Z/^Y Esc");
     }
 
     /// <summary>

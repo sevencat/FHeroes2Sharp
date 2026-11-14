@@ -1475,6 +1475,29 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "72,18;50,14
   面板退回 ADR-048 的文字版，`editor.png` 也随之变成文字版（这是有意的降级，不是崩溃）。
 * 基线比文字版大了 21,726 字节：按钮、九张地形图和一件纹理都是新进画面的高频色，PNG 压不动。
 
+### E2 面板对齐参考（重画）验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 264 / Game 181 / UI 145 全绿
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png 重建为 132,506 字节 / 274844977C…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+dotnet run -- --scene editor --editor-panel-click "24,18;24,72;30,125;20,225;70,255"
+  → Tool Terrain｜Tool Terrain（景观对象没实现，不换工具）｜Ground Water｜BrushSize｜System
+```
+
+* 四处观察：
+  1. **拾取区高度是 140，不是 124**：舱位 320 = 三行按钮 108 + 拾取区 + 两行系统按钮 72，正好对上参考的
+     `instrumentPanelHeight = 480 − 160 − 5·36`。写死 124 时底部会漏出一条砖纹、系统按钮也压不住底边框；
+     现在两行落在 `408…444`、`444…480`，笔刷行在 `381…399`。
+  2. **`EDITBTNS` 只有 35 帧，后 10 帧是拼出来的**：冒险对象 / 王国 / 怪物 / 撤销 / 重做，干净石面照参考填
+     detail 按钮的 `(16,6,18,24)`，图标按 `drawImageOnButton` 贴 `(2,2)` 并压四层阴影；撤销 / 重做箭头是
+     运行时画的 19×13 图，镜像后 `(23,16)` 与 `(27,16)` 都是 56 号色（`EditorButtonSetTests` 钉住）。
+  3. **冒险对象按钮的「脏底」是美术本身**：`X_LOC1` 第 0 帧是一块带暗色地面的对象图，不是拼装的瑕疵；
+     王国（`OBJNARTI` 13）与怪物（`MONS32` 11）都是透明底，只有阴影边缘落在石面上。
+  4. **面板不再写字**：`DrawPanelNotes` 与那五行状态一起删了，只有 `EditorPanel.TryCreate` 返回 `null`
+     （缺 `EDITBTNS` / `EDITPANL` / `TERRAINS`）时才退回 `DrawPanelText`。
+
 ### E2 小地图导航 验证记录
 
 ```text

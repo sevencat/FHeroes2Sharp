@@ -131,6 +131,156 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Turns every shadow of <paramref name="target"/> into a skip marker, the
+    /// <c>setTransformLayerTransparent()</c> of <c>game_assets.cpp</c>: the tables of the transform
+    /// layer are dropped and the copy / skip markers are kept.
+    /// </summary>
+    /// <remarks>
+    /// The editor buttons are assembled from parts of other sprites, and the shadows those parts
+    /// carry belong to their own background, not to the button they end up on.
+    /// </remarks>
+    /// <param name="target">Sprite to change; a single layer sprite is left alone.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void SetTransformLayerTransparent(Sprite target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        int stride = target.Image.Stride;
+
+        for (int y = 0; y < target.Height; ++y)
+        {
+            for (int x = 0; x < target.Width; ++x)
+            {
+                int index = (y * stride) + x;
+                if (transform[index] > 1)
+                {
+                    transform[index] = 1;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Replaces every pixel that uses <paramref name="transformId"/> by an opaque
+    /// <paramref name="colorId"/>, <c>fheroes2::ReplaceTransformIdByColorId()</c>.
+    /// </summary>
+    /// <param name="target">Sprite to change; a single layer sprite is left alone.</param>
+    /// <param name="transformId">Table to replace.</param>
+    /// <param name="colorId">Palette index the pixels become.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void ReplaceTransformIdByColorId(Sprite target, byte transformId, byte colorId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        int stride = target.Image.Stride;
+
+        for (int y = 0; y < target.Height; ++y)
+        {
+            Span<byte> row = target.Image.Row(y);
+
+            for (int x = 0; x < target.Width; ++x)
+            {
+                int index = (y * stride) + x;
+                if (transform[index] == transformId)
+                {
+                    transform[index] = 0;
+                    row[x] = colorId;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds a shadow of <paramref name="shadowOffset"/> to the transform layer of
+    /// <paramref name="target"/>, the <c>fheroes2::updateShadow()</c> of the engine.
+    /// </summary>
+    /// <remarks>
+    /// Every pixel of the transform layer that still skips and that sits
+    /// <paramref name="shadowOffset"/> away from an opaque pixel receives
+    /// <paramref name="transformId"/>. With <paramref name="connectCorners"/> a pixel whose two
+    /// neighbours along the axes are opaque counts as well, which keeps the diagonals of a one pixel
+    /// shadow free of holes. This is what lights the top edge of the editor buttons and darkens the
+    /// bottom edge.
+    /// </remarks>
+    /// <param name="target">Sprite to add the shadow to; a single layer sprite is left alone.</param>
+    /// <param name="shadowOffset">Offset of the shadow, in pixels; either component may be negative.</param>
+    /// <param name="transformId">Table the shadow pixels use.</param>
+    /// <param name="connectCorners">Whether diagonal corners are filled too.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void UpdateShadow(Sprite target, Point shadowOffset, byte transformId, bool connectCorners)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        int stride = target.Image.Stride;
+        int width = target.Width;
+        int height = target.Height;
+
+        if (Math.Abs(shadowOffset.X) >= width ||
+            Math.Abs(shadowOffset.Y) >= height ||
+            (shadowOffset.X == 0 && shadowOffset.Y == 0))
+        {
+            return;
+        }
+
+        int span = width - Math.Abs(shadowOffset.X);
+        int rows = height - Math.Abs(shadowOffset.Y);
+
+        int sourceStart = Math.Max(-shadowOffset.X, 0) + (stride * Math.Max(-shadowOffset.Y, 0));
+        int targetStart = Math.Max(shadowOffset.X, 0) + (stride * Math.Max(shadowOffset.Y, 0));
+
+        int cornerOffsetX = shadowOffset.X > 0 ? 1 : -1;
+        int cornerOffsetY = shadowOffset.Y > 0 ? stride : -stride;
+
+        for (int row = 0; row < rows; ++row)
+        {
+            int sourceRow = sourceStart + (row * stride);
+            int targetRow = targetStart + (row * stride);
+
+            for (int column = 0; column < span; ++column)
+            {
+                int destination = targetRow + column;
+                if (transform[destination] != 1)
+                {
+                    continue;
+                }
+
+                int source = sourceRow + column;
+                bool isArtwork = transform[source] == 0;
+
+                if (!isArtwork && connectCorners)
+                {
+                    int alongX = source + cornerOffsetX;
+                    int alongY = source + cornerOffsetY;
+
+                    isArtwork =
+                        alongX >= 0 && alongX < transform.Length && transform[alongX] == 0 &&
+                        alongY >= 0 && alongY < transform.Length && transform[alongY] == 0;
+                }
+
+                if (isArtwork)
+                {
+                    transform[destination] = transformId;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Draws a line from <paramref name="from"/> to <paramref name="to"/>, both ends included, the
     /// equivalent of <c>fheroes2::DrawLine</c>: the same integer Bresenham, so the shine
     /// decorations of a button come out pixel for pixel like the reference.

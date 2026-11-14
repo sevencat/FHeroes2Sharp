@@ -27,6 +27,31 @@ internal enum EditorPanelHitKind
 
     /// <summary>One of the four brush size buttons; the index is the <see cref="BrushSize"/>.</summary>
     BrushSize,
+
+    /// <summary>One of the six system buttons; the index is the entry of <see cref="EditorSystemButton"/>.</summary>
+    System,
+}
+
+/// <summary>The six buttons of the bottom rows of the panel, in the order the reference draws them.</summary>
+internal enum EditorSystemButton
+{
+    /// <summary>The magnifying glass, which zooms the map of the reference.</summary>
+    Magnify = 0,
+
+    /// <summary>Undo the last edit.</summary>
+    Undo,
+
+    /// <summary>Redo the last undone edit.</summary>
+    Redo,
+
+    /// <summary>The scenario specifications dialog.</summary>
+    Specs,
+
+    /// <summary>The save / load dialog.</summary>
+    File,
+
+    /// <summary>The game menu.</summary>
+    System,
 }
 
 /// <summary>A click on the editor panel: what was hit and which entry of it.</summary>
@@ -43,32 +68,33 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 
 /// <summary>
 /// The instrument panel of the map editor, the counterpart of <c>Editor::EditorPanel</c>: three rows of
-/// tool buttons, the picker below them and the row of brush size buttons under the picker.
+/// tool buttons, the picker below them, the row of brush sizes under the picker and the two rows of
+/// system buttons at the bottom.
 /// </summary>
 ///
 /// <remarks>
 /// <para>
 /// The reference has nine instruments (terrain, landscape objects, detail, adventure objects, kingdom
-/// objects, monsters, stream, road, erase) and six system buttons. This port has three tools, so only
-/// the buttons of those three are drawn, each in the cell the reference puts it in — terrain first,
-/// landscape objects second, erase last — and the cells of the tools that are not ported stay empty on
-/// the bay. The system row is left out: magnify, specs, file and system have no dialog behind them, and
-/// undo and redo have no artwork in this release of the game (its <c>EDITBTNS</c> holds 35 frames, the
-/// reference expects at least 45).
+/// objects, monsters, stream, road, erase). This port only carries the terrain, the landscape objects
+/// and the eraser, but all nine buttons are drawn in their cells, with the artwork the reference
+/// assembles for the five that the game does not have (<see cref="EditorButtonSet"/>); clicking one of
+/// the five that are not ported does not change the tool.
 /// </para>
 /// <para>
-/// The terrain picker is the one of the reference down to the pixel offsets: nine 27x27 images cut out
-/// of <c>EDITPANL.ICN</c> frame 0 at (30 + 29 column, 11 + 29 row), laid out at 36x33 steps, with the
+/// The picker is the one of the reference down to the pixel offsets: nine 27x27 images cut out of
+/// <c>EDITPANL.ICN</c> frame 0 at (30 + 29 column, 11 + 29 row), laid out at 36x33 steps, with the
 /// 30x30 yellow rectangle of <c>TERRAINS.ICN</c> frame 9 over the selected one. That sheet is a sheet
 /// of parts — the nine images, the name band the reference draws on taller displays, a few button
 /// faces — and must never be blitted whole: its 29 pixel grid disagrees with the 36 pixel grid the
 /// buttons are laid out on, and both sets would show, offset from each other.
 /// </para>
 /// <para>
-/// The brush row is the four size buttons of <c>EDITBTNS</c> frames 24 to 31 at (14 + 30 step, 113) of
-/// the instrument area, drawn for the ground and the eraser only. The reference also draws the name of
-/// the selected instrument in that row, but only on displays taller than 480; the logical frame of this
-/// port is exactly 480, so there is no band and the row belongs to the size buttons, as it does there.
+/// The picker is 140 pixels tall on the 480 pixel display the editor runs at: the reference computes
+/// it as <c>instrumentPanelHeight = displayHeight - displayY - 5 * buttonHeight</c>, i.e. what is left
+/// of the bay between the three button rows and the two rows of system buttons. The brush row sits at
+/// y = 113 of it, <c>min(instrumentPanelHeight - 27, 135)</c>, and the name of the selected instrument
+/// is only drawn on displays taller than 480, so there is no band here and the row belongs to the size
+/// buttons, as it does there.
 /// </para>
 /// <para>
 /// The object picker has no artwork to reuse: the nine presets are entries of the map format, not
@@ -78,7 +104,7 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 internal sealed class EditorPanel
 {
     /// <summary>File of the instrument buttons, the <c>EDITBTNS</c> of the reference.</summary>
-    public const string ButtonsFileName = "EDITBTNS.ICN";
+    public const string ButtonsFileName = EditorButtonSet.AssetName;
 
     /// <summary>File of the picker panels, the <c>EDITPANL</c> of the reference.</summary>
     public const string PickerFileName = "EDITPANL.ICN";
@@ -107,10 +133,10 @@ internal sealed class EditorPanel
     ];
 
     /// <summary>Width of one instrument button, <c>EDITBTNS</c> is 48x36 per frame.</summary>
-    public const int ButtonWidth = 48;
+    public const int ButtonWidth = EditorButtonSet.ButtonWidth;
 
     /// <summary>Height of one instrument button.</summary>
-    public const int ButtonHeight = 36;
+    public const int ButtonHeight = EditorButtonSet.ButtonHeight;
 
     private const int ButtonColumns = 3;
     private const int ButtonRows = 3;
@@ -118,8 +144,15 @@ internal sealed class EditorPanel
     /// <summary>Height of the three button rows, i.e. where the picker starts inside the bay.</summary>
     public const int PickerTop = ButtonHeight * ButtonRows;
 
-    /// <summary>Height of the picker area, the <c>instrumentPanelHeight</c> of the reference.</summary>
-    public const int PickerHeight = 140;
+    /// <summary>Height of the two rows of system buttons.</summary>
+    public const int SystemHeight = ButtonHeight * 2;
+
+    /// <summary>
+    /// Height of the picker area, the <c>instrumentPanelHeight</c> of the reference: what is left of
+    /// the bay below the three button rows and above the two system rows. On the 480 pixel display the
+    /// editor runs at that is 320 - 108 - 72 = 140 pixels, and the bay is exactly filled.
+    /// </summary>
+    public int PickerHeight => _area.Height - PickerTop - SystemHeight;
 
     private const int CellLeft = 23;
     private const int CellTop = 11;
@@ -131,34 +164,51 @@ internal sealed class EditorPanel
     private const int SourceStep = 29;
 
     // The brush size buttons of EDITBTNS are 24x18 (frames 24 to 31, a released and a pressed frame
-    // each), laid out at x = 14 + 30 * i and y = 113 of the instrument area, nine pixels under the last
-    // cell row and inside the height the reference clamps to (min(height - 27, 135)).
-    private const int BrushFrame = 24;
+    // each), laid out at x = 14 + 30 * i and y = min(instrumentPanelHeight - 27, 135) of the picker.
     private const int BrushLeft = 14;
-    private const int BrushTop = 113;
     private const int BrushStep = 30;
-    private const int BrushWidth = 24;
-    private const int BrushHeight = 18;
 
-    private const int RowLeft = 4;
-    private const int RowTop = 6;
-    private const int RowHeight = 14;
+    private int BrushTop => Math.Min(PickerHeight - 27, 135);
 
-    /// <summary>The instrument buttons, in the cells the reference lays out.</summary>
-    private static readonly (EditorTool Tool, int Column, int Row, int Frame)[] Tools =
+    private const int RowLeft = 6;
+    private const int RowTop = 4;
+    private const int RowHeight = 13;
+
+    /// <summary>
+    /// The nine instrument buttons in the cells the reference lays them out in: the tool each one
+    /// selects, or <see langword="null"/> for the five that are drawn but not ported.
+    /// </summary>
+    private static readonly (EditorTool? Tool, int Column, int Row, int Frame)[] Tools =
     [
-        (EditorTool.Terrain, 0, 0, 0),
-        (EditorTool.Object, 1, 0, 2),
-        (EditorTool.Erase, 2, 2, 10),
+        (EditorTool.Terrain, 0, 0, EditorButtonSet.TerrainFrame),
+        (EditorTool.Object, 1, 0, EditorButtonSet.LandscapeObjectsFrame),
+        (null, 2, 0, EditorButtonSet.DetailFrame),
+        (null, 0, 1, EditorButtonSet.AdventureObjectsFrame),
+        (null, 1, 1, EditorButtonSet.KingdomObjectsFrame),
+        (null, 2, 1, EditorButtonSet.MonstersFrame),
+        (null, 0, 2, EditorButtonSet.StreamFrame),
+        (null, 1, 2, EditorButtonSet.RoadFrame),
+        (EditorTool.Erase, 2, 2, EditorButtonSet.EraseFrame),
+    ];
+
+    /// <summary>The six system buttons, three per row, at the bottom of the bay.</summary>
+    private static readonly (EditorSystemButton Button, int Column, int Row, int Frame)[] SystemButtons =
+    [
+        (EditorSystemButton.Magnify, 0, 0, EditorButtonSet.MagnifyFrame),
+        (EditorSystemButton.Undo, 1, 0, EditorButtonSet.UndoFrame),
+        (EditorSystemButton.Redo, 2, 0, EditorButtonSet.RedoFrame),
+        (EditorSystemButton.Specs, 0, 1, EditorButtonSet.SpecsFrame),
+        (EditorSystemButton.File, 1, 1, EditorButtonSet.FileFrame),
+        (EditorSystemButton.System, 2, 1, EditorButtonSet.SystemFrame),
     ];
 
     private readonly Rect _area;
-    private readonly Sprite[] _buttons;
+    private readonly EditorButtonSet _buttons;
     private readonly Sprite _picker;
     private readonly Sprite? _selection;
     private readonly Sprite? _background;
 
-    private EditorPanel(Rect area, Sprite[] buttons, Sprite picker, Sprite? selection, Sprite? background)
+    private EditorPanel(Rect area, EditorButtonSet buttons, Sprite picker, Sprite? selection, Sprite? background)
     {
         _area = area;
         _buttons = buttons;
@@ -182,13 +232,13 @@ internal sealed class EditorPanel
     /// <returns>The panel, or <see langword="null"/> when the archive lacks its artwork.</returns>
     public static EditorPanel? TryCreate(in Rect area, AssetBundle? assets)
     {
-        if (assets?.TryReadIcn(ButtonsFileName) is not { Count: > 0 } buttons)
+        if (EditorButtonSet.TryCreate(assets) is not { } buttons)
         {
             GameLog.Warn($"'{ButtonsFileName}' is not available, the editor panel stays text only.");
             return null;
         }
 
-        if (assets.TryReadIcn(PickerFileName) is not { Count: > 0 } pickers)
+        if (assets?.TryReadIcn(PickerFileName) is not { Count: > 0 } pickers)
         {
             GameLog.Warn($"'{PickerFileName}' is not available, the editor panel stays text only.");
             return null;
@@ -204,12 +254,12 @@ internal sealed class EditorPanel
             ? stone.Sprites[0]
             : null;
 
-        return new EditorPanel(area, [.. buttons.Sprites], pickers.Sprites[0], selection, background);
+        return new EditorPanel(area, buttons, pickers.Sprites[0], selection, background);
     }
 
     /// <summary>
-    /// Draws the tool buttons, the picker and the brush size row. Text is drawn with
-    /// <paramref name="font"/>, the small font of the interface.
+    /// Draws the tool buttons, the picker, the brush size row and the system buttons. Text is drawn
+    /// with <paramref name="font"/>, the small font of the interface.
     /// </summary>
     /// <param name="target">The frame buffer.</param>
     /// <param name="font">Font of the labels.</param>
@@ -235,20 +285,22 @@ internal sealed class EditorPanel
             ImageOps.BlitSprite(target, new Point(_area.X, _area.Y), _background);
         }
 
-        foreach ((EditorTool item, int column, int row, int frame) in Tools)
+        foreach ((EditorTool? item, int column, int row, int frame) in Tools)
         {
             // The frame pairs of EDITBTNS are (released, pressed): the tool in use shows its pressed
-            // frame, the other two their released one.
-            int index = frame + (item == tool ? 1 : 0);
+            // frame, the others their released one.
+            int index = frame + (item is not null && item == tool ? 1 : 0);
 
-            if (index < _buttons.Length)
+            if (_buttons[index] is { } button)
             {
                 ImageOps.BlitSprite(
                     target,
                     new Point(_area.X + (column * ButtonWidth), _area.Y + (row * ButtonHeight)),
-                    _buttons[index]);
+                    button);
             }
         }
+
+        DrawPickerBackground(target);
 
         switch (tool)
         {
@@ -266,6 +318,90 @@ internal sealed class EditorPanel
                 DrawBrushRow(target, size);
                 break;
         }
+
+        DrawSystemButtons(target);
+    }
+
+    /// <summary>
+    /// Paints the picker area: the stone texture again, this time with the six concentric bevels of
+    /// <c>makeInstrumentPanelBackground()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference builds a 144x140 image, tiles STONEBAK into it and then applies six palette
+    /// tables to ever smaller frames, which is what gives the area its sunken look. The bevels are
+    /// four one pixel edges per pass, applied top and bottom over the full width and left and right
+    /// without the corners.
+    /// </remarks>
+    /// <param name="target">The frame buffer.</param>
+    private void DrawPickerBackground(PixelBuffer target)
+    {
+        Rect picker = new(_area.X, _area.Y + PickerTop, _area.Width, PickerHeight);
+
+        if (_background is not null)
+        {
+            ImageOps.BlitSprite(target, picker.Position, _background);
+        }
+
+        // offset 0 is the outer edge, then the next three passes walk inwards; the fourth offset is
+        // used twice, with different tables.
+        ReadOnlySpan<(int Offset, int Transform)> bevels =
+        [
+            (0, 2),
+            (1, 4),
+            (2, 5),
+            (2, 9),
+            (3, 8),
+            (4, 9),
+        ];
+
+        foreach ((int offset, int transform) in bevels)
+        {
+            ApplyBevel(target, picker, offset, transform);
+        }
+    }
+
+    /// <summary>Applies <paramref name="transform"/> to the one pixel frame of <paramref name="area"/>.</summary>
+    private static void ApplyBevel(PixelBuffer target, in Rect area, int offset, int transform)
+    {
+        if (area.Width <= (offset * 2) || area.Height <= (offset * 2))
+        {
+            return;
+        }
+
+        ImageOps.ApplyTransform(
+            target,
+            new Rect(area.X + offset, area.Y + offset, area.Width - (offset * 2), 1),
+            transform);
+        ImageOps.ApplyTransform(
+            target,
+            new Rect(area.X + offset, area.Bottom - 1 - offset, area.Width - (offset * 2), 1),
+            transform);
+        ImageOps.ApplyTransform(
+            target,
+            new Rect(area.X + offset, area.Y + 1 + offset, 1, area.Height - 2 - (offset * 2)),
+            transform);
+        ImageOps.ApplyTransform(
+            target,
+            new Rect(area.Right - 1 - offset, area.Y + 1 + offset, 1, area.Height - 2 - (offset * 2)),
+            transform);
+    }
+
+    /// <summary>Blits the six system buttons, three per row, at the bottom of the bay.</summary>
+    /// <param name="target">The frame buffer.</param>
+    private void DrawSystemButtons(PixelBuffer target)
+    {
+        foreach ((EditorSystemButton _, int column, int row, int frame) in SystemButtons)
+        {
+            if (_buttons[frame] is { } button)
+            {
+                ImageOps.BlitSprite(
+                    target,
+                    new Point(
+                        _area.X + (column * ButtonWidth),
+                        _area.Y + PickerTop + PickerHeight + (row * ButtonHeight)),
+                    button);
+            }
+        }
     }
 
     /// <summary>
@@ -281,14 +417,14 @@ internal sealed class EditorPanel
 
         for (int i = 0; i < sizes.Count; i++)
         {
-            int index = BrushFrame + (i * 2) + (sizes[i] == size ? 1 : 0);
+            int index = EditorButtonSet.BrushFrame + (i * 2) + (sizes[i] == size ? 1 : 0);
 
-            if (index < _buttons.Length)
+            if (_buttons[index] is { } button)
             {
                 ImageOps.BlitSprite(
                     target,
                     new Point(_area.X + BrushLeft + (i * BrushStep), _area.Y + PickerTop + BrushTop),
-                    _buttons[index]);
+                    button);
             }
         }
     }
@@ -310,11 +446,25 @@ internal sealed class EditorPanel
 
         for (int i = 0; i < Tools.Length; i++)
         {
-            (EditorTool _, int column, int row, int _) = Tools[i];
+            (EditorTool? _, int column, int row, int _) = Tools[i];
 
             if (new Rect(column * ButtonWidth, row * ButtonHeight, ButtonWidth, ButtonHeight).Contains(local))
             {
                 return new EditorPanelHit(EditorPanelHitKind.Tool, i);
+            }
+        }
+
+        for (int i = 0; i < SystemButtons.Length; i++)
+        {
+            (EditorSystemButton _, int column, int row, int _) = SystemButtons[i];
+
+            if (new Rect(
+                    column * ButtonWidth,
+                    PickerTop + PickerHeight + (row * ButtonHeight),
+                    ButtonWidth,
+                    ButtonHeight).Contains(local))
+            {
+                return new EditorPanelHit(EditorPanelHitKind.System, i);
             }
         }
 
@@ -370,10 +520,18 @@ internal sealed class EditorPanel
         return EditorPanelHit.None;
     }
 
-    /// <summary>The tool of the instrument button at <paramref name="index"/> of the tool table.</summary>
+    /// <summary>
+    /// The tool of the instrument button at <paramref name="index"/> of the tool table, or
+    /// <see langword="null"/> when the button belongs to an instrument that is not ported.
+    /// </summary>
     /// <param name="index">Entry of the tool table.</param>
-    /// <returns>The tool the button selects.</returns>
-    public static EditorTool ToolAt(int index) => Tools[index].Tool;
+    /// <returns>The tool the button selects, if it selects one.</returns>
+    public static EditorTool? ToolAt(int index) => Tools[index].Tool;
+
+    /// <summary>The system button at <paramref name="index"/> of the system table.</summary>
+    /// <param name="index">Entry of the system table.</param>
+    /// <returns>The button the cell shows.</returns>
+    public static EditorSystemButton SystemAt(int index) => SystemButtons[index].Button;
 
     /// <summary>
     /// Copies a part of the sheet to the frame. <see cref="ImageOps.BlitSprite(PixelBuffer, Point,
@@ -405,10 +563,10 @@ internal sealed class EditorPanel
         new(RowLeft, RowTop + (index * RowHeight), RowWidth, RowHeight);
 
     /// <summary>Rectangle of one brush size button inside the picker, the 24x18 artwork itself.</summary>
-    private static Rect BrushButton(int index) =>
-        new(BrushLeft + (index * BrushStep), BrushTop, BrushWidth, BrushHeight);
+    private Rect BrushButton(int index) =>
+        new(BrushLeft + (index * BrushStep), BrushTop, EditorButtonSet.BrushWidth, EditorButtonSet.BrushHeight);
 
-    private static int RowWidth => 136;
+    private static int RowWidth => 132;
 
     private void DrawTerrainPicker(PixelBuffer target, MapGround brush)
     {
@@ -458,7 +616,7 @@ internal sealed class EditorPanel
 
             // The rows have no artwork behind them — the presets are entries of the map format, not
             // icons — so the selection is marked with the outline of the frame instead of the yellow
-            // rectangle of TERRAINS.ICN, which is 30x30 and does not fit a 136x14 row.
+            // rectangle of TERRAINS.ICN, which is 30x30 and does not fit a 132x13 row.
             if (i == selected)
             {
                 ImageOps.DrawRect(
@@ -467,7 +625,7 @@ internal sealed class EditorPanel
                     highlight);
             }
 
-            Point position = new(_area.X + row.X + 3, _area.Y + PickerTop + row.Y + 2);
+            Point position = new(_area.X + row.X + 3, _area.Y + PickerTop + row.Y + 1);
 
             GlyphText.DrawLine(
                 font,
@@ -476,7 +634,6 @@ internal sealed class EditorPanel
                 FormattableString.Invariant($"{i + 1} {presets[i].Name}"),
                 new Rect(position.X, position.Y, RowWidth, RowHeight));
         }
-
     }
 
     private void DrawEraseHint(PixelBuffer target, IGlyphSource font)
