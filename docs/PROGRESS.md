@@ -1132,7 +1132,8 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
 | `tests/.../Mp2MapTests` | ✅ | 2 条：`SetTile` 原地写并返回旧值（含相邻格不变）、越界抛异常 |
 | `MapScrollControllerTests` | ✅ | 1 条：`SetPanButton` 与左键共用状态机 |
 | `ADVBORD` 外壳与 448×448 视口 | ✅ | 地图落在 16 px 边框与雷达列之间，雷达在右上角 (480,16)，雷达下方是面板槽 (480,160,144,304)；外壳就是 `ADVBORD.ICN` 那张 640×480 整图，缺资产时退化成纯色边框而布局不变（ADR-048） |
-| 面板槽 | ✅（文字版） | 槽里写工具、光标格/地面/对象、`clean`/`edited`/`saved`、`undo`、`scroll` 与快捷键；参考 `EditorPanel` 的按钮阵列未做 |
+| `EditorPanel` 按钮阵列 | ✅ | `EDITBTNS` 的三个工具按钮（地形 / 对象 / 橡皮，按下是亮帧）、`EDITPANL` 裁出的九个 27×27 地面格（选中压 `TERRAINS` 第 9 帧的 30×30 黄框）、名字条、对象名字表，以及选择器下方五行状态/快捷键；面板底纹是 `STONEBAK`，点按钮/格子直接换工具与笔刷，缺资产时退回文字版（ADR-049） |
+| `--editor-panel-click <x,y[;x,y…]>` | ✅ | 面板的脚本版，值是新面板坐标（0～143 × 0～319）：逐点 `EditorScene.ClickPanel`，日志报命中工具/地面/对象与点完的状态；多条串起来就能截「先换工具再选对象」的面板 |
 | 小地图导航 | ✅ | `EditorScene` 的 `_radarGrabbed`：左键在 144×144 小地图上按下就 `CenterOn` 到指针下的格子，按住拖动一直跟随，松手结束；**不开笔划**，所以点小地图不会往撤销栈塞一步（ADR-047，照抄 `Radar::QueueEventProcessing` 的 `MouseClickLeft \|\| isMouseLeftButtonPressedInArea`） |
 | `--editor-radar-click <x,y[,x2,y2]>` | ✅ | 雷达手势的脚本版，值是面板坐标：先按下，给了第二点就拖过去，再松手；`EditorScene.ClickRadar` 返回视图是否真的移动 |
 | 像素基线 `editor.png` | ✅ | 一次脚本笔刷（`46,52,6,4,Snow`，Alteris 中心左侧一块）把雪落在海岸线上：地形层被改写、雪块四周是真正的雪/草/水过渡、对象层（船）仍压在上面 |
@@ -1236,6 +1237,39 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-paint 46,52,6,4,Snow --e
      是唯一换算点。指针不在视口内就传 `null`，于是"视口外不画、不吸管、不滚边"三件事自动成立。
   4. **基线必换**：整个画面换了骨架，`editor.png` 从 108,862 字节变成 116,108 字节，雪块与接缝不变。
 
+### E2 EditorPanel 按钮阵列 验证记录
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test  FHeroes2Sharp.slnx              → Core 168 / Assets 243 / Game 150 / UI 145 全绿（面板是 App 层绘制，不加测试）
+pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update → editor.png 重建为 137,834 字节 / B9C29A3A…
+pwsh tools/scripts/Verify{Menu,Settings,Scenario,AdventureMap,Editor}Baseline.ps1 → 五条全部 identical
+dotnet run -- --scene editor --map Alteris.mp2 --editor-panel-click "72,18;50,145"
+  → Panel click at (72; 18) hit Tool. Tool Object, ground Grass, object 'Tree'.
+    Panel click at (50; 145) hit Object. Tool Object, ground Grass, object 'Tree (top)'.
+```
+
+* 四处观察：
+  1. **坐标与帧号照抄参考**：三个工具按钮落在参考那张 3×3 网格的同一格（地形 0,0 / 对象 1,0 / 橡皮 2,2），
+     帧号 0 / 2 / 10（按下 +1），格子步进 `36×33`、按钮本身 `48×36`；地面选择器在按钮下方，
+     九张 27×27 的图从 `EDITPANL` 的 `(30+29·col, 11+29·row)` 裁出，选中格压 `TERRAINS` 第 9 帧的
+     30×30 黄框（相对格子偏 -2）。名字条裁自同表的 `(7,104,130,14)`，放在选择器下 9 px
+     （参考 `drawInstrumentName` 的 `panel.y + 113`），文字居中。
+  2. **`BlitSprite` 的源偏移会双计**：`BlitSprite(dest, Point, Sprite, sourceRect)` 会把 `Point` 和
+     `sourceRect` 的原点相加，而参考的 `Blit` 是「目标位置」与「源图区域」两回事；所以 `BlitPart`
+     传的是 `position - source`，否则整片地形图向右下偏 `(30,11)`。
+  3. **底纹用 `STONEBAK`**：参考 `makeInstrumentPanelBackground()` 就是用这张纹理调
+     `StandardWindow::renderBackgroundImage()` 铺满面板，再另画阴影；这里只做纹理那一步（从面板左上
+     整贴一次，和参考 `borderOffset = 0` 一致）。面板一直画到显示底边、压住 `ADVBORD` 的底边框，
+     也是参考在 640×480 的行为（`bottomBorderOffset` 只在显示比 480 高时才加）。
+  4. **对象选择器只能是名字表**：`EDITBTNS` 只有 35 帧，参考那套对象图标（对象菜单）不在里面，
+     `.mp2` 里也没有对象表；于是 9 个预设排成 `1 Tree` … `9 Resources`，选中行用面板亮色描一圈
+     （黄框是 30×30，套不进 136×14 的行）。名字条就只在工具/橡皮分支画——九行恰好占到名字条的位置。
+    地面格的命中区是 27×27 的图本身，格与格之间的 9 px 空隙点不中，和参考的 `_terrainButtonsRect` 一样。
+* 边缘：`EDITBTNS` / `EDITPANL` / `TERRAINS` 任何一个缺失，`EditorPanel.TryCreate` 返回 `null`，
+  面板退回 ADR-048 的文字版，`editor.png` 也随之变成文字版（这是有意的降级，不是崩溃）。
+* 基线比文字版大了 21,726 字节：按钮、九张地形图和一件纹理都是新进画面的高频色，PNG 压不动。
+
 ### E2 小地图导航 验证记录
 
 ```text
@@ -1281,7 +1315,9 @@ dotnet run -- --scene editor --map Alteris.mp2 --editor-radar-click "140,140"
 * **对象只是外观**：矿、宝箱、资源放下去只改变画面与 `ObjectType`，`Quantity2` 里的资源类型、归属、
   事件与守卫都没有编辑入口；城堡表与可占领表也不随对象更新——那是「对象属性」这一步的事。
 * **对象目录只有 9 个、且几乎都是单格对象**：城镇、锯木厂这类多格建筑要按格拼装并处理 add-on 的
-  相对偏移，得等 `EditorPanel` 的对象按钮面板。
+  相对偏移；面板的对象工具现在只是把这 9 个预设列成名字表，参考那套按对象类型分页的图标菜单要先有图标来源。
+* **面板少了参考的系统按钮行**：`EDITBTNS` 只有 35 帧（参考要 45+：undo / redo / 网格 / 视图 / 系统菜单），
+  所以面板下部写的是状态与快捷键文字，不是按钮（ADR-049）。
 * **撤销深度不落盘**：200 笔内存栈，退出即丢。
 * **没有编辑器主菜单**：进编辑器只有主菜单按钮与 `--scene editor`；新建地图已由 `--editor-new` 提供（E3b）。
 

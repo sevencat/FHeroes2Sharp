@@ -16,6 +16,7 @@ namespace FHeroes2.App;
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
 ///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
+///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -155,6 +156,14 @@ public sealed class CommandLineOptions
     /// held, so a click and a drag are the same branch.
     /// </summary>
     public EditorRadarRequest? EditorRadarClick { get; private set; }
+
+    /// <summary>
+    /// Points of the editor panel a click lands on when the editor opens (<c>--editor-panel-click
+    /// &lt;x,y[;x,y...]&gt;</c>, panel coordinates from 0 to 143 by 0 to 319). Each click is the same one
+    /// the left button produces, so the list can walk through controls in order — select an instrument
+    /// and then its picker, which a single click cannot do.
+    /// </summary>
+    public IReadOnlyList<Point> EditorPanelClicks { get; private set; } = [];
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -317,11 +326,15 @@ public sealed class CommandLineOptions
                     break;
 
                 case "--editor-place":
-                    options.EditorPlacements = ParsePlacements(RequireValue(arguments, ref i, argument), argument);
+                    options.EditorPlacements = ParsePointList(RequireValue(arguments, ref i, argument), argument);
                     break;
 
                 case "--editor-radar-click":
                     options.EditorRadarClick = ParseRadarClick(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
+                case "--editor-panel-click":
+                    options.EditorPanelClicks = ParsePointList(RequireValue(arguments, ref i, argument), argument);
                     break;
 
                 case "--list-assets":
@@ -389,6 +402,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --editor-radar-click <x,y[,x2,y2]>  Presses that point of the 144x144 minimap when the");
         Console.WriteLine("                      editor opens, e.g. '20,20'; with a second point the press is dragged");
         Console.WriteLine("                      there first. The map centres on the tile under the pointer.");
+        Console.WriteLine("  --editor-panel-click <x,y[;x,y...]>  Clicks those points of the 144x320 editor panel");
+        Console.WriteLine("                      in order when the editor opens, e.g. '0,0' for the terrain button.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -464,12 +479,12 @@ public sealed class CommandLineOptions
             $"'{option}' expects '<x>,<y>' or '<x1>,<y1>,<x2>,<y2>' in panel pixels, got '{value}'.");
     }
 
-    /// <summary>Parses <c>--editor-place</c>: one or more <c>x,y</c> pairs, separated by semicolons.</summary>
+    /// <summary>Parses a list of points: one or more <c>x,y</c> pairs, separated by semicolons.</summary>
     /// <param name="value">The option value.</param>
     /// <param name="option">Name of the option, for the error message.</param>
-    /// <returns>The tiles that receive an object.</returns>
+    /// <returns>The points in the order they were given.</returns>
     /// <exception cref="ArgumentException">No pair or a malformed pair.</exception>
-    private static IReadOnlyList<Point> ParsePlacements(string value, string option)
+    private static IReadOnlyList<Point> ParsePointList(string value, string option)
     {
         string[] parts = value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 

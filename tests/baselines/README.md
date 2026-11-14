@@ -11,7 +11,7 @@
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
 | `adventure-map.png` | 冒险地图（M4，地形 + 对象层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、树林、山脊、海岸与沙滩；右上角 144×144 雷达面板带视口虚线框 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
-| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方面板槽）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
+| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板上是 `EDITBTNS` 的三个工具按钮、`EDITPANL` 的九个 27×27 地面格子（草压在 `TERRAINS` 第 9 帧的黄框里）、名字条与状态/快捷键五行，底纹是 `STONEBAK` | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -92,13 +92,15 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 ## 编辑器基线也是逐字节稳定的
 
 * 与冒险地图同一张图（`Alteris`，居中规则相同），多出来的只有编辑器自己画的东西：tile 网格、光标
-  双线高亮、顶部工具条与底部状态栏、小地图。它们都不带时钟。
+  双线高亮、`ADVBORD` 外壳与其中的雷达 / `EditorPanel`。它们都不带时钟。
 * `--editor-paint 46,52,6,4,Snow`：脚本先刷一块雪地再截帧。没有这一笔，基线分不出「编辑器能改 tile」
   与「只是把地图画出来了」。
-* 状态栏（`0,469,640,11`）被忽略：那里印着 `scroll`、撤销步数与版本号。**顶部工具条不在忽略之列**，
-  因为它只有英文常量——改工具条文字就要重建这张基线（ADR-045 把工具名从工具条挪到状态栏时就是这么做的）。
-* 对象工具（`O` / `X`）不在这张基线里：它需要按键，而脚本没有键盘。对象的验证走
-  `--editor-object` + `--editor-place` 的截图与 `MapEditSessionTests`，见 `PROGRESS.md` 的 E2 记录。
+* 状态栏（`0,469,640,11`）被忽略：那里印着视口偏移、撤销步数与版本号。**面板不在忽略之列**——工具名、
+  地面名、光标格坐标与快捷键都是英文常量，改面板文字（或换按钮美术）就要重建这张基线；面板按钮的
+  交互另有 `--editor-panel-click` 的日志验证（ADR-049）。
+* 对象工具（`O` / `X` / 面板上的对象按钮）不在这张基线里：它需要按键或点击。对象的验证走
+  `--editor-object` + `--editor-place`、`--editor-panel-click` 的日志与 `MapEditSessionTests`，
+  见 `PROGRESS.md` 的 E2 记录。
 
 ## CI 怎么接
 

@@ -79,6 +79,7 @@ public sealed class EditorScene : IScene
     private readonly Rect _radar;
     private readonly Rect _panel;
     private readonly Sprite? _chrome;
+    private readonly EditorPanel? _panelView;
     private readonly byte _dark;
     private readonly byte _bright;
 
@@ -107,7 +108,8 @@ public sealed class EditorScene : IScene
         MapEditSession edits,
         Minimap minimap,
         MapScrollController mouse,
-        Sprite? chrome)
+        Sprite? chrome,
+        EditorPanel? panelView)
     {
         _frame = frame;
         _fonts = fonts;
@@ -116,10 +118,11 @@ public sealed class EditorScene : IScene
         _minimap = minimap;
         _mouse = mouse;
         _chrome = chrome;
+        _panelView = panelView;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
-        // column below it.
+        // column below it, down to the bottom of the frame.
         _viewport = new Rect(
             BorderWidth,
             BorderWidth,
@@ -127,20 +130,38 @@ public sealed class EditorScene : IScene
             Math.Max(frame.Size.Height - (2 * BorderWidth), 0));
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
 
-        _radar = new Rect(
-            frame.Size.Width - RadarMargin - Minimap.PanelSize,
-            RadarMargin,
-            Minimap.PanelSize,
-            Minimap.PanelSize);
-
-        _panel = new Rect(
-            _radar.X,
-            _radar.Bottom,
-            Minimap.PanelSize,
-            Math.Max(frame.Size.Height - _radar.Bottom - BorderWidth, 0));
+        _radar = RadarBay(frame.Size);
+        _panel = PanelBay(frame.Size);
 
         _dark = frame.Palette.FindDarkestIndex();
         _bright = frame.Palette.FindBrightestIndex();
+    }
+
+    /// <summary>The radar, in the top right corner inside the border.</summary>
+    /// <param name="size">Size of the logical frame.</param>
+    /// <returns>The 144x144 rectangle of the radar.</returns>
+    private static Rect RadarBay(Size size) => new(
+        size.Width - RadarMargin - Minimap.PanelSize,
+        RadarMargin,
+        Minimap.PanelSize,
+        Minimap.PanelSize);
+
+    /// <summary>
+    /// The bay below the radar, which the editor panel fills. The reference lays the panel out from
+    /// the bottom of the radar to the bottom of the frame, so the bay ends at the frame edge and not
+    /// at the border: its system buttons sit on the last rows of the display.
+    /// </summary>
+    /// <param name="size">Size of the logical frame.</param>
+    /// <returns>The rectangle of the panel bay.</returns>
+    private static Rect PanelBay(Size size)
+    {
+        Rect radar = RadarBay(size);
+
+        return new Rect(
+            radar.X,
+            radar.Bottom,
+            Minimap.PanelSize,
+            Math.Max(size.Height - radar.Bottom, 0));
     }
 
     /// <summary>The map being edited.</summary>
@@ -163,6 +184,26 @@ public sealed class EditorScene : IScene
 
     /// <summary>The instrument panel below the radar, the <c>EditorPanel</c> of the reference.</summary>
     public Rect PanelArea => _panel;
+
+    /// <summary>Size of the logical frame the editor draws into.</summary>
+    public Size FrameSize => _frame.Size;
+
+    /// <summary>The tool in use, as the panel names it.</summary>
+    public string Tool => _edits.Tool.ToString();
+
+    /// <summary>The ground of the terrain tool, as the panel names it.</summary>
+    public string Brush => _edits.Brush.ToString();
+
+    /// <summary>The preset of the object tool, or <c>none</c> when no object is selected.</summary>
+    public string ObjectName => _edits.ObjectBrush?.Name ?? "none";
+
+    /// <summary>
+    /// The bay below the radar for a frame of <paramref name="size"/>, the rectangle
+    /// <see cref="PanelArea"/> reports once the editor exists.
+    /// </summary>
+    /// <param name="size">Size of the logical frame.</param>
+    /// <returns>The rectangle of the panel bay.</returns>
+    public static Rect PanelBayOf(Size size) => PanelBay(size);
 
     /// <summary>
     /// Opens the editor on <paramref name="mapInfo"/>; <see langword="null"/> with an
@@ -290,7 +331,8 @@ public sealed class EditorScene : IScene
             edits,
             Minimap.Build(map),
             new MapScrollController(view),
-            LoadFrameChrome(assets));
+            LoadFrameChrome(assets),
+            EditorPanel.TryCreate(PanelBay(frame.Size), assets));
     }
 
     /// <summary>
@@ -425,6 +467,14 @@ public sealed class EditorScene : IScene
             return false;
         }
 
+        // The panel takes the press as well, and it is a click on a control, not a stroke: the bay is
+        // not map, and an empty stroke behind it would land in the undo history.
+        if (down && _screenCursor is { } panelPoint && _panel.Contains(panelPoint))
+        {
+            ClickPanel(panelPoint);
+            return false;
+        }
+
         if (!down && _radarGrabbed)
         {
             _radarGrabbed = false;
@@ -510,6 +560,44 @@ public sealed class EditorScene : IScene
         SetLeftButton(false);
 
         return _editor.Map.Scroll != before;
+    }
+
+    /// <summary>
+    /// Clicks a control of the panel: an instrument button, a terrain button or an object preset. The
+    /// reference routes the same click through <c>EditorPanel::_queueEvent</c>, which reads what the
+    /// control under the pointer selects.
+    /// </summary>
+    /// <param name="screen">Pointer in logical pixels.</param>
+    /// <returns>What the point hit, <see cref="EditorPanelHit.None"/> when nothing; the change is applied.</returns>
+    internal EditorPanelHit ClickPanel(Point screen)
+    {
+        if (_panelView is null || !_panel.Contains(screen))
+        {
+            return EditorPanelHit.None;
+        }
+
+        EditorPanelHit hit = _panelView.HitTest(screen, _edits.Tool);
+
+        switch (hit.Kind)
+        {
+            case EditorPanelHitKind.Tool:
+                _edits.SetTool(EditorPanel.ToolAt(hit.Index));
+                break;
+
+            case EditorPanelHitKind.Ground:
+                _edits.SetBrush(EditorPanel.Grounds[hit.Index]);
+                break;
+
+            case EditorPanelHitKind.Object:
+                _edits.SelectObject(Mp2ObjectPresets.All[hit.Index]);
+                break;
+
+            case EditorPanelHitKind.None:
+            default:
+                break;
+        }
+
+        return hit;
     }
 
     /// <summary>
@@ -793,11 +881,100 @@ public sealed class EditorScene : IScene
     private void RebuildMinimap() => _minimap = Minimap.Build(Map);
 
     /// <summary>
-    /// Writes the state of the instruments into the bay below the radar. The reference fills that bay
-    /// with the buttons and pickers of <c>EditorPanel</c>; until those exist it carries the same facts
-    /// as text, so the layout is final and only the controls are missing.
+    /// Draws the bay below the radar: the instrument panel of the reference when its artwork is in the
+    /// archive, a text card carrying the same facts otherwise.
     /// </summary>
     private void DrawPanel()
+    {
+        if (_fonts is null)
+        {
+            return;
+        }
+
+        if (_panelView is not null)
+        {
+            // The bay carries the patterns of ADVBORD, and its last rows are the bottom border of the
+            // frame: the panel of the reference paints its own background over both — the stone
+            // texture of STONEBAK, or a flat bay when the archive has none.
+            if (!_panelView.HasBackground)
+            {
+                ImageOps.FillRect(_frame.Pixels, _panel, _dark);
+            }
+
+            _panelView.Draw(
+                _frame.Pixels,
+                _fonts.Small,
+                _edits.Tool,
+                _edits.Brush,
+                _edits.ObjectBrush,
+                _bright);
+            DrawPanelNotes(_fonts.Small);
+
+            return;
+        }
+
+        DrawPanelText();
+    }
+
+    /// <summary>
+    /// Writes the state of the instruments and the keys under the picker, where the reference keeps its
+    /// system buttons: the two rows there hold magnify, undo, redo, specs, file and system, and none of
+    /// them can be done here yet — undo and redo have no artwork in this release of the game either.
+    /// </summary>
+    /// <param name="font">Font of the labels.</param>
+    private void DrawPanelNotes(IGlyphSource font)
+    {
+        Rect notes = new(
+            _panel.X + 6,
+            _panel.Y + EditorPanel.PickerTop + EditorPanel.PickerHeight + 4,
+            Math.Max(_panel.Width - 12, 0),
+            Math.Max(_panel.Height - EditorPanel.PickerTop - EditorPanel.PickerHeight - 4, 0));
+
+        if (notes.IsEmpty)
+        {
+            return;
+        }
+
+        int step = font.LineHeight + 2;
+        int y = notes.Y;
+
+        void Line(string value)
+        {
+            if (y + font.LineHeight > notes.Bottom)
+            {
+                return;
+            }
+
+            GlyphText.DrawLine(
+                font,
+                _frame.Pixels,
+                new Point(notes.X, y),
+                value,
+                new Rect(notes.X, y, notes.Width, font.LineHeight));
+
+            y += step;
+        }
+
+        Line(_editor.HoverTile is { } tile
+            ? FormattableString.Invariant($"{tile.X},{tile.Y} {_editor.HoverGround}")
+            : "no tile");
+
+        Line(_edits.IsDirty
+            ? FormattableString.Invariant($"undo {_edits.UndoDepth} edited")
+            : _savedFlash > 0.0
+                ? "saved"
+                : "clean");
+
+        Line("1-9 ground  G grid");
+        Line("O object  X erase");
+        Line("^Z/^Y  Esc menu");
+    }
+
+    /// <summary>
+    /// The text card the editor falls back on when <c>EDITBTNS</c> or <c>EDITPANL</c> is missing: the
+    /// same facts and keys, laid out like the picker of the reference.
+    /// </summary>
+    private void DrawPanelText()
     {
         if (_fonts is null)
         {

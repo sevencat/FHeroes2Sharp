@@ -724,6 +724,23 @@ public sealed class GameHost : IDisposable
             }
         }
 
+        // --editor-panel-click clicks the controls of the editor panel in order: the panel is drawn from
+        // the artwork of the archive, so a screenshot alone cannot prove that its buttons respond, and
+        // selecting an instrument before its picker needs more than one click.
+        if (_options.EditorPanelClicks.Count > 0)
+        {
+            Rect panel = EditorScene.PanelBayOf(scene.FrameSize);
+
+            foreach (Point panelPoint in _options.EditorPanelClicks)
+            {
+                EditorPanelHit hit = scene.ClickPanel(new Point(panel.X + panelPoint.X, panel.Y + panelPoint.Y));
+
+                GameLog.Info(
+                    $"Panel click at ({panelPoint.X}; {panelPoint.Y}) hit {hit.Kind}. " +
+                    $"Tool {scene.Tool}, ground {scene.Brush}, object '{scene.ObjectName}'.");
+            }
+        }
+
         // --editor-save closes the loop that --editor-paint opens: the map is written back at once, so
         // a script can open, change and save a real map without a mouse.
         if (_options.EditorSavePath is { } savePath)
