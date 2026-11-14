@@ -1,6 +1,7 @@
 using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Icn;
+using FHeroes2.Assets.Maps;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Localization;
 using FHeroes2.Core.Diagnostics;
@@ -136,6 +137,8 @@ public sealed class MainMenuScene : IScene
     private readonly Rect _statusBar;
     private readonly byte _statusBarColor;
     private readonly SettingsArtwork? _settingsArtwork;
+    private readonly ScenarioDialogArtwork? _scenarioArtwork;
+    private readonly string? _dataDirectory;
 
     private int _languageIndex;
     private int _pressedButton = -1;
@@ -145,6 +148,9 @@ public sealed class MainMenuScene : IScene
     private string? _status;
     private MessageBox? _tip;
     private SettingsDialog? _settings;
+    private IReadOnlyList<Mp2FileInfo>? _maps;
+    private ScenarioSelectionDialog? _scenario;
+    private Mp2FileInfo? _confirmedScenario;
 
     private MainMenuScene(
         ScreenBuffer frame,
@@ -157,7 +163,9 @@ public sealed class MainMenuScene : IScene
         GameFonts fonts,
         IReadOnlyList<GameText> languages,
         string? culture,
-        SettingsArtwork? settingsArtwork)
+        SettingsArtwork? settingsArtwork,
+        ScenarioDialogArtwork? scenarioArtwork,
+        string? dataDirectory)
     {
         _frame = frame;
         _background = background;
@@ -169,6 +177,8 @@ public sealed class MainMenuScene : IScene
         _fonts = fonts;
         _languages = languages;
         _settingsArtwork = settingsArtwork;
+        _scenarioArtwork = scenarioArtwork;
+        _dataDirectory = dataDirectory;
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
         _languageIndex = IndexOfCulture(languages, culture);
@@ -238,9 +248,11 @@ public sealed class MainMenuScene : IScene
 
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
+            ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
+
             MainMenuScene scene = new(
                 frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, fonts, languages,
-                culture, SettingsArtwork.TryCreate(assets));
+                culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -251,6 +263,7 @@ public sealed class MainMenuScene : IScene
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
                 (messageChrome is null ? "no tooltips, " : "right click tooltips, ") +
+                (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -316,8 +329,11 @@ public sealed class MainMenuScene : IScene
         // The tooltip is modal in the original: it sits on top of everything, including the signs.
         _tip?.Draw(pixels);
 
-        // The settings dialog is modal as well, so it is painted last.
+        // The modal windows close the menu, so they are painted last: the settings dialog, then the
+        // scenario list. The two can never be open at the same time, the order only keeps the code
+        // in the order the host opens them.
         _settings?.Draw(pixels);
+        _scenario?.Draw(pixels);
 
         _frame.InvalidateAll();
     }
@@ -328,10 +344,16 @@ public sealed class MainMenuScene : IScene
     /// <summary>Sets the cursor position in logical pixels, or <see langword="null"/> when it left.</summary>
     public void SetCursor(Point? cursor)
     {
-        // The settings dialog owns the cursor while it is open.
+        // A modal window owns the cursor while it is open.
         if (_settings is not null)
         {
             _settings.SetCursor(cursor);
+            return;
+        }
+
+        if (_scenario is not null)
+        {
+            _scenario.SetCursor(cursor);
             return;
         }
 
@@ -366,6 +388,18 @@ public sealed class MainMenuScene : IScene
             if (_settings.SetLeftButton(down) == DialogButton.Ok)
             {
                 ApplySettings();
+            }
+
+            return null;
+        }
+
+        // The scenario list owns the mouse while it is open: OK picks the map, every other click
+        // only moves the selection, the size filter or the scroll thumb.
+        if (_scenario is not null)
+        {
+            if (_scenario.SetLeftButton(down) == DialogButton.Ok)
+            {
+                ConfirmScenario();
             }
 
             return null;
@@ -440,6 +474,28 @@ public sealed class MainMenuScene : IScene
                 EnterCharacter or LineFeedCharacter => ConfirmSettings(),
                 _ => null,
             };
+        }
+
+        // While the scenario list is open the keyboard belongs to it as well: Escape closes it
+        // without a choice, Enter is the OKAY hot key. The arrow, page, Home and End keys are not
+        // characters, the host routes them through MoveScenarioSelection / MoveScenarioPage.
+        if (_scenario is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter:
+                    CloseScenario();
+                    break;
+
+                case EnterCharacter or LineFeedCharacter:
+                    ConfirmScenario();
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
         }
 
         // A hot key is swallowed by the open tooltip, like every key press inside the dialog loop.
@@ -519,6 +575,143 @@ public sealed class MainMenuScene : IScene
             $"content {SettingsContentWidth}x{contentHeight}.");
 
         return true;
+    }
+
+    /// <summary>The open scenario list, or <see langword="null"/> when New Game has not been used.</summary>
+    public ScenarioSelectionDialog? Scenario => _scenario;
+
+    /// <summary>Whether a modal window (the settings dialog or the scenario list) owns the input.</summary>
+    public bool HasModalDialog => _settings is not null || _scenario is not null;
+
+    /// <summary>
+    /// Opens the scenario selection window of the main menu, the <c>Dialog::SelectScenario()</c> the
+    /// reference shows after <c>NEW_GAME</c>.
+    /// </summary>
+    /// <remarks>
+    /// The map list is read on the first call and kept for the rest of the session, which is how the
+    /// reference caches <c>Maps::getValidMaps</c> while the dialog is up. Nothing is opened when the
+    /// artwork is missing, when another modal window is already open or when no map is installed.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the dialog is now open.</returns>
+    public bool OpenScenario()
+    {
+        if (_scenarioArtwork is null || HasModalDialog)
+        {
+            return false;
+        }
+
+        IReadOnlyList<Mp2FileInfo> maps = Maps;
+
+        if (maps.Count == 0)
+        {
+            GameLog.Warn("No playable map was found; the scenario selection stays closed.");
+            return false;
+        }
+
+        _scenario = new ScenarioSelectionDialog(
+            _scenarioArtwork, _fonts.Normal, _fonts.Yellow, CreateScenarioText(), maps);
+
+        GameLog.Info(
+            $"Scenario selection opened: {maps.Count} maps, {_scenario.Maps.Count} listed, " +
+            $"'{_scenario.Selected?.Name}' selected.");
+
+        return true;
+    }
+
+    /// <summary>Closes the scenario list without a choice, the Escape key and CANCEL of the reference.</summary>
+    /// <returns><see langword="true"/> when a dialog was open.</returns>
+    public bool CloseScenario()
+    {
+        if (_scenario is null)
+        {
+            return false;
+        }
+
+        _scenario = null;
+        GameLog.Info("Scenario selection closed without a choice.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Accepts the selected map and closes the dialog, the OKAY button and Enter of the reference.
+    /// </summary>
+    /// <returns>
+    /// The chosen map, or <see langword="null"/> when the dialog is not open or the list is empty;
+    /// the host takes it and starts the game with it.
+    /// </returns>
+    public Mp2FileInfo? ConfirmScenario()
+    {
+        if (_scenario?.Selected is not { } map)
+        {
+            return null;
+        }
+
+        _scenario = null;
+        _status = $"{map.Name} - M4";
+        _confirmedScenario = map;
+
+        GameLog.Info(
+            $"Scenario selected: '{map.Name}' ({map.Width}x{map.Height}, difficulty {map.Difficulty}, " +
+            $"{map.PlayerCount} kingdom(s)) from '{map.FilePath}'.");
+
+        return map;
+    }
+
+    /// <summary>
+    /// Returns the map whose selection was confirmed since the last call and forgets it. The host
+    /// polls this after every input batch: it is what turns a confirmed scenario into the adventure
+    /// map, without the menu knowing anything about scenes.
+    /// </summary>
+    public Mp2FileInfo? TakeConfirmedScenario()
+    {
+        Mp2FileInfo? map = _confirmedScenario;
+        _confirmedScenario = null;
+        return map;
+    }
+
+    /// <summary>Moves the selection of the open scenario list by <paramref name="delta"/> rows.</summary>
+    public void MoveScenarioSelection(int delta) => _scenario?.MoveSelection(delta);
+
+    /// <summary>Moves the selection of the open scenario list by <paramref name="pages"/> pages.</summary>
+    public void MoveScenarioPage(int pages) => _scenario?.MovePage(pages);
+
+    /// <summary>Selects the first row of the open scenario list (the Home key).</summary>
+    public void SelectFirstScenario() => _scenario?.Select(0);
+
+    /// <summary>Selects the last row of the open scenario list (the End key).</summary>
+    public void SelectLastScenario() => _scenario?.Select(int.MaxValue);
+
+    /// <summary>Every map the dialog may offer, read on first use and cached for the session.</summary>
+    private IReadOnlyList<Mp2FileInfo> Maps
+    {
+        get
+        {
+            if (_maps is null)
+            {
+                _maps = _dataDirectory is null ? [] : MapCatalog.ReadAll([_dataDirectory]);
+
+                GameLog.Info(
+                    $"Map catalog: {_maps.Count} playable map(s) under " +
+                    $"'{_dataDirectory ?? "no data directory"}'.");
+            }
+
+            return _maps;
+        }
+    }
+
+    /// <summary>The labels of the scenario dialog, resolved through the current text catalog.</summary>
+    private ScenarioDialogText CreateScenarioText()
+    {
+        ScenarioDialogText untranslated = ScenarioDialogText.Default;
+
+        return new ScenarioDialogText
+        {
+            DifficultyLabel = Text.Get(untranslated.DifficultyLabel),
+            Difficulties = [.. untranslated.Difficulties.Select(Text.Get)],
+            VictoryConditions = [.. untranslated.VictoryConditions.Select(Text.Get)],
+            LossConditions = [.. untranslated.LossConditions.Select(Text.Get)],
+        };
     }
 
     /// <summary>Switches to the language at <paramref name="index"/> and returns it.</summary>
@@ -762,9 +955,17 @@ public sealed class MainMenuScene : IScene
             return entry.Action;
         }
 
-        // M3 onwards replaces this with the real screen; until then the status bar says so.
-        _status = $"{label} - M3";
-        GameLog.Info($"Main menu: '{label}' is not implemented before M3.");
+        // New Game opens the scenario list of the original; the other signs are later milestones
+        // (load game M8, high scores / credits M9) and only say so in the status bar.
+        if (entry.Action == MainMenuAction.NewGame && OpenScenario())
+        {
+            _status = null;
+            GameLog.Info($"Main menu: '{label}' opens the scenario selection.");
+            return entry.Action;
+        }
+
+        _status = $"{label} - not available yet";
+        GameLog.Info($"Main menu: '{label}' is not implemented yet.");
         return entry.Action;
     }
 

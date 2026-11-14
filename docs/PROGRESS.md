@@ -733,7 +733,8 @@ pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
 | `Assets.Maps.MapCatalog` | ✅ | `Maps::getAllMapFileInfos` + `getValidMaps`：数据目录本身、`maps` 子目录（大小写不敏感），**且只有**该目录含 `Heroes2.agg` 时才看父级（GOG 版 `Data/` 与 `Maps/` 平级）；`*.mp2`/`*.mx2` 去重、按路径排序；按人类玩家数过滤（人类独占色多于需求、或共享色不够都被丢掉），人类独占色正好等于需求时收窄可选颜色；被丢的文件进 `MapScanResult.Rejected` |
 | `AssetProbe maps` | ✅ | 打印 `文件名 / 场景名 / 宽x高 / 难度 / 玩家数与颜色 / 种族 / 胜负条件`，末尾打「延迟的英雄落败改写」张数 |
 | `tests/FHeroes2.Assets.Tests/Mp2FileInfoTests` + `MapCatalogTests` | ✅ | 19 个用例：合成 MP2 头覆盖每个字段、魔数/难度/无人类颜色/无名字/截断文件/缺文件的拒绝路径、`forEditor`、颜色子集与收窄、种族索引换算、目录搜索与排序、`.mx2` 版本、真实数据（本机 112 张）抽样 `Beltway` |
-| 场景选择对话框 / 新游戏流程 | ⏳ | 未开始（下一步） |
+| `UI.Dialogs.ScenarioSelectionDialog` | ✅ | 照 `dialog_selectscenario.cpp` 的布局：`REQSBKG.ICN` 0/1 帧面板 + 阴影贴在 `(W-377)/2, (H-458)/2`；5 个尺寸按钮（`REQUESTS.ICN` 9…13，`+36/23`，步长 62，`ALL` 默认按下）；列表 9 行按 `i*175/9` 截断分布（19/20 交替，**不是**固定 19，见「修正记录」），行内玩家数（19+人数 → 25 上限）、尺寸（26…29）、类型徽章、居中名字与胜负条件图标（30+2t / 36+t）；详情区选中图标 45/64/83、难度标签右对齐 210、难度值 220、描述 42,318 292×90 换行；`ESCROLL.ICN` 3 帧作滑块，点击行、拖滑块、点击尺寸按钮都会重建/重定位；OKAY 走 `SYSTEM.ICN` 1/2 帧 |
+| 新游戏接线（`NEW_GAME` → 场景选择） | ✅ | `MainMenuScene.OpenScenario()` 惰性调用 `MapCatalog.ReadAll`（本机 112 张，缓存整个会话）；`SetCursor` / `SetLeftButton` / `Select` 加模态路由；`GameHost` 转发 `Up/Down/PageUp/PageDown/Home/End` 给 `MoveScenarioSelection` / `MoveScenarioPage` / `SelectFirst…`；`--open-scenario` 供截图冒烟；有模态窗口时 Esc 先关窗口（顺带修掉「设置对话框打开时 Esc 直接退出客户端」） |
 
 ### M3 验证记录（地图文件头）
 
@@ -757,15 +758,126 @@ Slugfes.mp2     ¼¤Õ½            36x36  Normal  players 6: human Blue … Pur
 * 画面外的核对：`Beltway` 72×72 / `Normal` / 3 个王国 / `DefeatEveryone`、`DdDragon` 144×144 且
   失败条件是 `LoseTown`，与原版场景选择框里看到的摘要一致。
 
+### M3 验证记录（场景选择窗口）
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 162 / UI 137 全绿（新增 24）
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --smoke-frames 10 --freeze-animation \
+    --open-scenario --screenshot tools-output\scenario-zh.png --screenshot-frame 6
+# [INFO] Scenario selection opened: 112 maps, 112 listed, 'Alteris' selected.
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update
+# update tests/baselines/scenario.png  sha256 dcebe408…66654c
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
+# update tests/baselines/scenario.zh_CN.png  sha256 ef5b5fa5…2e28ac
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -SkipBuild
+# verify tests/baselines/scenario.png → identical
+```
+
+* 画面外核对：112 张地图全部列出，默认选中排序第一的 `Alteris`（108×108、`Hard`、3 个王国）；底部
+  详情区的名字、难度、描述与列表行的玩家数/尺寸/胜负图标都与 `AssetProbe maps` 的输出一致。
+* 尺寸按钮是 `ALL` 按下态，列表里 `S/M/L/XL` 四种尺寸都出现；点 `XL` 后只剩 144 图，再点 `ALL` 恢复。
+* `MAP_TYPE_ICON` 并不存在于归档里，参考是在启动时从 `ARTFX.ICN` 6/90/101 缩放到 15×15 合成的；
+  `ScenarioArtwork` 做同一件事（扩展包 `Heroes2x.agg` 才有 90/101 帧，纯原作数据只会显示 SW 徽章）。
+* `zh_CN` 基线证明 `地图难度：困难` 与描述区的英文地图原文能同框显示：界面词条走 `.mo`，地图描述
+  是文件里的原文，不做翻译。
+* 顺手修掉一个 M2 遗留的输入缺陷：设置对话框打开时按 Esc 会直接退出客户端；现在先关窗口，再关菜单。
+
+### M3 修正记录（列表行坐标与地图文本解码）
+
+第一版把 `MAP_LIST_ROW_SPACING_Y = 4` 当成了「图标离行顶 4 px」并把行高写成固定 19 px，结果整块
+内容比参考低 4 px、最后一行被列表框下沿吃掉 2 px，点击命中也跟着偏。两处都按参考改回：
+
+* **行坐标**：`RowArea(i)` 用 `i*175/9`（0/19/38/58/77/97/116/136/155），高度取相邻两条边界之差
+  （19 或 20），`RowAt` 自然跟着对齐；图标不再下移（`RowIconOffsetY = 0`），名字回到行顶 +3
+  （`MAP_LIST_ROW_SPACING_Y - 1`）。UI 测试新增「第 3/8 行起点」与「逐行点中心选中该行」两条。
+* **地图文本编码**：`MapTextCodec` 取代裸 `Encoding.Latin1`，顺序是 ASCII → UTF-8（严格解码且真的
+  含多字节）→ GBK（严格解码 + 回环一致 + 至少 2 个汉字）→ Latin-1。中文图包的名字与描述现在能
+  正常显示（`Slugfes.mp2` 显示「激战」、`Mineral.mp2` 显示「矿山之战」），`Château` 这类 CP1252
+  单词不会被误判成汉字（只有 1 个汉字时不信 GBK）。列表按新名字重排，`scenario*.png` 基线随之重建。
+* **`--scenario-select <n>`**：截图入口的一个小扩展，开窗并选中第 n 张图，用来给任意一行（尤其是
+  排在末尾的中文图）拍基线；`tools-output/scenario-cn.png` 就是这么核对「领主」那一屏的。
+
+```
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 169 / UI 139 全绿（新增 7 条编码用例）
+dotnet run --project src/FHeroes2.App -- --data F:\game\fh2 --scenario-select 110 --smoke-frames 30 \
+    --freeze-animation --screenshot tools-output\scenario-cn.png
+# 列表滚到底、选中「领主」，名字/难度/描述与 AssetProbe maps 一致
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update            # sha256 278483e2…a2e25
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update  # sha256 fca0dc30…83bc67
+```
+
 ### M3 已知遗留
 
-* **地图名按 Latin-1 解码**：本机几张中文图的 GBK 名字显示成 `¼¤Õ½` 一类的乱码。原版编辑器用的是
-  卖家本地代码页，正确处理需要文本层做代码页探测（先看字节是否落在 GBK 双字节区），等场景列表 UI
-  开始画字时一起做。
+* ~~**地图名按 Latin-1 解码**~~：已在「M3 修正记录」里用 `MapTextCodec` 解决（GBK 探测，见 ADR-034）。
+  仍不可靠的只剩「既是合法 GBK 又解出 ≥2 个汉字的 CP1252 文本」这一类，实际地图里没碰到。
 * **英雄落败改写没做**：`readMP2Map` 对「单人类玩家 + 失去某英雄即败 + 该英雄站在电脑色格子上」会把
   胜利条件改写成 `VICTORY_DEFEAT_OTHER_SIDE` 并结盟，这需要读 tile 数据与 `HEROES.ICN` 前 42 帧的
   颜色分组；本机 4 张图受影响（`WIZLAND1/2/3`、`Whoam`），`AssetProbe maps` 末尾会打张数，避免静默分叉。
 * **只读信息块**：tile / addon / 城堡 / 英雄 / 事件结构都没有解析，真正进冒险地图（M4）要另写地图加载器。
 * **`.fh2m` 不支持**：fheroes2 自己的地图格式没有移植，`MapVersion.Resurrection` 只是占位。
-* **场景选择对话框、难度选择、`NEW GAME` 分叉**（标准局 / 战役）都没有开始。
+* **难度选择、`NEW GAME` 分叉**（标准局 / 战役）：`NEW_GAME` 现在直接开场景选择，跳过了参考里的
+  「标准游戏 / 战役」分叉与 `Setup` 对话框；难度只在列表里只读显示，不能改（要等 M4 的地图加载器）。
+* **场景列表的几处简化**：没有双击确认、没有 Debug 版的 Delete 删文件；滚动条上下箭头只画
+  `REQUESTS.ICN` 5/7 帧作装饰，点击无效（滑块可拖、滚轮可用）；`MAP_TYPE_ICON` 徽章缩放用的
+  最近邻与参考的 `Resize` 取样点可能差 1 px（视觉无差别）。
+* **显示分辨率固定 640×480**：场景窗口按 `frame.Size` 居中，放大分辨率要等 M8 的设置项。
+
+## M4 — 冒险地图（进行中）
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `Assets.Maps.Mp2TileInfo` | ✅ | 20 字节 tile 结构，逐字段对齐 `MP2::loadTile`：地形图索引、地面对象（层 + ICN 类型 + 帧）、`quantity1/quantity2`（派生 13 位 `Metadata`）、顶部对象、地形标志（低 2 位 shape）、`mapObjectType`、addon 链头、两级对象 UID |
+| `Assets.Maps.Mp2AddonInfo` | ✅ | 15 字节 addon 结构；`objectNameN1` 读取时 ×2，与参考一致（`mp2_helper.cpp` 注释照抄，避免后人来「修」） |
+| `Assets.Maps.Mp2ObjectType` / `Mp2ObjectTypes` | ✅ | `MP2::MapObjectType` 全量移植（0…127 非动作、+128 动作、256+ 资料片），连同 `IsActionObject` / `BaseActionType` / `NeedsExtendedMetadata` / `ContainsMetadata` 四个判定 |
+| `Assets.Maps.Mp2ObjectIcnType` | ✅ | `MP2::ObjectIcnType`（`UNKNOWN`…`X_LOC3`，共 64 项）与 `Unknown` 判定；数值是地图格式的一部分，不许重排 |
+| `Assets.Maps.Mp2Map` | ✅ | 结构层全量读取：tile 区 → addon 计数与数组 → 城堡表（72×3）→ 捕获物表（144×3）→ 方尖碑计数 → 信息块计数列表（`256*high+low-1`，`00 00` 终止）与块（LE16 长度，0 长度跳过）→ 尾部对象 UID；尺寸必须正方形且为 36/72/108/144；`65/193 → 农夫小屋`；`rejectPriceOfLoyaltyObjects` 复刻参考对原作图的 PoL 拒绝；`EnumerateAddonChain` 对越界索引与环都设了上限 |
+| `AssetProbe map <file>` | ✅ | 打印摘要、对象类型直方图、地形图/`shape` 分布、城堡与捕获物表、最长 addon 链、信息块尺寸分布；定位「读错偏移」的第一现场 |
+| `tests/FHeroes2.Assets.Tests/Mp2MapTests` + `Mp2MapFileBuilder` | ✅ | 17 个用例：合成完整地图（默认空图）覆盖每个字段与每条拒绝路径（尺寸、截断、PoL、越界点）、`65/193` 归一化、addon 链与环、城堡种族（含 `0x80` 城墙位与未知种族）、捕获物映射、空信息块；末尾一条在真实数据上读 `Beltway.mp2`（缺数据即跳过） |
+| `Game.AdventureMap.TerrainTileSet` | ✅ | 载入 `GROUND32.TIL` 并预生成 4 个 shape（原图 / 上下 / 左右 / 两者），与参考 `getTileImage(TIL::GROUND32, index, shape)` 的 `Flip(horizontal = shape&2, vertical = shape&1)` 一致；越界索引返回 `null`（留黑，不崩） |
+| `Game.AdventureMap.AdventureMapView` | ✅ | 像素级滚动 + clamp（`max(0, map - viewport)`）、`TileAt`、`VisibleTileArea`（含被探到一半的边界 tile）、`Draw` 只画可见 tile；`CenterOn` 供视口定位 |
+| `App.Scenes.AdventureMapScene` | ✅ | 地形层 + 底部 `SMALFONT` 状态栏（地图名/尺寸、视口偏移、版本）；无英雄时把视口居中到「最靠地图中心的城堡」（占位规则，见 ADR-035）；地图或 TIL 读不出来时回到主菜单并在状态栏留信息，不会黑屏 |
+| `GameHost` 接线 | ✅ | `NEW GAME → 场景窗口 → OKAY` 现在真的进入冒险地图；方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单；`--enter-map`（配合 `--scenario-select`）与 `--map <file>` 两个截图/冒烟入口；鼠标事件在冒险地图上不再转给菜单 |
+| 像素基线 `adventure-map.png` | ✅ | `--map Alteris.mp2` 直接开图，居中到地图中部城堡，忽略状态栏；`VerifyAdventureMapBaseline.ps1` 与另外四条基线共用 `PixelBaseline.ps1` |
+
+### M4 验证记录（结构层与地形层）
+
+```text
+dotnet build FHeroes2Sharp.slnx -warnaserror → 0 警告 / 0 错误
+dotnet test   FHeroes2Sharp.slnx              → Core 167 / Assets 186 / UI 139 / Game 15 全绿（新增 32）
+dotnet run --project tools/FHeroes2.AssetProbe -- map F:\game\fh2\maps\Alteris.mp2 --limit 8
+# Map Alteris: 108x108 tiles, 11664 tiles, 1684 add-ons (1239 tiles with add-ons),
+# ground objects 4480, top objects 866, castles 12, capturable 59, obelisks 7,
+# information blocks 48, last object UID 4076.
+# Object types: ActionMonster 2335 / Mountains 449 / Trees 238 / …
+# Terrain images (206 distinct): 18 → 1408 tiles, 16 → 1349, 19 → 1333, …
+# Terrain shapes: 0 → 10435 tiles, 1 → 510, 2 → 507, 3 → 212
+dotnet run --project src/FHeroes2.App -- --map F:\game\fh2\maps\Beltway.mp2 \
+    --screenshot tools-output\map-direct.png --smoke-frames 30 --freeze-animation --lang en
+# [INFO] Terrain ready: 432 images of 32x32 from 'GROUND32.TIL' (4 shapes).
+# [INFO] Adventure map opened: 'Beltway' (72x72, 2304x2304 pixels, 13 castles).
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update
+# update tests/baselines/adventure-map.png  sha256 40178086…600cf
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -SkipBuild
+# verify tests/baselines/adventure-map.png → identical
+```
+
+* 画面外核对：`Beltway` 第一屏能看到草地、泥土、水域、海岸线与沙滩；`Alteris` 居中到中部城堡后同框出现
+  海岸、草地与沙地。地形图里内嵌的树、花、礁石、小船会照原样画出来——参考也一样
+  （`TIL` 的图自带这些装饰，与对象层无关）。
+* `GROUND32.TIL` 共 432 张 32×32，与参考 `GetMaximumTILIndex` 的输出一致；`shape` 分布说明翻转真的用上了。
+* 结构层与参考逐项对齐：tile 20 字节、addon 15 字节、城堡表 72 条、捕获物表 144 条都在同一偏移读出，
+  `Beltway` 的 13 座城镇与信息块里 15 个 70 字节城堡结构（13 城 + 2 个随机城）数量自洽。
+
+### M4 已知遗留
+
+* **对象层还没画**：地面/顶部对象、addon 部件、层排序（`sortObjectParts`）与主对象类型推断都没移植，
+  所以城镇、英雄、资源、矿场现在只是「地形」。这是 M4 的下一半，也是鼠标交互（信息框、拾取）的前提。
+* **雾、路径、旗帜、界面面板都没有**：没有右侧/底部控制面板、没有英雄状态、没有小地图，状态栏只是占位。
+* **视口居中规则是占位**：参考按玩家英雄定位；现在按「最靠地图中心的城堡」，等有玩家与英雄后替换。
+* **城堡/英雄/事件信息块只存原始字节**：`Mp2InfoBlock` 保留长度与内容，字段解析（`MP2::CastleInfo`、
+  `MP2::HeroInfo`、事件日期与资源）留给后续里程碑；因此「英雄落败改写」仍挂起。
+* **没有存档/退出确认**：`Esc` 直接回主菜单，参考会先弹系统对话框。
+* **滚动只有键盘**：鼠标拖屏、边缘滚动、小地图点击都未实现；滚动步长固定 1 tile。
 

@@ -881,8 +881,8 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
 
 **已知偏差**（写进 `PROGRESS.md`，不假装做完）：
 
-* 地图字符串按 Latin-1 解码。原版编辑器用的是卖家的 DOS 代码页，本机中文图的 GBK 名字会显示成
-  乱码；要正确显示得在文本层做代码页探测，那是接 UI 时的事。
+* ~~地图字符串按 Latin-1 解码。~~原版编辑器用的是卖家的 DOS 代码页，本机中文图的 GBK 名字会显示成
+  乱码；接 UI 时按 ADR-034 换成了 `MapTextCodec`（UTF-8 → GBK → Latin-1 探测）。
 * `readMP2Map` 里「单人类玩家 + 失去某英雄即败 + 该英雄站在电脑颜色格子上」会把胜利条件改写成
   `VICTORY_DEFEAT_OTHER_SIDE` 并建立盟友。它需要读 tile 数据与英雄精灵颜色表（`HEROES.ICN`
   前 42 帧的分组），等地图加载器落地后再补；本机 4 张图受影响，`AssetProbe maps` 会把这个数字
@@ -897,3 +897,109 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
   `Mp2FileInfo` 不是「地图」本身，只是它的名片。
 
 
+## ADR-033：场景选择窗口照参考布局自绘，`NEW_GAME` 直接开列表
+
+**背景**：`Mp2FileInfo` / `MapCatalog` 已经能列出本机 112 张可玩地图（ADR-032），但它们还没有
+消费者。参考实现里这条路是 `Game::MainMenu()` → `NEW_GAME` → `Dialog::SelectScenario`
+（`dialog_selectscenario.cpp`）：377×458 的 `REQSBKG.ICN` 面板居中，顶部五个尺寸按钮，中间
+30 行的 listbox（宽 364，行内放玩家数／尺寸／类型／名字／胜负图标），右侧滚动条，底部选中
+地图的难度与描述、`SYSTEM.ICN` 的 OKAY。它还有「标准局 / 战役」分叉与开局对话框（难度、玩家）。
+
+**决策**：
+
+1. 面板、17×17 图标、滑块、OKAY 帧全部用归档资源，坐标逐条照 `dialog_selectscenario.cpp`
+   （列表 55,55、行内 48/67/86/104、胜负 266/285、详情 42,318 292×90、OKAY 140,410）。
+   列表视口用 9 行 × 19 px，而不是参考的 30 行 × 12 px：`FONT.ICN` 的 small 字体加上 CJK 回退
+   在 12 px 行高里会互相顶到，19 px 是本项目 `SettingsOption` 已经验证过的行高。
+2. 列表只有一份，尺寸筛选（ALL/S/M/L/XL）重建视图并保留选中项，不照参考分成五个 bucket：
+   `MapCatalog` 已经排好序，筛选只需一次 `Where`，112 张图的内存代价可以忽略。
+3. `MAP_TYPE_ICON` 不是归档里的表：参考在启动时把 `ARTFX.ICN` 帧 6/90/101 缩放到 15×15 再放进
+   17×17 透明格。`App.Scenes.ScenarioArtwork` 做同一件事，UI 层只收三张 17×17 精灵。
+   只有扩展包 `Heroes2x.agg` 才有 90/101 帧，纯原作数据下 PoL/Resurrection 徽章留空。
+4. 难度只读显示，不弹参考里的开局对话框：改难度要等 M4 的地图加载器（`world_loadmap`）与
+   `Game::Setup`。`NEW_GAME` 也跳过「标准局 / 战役」分叉，直接开场景列表；分叉等战役数据。
+5. 键盘由宿主转发：`ScenarioSelectionDialog` 只认 `MoveSelection(±n)` / `MovePage(±1)` /
+   `Select(index)` 这类语义动作，`GameHost.HandleKeyDown` 把 SDL 的 Up/Down/PageUp/PageDown/
+   Home/End 映射过去。UI 层因此不依赖 SDL 键码，和鼠标、测试三边都解耦。
+6. Escape 的语义统一成「先关最上层模态窗口」：设置对话框或场景列表打开时 Esc 只关它们，
+   只有空菜单上的 Esc 才退出客户端（顺带修掉 M2 遗留的「设置打开时 Esc 直接退出」）。
+   同理，`F2` 在模态窗口打开时不生效：它会重建菜单文字，而窗口里的文字是打开时取的一份快照。
+7. `--open-scenario` 是截图入口，不新增玩法命令：窗口只能点 NEW GAME 招牌打开，脚本没有鼠标。
+   `scenario.png` / `scenario.zh_CN.png` 因此成为第三、第四份像素基线（门禁见
+   `tools/scripts/VerifyScenarioBaseline.ps1` 与 `tests/baselines/README.md`）。
+
+**后果**：
+
+* 从主菜单到场景列表已经全链路可用，`ConfirmScenario()` 把 `Mp2FileInfo` 交回宿主；M4 接上
+  地图加载器后只需替换那里「只改状态栏」的实现。
+* 参考里有、这里没做的：双击确认、Debug 版的 Delete 删文件、滚动条上下箭头的点击（只画
+  `REQUESTS.ICN` 5/7 帧）、难度选择与「标准局 / 战役」分叉。都记在 `PROGRESS.md`，不假装做完。
+* 中文界面能同框显示 `.mo` 译文与地图文件里的英文描述：地图文字是数据，不交给翻译层。
+* **修正（实现后对照参考复查）**：第 1 条里「列表视口用 9 行 × 19 px」是错的。参考的
+  `ListBox::Redraw()` 是 `rtAreaItems.y + i * height / maxItems`，即 `i*175/9` 截断（19、38、
+  58、77 …），不是固定 17/9 = 19 的整数倍；图标也画在行顶（没有 4 px 偏移），只有名字下沉 3 px。
+  第一版把 `MAP_LIST_ROW_SPACING_Y` 当成图标偏移，导致内容整体低 4 px、最后一行压到框沿、命中
+  区域跟着漂。已按参考改正并补了 UI 测试，细节见 `PROGRESS.md` 的「M3 修正记录」。
+
+
+## ADR-034：MP2 文本按「UTF-8 → GBK → Latin-1」的顺序自动判编码
+
+**背景**：MP2 的 428 字节头里，名字（45 字节）、描述（13 行 × 41）与胜负条件都是**裸字节**，
+没有任何编码标记。原版用数据集的 DOS 代码页把它画出来；本项目早期直接用 `Encoding.Latin1`
+解码，于是中文图包（GBK）的名字与描述变成一串 `?`——`AssetProbe maps` 里的 `Slugfes.mp2
+¼¤Õ½` 就是 `激战` 被当成 Latin-1 的结果，界面上更是整块不可读（见 M3 修正记录）。
+
+**决策**：
+
+1. 用一个显式的 `MapTextCodec` 负责这三个字段，判定顺序固定为：纯 ASCII → 严格 UTF-8（且必须
+   真的解出多字节字符）→ 严格 GBK（能解、回环编码字节一致、且至少 2 个汉字）→ Latin-1。
+   每一步都要么完全成功、要么整体放弃，不做逐字节猜测。
+2. GBK 的门槛是「至少 2 个汉字」而不是「解得出就行」：CP1252 的 `Château` 里 `E2 74` 恰好也是
+   一个合法 GBK 字，一个汉字的门槛会把它变成「Châ+汉字+eau」。这条边界有单测钉住。
+3. 不做自动探测的「学习」或配置项：地图文本是数据，界面语言是设置，两者不联动；中文图包在
+   英文界面下也照原样显示中文（`ADR-033` 的后果里已经说明地图文字不交给翻译层）。
+4. `System.Text.Encoding.CodePages` 的 `GBK`（936）在运行时才注册，取不到时 `SupportsGbk` 为
+   false，退化为「UTF-8 → Latin-1」，不会崩；对应的单测在这种情况下直接跳过。
+
+**后果**：
+
+* 中文图包的名字、描述、胜负条件都能正常显示，`MapCatalog` 按新名字排序，`scenario*.png`
+  基线因此重建（哈希已更新）。
+* 仍然是启发式：一串**同时**是合法 GBK 且解出两个以上汉字的 CP1252 文本会被误判成中文——这种
+  组合在真实地图里没有出现，真出现时也只能靠人工改名。
+* `--scenario-select <n>` 是这次顺手加的诊断开关（开窗并选中第 n 张图），用来给列表末尾的中文
+  图拍基线；它不改变玩法。
+
+## ADR-035：M4 先做「结构层 + 地形层」，对象层单独一刀
+
+**背景**：M3 之后要真正「进冒险地图」。参考实现里这一步跨三层：`World::loadMapMP2`（文件 →
+`Maps::Tile` 部件模型）、`Maps::redraw*Layer`（部件 → 像素）、`Interface::GameArea`（滚动与面板）。
+`Maps::Tile` 的部件模型（`pushGroundObjectPart` / `pushTopObjectPart` / `sortObjectParts` / 主对象
+类型推断）是其中最重的一块，且只有它有输入交互（信息框、拾取、路径）依赖。若一次全做，既没法
+分层验证，也没法给地形层拍稳定的像素基线。
+
+**决策**：
+
+1. `FHeroes2.Assets.Maps` 只负责**文件结构**：`Mp2TileInfo` / `Mp2AddonInfo` / `Mp2ObjectType` /
+   `Mp2ObjectIcnType` / `Mp2Map`。`Mp2Map` 不构建任何游戏对象（没有 Tile、没有 Castle、没有 Kingdom），
+   也不解释信息块内容，只把字节交给上层。
+2. 地形层单独一步：`AdventureMapView` 直接把 `Mp2TileInfo.TerrainImageIndex` 映射到
+   `GROUND32.TIL`，`TerrainShape`（`TerrainFlags & 3`）决定四个预翻转变体之一，与参考
+   `getTileImage(TIL::GROUND32, index, shape)` 一一对应。这层不依赖任何部件模型，因此可以先上。
+3. 对象层（下一刀）才引入 `Maps::Tile` 的部件模型：addon 链展开成部件、按 layer 排序、主对象类型
+   由 `mapObjectType` 与 addon 共同决定。地形层保持不动，只在它上面加绘制。
+4. 没有英雄之前，视口居中规则是占位：「最靠地图中心的城堡」。有玩家/英雄后立刻换成参考的规则
+   （玩家英雄，其次玩家城堡），`AdventureMapScene.TryCreate` 是唯一改动点。
+5. `--map <file>` 与 `--enter-map` 是为可验证性付的成本：前者让地形基线只依赖一个地图文件，后者
+   端到端跑通「NEW GAME → 列表 → OKAY → 冒险地图」而不需要鼠标。
+
+**后果**：
+
+* 结构层可以被独立钉死：`Mp2MapTests` 用合成地图覆盖每条偏移与拒绝路径，真实数据抽查 `Beltway`；
+  `AdventureMapViewTests` 用 2×2 像素的假 TIL 钉住滚动数学与 tile 循环。
+* 现在的冒险地图**没有对象**：城镇、英雄、资源、矿场只是地形。地形图里内嵌的装饰（树、花、礁石、
+  小船）照原样出现，这与参考一致，不是漏画。
+* `Mp2Map` 的 API 是**增量**的：对象层只需要新增消费方，不需要改读取器；但 `Mp2InfoBlock` 目前是
+  原始字节，解析城堡/英雄/事件时要加各自的解码器，且必须保持「块索引 = `Metadata`」这条链。
+* 如果之后发现 `Metadata` 与 tile 的匹配必须依赖主对象类型（`getMainObjectType` 与
+  `mapObjectType` 可能不同），那属于对象层的工作，届时在部件模型里解决，而不是往 `Mp2Map` 里塞近似值。

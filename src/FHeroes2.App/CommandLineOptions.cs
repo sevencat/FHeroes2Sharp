@@ -10,6 +10,7 @@ namespace FHeroes2.App;
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--freeze-animation]
+///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -67,6 +68,35 @@ public sealed class CommandLineOptions
     /// needs a real mouse.
     /// </summary>
     public bool OpenSettings { get; private set; }
+
+    /// <summary>
+    /// Opens the scenario selection window of the main menu at start up (<c>--open-scenario</c>).
+    /// The New Game sign does the same; the flag exists because a screenshot of the dialog
+    /// otherwise needs a real mouse click.
+    /// </summary>
+    public bool OpenScenario { get; private set; }
+
+    /// <summary>
+    /// Index of the map to select when the scenario window opens (<c>--scenario-select</c>), zero
+    /// based and counted in the unfiltered list. It opens the window as well, so a screenshot can
+    /// show any row of the list without a mouse.
+    /// </summary>
+    public int? ScenarioSelection { get; private set; }
+
+    /// <summary>
+    /// Confirms the scenario selection at start up and opens its adventure map (<c>--enter-map</c>).
+    /// The scenario window is opened first when it is not already, and the first map is used unless
+    /// <c>--scenario-select</c> picks another one. It is how M4 is screenshotted and smoke tested
+    /// without a mouse.
+    /// </summary>
+    public bool EnterMap { get; private set; }
+
+    /// <summary>
+    /// Opens this map file directly on the adventure map (<c>--map &lt;file.mp2&gt;</c>), skipping the
+    /// menu and the scenario list. It is what makes the adventure map baseline independent of the
+    /// installed map collection: the frame only depends on the file that is passed in.
+    /// </summary>
+    public string? MapFile { get; private set; }
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -184,6 +214,29 @@ public sealed class CommandLineOptions
                     options.OpenSettings = true;
                     break;
 
+                case "--open-scenario":
+                    options.OpenScenario = true;
+                    break;
+
+                case "--scenario-select":
+                    string rawSelection = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawSelection, out int selection) || selection < 0)
+                    {
+                        throw new ArgumentException(
+                            $"'{argument}' expects a zero based map index, got '{rawSelection}'.");
+                    }
+
+                    options.ScenarioSelection = selection;
+                    break;
+
+                case "--enter-map":
+                    options.EnterMap = true;
+                    break;
+
+                case "--map":
+                    options.MapFile = RequireValue(arguments, ref i, argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -230,6 +283,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
         Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");
+        Console.WriteLine("  --open-scenario     Opens the scenario selection of the main menu (New Game).");
+        Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");
+        Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
+        Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");

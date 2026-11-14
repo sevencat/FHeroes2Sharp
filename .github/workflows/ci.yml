@@ -66,8 +66,8 @@ jobs:
 
       # The baselines run from one step: they share PixelBaseline.ps1 (data lookup, build, baseline
       # self check, compare) and only differ in the flags that make their frame reproducible.
-      # The settings dialog is pinned once per interface language because its text is part of the
-      # image (tests/baselines/README.md explains why a language gets its own file).
+      # The settings and scenario dialogs are pinned once per interface language because their text
+      # is part of the image (tests/baselines/README.md explains why a language gets its own file).
       # FHEROES2_DATA is a repository variable holding the data directory on the runner (for
       # example D:\game\fh2). Set FHEROES2_RUNNER to a self hosted runner label (for example
       # 'fh2-data') as well; without both, the run degrades to the baseline file check that each
@@ -89,7 +89,10 @@ jobs:
           $runs = @(
             @{ Script = 'VerifyMenuBaseline.ps1'; Culture = '' },
             @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'en' },
-            @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'zh_CN' }
+            @{ Script = 'VerifySettingsBaseline.ps1'; Culture = 'zh_CN' },
+            @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'en' },
+            @{ Script = 'VerifyScenarioBaseline.ps1'; Culture = 'zh_CN' },
+            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en' }
           )
 
           foreach ($run in $runs) {

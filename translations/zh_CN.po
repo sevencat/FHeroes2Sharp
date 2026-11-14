@@ -281,6 +281,55 @@ msgstr ""
 "整数倍的分辨率（2.0x、3.0x 等）通常显示效果更好，因为像素在水平和垂直"
 "方向上都会按整数倍均匀放大。"
 
+#. 场景选择窗口（dialog_selectscenario.cpp、difficulty.cpp）
+msgid "Map difficulty:"
+msgstr "地图难度："
+
+msgid "difficulty|Easy"
+msgstr "简单"
+
+msgid "difficulty|Normal"
+msgstr "普通"
+
+msgid "difficulty|Hard"
+msgstr "困难"
+
+msgid "difficulty|Expert"
+msgstr "专家"
+
+msgid "difficulty|Impossible"
+msgstr "不可能"
+
+msgid "Defeat all enemy heroes and towns."
+msgstr "击败所有敌方英雄与城镇。"
+
+msgid "Capture a specific town."
+msgstr "占领特定城镇。"
+
+msgid "Defeat a specific hero."
+msgstr "击败特定英雄。"
+
+msgid "Find a specific artifact."
+msgstr "找到特定宝物。"
+
+msgid "Your side must defeat the opposing side."
+msgstr "我方必须击败敌方。"
+
+msgid "Accumulate a large amount of gold."
+msgstr "积累大量金币。"
+
+msgid "Lose all your heroes and towns."
+msgstr "失去所有英雄与城镇。"
+
+msgid "Lose a specific town."
+msgstr "失去特定城镇。"
+
+msgid "Lose a specific hero."
+msgstr "失去特定英雄。"
+
+msgid "Run out of time. Fail to win by a certain point."
+msgstr "时间耗尽。未能在指定时间前获胜。"
+
 #. 语言名称，显示在语言选择列表中
 msgid "English"
 msgstr "英语"

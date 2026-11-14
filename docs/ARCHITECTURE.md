@@ -8,7 +8,7 @@
 | `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
 | `FHeroes2.Game` | 世界状态、回合、AI、存档 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox`）、界面流转 | Core, Assets, Rendering, Game |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox` / `Dialogs.ScenarioSelectionDialog`）、界面流转 | Core, Assets, Rendering, Game |
 | `FHeroes2.App` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
@@ -170,6 +170,31 @@ AssetProbe maps                        把结果打成一张表（含被跳过�
 （含 `Heroes2.agg`）才去它的父级找 `Maps/`，否则用户顺手指一个临时目录就会去扫无关位置。
 tile / addon / 对象表仍归 M4 的地图加载器（`world_loadmap.cpp` / `map_object_info.cpp`），
 `Mp2FileInfo` 不假装自己是一张地图（ADR-032）。
+
+## 场景选择窗口（M3 的第一个界面）
+
+清单有了消费者：`UI.Dialogs.ScenarioSelectionDialog` 是参考 `Dialog::SelectScenario` 的等价物，
+和设置对话框一样归主菜单持有（`MainMenuScene.Scenario`），但它是**纯逻辑 + 自绘**：
+
+```
+UI.Dialogs.ScenarioDialogArtwork  面板/阴影/17x17 图标/滑块/OKAY 帧 + 五张尺寸按钮的矩形
+UI.Dialogs.ScenarioDialogText     难度、胜利、失败三类译文（msgid 与参考一致，交给 .mo）
+UI.Dialogs.ScenarioSelectionDialog  过滤后的列表、9 行视口、滚动、详情区、OK
+App.Scenes.ScenarioArtwork        ICN 名字 → 上面那份美术（ICN 编号只在这一层出现）
+```
+
+布局常量逐条抄 `dialog_selectscenario.cpp`（列表 55,55 270×175、行内图标 48/67/86/104、
+胜负 266/285、详情 42,318 292×90、OKAY 140,410），尺寸按钮是 `REQUESTS.ICN` 9…13 的
+17×17 图标按 62 px 步长摆开。`MAP_TYPE_ICON` 在归档里不存在：参考在启动时把 `ARTFX.ICN`
+6/90/101 缩放到 15×15 再放进 17×17 的透明格，`ScenarioArtwork` 做同一件事，所以 UI 层仍只
+收「三张 17×17 精灵」，不认识 ARTFX 编号。
+
+模态输入由主菜单转发：`SetCursor` / `SetLeftButton` / `Select(char)`（Enter、Escape），
+方向键与 PageUp/PageDown/Home/End 不是字符，走 `MoveScenarioSelection` / `MoveScenarioPage` /
+`SelectFirst…` / `SelectLast…`，由 `GameHost.HandleKeyDown` 在窗口打开时接管。列表是 `MapCatalog.ReadAll` 的结果再按尺寸过滤，
+惰性读一次、整个会话复用。
+确认后 `ConfirmScenario()` 把 `Mp2FileInfo` 交回宿主——这只是 M4 地图加载器的入口，
+当前只记日志并改状态栏（ADR-033）。
 
 
 ## 错误处理

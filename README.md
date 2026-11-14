@@ -37,7 +37,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 
 **M2 进行中（主菜单已可玩）**：`.mo` 本地化已落地（`Assets.Localization.MoCatalog` 读取 GNU MO 目录，
 `translations/zh_CN.po` + `tools/scripts/BuildTranslations.ps1` 生成并安装
-`<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率共 96 条，
+`<data>/files/lang/zh_CN.mo`，当前覆盖主菜单 / 设置 / 语言选择 / 快捷键 / 分辨率 / 场景选择共 112 条，
 未翻译项回退英文）。文字颜色也已落地：`Core.Imaging.PaletteTable`（原版 13 张索引重映射表）+
 `BitmapFont.WithPalette` / `GlyphCoverageRamp.WithPalette`，白/黄/灰文字与 CJK 混排同色（ADR-020）。
 界面文本接的是真实字体：`CompositeGlyphSource` 把 `FONT.ICN`/`SMALFONT.ICN` 与内嵌 CJK 字体合成，
@@ -61,11 +61,20 @@ CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这些脚本�
 行文字超出内容区时按 `RowPadding` 裁掉，值的左端也不会越过左内边距，所以长译文不会跑到边框上。
 待办：语言选择对话框（剩余清单见 `docs/PROGRESS.md`）。
 
-**M3 开始（先做场景列表的数据层）**：`Assets.Maps.Mp2FileInfo` 读 MP2 文件最前面的 428 字节信息块
+**M3：地图清单与场景选择**：`Assets.Maps.Mp2FileInfo` 读 MP2 文件最前面的 428 字节信息块
 （名字、描述、尺寸、难度、六种颜色的王国/人类/电脑归属、初始种族、胜负条件与参数），
 `Assets.Maps.MapCatalog` 照 `Maps::getAllMapFileInfos` 的规则在数据目录与 `Maps/` 子目录里找地图、
 丢掉当前玩家数玩不了的图、按场景名排序；`AssetProbe maps` 能一次打出整份清单（本机 112 张可玩，
-1 张因为要求 2 名人类玩家被跳过）。场景选择对话框本身还没开始（ADR-032）。
+1 张因为要求 2 名人类玩家被跳过，ADR-032）。点 NEW GAME 招牌会打开原版的场景选择窗口
+（`REQSBKG.ICN` 面板 + `REQUESTS.ICN` 图标、五个尺寸筛选、9 行列表 + `ESCROLL.ICN` 滑块、
+选中地图的难度与描述、`SYSTEM.ICN` 的 OKAY）；产品徽章是从 `ARTFX.ICN` 6/90/101 帧缩放合成的
+（原版 `ICN::MAP_TYPE_ICON` 也是运行时生成）。方向键 / PageUp / PageDown / Home / End 走列表，
+Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退出。`--open-scenario` 让截图脚本也能
+抓到这一屏，`--scenario-select <n>` 还能直接选中第 n 张（列表末尾的中文图靠它拍图）；
+`scenario.png` / `scenario.zh_CN.png` 是它的像素基线（ADR-033）。
+地图文字由 `Assets.Maps.MapTextCodec` 判编码：ASCII → UTF-8 → GBK（至少 2 个汉字）→ Latin-1，
+所以中文图包的「矿山之战」与英文图的「Alteris」在同一个列表里都能读（ADR-034）。
+难度选择、`NEW GAME` 的「标准局 / 战役」分叉、进入冒险地图仍在 M4 之前。
 
 音频：主菜单上屏后循环播原版主菜单曲（`MUSIC/homm2_41.ogg`），音效走 `HEROES2.AGG` 里的
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
@@ -122,6 +131,11 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update      # 有意改了视觉后�
 pwsh tools/scripts/VerifySettingsBaseline.ps1
 pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update
+
+# 场景选择窗口基线：点 NEW GAME 打开的那一屏（--open-scenario 让脚本也能抓到它）
+pwsh tools/scripts/VerifyScenarioBaseline.ps1
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
 
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1

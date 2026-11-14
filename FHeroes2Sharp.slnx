@@ -10,6 +10,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/FHeroes2.Assets.Tests/FHeroes2.Assets.Tests.csproj" />
     <Project Path="tests/FHeroes2.Core.Tests/FHeroes2.Core.Tests.csproj" />
+    <Project Path="tests/FHeroes2.Game.Tests/FHeroes2.Game.Tests.csproj" />
     <Project Path="tests/FHeroes2.UI.Tests/FHeroes2.UI.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

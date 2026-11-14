@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Audio;
+using FHeroes2.Assets.Maps;
 using FHeroes2.App.Audio;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
@@ -41,6 +42,7 @@ public sealed class GameHost : IDisposable
     private IScene? _scene;
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
+    private AdventureMapScene? _adventure;
     private bool _supportsCjk;
     private bool _sdlInitialised;
     private bool _ttfInitialised;
@@ -171,6 +173,10 @@ public sealed class GameHost : IDisposable
                 break;
             }
 
+            // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
+            // input batch that confirmed it has been handled.
+            TryEnterAdventureMap();
+
             double now = clock.Elapsed.TotalSeconds;
 
             // Clamp the step so that dragging the window does not teleport the animation.
@@ -199,8 +205,9 @@ public sealed class GameHost : IDisposable
 
                 case SDL.EventType.MouseMotion:
                     // With --cursor the synthetic pointer is what a screenshot should show, so the
-                    // real one must not steal the hover state.
-                    if (!_syntheticCursor)
+                    // real one must not steal the hover state. The adventure map has no widgets yet,
+                    // so the pointer only matters on the menu.
+                    if (!_syntheticCursor && _adventure is null)
                     {
                         _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
                     }
@@ -208,7 +215,7 @@ public sealed class GameHost : IDisposable
                     break;
 
                 case SDL.EventType.WindowMouseLeave:
-                    if (!_syntheticCursor)
+                    if (!_syntheticCursor && _adventure is null)
                     {
                         _menu?.SetCursor(null);
                     }
@@ -235,21 +242,68 @@ public sealed class GameHost : IDisposable
     /// <summary>Handles a key press; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleKeyDown(in SDL.KeyboardEvent key)
     {
+        // Engine wide keys stay available on every screen, including the adventure map.
         switch (key.Key)
         {
-            case SDL.Keycode.Escape:
-                return true;
-
-            case SDL.Keycode.F2 when !key.Repeat:
-                _menu?.NextLanguage();
-                return false;
-
             case SDL.Keycode.F11 when !key.Repeat:
                 _presenter?.ToggleFullscreen();
                 return false;
 
             case SDL.Keycode.F12 when !key.Repeat:
                 _screenshotRequested = true;
+                return false;
+
+            default:
+                break;
+        }
+
+        if (_adventure is { } adventure)
+        {
+            return HandleAdventureKey(key, adventure);
+        }
+
+        switch (key.Key)
+        {
+            case SDL.Keycode.Escape:
+                // Escape closes an open modal window first, the CANCEL button of the original; only
+                // a bare menu Escape leaves the client.
+                if (_menu?.HasModalDialog == true)
+                {
+                    _menu.Select((char)SDL.Keycode.Escape);
+                    return false;
+                }
+
+                return true;
+
+            case SDL.Keycode.Up when _menu?.Scenario is not null:
+                _menu.MoveScenarioSelection(-1);
+                return false;
+
+            case SDL.Keycode.Down when _menu?.Scenario is not null:
+                _menu.MoveScenarioSelection(1);
+                return false;
+
+            case SDL.Keycode.Pageup when _menu?.Scenario is not null:
+                _menu.MoveScenarioPage(-1);
+                return false;
+
+            case SDL.Keycode.Pagedown when _menu?.Scenario is not null:
+                _menu.MoveScenarioPage(1);
+                return false;
+
+            case SDL.Keycode.Home when _menu?.Scenario is not null:
+                _menu.SelectFirstScenario();
+                return false;
+
+            case SDL.Keycode.End when _menu?.Scenario is not null:
+                _menu.SelectLastScenario();
+                return false;
+
+            // The language hot key rebuilds the menu, so it stays out of the way while a modal
+            // window owns the text: the settings dialog has its own language row, the scenario list
+            // is rebuilt in the new language the next time it opens.
+            case SDL.Keycode.F2 when !key.Repeat && _menu?.HasModalDialog != true:
+                _menu?.NextLanguage();
                 return false;
 
             default:
@@ -265,7 +319,7 @@ public sealed class GameHost : IDisposable
     /// <summary>Handles a mouse button event; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleMouseButton(in SDL.MouseButtonEvent button)
     {
-        if (_menu is null)
+        if (_menu is null || _adventure is not null)
         {
             return false;
         }
@@ -301,6 +355,114 @@ public sealed class GameHost : IDisposable
         GameLog.Info("Quit selected, closing the client.");
         _running = false;
         return true;
+    }
+
+    /// <summary>
+    /// Handles the keys of the adventure map: the arrow keys scroll by one tile, Home returns to the
+    /// top left corner and Escape goes back to the main menu (the reference opens the system dialog
+    /// there; that dialog belongs to a later milestone).
+    /// </summary>
+    private bool HandleAdventureKey(in SDL.KeyboardEvent key, AdventureMapScene adventure)
+    {
+        switch (key.Key)
+        {
+            case SDL.Keycode.Escape:
+                ReturnToMenu();
+                return false;
+
+            case SDL.Keycode.Left:
+                adventure.ScrollByTiles(-1, 0);
+                return false;
+
+            case SDL.Keycode.Right:
+                adventure.ScrollByTiles(1, 0);
+                return false;
+
+            case SDL.Keycode.Up:
+                adventure.ScrollByTiles(0, -1);
+                return false;
+
+            case SDL.Keycode.Down:
+                adventure.ScrollByTiles(0, 1);
+                return false;
+
+            case SDL.Keycode.Home:
+                adventure.ScrollToStart();
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Starts the adventure map of a scenario the menu has just confirmed. The map or the terrain
+    /// tiles may be unusable; the client then stays on the menu, which keeps its status bar, instead
+    /// of showing a black screen.
+    /// </summary>
+    private void TryEnterAdventureMap()
+    {
+        if (_adventure is not null || _menu is null)
+        {
+            return;
+        }
+
+        if (_menu.TakeConfirmedScenario() is not { } map)
+        {
+            return;
+        }
+
+        AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, map, out string? error);
+        if (scene is null)
+        {
+            GameLog.Warn($"The scenario '{map.Name}' cannot be started: {error}");
+            return;
+        }
+
+        _adventure = scene;
+        _scene = scene;
+    }
+
+    /// <summary>
+    /// Opens one map file on the adventure map, bypassing the menu and the scenario list
+    /// (<c>--map</c>). A file that cannot be read leaves the client where it was, which is what makes
+    /// the flag safe to use in scripts.
+    /// </summary>
+    private void OpenMapFile(string filePath)
+    {
+        Mp2FileInfo mapInfo;
+        try
+        {
+            mapInfo = Mp2FileInfo.Read(filePath);
+        }
+        catch (Exception exception) when (exception is BinaryFormatException or IOException or UnauthorizedAccessException)
+        {
+            GameLog.Error($"The map file '{filePath}' could not be read", exception);
+            return;
+        }
+
+        AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
+        if (scene is null)
+        {
+            GameLog.Warn($"The map file '{filePath}' cannot be shown: {error}");
+            return;
+        }
+
+        _adventure = scene;
+        _scene = scene;
+    }
+
+    /// <summary>Leaves the adventure map and goes back to the main menu.</summary>
+    private void ReturnToMenu()
+    {
+        if (_adventure is null)
+        {
+            return;
+        }
+
+        GameLog.Info($"Leaving the adventure map '{_adventure.MapName}'.");
+        _adventure = null;
+        _scene = _menu is not null ? _menu : _diagnostics;
     }
 
     /// <summary>Maps a window coordinate onto the 640x480 logical frame, or <see langword="null"/> outside it.</summary>
@@ -382,6 +544,14 @@ public sealed class GameHost : IDisposable
                     _menu.OpenSettings();
                 }
 
+                if (_options.OpenScenario || _options.ScenarioSelection is not null)
+                {
+                    if (_menu.OpenScenario() && _options.ScenarioSelection is { } selection)
+                    {
+                        _menu.Scenario?.Select(selection);
+                    }
+                }
+
                 if (_options.Cursor is { } cursor)
                 {
                     _menu.SetCursor(cursor);
@@ -397,6 +567,23 @@ public sealed class GameHost : IDisposable
         }
 
         _scene = _menu is not null ? _menu : _diagnostics;
+
+        if (_options.EnterMap && _menu is not null)
+        {
+            if (_menu.Scenario is null)
+            {
+                _menu.OpenScenario();
+            }
+
+            // Confirm what the list shows: the first map, or the one --scenario-select picked.
+            _menu.ConfirmScenario();
+            TryEnterAdventureMap();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.MapFile))
+        {
+            OpenMapFile(_options.MapFile);
+        }
 
         GameLog.Info(_menu is null
             ? "Starting on the diagnostics screen."

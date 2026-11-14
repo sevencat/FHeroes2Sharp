@@ -290,18 +290,8 @@ public sealed record Mp2FileInfo
         return colors;
     }
 
-    private static string ReadField(ReadOnlySpan<byte> header, int offset, int length)
-    {
-        ReadOnlySpan<byte> field = header.Slice(offset, length);
-
-        int terminator = field.IndexOf((byte)0);
-        if (terminator >= 0)
-        {
-            field = field[..terminator];
-        }
-
-        return Encoding.Latin1.GetString(field).TrimEnd();
-    }
+    private static string ReadField(ReadOnlySpan<byte> header, int offset, int length) =>
+        MapTextCodec.Decode(header.Slice(offset, length));
 
     private static MapVersion VersionFromPath(string filePath)
     {

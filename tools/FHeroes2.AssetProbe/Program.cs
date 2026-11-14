@@ -25,6 +25,8 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe cursor  &lt;NAME.BMP&gt; &lt;output-dir&gt; [--palette &lt;NAME&gt;] [--format png|bmp]
 ///   FHeroes2.AssetProbe effects &lt;output-dir&gt; [--palette &lt;NAME&gt;]
 ///   FHeroes2.AssetProbe window  &lt;output-dir&gt; [--palette &lt;NAME&gt;]
+///   FHeroes2.AssetProbe maps    [--data &lt;dir&gt;]
+///   FHeroes2.AssetProbe map     &lt;file.mp2&gt; [--limit &lt;n&gt;]
 ///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;] [--ignore x,y,w,h]...
 /// </code>
 /// </summary>
@@ -58,6 +60,7 @@ internal static class Program
                 "effects" => ExportEffects(arguments),
                 "window" => ExportWindow(arguments),
                 "maps" => ListMaps(arguments),
+                "map" => InspectMap(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -635,6 +638,81 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// Reads one map file at the tile level and prints what the loader found: the summary, the most
+    /// frequent object types, the castle and capturable object tables, the longest add-on chain and
+    /// the sizes of the information blocks. It is the quickest way to tell whether the MP2 structures
+    /// are parsed at the right offsets.
+    /// </summary>
+    private static int InspectMap(ProbeArguments arguments)
+    {
+        if (arguments.Positional.Count != 1)
+        {
+            throw new ArgumentException("map expects exactly one argument: <file.mp2>.");
+        }
+
+        string file = arguments.Positional[0];
+        Mp2Map map = Mp2Map.Read(file);
+
+        Console.WriteLine($"# {map.Info.FilePath}");
+        Console.WriteLine(map.GetSummary());
+
+        int limit = arguments.Limit ?? 10;
+
+        Console.WriteLine("Object types:");
+        foreach (IGrouping<Mp2ObjectType, Mp2TileInfo> group in map.Tiles
+                     .Where(tile => !tile.IsEmpty)
+                     .GroupBy(tile => tile.ObjectType)
+                     .OrderByDescending(group => group.Count())
+                     .ThenBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                     .Take(limit))
+        {
+            Console.WriteLine($"  {group.Key,-32} {group.Count()}");
+        }
+
+        Console.WriteLine($"Terrain images ({map.Tiles.Select(tile => tile.TerrainImageIndex).Distinct().Count()} distinct):");
+        foreach (IGrouping<ushort, Mp2TileInfo> group in map.Tiles
+                     .GroupBy(tile => tile.TerrainImageIndex)
+                     .OrderByDescending(group => group.Count())
+                     .Take(limit))
+        {
+            Console.WriteLine($"  image {group.Key,-5} {group.Count()} tiles");
+        }
+
+        Console.WriteLine("Terrain shapes:");
+        for (int shape = 0; shape < 4; ++shape)
+        {
+            Console.WriteLine($"  shape {shape} {map.Tiles.Count(tile => tile.TerrainShape == shape)} tiles");
+        }
+
+        Console.WriteLine($"Castles ({map.Castles.Count}):");
+        foreach (Mp2CastlePosition castle in map.Castles)
+        {
+            Console.WriteLine($"  {castle.X},{castle.Y}  {castle.Race}  {(castle.HasFort ? "castle" : "town")}");
+        }
+
+        Console.WriteLine($"Capturable objects ({map.CaptureObjects.Count}):");
+        foreach (Mp2CaptureObject captureObject in map.CaptureObjects)
+        {
+            Console.WriteLine(
+                $"  {captureObject.X},{captureObject.Y}  {captureObject.ObjectType}  (raw {captureObject.RawType})");
+        }
+
+        int usedAddons = Math.Max(map.Addons.Count - 1, 0);
+        int longestChain = map.Tiles.Max(tile => map.EnumerateAddonChain(tile).Count());
+        Console.WriteLine($"Add-ons: {usedAddons} used, longest chain {longestChain}");
+
+        Console.WriteLine($"Information blocks ({map.InfoBlocks.Count}):");
+        foreach (IGrouping<int, Mp2InfoBlock> group in map.InfoBlocks
+                     .GroupBy(block => block.Data.Length)
+                     .OrderBy(group => group.Key))
+        {
+            Console.WriteLine($"  {group.Key} bytes: {group.Count()}");
+        }
+
+        return 0;
+    }
+
     private static int Unknown(string command)
     {
         Console.Error.WriteLine($"error: unknown command '{command}'.");
@@ -679,6 +757,7 @@ internal static class Program
         Console.WriteLine("  effects <dir> [--palette <NAME>]                     Renders the dialog effects preview.");
         Console.WriteLine("  window  <dir> [--palette <NAME>]                     Renders the standard dialog windows.");
         Console.WriteLine("  maps    [--data <dir>]                               Lists the playable map files.");
+        Console.WriteLine("  map     <file.mp2> [--limit <n>]                     Dumps the tile level content of one map.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
         Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
         Console.WriteLine("                      bar shows a live FPS counter.");

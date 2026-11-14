@@ -93,6 +93,38 @@ public static partial class ImageOps
         }
     }
 
+    /// <summary>
+    /// Mirrors <paramref name="source"/> into a new buffer, the port of <c>fheroes2::Flip()</c> as it
+    /// is used for the four terrain shape variants of a TIL entry: the second shape bit flips
+    /// horizontally, the first one vertically.
+    /// </summary>
+    public static PixelBuffer Flip(PixelBuffer source, bool horizontal, bool vertical)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        PixelBuffer result = new(source.Width, source.Height);
+
+        for (int y = 0; y < source.Height; ++y)
+        {
+            ReadOnlySpan<byte> sourceRow = source.Row(vertical ? source.Height - 1 - y : y);
+            Span<byte> destinationRow = result.Row(y);
+
+            if (horizontal)
+            {
+                for (int x = 0; x < source.Width; ++x)
+                {
+                    destinationRow[x] = sourceRow[source.Width - 1 - x];
+                }
+            }
+            else
+            {
+                sourceRow.CopyTo(destinationRow);
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>Draws <paramref name="sprite"/> at its own <see cref="Sprite.OffsetX"/>/<see cref="Sprite.OffsetY"/>.</summary>
     public static void BlitSprite(PixelBuffer destination, Sprite sprite) =>
         BlitSprite(destination, new Point(sprite.OffsetX, sprite.OffsetY), sprite);

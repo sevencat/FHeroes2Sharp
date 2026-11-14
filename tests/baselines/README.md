@@ -8,6 +8,9 @@
 | `menu.png` | 主菜单首屏：背景 + 灯体 + 光晕第 1 帧 + 五块招牌（未悬停、门未点亮） | 640×480 | `pwsh tools/scripts/VerifyMenuBaseline.ps1 -Update` |
 | `settings.png` | 主菜单 + 设置对话框（`en`，语言行未悬停，OK 未按下） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Update` |
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
+| `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
+| `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
+| `adventure-map.png` | 冒险地图地形层（M4）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含沙地/草地/海岸/水域 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -16,20 +19,24 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1                   # 主菜单：0 = �
 pwsh tools/scripts/VerifySettingsBaseline.ps1               # 设置对话框（en）：0 = 一致
 pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN  # 设置对话框（中文）
 pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update   # 有意改了视觉后重建基线
+pwsh tools/scripts/VerifyScenarioBaseline.ps1               # 场景选择（en）：0 = 一致
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
+pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update       # 有意改了视觉后重建场景基线
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData      # 自建 runner 上把「没数据」当失败
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素漂移
 ```
 
-两个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
+四个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
 `AssetProbe compare` 与容差判定都在那里，脚本本身只剩「哪些开关让这一帧可复现」与
-「哪块区域要忽略」。所以两个脚本的命令行、退出码与失败输出格式完全一致。
+「哪块区域要忽略」。所以四个脚本的命令行、退出码与失败输出格式完全一致。
 
 脚本做的事：先做**基线自检**（PNG 魔数 + `IHDR` 必须是 640×480，失败即退出 `1`），
 再 `dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
-渲染一帧（设置基线多一个 `--open-settings`）→ 交给 `AssetProbe compare` 与基线逐像素比对
-（差异图写到 `tools-output/baseline/diff/diff_menu.png` / `diff_settings.png`，退出码 `1`
-表示超阈值）。找不到 `Heroes2.agg` 时打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit
-用例」策略一致（ADR-010）；只有显式给 `-RequireData` 才把缺数据当失败。
+渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
+`AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
+`diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
+`-RequireData` 才把缺数据当失败。
 
 ## 设置基线为什么也是逐字节稳定的
 
@@ -44,10 +51,35 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   不会把文字画到边框或窗口外——`SettingsDialogTests` 用 40 个字符宽的假译文钉住了这一点。
 * 状态栏同样用 `--ignore 0,469,640,11` 排除。
 
+## 场景基线为什么也是逐字节稳定的
+
+* `--open-scenario`：窗口只能点 NEW GAME 招牌打开，脚本没有鼠标，这个开关直接把它放到屏幕上
+  （`--freeze-animation` 把框后的灯晕钉在第 1 帧）。
+* 面板落在 `115,17 377×458`，`--cursor 620,100` 在它之外，所以尺寸按钮、滚动箭头、OKAY 与
+  列表行都停在静止态。
+* 列表内容来自数据目录：首个地图文件（按 `MapCatalog` 的顺序是 `Alteris`）被选中，`ALL`
+  筛选处于按下态；地图名、难度与描述都取自该文件，所以基线也钉住了「列表 → 详情」这条路径。
+* 产品徽章（地图类型列）是运行时从 `ARTFX.ICN` 帧 6/90/101 缩放到 15×15 合成的，和参考的
+  `ICN::MAP_TYPE_ICON` 一致；缺扩展包时该列留空，基线会跟着变，重建前先确认数据完整。
+* 状态栏同样用 `--ignore 0,469,640,11` 排除。
+
+## 冒险地图基线为什么也是逐字节稳定的
+
+* `--map <file>`：直接打开一张地图，不经过 NEW GAME 与场景列表，所以基线只依赖**一个**地图文件
+  （默认 `Alteris.mp2`），与安装了多少地图、地图目录叫什么无关。
+* 视口居中到「最靠地图中心的城堡」：M4 还没有英雄可以居中，这是 `AdventureMapScene.TryCreate`
+  的占位规则，因此滚动偏移由地图文件唯一决定。
+* 地形图来自 `GROUND32.TIL`，四个 shape 变体（原图 / 上下 / 左右 / 两者）在启动时预生成再拷贝，
+  不经过任何时钟，所以同一台机器上逐帧相同。
+* 状态栏（`0,469,640,11`）里印着视口偏移与版本号，后者每次发版都会变，所以排除掉。地图内容本身
+  是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
+* 这张基线钉住的是「MP2 tile 字段 → TIL 索引 → 像素」这条链：`Mp2MapTests` 与
+  `AdventureMapViewTests` 钉住结构解析与滚动数学，两者一起才能把地形层钉死。
+
 ## CI 怎么接
 
-`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用三条命令（job 名是历史原因，现在跑的是
-三份基线：菜单一次、设置对话框 `en` 与 `zh_CN` 各一次）：
+`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用六条命令（job 名是历史原因，现在跑的是
+六份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图各一次）：
 
 * 托管 runner（`windows-latest`）没有游戏数据，脚本会停在自检之后：**基线文件本身**被校验
   （存在、是 PNG、640×480），像素比对退化为 `skip`。这一步拦的是「基线被删/被换错尺寸」。
