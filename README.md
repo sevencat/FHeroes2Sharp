@@ -21,10 +21,10 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
   `Core.Imaging.PaletteTable`（原版 `PAL::GetPalette` 的索引重映射表，ADR-020），所以中英文混排同色。
 * 分辨率：内部逻辑分辨率固定 **640×480**，按整数倍放大并加黑边（默认 2x = 1280×960）。
 * 策略：解析层对原版资源格式 **逐字节一致**，工程结构用现代 C# 分层重写。
-* 范围：**游戏本体 + 地图编辑器（先只读）**——参考实现 fheroes2 1.1.18 有完整编辑器（`src/fheroes2/editor/`，
-  主菜单 EDITOR 按钮进入），因此编辑器有可对拍的 C++ 代码；但一期只做 E1：打开 `.mp2` 并叠加网格 / 光标
-  高亮 / 状态栏，**不改 tile、不保存**。改地图请继续用原版编辑器（ADR-039 已更正「参考没有编辑器」的说法，
-  范围与理由见 ADR-040）。
+* 范围：**游戏本体 + 地图编辑器**——参考实现 fheroes2 1.1.18 有完整编辑器（`src/fheroes2/editor/`，
+  主菜单 EDITOR 按钮进入），因此编辑器有可对拍的 C++ 代码。E1 打开、E2 改地形 + 撤销、E3 存回 MP2 已完成；
+  剩下的编辑器工作（对象放置与删除、新建地图、`ADVBORD` 外壳与面板）见 `docs/PROGRESS.md`（ADR-039 更正了
+  「参考没有编辑器」的说法，范围与理由见 ADR-040）。
 * NativeAOT：**暂不作为支持目标**，但已开启 AOT / 裁剪分析器（`IsAotCompatible`，`IL2xxx`/`IL3xxx`
   为错误），代码保持「反射自由」以便将来切换（见 ADR-011）。
 
@@ -95,16 +95,24 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 （`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、地图怪物与船、
 雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `docs/PROGRESS.md`。
 
-**地图编辑器（E1 看得见，E2 改得动地形）**：主菜单右下角有 EDITOR 按钮（位置照参考，普通数据没有那三帧
-招牌美术时自绘一块招牌），点它或 `--scene editor [--map <file.mp2>]` 直接进编辑器，不给 `--map` 就打开地图
-目录里的第一张。画面整块复用 M4 的渲染，所以地形、对象、英雄、小地图与游戏里完全一致；编辑器自己加的是
-tile 网格（`G` 开关）、光标所在格的双线高亮、顶部 `MAP EDITOR` 工具条与底部状态栏——状态栏会报出光标下的
-`x,y`、地面类型（`MapGround`）与对象类型。
+**地图编辑器（E1 看得见，E2 改得动地形，E3 存得回去、新建得出来）**：主菜单右下角有 EDITOR 按钮（位置照参考，
+普通数据没有那三帧招牌美术时自绘一块招牌），点它或 `--scene editor [--map <file.mp2>]` 直接进编辑器，不给 `--map`
+就打开地图目录里的第一张；`--editor-new 36|72|108|144` 则直接开一张空白草地地图。画面整块复用 M4 的渲染，所以地形、
+对象、英雄、小地图与游戏里完全一致；编辑器自己加的是 tile 网格（`G` 开关）、光标所在格的双线高亮、
+顶部 `MAP EDITOR` 工具条与底部状态栏——状态栏会报出光标下的 `x,y`、地面类型（`MapGround`）与对象类型。
 
 E2 起可以**真的改地形**：左键刷、右键按住拖动地图、右键单击当吸管（取光标下的地面），`1`～`9` 选水面到海滩，
 `Ctrl+Z` / `Ctrl+Y` 撤销重做——一次按下到抬起算一步，来回刷同一格也只算一步；小地图在结笔后重烤。刷出来的
-是每种地面的「纯图块」，**还没有与四邻自动接缝**，所以边缘是硬的（ADR-041）。对象仍不能放、不能删，
-**也不能保存**（E3）。
+是每种地面的「纯图块」，**还没有与四邻自动接缝**，所以边缘是硬的（ADR-041）。对象仍不能放、不能删。
+
+E3 起可以**存回 MP2**：`Ctrl+S` 写回打开的那个 `.mp2`，状态栏闪一下 `saved`。写回是**只改 tile 区**的
+原地补丁——文件头、add-on 表、城堡与可占领对象表、信息块、对象编号全部原样保留，所以「打开→保存」
+字节完全一致，「刷一块→保存」只有被刷那几格的 20 字节变化（ADR-043）。地图目录只读时保存会失败，
+日志里写明原因，编辑器照常可玩。
+
+也可以**从零开始**：`--editor-new 108 --editor-save out.mp2` 打开一张空白草地地图并立刻整份写出（header
+到对象编号全部生成，不是补丁），之后 `Ctrl+S` 就回到补丁路径。空白地图还没有场景设置（难度、颜色、
+胜利条件、名字都是默认）。另存为与对象编辑还没做（E4）。
 
 编辑器自己的工具条文字暂用英文常量，因此只有一份基线 `editor.png`（`VerifyEditorBaseline.ps1`，里面带一次
 脚本化笔刷 `--editor-paint`）；方向键、滚轮、边缘滚动、`Home`、`Esc` 与冒险地图同一套。
@@ -127,13 +135,19 @@ dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2"
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --lang zh_CN
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene diagnostics
 
-# 地图编辑器（E2 可改地形）：左键刷、右键拖、右键单击吸管、1~9 选地面、Ctrl+Z/Y 撤销重做
-# G 切网格、方向键/滚轮滚动、Home 回左上、ESC 退出
+# 地图编辑器（E2 可改地形，E3 可存盘）：左键刷、右键拖、右键单击吸管、1~9 选地面
+# Ctrl+Z/Y 撤销重做、Ctrl+S 保存、G 切网格、方向键/滚轮滚动、Home 回左上、ESC 退出
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --map "F:\game\fh2\maps\Alteris.mp2"
 
 # 脚本化笔刷（截图按不动鼠标）：在 (50,50) 起刷 8x5 的雪地，然后截图
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --editor-paint "50,50,8,5,Snow" --smoke-frames 8 --screenshot painted.png
+
+# 打开→改→存回：--editor-save 在编辑器打开时就把地图写到指定文件，整条链路不用鼠标
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --map "F:\game\fh2\maps\Alteris.mp2" --editor-paint "50,50,6,4,Snow" --editor-save out.mp2 --smoke-frames 8
+
+# 新建地图：不读任何 .mp2，造一张 108x108 的空白草地地图再整份写出
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene editor --editor-new 108 --editor-save new.mp2 --smoke-frames 8
 
 # 渲染 40 帧后截图退出（CI / 回归用）；--cursor 定格 hover 态
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --screenshot out.png

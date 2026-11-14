@@ -241,6 +241,160 @@ public sealed class MapEditSessionTests
         Assert.Equal(7, painted.ObjectName1);
     }
 
+    [Fact]
+    public void ASaveClearsTheDirtyFlagAndAStrokeSetsItAgain()
+    {
+        string filePath = CreateBlankMapFile();
+
+        try
+        {
+            MapEditSession session = CreateSessionFrom(filePath);
+
+            // The map is grass, so the brush has to be something else or the stroke would be a no-op.
+            session.SetBrush(MapGround.Snow);
+
+            Assert.False(session.IsDirty);
+
+            session.Paint(new Point(1, 1));
+            Assert.True(session.IsDirty);
+
+            Assert.True(session.Save(out string? error), error);
+            Assert.False(session.IsDirty);
+
+            session.Paint(new Point(2, 2));
+            Assert.True(session.IsDirty);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
+    }
+
+    [Fact]
+    public void UndoingBackToTheSavePointClearsTheDirtyFlag()
+    {
+        string filePath = CreateBlankMapFile();
+
+        try
+        {
+            MapEditSession session = CreateSessionFrom(filePath);
+            session.SetBrush(MapGround.Snow);
+
+            session.Paint(new Point(0, 0));
+            session.Paint(new Point(1, 0));
+            Assert.True(session.Save(out string? error), error);
+
+            session.Paint(new Point(2, 0));
+            Assert.True(session.IsDirty);
+
+            Assert.True(session.Undo());
+            Assert.False(session.IsDirty);
+
+            // Undoing further than the save point removes a saved change, so the file is stale again.
+            Assert.True(session.Undo());
+            Assert.True(session.IsDirty);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
+    }
+
+    [Fact]
+    public void AFailedSaveKeepsTheMapDirty()
+    {
+        string filePath = CreateBlankMapFile();
+
+        try
+        {
+            MapEditSession session = CreateSessionFrom(filePath);
+            session.SetBrush(MapGround.Snow);
+            session.Paint(new Point(0, 0));
+
+            // A file cannot be a directory: the map file itself is used as the parent of the target, which
+            // no writer can create and which therefore exercises the failure path for real.
+            string unwritable = Path.Combine(filePath, "map.mp2");
+
+            Assert.False(session.SaveAs(unwritable, out string? error));
+            Assert.NotNull(error);
+            Assert.True(session.IsDirty);
+            Assert.Equal(filePath, session.SavePath);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
+    }
+
+    [Fact]
+    public void AMapWithoutAFileCannotBeSaved()
+    {
+        MapEditSession session = CreateSession();
+
+        Assert.False(session.Save(out string? error));
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void ANewMapIsWrittenWholeAndBecomesTheSaveTarget()
+    {
+        string filePath = Path.Combine(Path.GetTempPath(), $"fh2-editor-new-{Guid.NewGuid():N}.mp2");
+
+        try
+        {
+            MapEditSession session = CreateSessionOn(
+                Mp2Map.CreateBlank(36, MapGrounds.StartImageIndex(MapGround.Grass)));
+
+            Assert.Equal(string.Empty, session.SavePath);
+            Assert.False(session.IsDirty);
+
+            Assert.True(session.SaveAs(filePath, out string? error), error);
+            Assert.Equal(filePath, session.SavePath);
+            Assert.False(session.IsDirty);
+
+            Mp2Map saved = Mp2Map.Read(filePath);
+
+            Assert.Equal(36, saved.Width);
+            Assert.Equal(Mp2Map.NewMapName, saved.Info.Name);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
+    }
+
+    /// <summary>Creates a session around an already built map, the way the host does.</summary>
+    private static MapEditSession CreateSessionOn(Mp2Map map)
+    {
+        TerrainTileSet tiles = SyntheticTerrain.Create(4, 32);
+
+        return new MapEditSession(new MapEditorView(new AdventureMapView(map, tiles, new Size(96, 96))));
+    }
+
+    /// <summary>Creates a session whose map pretends to have been read from <paramref name="filePath"/>.</summary>
+    private static MapEditSession CreateSessionFrom(string filePath)
+    {
+        Mp2Map template = SyntheticMap.Create(4, 4, _ => Tile(Grass));
+        Mp2Map map = template with { Info = template.Info with { FilePath = filePath } };
+
+        TerrainTileSet tiles = SyntheticTerrain.Create(4, 32);
+
+        return new MapEditSession(new MapEditorView(new AdventureMapView(map, tiles, new Size(96, 96))));
+    }
+
+    /// <summary>
+    /// A file image with room for a 4x4 tile area and the add-on count: enough for the writer to patch,
+    /// and deliberately not a readable map, because the session only needs something to patch.
+    /// </summary>
+    private static string CreateBlankMapFile()
+    {
+        string filePath = Path.Combine(Path.GetTempPath(), $"fh2-edit-{Guid.NewGuid():N}.mp2");
+        int length = Mp2FileInfo.HeaderSize + (4 * 4 * Mp2TileInfo.StructureSize) + Mp2Map.AddonCountSize;
+
+        File.WriteAllBytes(filePath, new byte[length]);
+        return filePath;
+    }
+
     private static MapEditSession CreateSession(ushort terrainImageIndex = Grass)
     {
         Mp2Map map = SyntheticMap.Create(4, 4, _ => Tile(terrainImageIndex));

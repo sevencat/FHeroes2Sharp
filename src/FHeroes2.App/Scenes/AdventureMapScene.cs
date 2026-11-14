@@ -153,6 +153,9 @@ public sealed class AdventureMapScene : IScene
     {
         // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
         // of index 0 of KB.PAL and matches the empty border of the reference.
+        // The map is written straight into the indexed pixels, which cannot report the change, so
+        // the whole buffer has to be marked dirty or the presenter would skip the upload.
+        _frame.InvalidateAll();
         _frame.Pixels.Clear();
         _view.Draw(_frame.Pixels);
         DrawMinimap();

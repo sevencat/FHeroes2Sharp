@@ -47,6 +47,9 @@ public sealed class EditorScene : IScene
 
     private const int Gap = 10;
 
+    /// <summary>How long the status bar shows "saved" after a successful save, in seconds.</summary>
+    private const double SavedFlashSeconds = 2.0;
+
     private readonly ScreenBuffer _frame;
     private readonly GameFonts? _fonts;
     private readonly MapEditorView _editor;
@@ -63,6 +66,9 @@ public sealed class EditorScene : IScene
 
     /// <summary>Whether the paint button is held, i.e. the pointer keeps painting as it moves.</summary>
     private bool _painting;
+
+    /// <summary>Seconds left of the "saved" note in the status bar.</summary>
+    private double _savedFlash;
 
     private EditorScene(
         ScreenBuffer frame,
@@ -141,20 +147,7 @@ public sealed class EditorScene : IScene
         try
         {
             Mp2Map map = Mp2Map.Read(mapInfo.FilePath);
-
-            AdventureMapView view = new(
-                map,
-                tiles,
-                frame.Size,
-                ObjectSpriteSet.TryCreate(assets),
-                HeroSpriteSet.TryCreate(assets));
-
-            view.CenterOn(map.Width / 2, map.Height / 2);
-
-            MapEditorView editor = new(view);
-            MapEditSession edits = new(editor);
-            EditorScene scene = new(
-                frame, fonts, editor, edits, Minimap.Build(map), new MapScrollController(view));
+            EditorScene scene = Assemble(frame, fonts, map, tiles, assets);
 
             GameLog.Info(
                 $"Editor opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
@@ -170,12 +163,84 @@ public sealed class EditorScene : IScene
         }
     }
 
+    /// <summary>
+    /// Opens the editor on an empty map of <paramref name="size"/> tiles instead of a file;
+    /// <see langword="null"/> with an <paramref name="error"/> when the size is not a map size or the
+    /// terrain tiles cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// The map is grass with no object on it and has no file behind it, so the first save has to name
+    /// one (<see cref="MapEditorView"/> has no "save as" dialog yet, the command line does).
+    /// </remarks>
+    public static EditorScene? CreateNew(
+        ScreenBuffer frame,
+        AssetBundle? assets,
+        GameFonts? fonts,
+        int size,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+
+        error = null;
+
+        if (!Mp2Map.IsSupportedSize(size, size))
+        {
+            error = $"A map is 36, 72, 108 or 144 tiles wide and high, not {size}.";
+            return null;
+        }
+
+        TerrainTileSet? tiles = TerrainTileSet.TryLoad(assets);
+        if (tiles is null)
+        {
+            error = $"'{TerrainTileSet.GroundFileName}' is not available, so the map cannot be drawn.";
+            return null;
+        }
+
+        Mp2Map map = Mp2Map.CreateBlank(size, MapGrounds.StartImageIndex(MapGround.Grass));
+        EditorScene scene = Assemble(frame, fonts, map, tiles, assets);
+
+        GameLog.Info($"Editor created a new {map.Width}x{map.Height} map; it has no file until it is saved.");
+
+        return scene;
+    }
+
+    /// <summary>Builds the scene around an already loaded map, the part both entry points share.</summary>
+    private static EditorScene Assemble(
+        ScreenBuffer frame, GameFonts? fonts, Mp2Map map, TerrainTileSet tiles, AssetBundle? assets)
+    {
+        AdventureMapView view = new(
+            map,
+            tiles,
+            frame.Size,
+            ObjectSpriteSet.TryCreate(assets),
+            HeroSpriteSet.TryCreate(assets));
+
+        view.CenterOn(map.Width / 2, map.Height / 2);
+
+        MapEditorView editor = new(view);
+        MapEditSession edits = new(editor);
+
+        return new EditorScene(
+            frame, fonts, editor, edits, Minimap.Build(map), new MapScrollController(view));
+    }
+
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
-    public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
+    public void Update(double elapsedSeconds)
+    {
+        _mouse.Update(elapsedSeconds);
+        _savedFlash = Math.Max(0.0, _savedFlash - elapsedSeconds);
+    }
 
     /// <summary>Paints the terrain, the grid, the highlighted tile, the minimap and both bars.</summary>
+    /// <remarks>
+    /// Every frame is a full repaint, so the whole buffer is marked dirty: the terrain is written
+    /// straight into <see cref="ScreenBuffer.Pixels"/>, which does not report changes, and a frame
+    /// that is never marked dirty is never uploaded - the window would keep showing the screen of
+    /// the previous scene.
+    /// </remarks>
     public void DrawFrame(in DiagnosticsState state)
     {
+        _frame.InvalidateAll();
         _frame.Pixels.Clear();
         _editor.Map.Draw(_frame.Pixels);
         DrawGrid();
@@ -357,6 +422,28 @@ public sealed class EditorScene : IScene
         return true;
     }
 
+    /// <summary>Saves the edited map over the file it was opened from, <c>Ctrl+S</c>.</summary>
+    /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
+    /// <returns>Whether the map was written.</returns>
+    public bool Save(out string? error) => SaveAs(_edits.SavePath, out error);
+
+    /// <summary>Saves the edited map to <paramref name="filePath"/> and keeps saving there.</summary>
+    /// <param name="filePath">File to write, created or replaced.</param>
+    /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
+    /// <returns>Whether the map was written.</returns>
+    public bool SaveAs(string filePath, out string? error)
+    {
+        if (!_edits.SaveAs(filePath, out error))
+        {
+            return false;
+        }
+
+        // The status bar says "saved" for a moment: a save is the one action whose result is otherwise
+        // invisible, and a player should not have to open the file to believe it.
+        _savedFlash = SavedFlashSeconds;
+        return true;
+    }
+
     /// <summary>Selects the ground the brush paints, the number keys and the eyedropper.</summary>
     /// <param name="ground">Ground to paint.</param>
     /// <returns>Whether the brush changed.</returns>
@@ -510,6 +597,10 @@ public sealed class EditorScene : IScene
         if (_edits.IsDirty)
         {
             hover += "  edited";
+        }
+        else if (_savedFlash > 0.0)
+        {
+            hover += "  saved";
         }
 
         if (_editor.Hover is { } info && info.ObjectType != Mp2ObjectType.None)

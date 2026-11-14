@@ -55,4 +55,21 @@ public static class MapRaces
     /// <see cref="MapRace.None"/>, exactly like the reference implementation.
     /// </summary>
     public static MapRace FromIndex(int index) => index >= 0 && index < ByIndex.Length ? ByIndex[index] : MapRace.None;
+
+    /// <summary>
+    /// Index the header stores for <paramref name="race"/>, the port of <c>Race::RaceToIndex</c>;
+    /// <see langword="null"/> for <see cref="MapRace.None"/>, which no header slot can hold.
+    /// </summary>
+    public static int? ToIndex(MapRace race)
+    {
+        for (int index = 0; index < ByIndex.Length; ++index)
+        {
+            if (ByIndex[index] == race)
+            {
+                return index;
+            }
+        }
+
+        return null;
+    }
 }

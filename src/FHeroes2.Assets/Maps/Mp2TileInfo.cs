@@ -116,6 +116,27 @@ public readonly record struct Mp2TileInfo
         };
     }
 
+    /// <summary>Writes the tile structure back, the exact inverse of <see cref="Read"/>.</summary>
+    /// <param name="writer">Destination, positioned at the start of the structure.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="writer"/> is <see langword="null"/>.</exception>
+    public void Write(LittleEndianWriter writer)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+
+        writer.WriteUInt16(TerrainImageIndex);
+        writer.WriteByte(ObjectName1);
+        writer.WriteByte(BottomIcnImageIndex);
+        writer.WriteByte(Quantity1);
+        writer.WriteByte(Quantity2);
+        writer.WriteByte(ObjectName2);
+        writer.WriteByte(TopIcnImageIndex);
+        writer.WriteByte(TerrainFlags);
+        writer.WriteByte((byte)ObjectType);
+        writer.WriteUInt16(NextAddonIndex);
+        writer.WriteUInt32(Level1ObjectUid);
+        writer.WriteUInt32(Level2ObjectUid);
+    }
+
     /// <summary>Short diagnostic line, used by the tests and by <c>AssetProbe map</c>.</summary>
     public string GetSummary() =>
         $"tile {TerrainImageIndex} terrain/{TerrainFlags:X2} | {ObjectType}" +

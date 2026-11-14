@@ -1107,7 +1107,7 @@ dotnet run -- --scene editor（不带 --map）→ 日志 Editor opened: 'Alteris
   按钮标题与提示走 `Text`，zh_CN 显示「地图编辑器」。
 * **主菜单按钮在无 PoL 数据时是自绘的**：`BTNSHNGL` 普通数据只有 20 帧，自绘招牌的配色与招牌美术不完全一致；
   换到有 20/21/22 帧的数据会自动改用原版美术。
-* **新建地图未做**：`--scene editor` 必须有地图（缺省取第一张）；`Mp2MapFileBuilder` 能合成空图，但还没接进 UI。
+* ~~新建地图未做~~：E3b 已做，`--editor-new <size>` 打开空白地图（见下）。
 
 ## E2 — 地图编辑器（改地形 + 撤销/重做）✅ 地形部分
 
@@ -1147,12 +1147,100 @@ dotnet run -- --scene editor --editor-paint "50,50,8,5,Snow" → 日志 Painted 
   3. **只换地形图，不做相邻过渡**：参考的地形工具刷完会重算与四邻的接缝（`updateTerrain`），我们只把
      `TerrainImageIndex` 设成区间首图，所以刷出来是硬边。宁可先给它一个诚实的硬边，也不假装做了过渡。
 
+### E2 修复记录（从主菜单进不去编辑器）
+
+* **现象**：在招牌上点左键，日志已有 `Main menu: '地图编辑器' opens the map editor.` 与
+  `Editor opened: 'Alteris' ...`，场景也换成了 `EditorScene`，窗口却仍是主菜单；`--scene editor` 启动正常。
+* **根因**：`SdlPresenter.Upload` 只上传 `TakeDirtyRegion()`，而 `EditorScene` / `AdventureMapScene`
+  把地形直接写进 `ScreenBuffer.Pixels`，从不标脏；初始脏区是全屏，所以第一帧蒙对一次之后画面冻结。
+* **修复**：两个场景的 `DrawFrame` 第一行 `_frame.InvalidateAll()`；`IScene.DrawFrame` 文档写明这条契约
+  （见 **ADR-042**）。顺带修掉冒险地图滚动冻结的同类隐患。
+* **验证**：`--left-click`（现在在 `Loop` 第 10 帧按真实帧序模拟一次左键）点招牌后截图是编辑器；
+  六条像素基线 `identical`；`-warnaserror` 0 警告；663 条测试全绿。
+
 ### E2 已知遗留
 
 * **没有地形过渡/海岸自动衔接**：刷在草地上的一块雪是硬边方块，参考会自动接缝；这是下一个要补的渲染问题。
 * **笔刷只有 1×1**：参考有 1×1 / 2×2 / 3×3 / 圆刷。
 * **对象不能放、不能删**：`Paint` 明确不动对象字段（有测试守着），对象面板属于下一步。
 * **撤销深度不落盘**：200 笔内存栈，退出即丢。
-* **没有编辑器主菜单与新建地图**：`--scene editor` 仍必须有地图。
-* **保存 MP2 未做**：E3，走 `Maps::Map_Format::saveMap` 的对拍路线。
+* **没有编辑器主菜单**：进编辑器只有主菜单按钮与 `--scene editor`；新建地图已由 `--editor-new` 提供（E3b）。
+
+## E3 — 地图编辑器（存回 MP2）✅ 保存完成
+
+`Ctrl+S` 把当前地图写回打开的那个 `.mp2`，状态栏闪 2 秒 `saved`；`--editor-save <file>` 是脚本入口。
+写回是**原地补丁**：只重写 tile 区（`428 + x*y*20` 起的 `w*h*20` 字节），文件头、add-on 表、城堡表、
+可占领对象表、方尖碑数、信息块、对象编号全部按原字节保留（ADR-043）。
+
+改动：
+
+* `Mp2TileInfo.Write`：与 `Read` 对称的 20 字节写出。
+* `Assets/Maps/Mp2MapWriter`：`Save(path, map, sourcePath)` 与可单测的 `WriteTiles(byte[], map)`；
+  写文件走同目录临时文件 + `File.Move(overwrite)`，失败不留半截地图。
+* `MapEditSession`：`Save` / `SaveAs` / `SavePath`；`IsDirty` 改成与**保存点**比较，
+  并且**进行中的笔划也算脏**（原来只数 `_undo.Count`，按住左键拖完还没抬手时状态栏不亮 `edited`，
+  拖到一半保存也会被当成"干净"）。保存时先 `EndStroke()` 收尾当前笔划。
+* `EditorScene`：`Save` / `SaveAs` + 状态栏 `saved` 提示；`GameHost` 接 `Ctrl+S`；
+  `--editor-save` 在编辑器打开时立即写一次。
+
+### E3 验证记录（真实地图）
+
+```text
+Alteris.mp2 268562 字节
+打开→另存            → 0 字节差异（round-trip 完全一致）
+--editor-paint 50,50,6,4,Snow → 保存 → 30 字节变化，全部落在被刷 tile 的 20 字节窗内，尾部 0 变化
+保存后的文件再打开再另存 → 0 字节差异
+截图 editor-saved.png：刷出来的雪地读回后正确显示
+```
+
+测试：`Mp2MapWriterTests` 6 条（round-trip、只改被编辑 tile、尾部段保真、tile 数量不符、源文件截断、
+不留临时文件）；`MapEditSessionTests` 4 条（保存清脏 / 再画又脏 / 撤销回保存点 / 保存失败不改变脏标记与目标）。
+`-warnaserror` 0 警告；673 条测试全绿；五条像素基线全部 `match`。
+
+### E3 已知遗留
+
+* **另存为没有 UI**：只有 `--editor-save` 与 `MapEditSession.SaveAs`，没有对话框。
+* **保存不动对象/英雄/城堡**：这些段原样保留，等对象编辑做完再考虑。
+
+## E3b — 新建地图与全量写出 ✅
+
+`--editor-new 36|72|108|144` 不读文件，直接造一张空白地图进编辑器；`--editor-save` 给它一个文件，
+之后 `Ctrl+S` 就是普通的补丁保存（ADR-044）。
+
+改动：
+
+* `Mp2Map.CreateBlank(size, terrainImageIndex, name)`：全图草地纯图块、无对象、城堡与可占领表为空、
+  `Addons` 只有 index 0 的占位项、无信息块、UID 0、全六色可玩、每色骑士、Normal 难度。
+* `Mp2FileInfo.HeaderBytes` + `ToHeaderBytes()`：header 以原始 428 字节为基底，只覆盖建模过的字段。
+* `Mp2AddonInfo.Write`：`ObjectNameN1` 除以 2 写回（读取时乘过 2）。
+* `Mp2MapWriter.WriteAll` / `Serialize`：写全部段；`MapEditSession.SaveAs` 无源文件时自动走它。
+* `EditorScene.CreateNew` + `Assemble`（与 `TryCreate` 共用的装配）；`GameHost.OpenEditor` /
+  `OpenEditorMap`；`CommandLineOptions --editor-new`。
+
+### E3b 验证记录
+
+```text
+--editor-new 36 --editor-save    → 27024 字节（= 428 + 1296*20 + 4 + 15 + 216 + 432 + 1 + 4 + 4）
+--editor-new 144 --editor-save   → 415824 字节，公式一致
+new36.mp2 读回再保存（补丁）     → 0 字节差异
+--editor-new 36 --editor-paint 10,10,6,4,Snow → 保存 → 读回截图：雪地区块正确显示
+--editor-new 50                  → "'--editor-new' expects a map size of 36, 72, 108 or 144 tiles, got '50'."
+Alteris.mp2 全量写出（一次性探针）→ header 428 字节与原文逐字节相同，tiles/add-ons/城堡/可占领/
+                                   信息块/UID 与读入相等
+```
+
+**实测改掉的三个「读回会变字节」的坑**（详见 ADR-044）：种族槽 255 被写成 0、名字字段里跟在 NUL 后的
+第二个串被抹掉、颜色字节的 2 被压成 1。
+
+测试：`Mp2MapWriterTests` 增 5 条（全量写出的读回、对象与信息块保真、读写稳定、非法尺寸、`CreateBlank`
+拒绝非标尺寸）；`MapEditSessionTests` 增 1 条（新建地图全量写盘并成为保存目标）。`-warnaserror` 0 警告，
+679 条测试全绿，五条像素基线 `match`。
+
+### E3b 已知遗留
+
+* **空白地图只有草地，没有场景设置**：难度、颜色、胜利条件、地图名都还是固定默认，没有对话框。
+* **全量写出会压紧城堡/可占领表**：空槽排到后面；「表里本来有空槽」的地图才看得出来，而那种地图走补丁。
+* **信息块数量只写一对**：真实地图在那里存了一串历史值（Alteris 13 对），全量写出只写 `count+1` 加终止，
+  读回等价但字节更短；补丁路径原样保留。
+
 

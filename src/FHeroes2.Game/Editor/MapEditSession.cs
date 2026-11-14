@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
 
 namespace FHeroes2.Game.Editor;
@@ -40,12 +41,19 @@ public sealed class MapEditSession
     private MapStroke? _stroke;
     private MapGround _brush = MapGround.Grass;
 
+    /// <summary>Undo depth at the last save; the map is dirty while the depth differs from it.</summary>
+    private int _savedDepth;
+
+    /// <summary>File the map is saved to; an edit is written over the file it came from.</summary>
+    private string _savePath = string.Empty;
+
     /// <summary>Wraps the editor state whose map is being changed.</summary>
     /// <param name="editor">The editor that owns the map and the pointer.</param>
     public MapEditSession(MapEditorView editor)
     {
         ArgumentNullException.ThrowIfNull(editor);
         _editor = editor;
+        _savePath = editor.Map.Map.Info.FilePath;
     }
 
     /// <summary>The map being edited, changed in place by <see cref="Paint"/>.</summary>
@@ -57,13 +65,20 @@ public sealed class MapEditSession
     /// <summary>Whether a stroke is in progress, i.e. the button is still held.</summary>
     public bool IsPainting => _stroke is not null;
 
-    /// <summary>Whether the map differs from the one that was opened.</summary>
+    /// <summary>Whether the map differs from the last state written to disk.</summary>
     /// <remarks>
     /// "Differs" is read from the history, not from a comparison with a copy of the map: a stroke that
-    /// is undoable is a change, and undoing everything makes the flag go away again. Re-painting a tile
-    /// with the ground it already has records nothing, so it does not mark the map either.
+    /// is undoable is a change, and undoing back to the point of the last save makes the flag go away
+    /// again. Re-painting a tile with the ground it already has records nothing, so it does not mark
+    /// the map either. The depth is compared with the depth at the save, so undoing past the save
+    /// counts as a change even though the history only shrinks. An unfinished stroke counts as well:
+    /// the tiles under the held button are already changed, and a save in the middle of a drag must not
+    /// look like a clean map.
     /// </remarks>
-    public bool IsDirty => _undo.Count > 0;
+    public bool IsDirty => _stroke is not null || _undo.Count != _savedDepth;
+
+    /// <summary>File <see cref="Save"/> writes to, the file the map was opened from by default.</summary>
+    public string SavePath => _savePath;
 
     /// <summary>Number of undoable strokes.</summary>
     public int UndoDepth => _undo.Count;
@@ -137,7 +152,10 @@ public sealed class MapEditSession
 
         if (_undo.Count > MaxUndoDepth)
         {
+            // The oldest stroke leaves the history and can no longer be undone, so the depth of the
+            // last save moves with it; otherwise a long session would look clean at the wrong moment.
             _undo.RemoveAt(0);
+            _savedDepth = Math.Max(0, _savedDepth - 1);
         }
 
         _redo.Clear();
@@ -238,6 +256,64 @@ public sealed class MapEditSession
         Apply(stroke, reverse: false);
         _undo.Add(stroke);
         return true;
+    }
+
+    /// <summary>Writes the map to <see cref="SavePath"/>.</summary>
+    /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
+    /// <returns>Whether the map was written.</returns>
+    public bool Save(out string? error)
+    {
+        if (string.IsNullOrWhiteSpace(_savePath))
+        {
+            error = "The map has no file yet, so there is nowhere to save it.";
+            return false;
+        }
+
+        return SaveAs(_savePath, out error);
+    }
+
+    /// <summary>
+    /// Writes the map to <paramref name="filePath"/> and makes that file the save target.
+    /// </summary>
+    /// <remarks>
+    /// A map that came from a file is patched: only the tiles are rewritten and every other section is
+    /// kept as it was read. A map that never had a file — the ones <see cref="Mp2Map.CreateBlank"/>
+    /// makes — has nothing to patch, so it is written whole instead (see <see cref="Mp2MapWriter"/>).
+    /// </remarks>
+    /// <param name="filePath">File to write, created or replaced.</param>
+    /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
+    /// <returns>Whether the map was written.</returns>
+    public bool SaveAs(string filePath, out string? error)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+
+        error = null;
+
+        // A save in the middle of a drag closes the stroke first: the tiles under the pointer are part
+        // of the map already, so saving them and then recording the stroke as unsaved would lie.
+        EndStroke();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_savePath) || !File.Exists(_savePath))
+            {
+                Mp2MapWriter.WriteAll(filePath, Map);
+            }
+            else
+            {
+                Mp2MapWriter.Save(filePath, Map, _savePath);
+            }
+
+            _savePath = filePath;
+            _savedDepth = _undo.Count;
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or BinaryFormatException or NotSupportedException)
+        {
+            error = exception.Message;
+            return false;
+        }
     }
 
     /// <summary>Writes one side of a stroke back into the map.</summary>

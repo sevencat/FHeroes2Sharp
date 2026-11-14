@@ -72,6 +72,77 @@ public static class MapTextCodec
         return Encoding.Latin1.GetString(field).TrimEnd();
     }
 
+    /// <summary>
+    /// Encodes one NUL padded field, the inverse of <see cref="Decode"/> bounded by the size the field
+    /// has in the header.
+    /// </summary>
+    /// <remarks>
+    /// A field that is cut in the middle of a multi byte character loses the character instead of
+    /// storing half of it, and the last byte of the field always stays NUL, so a reader that trusts
+    /// the padding cannot run past the text.
+    /// </remarks>
+    /// <param name="text">Text to store; NUL characters are dropped.</param>
+    /// <param name="fieldLength">Size of the field; the result is always exactly this long.</param>
+    /// <returns>The field, NUL padded and NUL terminated.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="text"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="fieldLength"/> is not positive.</exception>
+    public static byte[] Encode(string text, int fieldLength)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(fieldLength);
+
+        byte[] field = new byte[fieldLength];
+        Encoding encoding = ChooseEncoding(text);
+        int offset = 0;
+
+        foreach (Rune rune in text.EnumerateRunes())
+        {
+            if (rune.Value == 0)
+            {
+                continue;
+            }
+
+            byte[] bytes = encoding.GetBytes(rune.ToString());
+
+            if (offset + bytes.Length >= fieldLength)
+            {
+                break;
+            }
+
+            bytes.CopyTo(field, offset);
+            offset += bytes.Length;
+        }
+
+        return field;
+    }
+
+    /// <summary>
+    /// Picks the code page a new or edited field is stored in: ASCII as is, Chinese text in GBK so the
+    /// Chinese map packs can be written back, everything else in Latin-1.
+    /// </summary>
+    private static Encoding ChooseEncoding(string text)
+    {
+        if (IsAscii(text))
+        {
+            return Utf8;
+        }
+
+        if (Gbk is not null)
+        {
+            try
+            {
+                _ = Gbk.GetBytes(text);
+                return Gbk;
+            }
+            catch (EncoderFallbackException)
+            {
+                // Not representable in GBK; Latin-1 keeps at least the accented letters.
+            }
+        }
+
+        return Encoding.Latin1;
+    }
+
     private static bool IsAscii(ReadOnlySpan<byte> bytes)
     {
         foreach (byte value in bytes)

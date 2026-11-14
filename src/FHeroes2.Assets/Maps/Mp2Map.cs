@@ -82,6 +82,9 @@ public sealed record Mp2Map
     /// <summary>Size of the trailing object UID counter.</summary>
     public const int ObjectUidSize = 4;
 
+    /// <summary>Name the editor gives a map that was created instead of opened.</summary>
+    public const string NewMapName = "Untitled";
+
     private static readonly int[] SupportedDimensions = [36, 72, 108, 144];
 
     private static readonly MapRace[] CastleRaces =
@@ -144,6 +147,90 @@ public sealed record Mp2Map
         }
 
         return Tiles[TileIndex(x, y)];
+    }
+
+    /// <summary>
+    /// Whether a map of <paramref name="width"/> by <paramref name="height"/> tiles fits the format,
+    /// which only knows four square sizes.
+    /// </summary>
+    public static bool IsSupportedSize(int width, int height) =>
+        width == height && Array.IndexOf(SupportedDimensions, width) >= 0;
+
+    /// <summary>
+    /// Creates an empty square map: every tile is the same plain ground image with no object on it,
+    /// the castle and capturable object tables are empty and no information block exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The editor starts here when it is asked for a new map instead of a file. There is no file to
+    /// patch, so such a map can only be written by <see cref="Mp2MapWriter.WriteAll"/>, which builds
+    /// the header from the fields above because <see cref="Mp2FileInfo.HeaderBytes"/> is empty.
+    /// </para>
+    /// <para>
+    /// <see cref="Addons"/> holds one zeroed entry instead of none: index 0 is the "no add-on value"
+    /// of the format, and the shipped maps all keep the placeholder entry.
+    /// </para>
+    /// </remarks>
+    /// <param name="size">Width and height in tiles, 36, 72, 108 or 144.</param>
+    /// <param name="terrainImageIndex">Terrain image every tile starts with, the ground of the map.</param>
+    /// <param name="name">Name stored in the header, <see cref="NewMapName"/> by default.</param>
+    /// <returns>A map that is not backed by a file; saving it needs a target path.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="size"/> is not a map size.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
+    public static Mp2Map CreateBlank(int size, ushort terrainImageIndex, string name = NewMapName)
+    {
+        if (!IsSupportedSize(size, size))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(size), size, "A map is 36, 72, 108 or 144 tiles wide and high.");
+        }
+
+        ArgumentNullException.ThrowIfNull(name);
+
+        Mp2TileInfo empty = new()
+        {
+            TerrainImageIndex = terrainImageIndex,
+            ObjectName1 = 0,
+            BottomIcnImageIndex = 0,
+            Quantity1 = 0,
+            Quantity2 = 0,
+            ObjectName2 = 0,
+            TopIcnImageIndex = 0,
+            TerrainFlags = 0,
+            ObjectType = Mp2ObjectType.None,
+            NextAddonIndex = 0,
+            Level1ObjectUid = 0,
+            Level2ObjectUid = 0,
+        };
+
+        Mp2TileInfo[] tiles = new Mp2TileInfo[size * size];
+        Array.Fill(tiles, empty);
+
+        return new Mp2Map
+        {
+            Info = new Mp2FileInfo
+            {
+                FilePath = string.Empty,
+                Name = name,
+                Description = string.Empty,
+                Width = size,
+                Height = size,
+                Difficulty = GameDifficulty.Normal,
+                KingdomColors = PlayerColors.All,
+                HumanPlayers = PlayerColors.All,
+                ComputerPlayers = PlayerColors.All,
+                PlayerRaces = [.. Enumerable.Repeat(MapRace.Knight, PlayerColors.Ordered.Count)],
+                Version = MapVersion.SuccessionWars,
+            },
+            Tiles = tiles,
+            Addons = [default],
+            Castles = [],
+            CaptureObjects = [],
+            Heroes = [],
+            ObeliskCount = 0,
+            InfoBlocks = [],
+            LastObjectUid = 0,
+        };
     }
 
     /// <summary>
@@ -229,7 +316,7 @@ public sealed record Mp2Map
 
         Mp2FileInfo info = Mp2FileInfo.Read(filePath);
 
-        if (info.Width != info.Height || !SupportedDimensions.Contains(info.Width))
+        if (!IsSupportedSize(info.Width, info.Height))
         {
             throw new BinaryFormatException(
                 $"'{filePath}' has an unsupported map size {info.Width}x{info.Height}: only square maps of 36, 72, 108 or 144 tiles exist.");

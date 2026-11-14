@@ -73,6 +73,27 @@ public readonly record struct Mp2AddonInfo
         };
     }
 
+    /// <summary>Writes the add-on structure back, the exact inverse of <see cref="Read"/>.</summary>
+    /// <param name="writer">Destination, positioned at the start of the structure.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="writer"/> is <see langword="null"/>.</exception>
+    public void Write(LittleEndianWriter writer)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+
+        writer.WriteUInt16(NextAddonIndex);
+
+        // Read multiplies this byte by two, so writing it back has to undo that; the value is always
+        // even because it came from a byte, so the division cannot lose a bit.
+        writer.WriteByte((byte)(ObjectNameN1 / 2));
+
+        writer.WriteByte(BottomIcnImageIndex);
+        writer.WriteByte(QuantityN);
+        writer.WriteByte(ObjectNameN2);
+        writer.WriteByte(TopIcnImageIndex);
+        writer.WriteUInt32(Level1ObjectUid);
+        writer.WriteUInt32(Level2ObjectUid);
+    }
+
     /// <summary>Short diagnostic line, used by the tests and by <c>AssetProbe map</c>.</summary>
     public string GetSummary() =>
         $"ground {GroundIcnType}:{BottomIcnImageIndex} layer {GroundLayer}" +

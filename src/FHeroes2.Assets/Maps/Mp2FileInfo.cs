@@ -109,6 +109,83 @@ public sealed record Mp2FileInfo
     /// <summary>Product the map belongs to; derived from the file extension.</summary>
     public MapVersion Version { get; init; }
 
+    /// <summary>
+    /// The 428 header bytes the map was read from, <see langword="null"/> when the header was built
+    /// from the fields alone (a new map).
+    /// </summary>
+    /// <remarks>
+    /// The header holds fields this record does not model — the AI settings, the "unknown" bytes
+    /// around the conditions and reserved padding — so writing a map back starts from the original
+    /// image and only overwrites what is modelled here. A map that was read and written again
+    /// therefore keeps every byte the reader ignored.
+    /// </remarks>
+    public byte[]? HeaderBytes { get; init; }
+
+    /// <summary>
+    /// Builds the <see cref="HeaderSize"/> byte header this record describes: the original image when
+    /// there is one, a zeroed header otherwise, with every modelled field written over it.
+    /// </summary>
+    /// <returns>A new array of exactly <see cref="HeaderSize"/> bytes.</returns>
+    public byte[] ToHeaderBytes()
+    {
+        byte[] header = HeaderBytes is { Length: HeaderSize } original
+            ? (byte[])original.Clone()
+            : new byte[HeaderSize];
+
+        // The magic is the one big endian value of the file, everything else is little endian.
+        BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(), Magic);
+
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(DifficultyOffset), (ushort)Difficulty);
+        header[DimensionOffset] = (byte)Width;
+        header[DimensionOffset + 1] = (byte)Height;
+        WriteColors(header, KingdomColorsOffset, KingdomColors);
+        WriteColors(header, HumanColorsOffset, HumanPlayers);
+        WriteColors(header, ComputerColorsOffset, ComputerPlayers);
+
+        header[VictoryBlockOffset] = (byte)VictoryCondition;
+        header[VictoryBlockOffset + 1] = (byte)(ComputerAlsoWins ? 1 : 0);
+        header[VictoryBlockOffset + 2] = (byte)(AllowNormalVictory ? 1 : 0);
+        WriteParameter(header, VictoryBlockOffset + 3, VictoryConditionParameters, 0);
+        header[VictoryBlockOffset + 5] = (byte)LossCondition;
+        WriteParameter(header, VictoryBlockOffset + 6, LossConditionParameters, 0);
+        header[VictoryBlockOffset + 8] = (byte)(StartWithHeroInFirstCastle ? 0 : 1);
+        WriteParameter(header, VictoryBlockOffset + 15, VictoryConditionParameters, 1);
+        WriteParameter(header, VictoryBlockOffset + 17, LossConditionParameters, 1);
+
+        for (int index = 0; index < PlayerColors.Ordered.Count; ++index)
+        {
+            MapRace race = index < PlayerRaces.Count ? PlayerRaces[index] : MapRace.None;
+
+            // A race the header cannot hold keeps the byte it already had: the shipped maps put 255
+            // in the slots of players the map does not use, and a header built from zeros keeps zero.
+            if (MapRaces.ToIndex(race) is { } stored)
+            {
+                header[RaceBlockOffset + index] = (byte)stored;
+            }
+        }
+
+        // The two text fields keep their original bytes when the text did not change. A field is only
+        // sixteen or two hundred bytes wide and the map makers sometimes put more than one string in
+        // it - Alteris stores "10" right after the name's NUL - so rewriting the whole field would
+        // drop text that the reader never showed.
+        if (HeaderBytes is null
+            || !string.Equals(ReadField(header, NameFieldOffset, NameFieldLength), Name, StringComparison.Ordinal))
+        {
+            MapTextCodec.Encode(Name, NameFieldLength).CopyTo(header, NameFieldOffset);
+        }
+
+        if (HeaderBytes is null
+            || !string.Equals(
+                ReadField(header, DescriptionFieldOffset, DescriptionFieldLength),
+                Description,
+                StringComparison.Ordinal))
+        {
+            MapTextCodec.Encode(Description, DescriptionFieldLength).CopyTo(header, DescriptionFieldOffset);
+        }
+
+        return header;
+    }
+
     /// <summary>Colors that must be played by a human (<c>FileInfo::HumanOnlyColors</c>).</summary>
     public PlayerColor HumanOnlyColors => HumanPlayers & ~ComputerPlayers;
 
@@ -239,6 +316,7 @@ public sealed record Mp2FileInfo
             ],
             StartWithHeroInFirstCastle = span[VictoryBlockOffset + 8] == 0,
             Version = VersionFromPath(filePath),
+            HeaderBytes = header,
         };
     }
 
@@ -292,6 +370,33 @@ public sealed record Mp2FileInfo
 
     private static string ReadField(ReadOnlySpan<byte> header, int offset, int length) =>
         MapTextCodec.Decode(header.Slice(offset, length));
+
+    /// <summary>
+    /// Writes the six color bytes of one player group. A set bit only raises a zero byte to one:
+    /// the headers of the shipped maps sometimes hold other non zero values, and those mean "set"
+    /// as well, so overwriting them would change a file that is only being written back unchanged.
+    /// </summary>
+    private static void WriteColors(Span<byte> header, int offset, PlayerColor colors)
+    {
+        for (int index = 0; index < PlayerColors.Ordered.Count; ++index)
+        {
+            if ((colors & PlayerColors.Ordered[index]) == 0)
+            {
+                header[offset + index] = 0;
+            }
+            else if (header[offset + index] == 0)
+            {
+                header[offset + index] = 1;
+            }
+        }
+    }
+
+    /// <summary>Writes one 16 bit condition parameter, zero when the list is shorter.</summary>
+    private static void WriteParameter(Span<byte> header, int offset, IReadOnlyList<int> parameters, int index)
+    {
+        int value = index < parameters.Count ? Math.Clamp(parameters[index], 0, ushort.MaxValue) : 0;
+        BinaryPrimitives.WriteUInt16LittleEndian(header[offset..], (ushort)value);
+    }
 
     private static MapVersion VersionFromPath(string filePath)
     {

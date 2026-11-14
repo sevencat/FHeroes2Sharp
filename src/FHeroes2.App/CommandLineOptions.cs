@@ -1,3 +1,4 @@
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Game.AdventureMap;
@@ -12,6 +13,8 @@ namespace FHeroes2.App;
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
+///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
+///                 [--editor-new &lt;36|72|108|144&gt;]
 ///                 [--no-audio] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
@@ -50,10 +53,10 @@ public sealed class CommandLineOptions
     public bool RightButton { get; private set; }
 
     /// <summary>
-    /// Clicks the left mouse button once at the position of <c>--cursor</c> right after the main menu
-    /// is built: press and release in the same frame. It is how a screenshot can walk through a
-    /// click-only path (the editor entrance) and how the log shows whether the hit test matched;
-    /// it has no effect without <c>--cursor</c>.
+    /// Clicks the left mouse button once at the position of <c>--cursor</c>, on the tenth frame of
+    /// the loop: press and release in the same frame, in the same order the event loop produces. It
+    /// is how a screenshot can walk through a click-only path (the editor entrance) and how the log
+    /// shows whether the hit test matched; it has no effect without <c>--cursor</c>.
     /// </summary>
     public bool LeftClick { get; private set; }
 
@@ -114,6 +117,21 @@ public sealed class CommandLineOptions
     /// view reads the tiles on every frame, so this is also the cheapest regression for that path.
     /// </summary>
     public EditorPaintRequest? EditorPaint { get; private set; }
+
+    /// <summary>
+    /// Saves the map to this file as soon as the editor opens (<c>--editor-save &lt;file.mp2&gt;</c>,
+    /// usually together with <c>--editor-paint</c>). Together they exercise the whole loop - open,
+    /// change a tile, write it back - without a mouse, which is how the save path is checked on the
+    /// real map collection.
+    /// </summary>
+    public string? EditorSavePath { get; private set; }
+
+    /// <summary>
+    /// Starts the editor on an empty map of this many tiles instead of a file
+    /// (<c>--editor-new &lt;36|72|108|144&gt;</c>). Such a map has no file behind it, so saving it needs
+    /// <c>--editor-save</c> and takes the whole-file write path rather than the tile patch.
+    /// </summary>
+    public int? EditorNewMapSize { get; private set; }
 
     /// <summary>Writes a PNG of the composed logical frame, then keeps running unless smoke mode is set.</summary>
     public string? ScreenshotPath { get; private set; }
@@ -263,6 +281,14 @@ public sealed class CommandLineOptions
                     options.EditorPaint = ParseEditorPaint(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--editor-save":
+                    options.EditorSavePath = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--editor-new":
+                    options.EditorNewMapSize = ParseMapSize(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--list-assets":
                     options.ListAssets = true;
                     break;
@@ -317,6 +343,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
         Console.WriteLine("  --editor-paint <x,y,w,h,ground>  Paints that rectangle of tiles when the editor");
         Console.WriteLine("                      opens, e.g. '50,50,6,4,Snow' (ground name or 1..9).");
+        Console.WriteLine("  --editor-save <file>  Saves the map to that file when the editor opens; combine with");
+        Console.WriteLine("                      --editor-paint to write the whole open-edit-save loop from a script.");
+        Console.WriteLine("  --editor-new <size>  Starts the editor on an empty grass map of 36, 72, 108 or 144");
+        Console.WriteLine("                      tiles instead of a file; use --editor-save to give it a file.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
@@ -365,6 +395,17 @@ public sealed class CommandLineOptions
         throw new ArgumentException(
             $"'{option}' expects '<x>,<y>,<width>,<height>,<ground>', got '{value}'. " +
             "The ground is a name such as 'Snow' or a number from 1 (water) to 9 (beach).");
+    }
+
+    private static int ParseMapSize(string value, string option)
+    {
+        if (int.TryParse(value, out int size) && Mp2Map.IsSupportedSize(size, size))
+        {
+            return size;
+        }
+
+        throw new ArgumentException(
+            $"'{option}' expects a map size of 36, 72, 108 or 144 tiles, got '{value}'.");
     }
 
     /// <summary>Reads a ground by its enum name or by the number the editor's keys use.</summary>

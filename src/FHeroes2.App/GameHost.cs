@@ -28,6 +28,9 @@ public sealed class GameHost : IDisposable
     /// <summary><c>SDL_BUTTON_RIGHT</c>; shows the tooltip of the sign under it while held.</summary>
     private const int RightMouseButton = 3;
 
+    /// <summary>Frame at which <c>--left-click</c> fires: late enough for the menu to be laid out.</summary>
+    private const int LeftClickFrame = 10;
+
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
     private readonly bool _syntheticCursor;
@@ -40,6 +43,7 @@ public sealed class GameHost : IDisposable
     private GameFonts? _fonts;
     private AudioPlayer? _audio;
     private IScene? _scene;
+    private IScene? _drawnScene;
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
@@ -172,6 +176,20 @@ public sealed class GameHost : IDisposable
             if (!PumpEvents())
             {
                 break;
+            }
+
+            // --left-click replays one click from inside the loop, i.e. after the event batch and
+            // before the scene update, which is the frame order a player produces. Doing it in
+            // CreateScenes would skip the first frames of the new scene.
+            if (_options.LeftClick && _menu is not null && _timer.FrameCount == LeftClickFrame)
+            {
+                _menu.SetCursor(_options.Cursor);
+                _menu.SetLeftButton(true);
+
+                if (_menu.SetLeftButton(false) is { } clicked)
+                {
+                    HandleMenuAction(clicked);
+                }
             }
 
             // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
@@ -518,6 +536,18 @@ public sealed class GameHost : IDisposable
                     GameLog.Info(editor.Redo() ? "Editor: redo." : "Editor: nothing to redo.");
                     return false;
 
+                case SDL.Keycode.S when !key.Repeat:
+                    if (editor.Save(out string? saveError))
+                    {
+                        GameLog.Info($"Editor: saved '{editor.MapName}' to '{editor.Edits.SavePath}'.");
+                    }
+                    else
+                    {
+                        GameLog.Warn($"Editor: could not save '{editor.MapName}': {saveError}");
+                    }
+
+                    return false;
+
                 default:
                     return false;
             }
@@ -579,42 +609,31 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
-    /// Opens the editor on <paramref name="filePath"/>, or on the first map of the catalog when no
-    /// file is given: an editor without a map would be an empty screen, and the first map is the one
-    /// the scenario list shows first.
+    /// Opens the editor: on a new empty map when <c>--editor-new</c> asked for one, otherwise on
+    /// <paramref name="filePath"/>, or on the first map of the catalog when no file is given: an editor
+    /// without a map would be an empty screen, and the first map is the one the scenario list shows
+    /// first.
     /// </summary>
     private void OpenEditor(string? filePath)
     {
-        string? path = filePath;
+        EditorScene? scene;
 
-        if (string.IsNullOrWhiteSpace(path))
+        if (_options.EditorNewMapSize is { } size)
         {
-            string? directory = _assets?.DataDirectory;
-            path = directory is null ? null : MapCatalog.ReadAll([directory]).FirstOrDefault()?.FilePath;
+            scene = EditorScene.CreateNew(_frame, _assets, _fonts, size, out string? error);
+            if (scene is null)
+            {
+                GameLog.Warn($"A new {size}x{size} map cannot be created: {error}");
+                return;
+            }
         }
-
-        if (path is null)
+        else
         {
-            GameLog.Warn("The editor needs a map: pass --map <file.mp2> or install the map collection.");
-            return;
-        }
-
-        Mp2FileInfo mapInfo;
-        try
-        {
-            mapInfo = Mp2FileInfo.Read(path);
-        }
-        catch (Exception exception) when (exception is BinaryFormatException or IOException or UnauthorizedAccessException)
-        {
-            GameLog.Error($"The map file '{path}' could not be read", exception);
-            return;
-        }
-
-        EditorScene? scene = EditorScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
-        if (scene is null)
-        {
-            GameLog.Warn($"The map file '{path}' cannot be edited: {error}");
-            return;
+            scene = OpenEditorMap(filePath);
+            if (scene is null)
+            {
+                return;
+            }
         }
 
         // The synthetic pointer of a screenshot has to reach the editor as well, or the highlighted
@@ -640,7 +659,62 @@ public sealed class GameHost : IDisposable
             }
         }
 
+        // --editor-save closes the loop that --editor-paint opens: the map is written back at once, so
+        // a script can open, change and save a real map without a mouse.
+        if (_options.EditorSavePath is { } savePath)
+        {
+            if (scene.SaveAs(savePath, out string? saveError))
+            {
+                GameLog.Info($"Saved '{scene.MapName}' to '{savePath}'.");
+            }
+            else
+            {
+                GameLog.Warn($"Could not save '{scene.MapName}' to '{savePath}': {saveError}");
+            }
+        }
+
         _editor = scene;
+    }
+
+    /// <summary>
+    /// Opens the editor on an existing map file; <see langword="null"/> when there is nothing usable to
+    /// open, with the reason in the log.
+    /// </summary>
+    private EditorScene? OpenEditorMap(string? filePath)
+    {
+        string? path = filePath;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            string? directory = _assets?.DataDirectory;
+            path = directory is null ? null : MapCatalog.ReadAll([directory]).FirstOrDefault()?.FilePath;
+        }
+
+        if (path is null)
+        {
+            GameLog.Warn("The editor needs a map: pass --map <file.mp2>, --editor-new <size>, or install the map collection.");
+            return null;
+        }
+
+        Mp2FileInfo mapInfo;
+        try
+        {
+            mapInfo = Mp2FileInfo.Read(path);
+        }
+        catch (Exception exception) when (exception is BinaryFormatException or IOException or UnauthorizedAccessException)
+        {
+            GameLog.Error($"The map file '{path}' could not be read", exception);
+            return null;
+        }
+
+        EditorScene? scene = EditorScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
+        if (scene is null)
+        {
+            GameLog.Warn($"The map file '{path}' cannot be edited: {error}");
+            return null;
+        }
+
+        return scene;
     }
 
     /// <summary>
@@ -756,6 +830,14 @@ public sealed class GameHost : IDisposable
             _timer.FramesPerSecond,
             _timer.FrameCount);
 
+        // One line per scene change: it tells whether a switch reached the renderer, which is the
+        // difference between "the click did nothing" and "the new scene drew nothing" (ADR-042).
+        if (_drawnScene != _scene)
+        {
+            _drawnScene = _scene;
+            GameLog.Info($"Drawing the '{_scene.GetType().Name}'.");
+        }
+
         _scene.DrawFrame(state);
         _presenter.Upload(_frame);
 
@@ -829,18 +911,6 @@ public sealed class GameHost : IDisposable
         }
 
         _scene = _menu is not null ? _menu : _diagnostics;
-
-        // --left-click replays one click through the same method the event loop uses; press and
-        // release in the same frame is still a click, because the menu only reports on the release.
-        if (_options.LeftClick && _menu is not null)
-        {
-            _menu.SetLeftButton(true);
-
-            if (_menu.SetLeftButton(false) is { } clicked)
-            {
-                HandleMenuAction(clicked);
-            }
-        }
 
         if (_options.EnterMap && _menu is not null)
         {
