@@ -171,6 +171,76 @@ public readonly record struct MapGeometry
     public int GetIndexFromAbsPoint(int x, int y) => x < 0 || y < 0 ? -1 : (y * Width) + x;
 
     /// <summary>
+    /// The squared euclidean distance between two tiles, the comparison of <c>ComparisonDistance</c>
+    /// (<c>maps.cpp:184</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference has no such function: the comparator of <c>maps.cpp</c> builds the squared distance of
+    /// both indexes inline every time it is asked. The port keeps the arithmetic in one place because two
+    /// other functions need it — <see cref="World.GetObjectPositions(int, FHeroes2.Assets.Maps.Mp2ObjectType, bool)"/>
+    /// and <see cref="World.ScanAroundObjectWithDistance"/> both sort by it — and because a comparator
+    /// that cannot be called on its own cannot be tested on its own.
+    /// </remarks>
+    /// <param name="from">Source tile index.</param>
+    /// <param name="to">Target tile index.</param>
+    /// <returns>The squared distance, in tiles.</returns>
+    public int GetSquaredDistance(int from, int to)
+    {
+        int diffX = (from % Width) - (to % Width);
+        int diffY = (from / Width) - (to / Width);
+
+        return (diffX * diffX) + (diffY * diffY);
+    }
+
+    /// <summary>
+    /// The distance a hero would have to walk between two tiles, <c>Maps::GetApproximateDistance()</c>
+    /// (<c>maps.cpp:691</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference's own example: a tile seven rows below and five columns to the right is reached by
+    /// five diagonal steps and two straight ones, which costs <c>2 + 5 * 1.5 = 9.5</c> tiles of straight
+    /// travel — nine after truncation. The formula is <c>max + min / 2</c> on the two deltas, with the
+    /// division truncating, which is exactly that.
+    /// </para>
+    /// <para>
+    /// The result is <b>approximate</b>: it knows nothing about terrain penalties, roads or obstacles. The
+    /// reference says the same and tells callers to keep it for cases where precision does not matter.
+    /// </para>
+    /// </remarks>
+    /// <param name="from">Source tile index.</param>
+    /// <param name="to">Target tile index.</param>
+    /// <returns>The distance in tiles.</returns>
+    public uint GetApproximateDistance(int from, int to)
+    {
+        int diffX = Math.Abs((from % Width) - (to % Width));
+        int diffY = Math.Abs((from / Width) - (to / Width));
+
+        return (uint)(Math.Max(diffX, diffY) + (Math.Min(diffX, diffY) / 2));
+    }
+
+    /// <summary>
+    /// The straight line distance between two tiles, <c>Maps::GetStraightLineDistance()</c>
+    /// (<c>maps.cpp:704</c>).
+    /// </summary>
+    /// <remarks>
+    /// <c>std::hypot</c> truncated to an integer, so the result is the floor of the hypotenuse. Like
+    /// <see cref="GetApproximateDistance"/> this ignores the terrain, and the reference warns that it is
+    /// <b>not</b> a movement point count: a diagonal step costs 1.5 times a straight one, which the
+    /// hypotenuse does not express.
+    /// </remarks>
+    /// <param name="from">Source tile index.</param>
+    /// <param name="to">Target tile index.</param>
+    /// <returns>The distance in tiles, truncated.</returns>
+    public uint GetStraightLineDistance(int from, int to)
+    {
+        int diffX = Math.Abs((from % Width) - (to % Width));
+        int diffY = Math.Abs((from / Width) - (to / Width));
+
+        return (uint)Math.Sqrt((diffX * diffX) + (diffY * diffY));
+    }
+
+    /// <summary>
     /// The indexes of the tiles around one tile — <c>Maps::getAroundIndexes</c>.
     /// </summary>
     /// <param name="tileIndex">Index of the centre tile.</param>

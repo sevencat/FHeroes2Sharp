@@ -12,6 +12,18 @@ namespace FHeroes2.Game.Maps;
 /// local helper, everything else is copied statement by statement, and the order of the calls is the
 /// order of the table.
 /// </para>
+///
+/// <para>
+/// <b>The main type is the action one.</b> The reference passes <c>MP2::OBJ_CASTLE</c>,
+/// <c>MP2::OBJ_RANDOM_CASTLE</c> and <c>MP2::OBJ_RANDOM_TOWN</c>, which are the values
+/// <em>with</em> the action bit (<c>mp2.h:307</c>); their non-action twins are
+/// <c>MP2::OBJ_NON_ACTION_CASTLE</c> and so on. Written out in C# that is
+/// <see cref="Mp2ObjectType.ActionCastle"/>, <see cref="Mp2ObjectType.ActionRandomCastle"/> and
+/// <see cref="Mp2ObjectType.ActionRandomTown"/> — <see cref="Mp2ObjectType.Castle"/> is the value the
+/// lambda derives for the <em>other</em> parts (see below) and must not be passed in here:
+/// the subtraction of the action bit below would wrap around and the tile cache would hold a type no
+/// map ever contains.
+/// </para>
 /// </summary>
 public static partial class MapObjectCatalog
 {
@@ -27,12 +39,12 @@ public static partial class MapObjectCatalog
             uint race = i / 2;
             bool isCastle = (i % 2) == 0;
 
-            AddTown(objects, Mp2ObjectType.Castle, race, icnOffset, icnOffset, Mp2ObjectIcnType.ObjnTown, Mp2ObjectIcnType.ObjnTwsh, isCastle);
+            AddTown(objects, Mp2ObjectType.ActionCastle, race, icnOffset, icnOffset, Mp2ObjectIcnType.ObjnTown, Mp2ObjectIcnType.ObjnTwsh, isCastle);
         }
 
         // Random castle/town.
-        AddTown(objects, Mp2ObjectType.RandomCastle, 7, 0, 32, Mp2ObjectIcnType.ObjnTwrd, Mp2ObjectIcnType.ObjnTwrd, true);
-        AddTown(objects, Mp2ObjectType.RandomTown, 7, 16, 16 + 32, Mp2ObjectIcnType.ObjnTwrd, Mp2ObjectIcnType.ObjnTwrd, false);
+        AddTown(objects, Mp2ObjectType.ActionRandomCastle, 7, 0, 32, Mp2ObjectIcnType.ObjnTwrd, Mp2ObjectIcnType.ObjnTwrd, true);
+        AddTown(objects, Mp2ObjectType.ActionRandomTown, 7, 16, 16 + 32, Mp2ObjectIcnType.ObjnTwrd, Mp2ObjectIcnType.ObjnTwrd, false);
     }
 
     /// <summary>The <c>addTown</c> lambda of the reference.</summary>

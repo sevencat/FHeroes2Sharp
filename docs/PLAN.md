@@ -80,18 +80,18 @@
 | `castle` | 11 | 0 | 0 | 11 |
 | `dialog` | 29 | 2 | 3 | 24 |
 | `editor` | 18 | 1 | 4 | 13 |
-| `game` | 28 | 2 | 3 | 23 |
+| `game` | 28 | 2 | 4 | 22 |
 | `gui` | 33 | 8 | 10 | 15 |
 | `h2d` | 1 | 0 | 0 | 1 |
-| `heroes` | 12 | 1 | 0 | 11 |
+| `heroes` | 12 | 1 | 3 | 8 |
 | `kingdom` | 14 | 0 | 2 | 12 |
 | `maps` | 17 | 3 | 7 | 7 |
 | `monster` | 3 | 0 | 1 | 2 |
 | `resource` | 4 | 1 | 1 | 2 |
 | `spell` | 4 | 0 | 0 | 4 |
 | `system` | 3 | 0 | 2 | 1 |
-| `world` | 5 | 0 | 1 | 4 |
-| **合计** | **249** | **26** | **43** | **180** |
+| `world` | 5 | 0 | 4 | 1 |
+| **合计** | **249** | **26** | **50** | **173** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -123,11 +123,88 @@
 两个文件本来都在「部分」里，行数与合计不变；`maps_tiles.cpp` 现在只差英雄占用、船的、迷雾位与
 `isCoast`，`world.cpp` 只差英雄/城堡/王国/事件等容器与地图装载。
 
+2026-11-16 凌晨：`world_loadmap.cpp` 的瓦片循环 + add-on 链 + `fixMP2MapTileObjectType` + `PostLoad`
+可运行子集落地，`world_object_uid.cpp` 的计数器改挂 `World`（ADR-067）。这两个文件从「未转」转为「部分」，
+`world` 行 0/1/4 → 0/3/2，合计 26/43/180 → **26/45/178**（总数仍是 249）。同时修掉对象表三个手写文件把
+C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名字直译成非 action 值的 bug——
+它让真实地图装载时 `GetObjectTypeByIcn` 吐出 `0xFFB0` 这种环绕值。
+
+2026-11-16：`Tile.setHero`/`getHero` 与最小 `Hero` 契约（ADR-068）：瓦片只存英雄 id，放置时把当前
+对象类型停放到英雄身上，`getMainObjectType` 补上「看穿英雄」的形态，`updatePassability` 与
+`fixMP2MapTileObjectType` 改读它。覆盖率**不变**（`heroes` 行仍 1/0/11）：这一片只有 `heroes.h` 的 id 表
+加一个 `AllHeroes::Get` 式查找，`heroes.cpp` 的主体没动，记成「部分」会把口径弄虚。
+
+2026-11-16：地图对象查询（`GetObjectPositions`/`getObjectParts`/`doesObjectExistOnMap`）与 `PostLoad` 的
+石阵/漩涡/法师之眼三张缓存（ADR-069）。覆盖率**不变**：`maps.cpp` 与 `world.cpp` 本来就是「部分」，
+这一片是把它们补厚，不新增「转」。
+
+2026-11-16：`Rand` 门面（`src/FHeroes2.Core/Random/Rand.cs`）与 `World.NextTeleport`/`GetTeleportEndPoints`/
+`GetWhirlpoolEndPoints`/`NextWhirlpool`（ADR-070）。`rand.cpp` 的 ✅ 至此名副其实（只差
+`combineSeedWithValueHash`）；覆盖率不变，`world.cpp` 仍是「部分」。
+
+2026-11-16：英雄表 `AllHeroes`（`Init`/`Clear`/`GetHeroForHire`/`isAvailableForHire`）、`HeroRaces` 与
+`Hero` 的种族/颜色/肖像/mode 位（ADR-071）。`World` 的 `AddHero` 替身删除，`_heroes` 换成按 id 索引的
+`AllHeroes`，`LoadMap` 调 `Init( map.Info.Version )`。`heroes` 行 1/0/11 → **1/1/10**，
+合计 26/45/178 → **26/46/177**（`heroes.cpp` 进「部分」）。
+
+2026-11-16：地图装载建英雄（ADR-072）：`Mp2HeroInfo` 拆 76 字节块、`World.CreateMapHeroes`/`PlaceMapHero`
+接 `world_loadmap.cpp` 的 `MP2::OBJ_HERO` 分支与落格，`Hero.LoadFromMP2` 搬「只依赖英雄自己」的那半
+（位置/颜色/种族改判/肖像/名字/巡逻），`HeroModes` 加 `Patrol`。覆盖率**不变**：`heroes.cpp` 与
+`world_loadmap.cpp` 早就记在「部分」里，这一片是补薄缺口；`heroes.cpp` 现在只差军队/神器/技能/经验/
+法术点与移动。
+
+2026-11-16：牢房里的英雄（ADR-073）：`MP2::OBJ_JAIL` 分支，种族取第 60 字节、颜色 `None`、
+`isInJail = true`，瓦片仍归监狱。`CreateMapHeroes` 拆成 `FindInfoBlockTile`/`CreateMapHero`/
+`CreateJailHero`/`SelectMapHero`。覆盖率**不变**（都是「部分」）；`world_loadmap.cpp` 现在只差
+告示/瓶子/事件/狮身人面/每日事件/传闻六支与城堡表、俘获对象、AI 区域。
+
+2026-11-16：告示/瓶子与地面事件（ADR-074）：新增 `MapObject`/`MapSign`/`MapEvent`/`MapObjects`，
+`World.ReadInfoBlocks`（原 `CreateMapHeroes`）按对象类型分派四支，`World` 加 `MapObjects`/`GetMapSign`/
+`GetMapEvent`，`Tile.UpdateObjectType` 补上「事件数据不在就清成 `None`」的分支。覆盖率**不变**
+（`maps_objects.cpp` 早就在「部分」里，这一片给它挂上装载）；`world_loadmap.cpp` 现在只差
+狮身人面/每日事件/传闻与城堡表、俘获对象、AI 区域。
+
+2026-11-16：狮身人面、每日事件与传闻（ADR-075）：`MapSphinx`（答案小写、只比前 4 个字符、
+`validate()` → `IsValid`）、`EventDate`（可负资源、首日/周期、六色、`IsAllowed`/`IsDeprecated`）、
+`World.Rumors`/`DailyEvents`/`AddEventDate`/`GetMapSphinx`；`ReadInfoBlocks` 加「空块跳过」与
+「无瓦片块分流」（`ReadWorldBlock`，`[42]==1` 才是事件），`FindInfoBlockTile` 的匹配集合扩到城堡，
+避免城堡块被当成传闻。覆盖率**不变**；`world_loadmap.cpp` 现在只差城堡表、俘获对象、AI 区域。
+
+2026-11-16：日期系统（ADR-076）：`World` 的 `_day`/`_week`/`_month`、五个派生显示值、五个裸取模判定、
+`DateString()` 与 `NewDay()`（三层嵌套递增 + 按 `_day - 1` 剪掉过期每日事件）；`NewMonth`/`NewWeek` 与
+三张表的 `NewDay`/`NewWeek` 按参考顺序留插入点。同时补 `mp2.cpp` 的 `isWeekLife`/`isBattleLife` 两张
+分类表与 `World::CountObeliskOnMaps()`（ADR-077）。覆盖率**不变**（`world.cpp` 与 `mp2.cpp` 早就在
+「部分」/✅ 里）；`world.cpp` 的日期侧只剩 `GetWeekType`/`NewWeek`/`NewMonth`。
+
+2026-11-16：俘获对象（ADR-078）、瓦片级迷雾（ADR-079）、`maps_tiles_helper.cpp` 的元数据读写
+（ADR-080）：`map_captureobj` 的 `(对象类型, 颜色)` 表与 `CountCapturedMines` 的两条特殊路径、`Tile`
+的 `_fogColors`/`_fogDirection` 与 `IsFog`/`ClearFog`、`GetFundsFromTile`/`GetArtifactFromTile`/
+`DoesTileContainValuableItems`/`SetResourceOnTile`/`SetBarrierColorOnTile`/`ResetObjectMetadata` 与
+`ArtifactCaptureCondition`。覆盖率**不变**；`world_loadmap.cpp` 现在只差城堡表与 AI 区域，
+`maps_tiles_helper.cpp` 只差 `ClearFog` 半径揭示、`updateFogDirectionsInArea` 与军队/法术相关的几支。
+
+2026-11-16：英雄技能与经验（ADR-087~090）：`SecondarySkill` 14 项、`secondarySkillValuesPerLevel`
+（重排成 id 序）、`factionProperties` 六行 + `Factions.Get`、`Skill::SecSkills`（8 槽含空槽）、
+`HeroExperience` 的 40 行阈值表与尾部公式。`heroes` 行 1/1/10 → **1/2/9**（`skill.cpp` 进「部分」），
+`game` 行 2/3/23 → **2/4/22**（`game_static.cpp` 进「部分」），合计 26/46/177 → **26/48/175**。
+`skill.cpp` 只差 `FindSkillsForLevelUp`（要随机种子）与技能名/描述那几支文案；`game_static.cpp` 只转了
+数据行与三支取用入口，护城河减防、城墙远程惩罚、绿洲移动点、中立怪上限、漩涡失踪率、雾发现距离都未转；
+`heroes.cpp` 仍记「部分」，但经验侧已齐，现在只差军队/神器/法术点/移动。
+
+2026-11-16：寻路的玩家侧与路线（ADR-091~094）：`WorldPathfinder` 基类的缓存/队列/邻居松弛、
+`PlayerWorldPathfinder` 的 `reEvaluateIfNeeded`/`buildPath`/怪物挡路、`Route::Step` 与 `Route::Path`
+的队列（除 `GetIndexSprite` 与 `String`）。`world` 行 0/3/2 → **0/4/1**（`world_pathfinding.cpp` 进「部分」），
+`heroes` 行 1/2/9 → **1/3/8**（`route.cpp` 进「部分」），合计 26/48/175 → **26/50/173**。
+`world_pathfinding.cpp` 只差 AI 侧的四个子类（`AIWorldPathfinder`/`ObjectValueStorage` 那一半要军队与
+对象价值表）；`route.cpp` 只差 `GetIndexSprite`（260 行 `ICN::ROUTE` 精灵表，等渲染侧）与 `String`；
+`heroes_move.cpp` 仍未动（它整个是动画与移动点记账，等 `Hero` 有军队与移动点）。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
   `image_tool.cpp`→`IcnSpriteDecoder`+`PngWriter`/`PngReader`+`BmpWriter`+`MonoCursorFile`+TIL 负载读取；
-  `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32`；`timing.cpp`→`FrameTimer`
+  `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32` + `Rand` 门面（门面在
+  ADR-070；`combineSeedWithValueHash` 未转，靠 `std::hash`，跨库不可复现）；`timing.cpp`→`FrameTimer`
 * ◐ `image.cpp`（`Blit`/`Copy`/`Fill`/`ApplyTransform`/`Resize`/`CreateContour`/`Dithering` 已转，
   `SubpixelResize` 与重采样分支未）；`screen.cpp`（只转了呈现层：`PresentationViewport` + `SdlPresenter`）；
   `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
@@ -170,11 +247,13 @@
 * ✅ `game_mainmenu.cpp`→`MainMenuScene`（招牌/灯笼/门/右键提示）；`game_delays.cpp`→`IcnAnimation` 计时
 * ◐ `game_assets.cpp`→`Game.Assets` 门面 + 字体派生（`getImage`/`getICN`/`CopyICNWithPalette`/
   `generateGradientFont` 已转，其余大量 `getXxx` 未）；`game_scenarioinfo.cpp`→`ScenarioSelectionDialog`；
-  `game_newgame.cpp`→`GameHost` 的 NEW GAME 流程
-* ❌ 其余 23：`difficulty`、`fheroes2`、`game_auto_playtest`、`game_campaign`、`game_credits`、
+  `game_newgame.cpp`→`GameHost` 的 NEW GAME 流程；`game_static.cpp`→`Factions`/`FactionProperties`/
+  `SecondarySkillTable`（只有 `factionProperties` 六行与 `GetFactionProperties`/`GetSecondarySkillValuesPerLevel`/
+  `getSecondarySkillsForWitchsHut` 三支，护城河、城墙、绿洲、中立怪、漩涡、雾距离未转）
+* ❌ 其余 22：`difficulty`、`fheroes2`、`game_auto_playtest`、`game_campaign`、`game_credits`、
   `game_exit`、`game_highscores`、`game_hotkeys`、`game_init`、`game_interface`、`game_intro`、
   `game_invalid_assets`、`game_io`、`game_loadgame`、`game_mainmenu_ui`、`game_over`、
-  `game_startgame`、`game_static`、`game_string`、`game_tools`、`game_video`、`game`、`highscores`
+  `game_startgame`、`game_string`、`game_tools`、`game_video`、`game`、`highscores`
 
 ### `gui`（33）
 
@@ -194,17 +273,37 @@
 
 ### `maps`（17）
 
-* ✅ `ground.cpp`→`MapGround`；`mp2.cpp`+`mp2_helper.cpp`→`Mp2Map`/`Mp2TileInfo`/`Mp2AddonInfo`/
-  `Mp2ObjectData`
+* ✅ `ground.cpp`→`MapGround`/`MapGrounds`：`getTerrainImageIndex` 族的起始图号、`GetPenalty` 的九行代价表与
+  五个代价常量、`isTerrainTransitionImage`/`doesTerrainImageIndexContainEmbeddedObjects` 的地形图像边界
+  （ADR-082）；`mp2.cpp`+`mp2_helper.cpp`→`Mp2Map`/`Mp2TileInfo`/`Mp2AddonInfo`/
+  `Mp2ObjectData`，对象分类谓词 `isOffGameActionObject`/`getBaseActionObjectType`/`isObjectCanBeAction`/
+  `doesObject(NeedExtended|Contain)Metadata`（ADR-066/073）、`isWeekLife`/`isBattleLife`（ADR-077）
+  与其余十一个判据 `isDayLife`…`isNeedStayFront`（ADR-081）
 * ◐ `maps.cpp`（几何部分全部已转：`Game/Maps/MapGeometry` 的 index ↔ point、`GetDirection`、
   `GetDirectionIndex`、`getDirectionPoint`、`isValidDirection`、`isValidAbs(Index|Point)`、`getAroundIndexes`，
-  外加 `Game/Maps/Direction`+`Directions` 照 `direction.h/.cpp` 逐条移植；渲染侧只有
-  `drawFog`→`MapFog`/`DrawFog` 与部分 `ClearFog`）；`maps_fileinfo.cpp`→
-  `Mp2FileInfo`/`MapCatalog`；`maps_objects.cpp`→`Mp2ObjectPreset`/`Mp2ObjectName`（对象表子集）；
+  外加 `Game/Maps/Direction`+`Directions` 照 `direction.h/.cpp` 逐条移植；距离 `GetApproximateDistance`/
+  `GetStraightLineDistance`/`ComparisonDistance` 的比较算术已转（ADR-085）；对象查询
+  `doesObjectExistOnMap`/`GetObjectPositions`/`getObjectParts` 已转（`World` 实例方法，ADR-069），
+  扫描与守卫 `scanAroundObject`（两个重载）/`hasNearbyObject`/`isValidForDimensionDoor`/
+  `scanAroundObjectWithDistance`/`GetObjectPositions( center, … )`/`forEachMonsterProtectingTile`/
+  `getMonstersProtectingTile`/`isTileUnderProtection` 已转（ADR-084；`isTileProtectionStrongerThan` 要
+  `Army`、`getVisibleMonstersAroundHero` 要 `Heroes` 的视野距离）；`getSquaredScoutingRadiusLimit` 落在
+  `MapFog.SquaredRevealLimit`（ADR-086）；渲染侧 `drawFog`→`MapFog`/`DrawFog`，`ClearFog` 的半径版与
+  `getFogTileCountToBeRevealed` 仍由 `MapFog.Reveal` 承担）；`maps_fileinfo.cpp`→
+  `Mp2FileInfo`/`MapCatalog`；`maps_objects.cpp`→`Mp2ObjectPreset`/`Mp2ObjectName`（对象表子集）
+  与 `Game/Maps/MapObject`/`MapSign`/`MapEvent`/`MapSphinx`/`MapObjects`（告示/瓶子、地面事件与
+  狮身人面的装载，ADR-074/075；拾取与问答题信息框未转）；
   `maps_tiles.cpp`（雾位 + `Tile` 的对象层/地形位/道路位/通行掩码/`Init`/独立通行计算/`isStream`/
   `isShadow`/`updatePassability`/`updateObjectType`/`isAnyTallObjectOnTile`/`isDetachedObject`/
-  `getIndexOfMainTile` 已转，`isCoast`/`updateFogDirection` 部分；只剩英雄占用、船的、迷雾位）；
-  `maps_tiles_helper.cpp`（`updateFogDirectionsInArea`、`updateTerrainTransitionOnTile` 已转）；
+  `getIndexOfMainTile`/`getHero`/`setHero`/`getMainObjectType`/`_getMainObjectTypeUnderHero` 已转，
+  对象感知通行 `isSuitableForDisembarkation`/`isSuitableForSummoningBoat`/`isSuitableForUltimateArtifact`/
+  `isPassableFrom( direction, fromWater, ignoreFog, heroColor )` 也已转（ADR-083，只差同盟城堡入口），
+  `isCoast`/`updateFogDirection` 部分；迷雾位与 `ClearFog` 已转（ADR-079），只剩船）；
+  `maps_tiles_helper.cpp`（`updateTerrainTransitionOnTile`/`getObjectPartByActionType` 已转；
+  `getFundsFromTile`/`getArtifactFromTile`/`getBarrierColorFromTile`/`doesTileContainValuableItems`/
+  `setResourceOnTile`/`setBarrierColorOnTile`/`resetObjectMetadata` 已转，ADR-080；
+  只剩半径 `ClearFog`、`updateFogDirectionsInArea`（此前误记为已转，实际未搬）与法术/军队几支）；
+  `maps_tiles_helper.h` 的 `ArtifactCaptureCondition` 已转（ADR-080）；
   `maps_tiles_render.cpp`（`drawByObjectIcnType`/`drawFog`/`drawMainObjectTiles` 已转）
 * ◐ `map_object_info.cpp`→`Game/Maps/MapObjectCatalog`：`ObjectInfo` / `ObjectPartInfo` /
   `LayeredObjectPartInfo` / `ObjectGroup` 与 `getObjectsByGroup`、`getObjectPartByIcn`、
@@ -221,11 +320,36 @@
 ### 其余目录
 
 * `world`（5）：◐ `world.cpp` 搬了骨架与通行重算——`World` 的 `w()`/`h()`、瓦片表与两个 `getTile`、
-  `generateUninitializedMap`、`Reset`、`ResetPathfinder` 占位（ADR-065）、`updatePassabilities`（ADR-066）；
-  英雄/城堡/王国/俘获对象/地图对象这些容器、日期与事件、区域图、静态分析都未转；
-  ❌ `world_loadmap`、`world_pathfinding`、`world_object_uid`、`world_regions`
+  `generateUninitializedMap`、`Reset`、`ResetPathfinder` 占位（ADR-065）、`updatePassabilities`（ADR-066）、
+  对象查询与石阵/漩涡（ADR-069/070）、地图对象与每日事件/传闻容器（ADR-074/075）、
+  日期（`_day`/`_week`/`_month`、派生显示值、`DateString`、`NewDay` 的时钟与剪枝，ADR-076）、
+  `CountObeliskOnMaps`（ADR-077）与俘获对象（`map_captureobj`、`CaptureObject`/`CountCapturedMines`/
+  `ResetCapturedObjects`，ADR-078）；英雄/城堡/王国这些容器、`GetWeekType`/`NewWeek`/`NewMonth`、
+  区域图、静态分析都未转；
+  ◐ `world_loadmap` 搬了瓦片循环、add-on 链、`fixMP2MapTileObjectType`、`MP2::OBJ_HERO` 与
+  `MP2::OBJ_JAIL` 的信息块建人（ADR-067/072/073）、`MP2::OBJ_SIGN`/`OBJ_BOTTLE`/`OBJ_EVENT` 的
+  对象装载（ADR-074）、`MP2::OBJ_SPHINX` 与无瓦片的每日事件/传闻块（ADR-075）与 `PostLoad` 的
+  可运行子集，城堡表/AI 区域未转（俘获对象的数据结构已落，ADR-078）；`PostLoad` 的石阵/漩涡/法师之眼缓存另在
+  `World` 上落地（ADR-069），读取端 `GetTeleportEndPoints`/`GetWhirlpoolEndPoints`/`NextTeleport`/
+  `NextWhirlpool` 已接（ADR-070）；
+  ◐ `world_object_uid` 的计数器改挂在 `World` 上（`LastObjectUid`/`GetNewObjectUid`，ADR-067）；
+  ◐ `world_pathfinding` 的**玩家侧**已转：`WorldPathfinder` 抽象基类包住缓存、标签修正式搜索、
+  「最后一格」规则、船的对角切角与怪物「只到不穿」（ADR-091），`PlayerWorldPathfinder` 是五元组
+  缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
+  都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；❌ `world_regions`
 * `ai`（9）、`army`（4）、`battle`（18）、`campaign`（3）、`castle`（11）、`heroes`（12）、`spell`（4）、
-  `h2d`（1）、`audio`（1）：**全部未转**
+  `h2d`（1）、`audio`（1）：**全部未转**，只有 `heroes` 例外——◐ `direction.cpp` 已转；`heroes.cpp` 转成
+  「部分」：`AllHeroes::Init` / `Clear` / `GetHeroForHire`、`isAvailableForHire`、`getHeroIdRangeForRace`
+  （`Game/Heroes/AllHeroes`、`HeroRaces`，ADR-071）与 `Heroes::LoadFromMP2` 的前半（位置/颜色/种族改判/
+  肖像/名字/巡逻，ADR-072）已落，另有 `Hero` 的 id 取值域、种族/颜色/肖像、mode 位、`isFriends`（暂等价于
+  同色，ADR-083）、瓦片占用契约（ADR-062/068/071）与经验/等级表（`HeroExperience`，ADR-090）；
+  `skill.cpp` 也记「部分」：14 项枚举、数值表、种族初始技能、`SecSkills`、外交折扣已转（ADR-087~089），
+  只差 `FindSkillsForLevelUp`（要随机种子）与技能名/描述文案；`route.cpp` 也记「部分」：
+  `Route::Step`→`RouteStep`（ADR-093）与 `Route::Path`→`HeroPath` 的队列语义
+  （`FrontIndex`/`FrontFrom`/`FrontDirection`/`FrontPenalty`/`NextStepDirection`、`Truncate`/
+  `PopFront`/`Show`/`Hide`/`IsValidForMovement`/`IsValidForTeleportation`/`GetAllowedSteps`，
+  ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；未转 `GetIndexSprite`
+  （260 行 `ICN::ROUTE` 精灵表，等渲染侧）与 `String`；移动、军队、法术书、AI 动作仍未转
 * `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`；❌ `experience`、
   `kingdom_overview`、`kingdom`、`luck`、`morale`、`payment`、`profit`、`puzzle`、`resource_trading`、
   `speed`、`view_world`、`week`
@@ -242,11 +366,18 @@
 1. `maps/map_object_info.cpp` —— 拾取、信息框与 `ActionToObject` 的总闸。类型、全部 21 组表与它们依赖的
    `MonsterType` / `ArtifactType` 两个 id 枚举都已落地（表大小与枚举锚点分别钉在 `MapObjectCatalogTests`、
    `IdEnumTests`）。`Tile::getMainObjectType` 的缓存字段也已随第 3 条落地（ADR-066）。
-2. `heroes/heroes_move.cpp` + `world/world_pathfinding.cpp` + `maps/visit.cpp` —— 英雄移动与路径预览，
-   `MapFog` 的增量更新挂在这里。
+2. `heroes/heroes_move.cpp` + `maps/visit.cpp` —— 英雄移动与路径预览，`MapFog` 的增量更新挂在这里。
+   `world/world_pathfinding.cpp` 的玩家侧与 `route.cpp` 已落（ADR-091~094）：路径查找表有了
+   （`World.Pathfinder.ReEvaluateIfNeeded` + `BuildPath`），路线队列也有了（`HeroPath`），
+   剩下的是移动点记账与动画那半边——它要 `Hero` 真的拥有军队与移动点。
 3. `world/world.cpp`、`world_loadmap.cpp`、`world_object_uid.cpp` —— 可变世界状态，`castle`/`kingdom`/
-   `army` 都依赖它。`World` 的骨架与 `updatePassabilities` 已立（ADR-065/066），`Tile` 的邻居通行也已
-   接上；下一步是 `world_loadmap` 的对象表（让整条链吃上真数据）与 `Tile.setHero`/`getHero`。
+   `army` 都依赖它。   `World` 的骨架与 `updatePassabilities` 已立（ADR-065/066），`Tile` 的邻居通行也已
+   接上；`world_loadmap` 的瓦片循环 + add-on 链 + 类型修复 + `PostLoad` 子集与 `world_object_uid` 的
+   计数器已落（ADR-067），英雄占用（`Tile.setHero`/`getHero` + 最小 `Hero`）也已落（ADR-068），
+   地图对象查询与石阵/漩涡/法师之眼缓存也已落（ADR-069），装载时按信息块建英雄并落到格子上也已落
+   （ADR-072），牢房里的英雄同样已落（ADR-073），告示/瓶子与地面事件的对象装载也已落（ADR-074），
+   狮身人面与无瓦片的每日事件/传闻块同样已落（ADR-075）。信息块的六个分支到这里全部落地。
+   下一步是 `PostLoad` 里剩下的城堡表（要 `Castle` 系统）、俘获对象与 AI 区域。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
 5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
    `audio_manager.cpp`（音乐播放，现在只有元数据）。

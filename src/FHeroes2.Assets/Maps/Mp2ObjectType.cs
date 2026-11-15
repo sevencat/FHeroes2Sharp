@@ -318,7 +318,7 @@ public enum Mp2ObjectType : ushort
 /// Helpers around <see cref="Mp2ObjectType"/>, ported from the predicates at the end of
 /// <c>mp2.h</c> that the map loader needs.
 /// </summary>
-public static class Mp2ObjectTypes
+public static partial class Mp2ObjectTypes
 {
     /// <summary>
     /// <c>MP2::isOffGameActionObject</c>: whether the type carries the action bit. Note that this is a
@@ -392,6 +392,94 @@ public static class Mp2ObjectTypes
         Mp2ObjectType.SwampyLake => false,
         Mp2ObjectType.FrozenLake => false,
         _ => true,
+    };
+
+    /// <summary>
+    /// <c>MP2::isWeekLife</c> (<c>mp2.cpp:511</c>): the objects that are refreshed at the beginning of
+    /// every week — the weekly production buildings, the monster dwellings and (for the AI) a hero.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The list is the reference's and is compared against the <b>non-action</b> values, because the
+    /// reference calls it with <c>tile.getMainObjectType( false )</c>. Passing an <c>Action*</c> value
+    /// therefore answers <see langword="false"/> — that is the reference behaviour, not an oversight of
+    /// the port.
+    /// </para>
+    /// <para>
+    /// The hero case looks odd in a list of "life" objects: it is there for the AI, which uses the
+    /// predicate to decide when a hero's movable points are refilled (<c>ai_planner_hero.cpp:823</c>).
+    /// </para>
+    /// </remarks>
+    /// <param name="type">Object type to test.</param>
+    /// <returns><see langword="true"/> when the object is refreshed weekly.</returns>
+    public static bool IsWeekLife(Mp2ObjectType type) => type switch
+    {
+        // Weekly production.
+        Mp2ObjectType.ArtesianSpring => true,
+        Mp2ObjectType.MagicGarden => true,
+        Mp2ObjectType.Stables => true,
+        Mp2ObjectType.WaterWheel => true,
+        Mp2ObjectType.Windmill => true,
+
+        // Monster dwellings.
+        Mp2ObjectType.AirAltar => true,
+        Mp2ObjectType.ArcherHouse => true,
+        Mp2ObjectType.BarrowMounds => true,
+        Mp2ObjectType.Cave => true,
+        Mp2ObjectType.CityOfDead => true,
+        Mp2ObjectType.DesertTent => true,
+        Mp2ObjectType.DragonCity => true,
+        Mp2ObjectType.DwarfCottage => true,
+        Mp2ObjectType.EarthAltar => true,
+        Mp2ObjectType.Excavation => true,
+        Mp2ObjectType.FireAltar => true,
+        Mp2ObjectType.GoblinHut => true,
+        Mp2ObjectType.HalflingHole => true,
+        Mp2ObjectType.PeasantHut => true,
+        Mp2ObjectType.Ruins => true,
+        Mp2ObjectType.TreeCity => true,
+        Mp2ObjectType.TreeHouse => true,
+        Mp2ObjectType.TrollBridge => true,
+        Mp2ObjectType.WagonCamp => true,
+        Mp2ObjectType.WatchTower => true,
+        Mp2ObjectType.WaterAltar => true,
+
+        // For the AI: a hero's movement is refilled with the same weekly rhythm.
+        Mp2ObjectType.Hero => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// <c>MP2::isBattleLife</c> (<c>mp2.cpp:551</c>): the objects that give a temporary luck or morale
+    /// bonus which lasts until the next battle.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="IsWeekLife"/> this is compared against the non-action values, and
+    /// <c>MP2::OBJ_BLACK_CAT</c> is in the list because it changes both morale and luck.
+    /// </remarks>
+    /// <param name="type">Object type to test.</param>
+    /// <returns><see langword="true"/> when the object's bonus is consumed by a battle.</returns>
+    public static bool IsBattleLife(Mp2ObjectType type) => type switch
+    {
+        // Luck modifiers.
+        Mp2ObjectType.FaerieRing => true,
+        Mp2ObjectType.Fountain => true,
+        Mp2ObjectType.Idol => true,
+        Mp2ObjectType.Pyramid => true,
+
+        // Morale modifiers.
+        Mp2ObjectType.Buoy => true,
+        Mp2ObjectType.DerelictShip => true,
+        Mp2ObjectType.Graveyard => true,
+        Mp2ObjectType.Mermaid => true,
+        Mp2ObjectType.Oasis => true,
+        Mp2ObjectType.Shipwreck => true,
+        Mp2ObjectType.Temple => true,
+        Mp2ObjectType.WateringHole => true,
+
+        // Both.
+        Mp2ObjectType.BlackCat => true,
+        _ => false,
     };
 
     /// <summary>

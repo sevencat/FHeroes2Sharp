@@ -213,18 +213,18 @@ public sealed class TileNeighbourPassabilityTests
     }
 
     [Fact]
-    public void UpdateObjectTypeKeepsTheEventType()
+    public void UpdateObjectTypeDropsAnEventWithoutData()
     {
         World world = CreateLandWorld();
         Tile tile = world.GetTile(12);
 
-        // The reference resets the type when the map event data is gone; there is no event container yet,
-        // so the type survives (documented gap).
+        // The reference resets the type when the map event data is gone (maps_tiles.cpp:1601-1611): a tile
+        // that claims to be an event, but has no event in the table, stops being visitable.
         tile.SetMainObjectType(Mp2ObjectType.ActionEvent);
 
         tile.UpdateObjectType(world);
 
-        Assert.Equal(Mp2ObjectType.ActionEvent, tile.MainObjectType);
+        Assert.Equal(Mp2ObjectType.None, tile.MainObjectType);
     }
 
     [Fact]

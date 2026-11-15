@@ -160,10 +160,16 @@ public sealed class WorldLoadMapTests
 
         Tile tile = world.GetTile(firstAddon - 1);
 
-        Assert.Equal(2, tile.GroundObjectParts.Count);
-        Assert.Equal(10, tile.GroundObjectParts[0].IcnIndex);
-        Assert.Equal(12, tile.GroundObjectParts[1].IcnIndex);
-        Assert.Equal(ObjectLayerType.Background, tile.GroundObjectParts[1].LayerType);
+        // The tile had no object of its own, so the sorting pass promotes one of the add-on parts: the
+        // object layer one, which is the lowest layer and therefore the last of the sorted list.
+        Assert.Equal(10, tile.MainObjectPart.IcnIndex);
+        Assert.Equal(ObjectLayerType.Object, tile.MainObjectPart.LayerType);
+        Assert.Equal(5u, tile.MainObjectPart.Uid);
+
+        ObjectPart background = Assert.Single(tile.GroundObjectParts);
+        Assert.Equal(12, background.IcnIndex);
+        Assert.Equal(ObjectLayerType.Background, background.LayerType);
+        Assert.Equal(6u, background.Uid);
 
         // Only the first add-on has a top part.
         ObjectPart top = Assert.Single(tile.TopObjectParts);

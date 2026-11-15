@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Resources;
 
 namespace FHeroes2.Game.Maps;
 
@@ -9,23 +11,20 @@ namespace FHeroes2.Game.Maps;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>This is the first slice of <c>Tile</c>, not the whole class.</b> What is here can be answered
-/// from the tile alone: the object parts (main, ground, top), the object type cache, the metadata,
-/// the terrain image and flags, the road bit and the passability mask. Everything that reads the
-/// global <c>world</c>, the hero list, the fog, the region map or the ground transition tables is
-/// deliberately absent and will be added with <c>world</c> (see <c>docs/DECISIONS.md</c>, ADR-063):
-/// <c>getHero</c>/<c>setHero</c>, the <c>ignoreObjectUnderHero</c> overload of
-/// <c>getMainObjectType</c>, boats, fog, <c>setInitialPassability</c> / <c>updatePassability</c>,
-/// <c>updateObjectType</c>, <c>removeObjectPartsByUID</c> (its tail touches the neighbours),
-/// <c>fixMP2MapTileObjectType</c>, <c>getIndexOfMainTile</c>, <c>isAnyTallObjectOnTile</c>,
-/// <c>isDetachedObject</c>, the ownership flags, <c>String()</c> and the savegame operators.
+/// <b>This is not the whole class.</b> The object parts (main, ground, top), the object type cache, the
+/// metadata, the terrain image and flags, the road bit, the passability mask, the type repairs of the
+/// loader and the hero occupancy are here. Everything that needs the fog, the region map or the ground
+/// transition tables is deliberately absent and will be added with the system it belongs to (see
+/// <c>docs/DECISIONS.md</c>, ADR-063 / ADR-066 / ADR-067 / ADR-068): boats, fog,
+/// <c>removeObjectPartsByUID</c> (its tail touches the neighbours), the ownership flags, <c>String()</c>
+/// and the savegame operators.
 /// </para>
 /// <para>
 /// The class is not a struct like the reference: <c>Tile</c> owns three containers, and the
 /// reference copies them only for the savegame operators, which are not ported yet.
 /// </para>
 /// </remarks>
-public sealed class Tile
+public sealed partial class Tile
 {
     private readonly List<ObjectPart> _groundObjectParts = [];
     private readonly List<ObjectPart> _topObjectParts = [];
@@ -41,6 +40,16 @@ public sealed class Tile
     private Direction _tilePassabilityDirections = Directions.All;
 
     private bool _isTileMarkedAsRoad;
+
+    // The reference stores this in a uint8_t initialised to Heroes::UNKNOWN (maps_tiles.h:417), which is
+    // zero, so a tile starts out as "no hero" without any extra state.
+    private byte _occupantHeroId = (byte)Hero.UnknownId;
+
+    // A fresh tile is under the fog of every player until somebody reveals it (maps_tiles.h:421).
+    private PlayerColor _fogColors = PlayerColors.All;
+
+    // DIRECTION_ALL until the reveal finds out which neighbours are still hidden (maps_tiles.h:427).
+    private Direction _fogDirection = Directions.All;
 
     /// <summary>
     /// Fills the tile from one <c>MP2TileInfo</c>, the <c>Tile::Init</c> of the reference
@@ -112,13 +121,99 @@ public sealed class Tile
     public bool IsWater => _terrainImageIndex < MapGrounds.GrassStartImageIndex;
 
     /// <summary>
+    /// Id of the hero standing on the tile, <c>_occupantHeroId</c>. Zero
+    /// (<see cref="Hero.UnknownId"/>) means no hero.
+    /// </summary>
+    public byte OccupantHeroId => _occupantHeroId;
+
+    /// <summary>
+    /// The hero standing on the tile, <c>getHero()</c> (<c>maps_tiles.cpp:429</c>).
+    /// </summary>
+    /// <param name="world">The world the tile belongs to, the reference's global.</param>
+    /// <returns>The hero, or <see langword="null"/> when the tile has none.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The reference asks for both conditions: the cached type must be <c>MP2::OBJ_HERO</c> <b>and</b> the
+    /// stored id must be a hero id, and only then does it look the object up. A tile whose type says
+    /// "hero" but whose id is unknown therefore reports no hero — the reference would return
+    /// <c>world.GetHeroes( id )</c>, which is a <c>nullptr</c> for such an id anyway.
+    /// <c>MP2::OBJ_HERO</c> is the action value (183), i.e. <see cref="Mp2ObjectType.ActionHero"/>;
+    /// <see cref="Mp2ObjectType.Hero"/> is the non-action twin that no map stores.
+    /// </remarks>
+    public Hero? GetHero(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        return _mainObjectType == Mp2ObjectType.ActionHero && Hero.IsValidId(_occupantHeroId) ? world.GetHero(_occupantHeroId) : null;
+    }
+
+    /// <summary>
+    /// Puts a hero on the tile, or takes the hero away when <paramref name="hero"/> is
+    /// <see langword="null"/>, <c>setHero()</c> (<c>maps_tiles.cpp:434</c>).
+    /// </summary>
+    /// <param name="world">The world the tile belongs to.</param>
+    /// <param name="hero">Hero to place, or <see langword="null"/> to remove the one that is there.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// <para>
+    /// Placing a hero <b>parks the type the tile currently shows on the hero</b> and overwrites the cached
+    /// type with <see cref="Mp2ObjectType.ActionHero"/> (<c>MP2::OBJ_HERO</c>, the action value).
+    /// Removing it puts the parked type back, so the object the hero covered reappears. When the tile
+    /// claims to hold a hero that the world does not know, the removal falls back to
+    /// <see cref="UpdateObjectType"/>, which re-derives the type from the parts.
+    /// </para>
+    /// <para>
+    /// The reference asserts that the id fits into the byte the tile stores
+    /// (<c>hero-&gt;GetID() &lt; 255</c>). <see cref="Hero"/> refuses ids at or above
+    /// <see cref="Hero.IdCount"/> (73), so the cast below is always safe and the port has nothing to
+    /// assert.
+    /// </para>
+    /// <para>
+    /// Both branches change the cached type, and the reference's <c>setMainObjectType()</c> resets the
+    /// pathfinder for that reason (<c>maps_tiles.cpp:477</c>). The port cannot do it there — the setter has
+    /// no world — so the reset sits here, at the only call site that has one.
+    /// </para>
+    /// </remarks>
+    public void SetHero(World world, Hero? hero)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (hero is not null)
+        {
+            hero.SetObjectTypeUnderHero(_mainObjectType);
+
+            _occupantHeroId = (byte)hero.Id;
+
+            SetMainObjectType(Mp2ObjectType.ActionHero);
+            world.ResetPathfinder();
+
+            return;
+        }
+
+        hero = GetHero(world);
+
+        if (hero is not null)
+        {
+            SetMainObjectType(hero.ObjectTypeUnderHero);
+            world.ResetPathfinder();
+
+            hero.SetObjectTypeUnderHero(Mp2ObjectType.None);
+        }
+        else
+        {
+            UpdateObjectType(world);
+        }
+
+        _occupantHeroId = (byte)Hero.UnknownId;
+    }
+
+    /// <summary>
     /// The object whose data the tile shows, <c>getMainObjectType()</c>.
     /// </summary>
     /// <remarks>
-    /// The reference has two forms: the cached value (<c>getMainObjectType( true )</c>) and one that looks
-    /// through an occupying hero (<c>getMainObjectType( false )</c>). A tile can only hold
-    /// <see cref="Mp2ObjectType.Hero"/> when <c>setHero</c> put it there, and that needs the hero class, so
-    /// until heroes are ported the two forms are the same value and this property is the whole answer.
+    /// The reference has two forms: the cached value (<c>getMainObjectType( true )</c>, the default) and
+    /// one that looks through an occupying hero (<c>getMainObjectType( false )</c>, see
+    /// <see cref="GetMainObjectType(World, bool)"/>). This property is the cached value.
     /// </remarks>
     public Mp2ObjectType MainObjectType => _mainObjectType;
 
@@ -127,11 +222,55 @@ public sealed class Tile
     /// </summary>
     /// <remarks>
     /// The reference also calls <c>world.resetPathfinder()</c> here, because the pathfinder caches
-    /// whether a tile is an action object. There is no pathfinder in the port yet, so the reset is
-    /// left for the <c>world</c> step — the cached type itself is set exactly like the reference.
+    /// whether a tile is an action object. The setter has no world in the port, so the reset is the
+    /// caller's job — <see cref="SetHero"/> is the only caller that has a world today. When the
+    /// pathfinder lands, this setter gets an overload that takes the world and the call sites move over.
     /// </remarks>
     /// <param name="objectType">Type to cache.</param>
     public void SetMainObjectType(Mp2ObjectType objectType) => _mainObjectType = objectType;
+
+    /// <summary>
+    /// The type of the object hidden by the hero standing on the tile,
+    /// <c>_getMainObjectTypeUnderHero()</c> (<c>maps_tiles.cpp:467</c>).
+    /// </summary>
+    /// <param name="world">The world the tile belongs to.</param>
+    /// <returns>
+    /// The cached type when it is not <see cref="Mp2ObjectType.ActionHero"/>, the type the hero parked when
+    /// it is, and <see cref="Mp2ObjectType.None"/> when the hero cannot be resolved.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    public Mp2ObjectType GetMainObjectTypeUnderHero(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (_mainObjectType != Mp2ObjectType.ActionHero)
+        {
+            return _mainObjectType;
+        }
+
+        Hero? hero = GetHero(world);
+
+        return hero is not null ? hero.ObjectTypeUnderHero : Mp2ObjectType.None;
+    }
+
+    /// <summary>
+    /// The object type with the option to look through a hero, <c>getMainObjectType( ignoreObjectUnderHero )</c>.
+    /// </summary>
+    /// <param name="world">The world the tile belongs to.</param>
+    /// <param name="ignoreObjectUnderHero">
+    /// <see langword="true"/> (the reference default) returns the cached type, which is
+    /// <see cref="Mp2ObjectType.ActionHero"/> while a hero stands here; <see langword="false"/> returns the
+    /// type of the object the hero covers.
+    /// </param>
+    /// <returns>The object type.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The difference matters exactly once, in <c>updatePassability()</c>: a hero is a temporary object, so
+    /// the passability of the tile under it must be decided by the object the hero covers
+    /// (<c>maps_tiles.cpp:686</c>: "get object type but ignore heroes as they are temporary objects").
+    /// </remarks>
+    public Mp2ObjectType GetMainObjectType(World world, bool ignoreObjectUnderHero = true) =>
+        ignoreObjectUnderHero ? _mainObjectType : GetMainObjectTypeUnderHero(world);
 
     /// <summary>The part that represents the object of the tile, <c>_mainObjectPart</c>.</summary>
     public ObjectPart MainObjectPart => _mainObjectPart;
@@ -187,6 +326,52 @@ public sealed class Tile
         int index = _topObjectParts.FindIndex(part => part.Uid == uid);
 
         return index >= 0 ? _topObjectParts[index] : null;
+    }
+
+    /// <summary>
+    /// The part of this tile that produces <paramref name="type"/> as its object type,
+    /// <c>getObjectPartByActionType()</c> (<c>maps_tiles_helper.cpp:487</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The main part is tried first, then the ground level parts, comparing what
+    /// <c>getObjectTypeByIcn</c> says about each sprite with the requested type. Top level parts are not
+    /// searched: no action object lives there.
+    /// </para>
+    /// <para>
+    /// A type without the action bit is rejected outright, because that is what the reference does
+    /// (<c>MP2::isOffGameActionObject</c>) — the query exists to find the part an action will run on.
+    /// Note that this means the callers pass <b>action</b> values: <see cref="Mp2ObjectType.ActionStoneLiths"/>,
+    /// not <see cref="Mp2ObjectType.StoneLiths"/>.
+    /// </para>
+    /// <para>
+    /// The reference hands out a pointer; <see cref="ObjectPart"/> is a struct, so the port returns a
+    /// copy. Every caller only reads <see cref="ObjectPart.IcnIndex"/> and <see cref="ObjectPart.Uid"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="type">Object type to look for, action bit included.</param>
+    /// <returns>The part, or <see langword="null"/> when this tile has none of that type.</returns>
+    public ObjectPart? GetObjectPartByActionType(Mp2ObjectType type)
+    {
+        if (!Mp2ObjectTypes.IsActionObject(type))
+        {
+            return null;
+        }
+
+        if (MapObjectCatalog.GetObjectTypeByIcn(_mainObjectPart.IcnType, _mainObjectPart.IcnIndex) == type)
+        {
+            return _mainObjectPart;
+        }
+
+        foreach (ObjectPart part in _groundObjectParts)
+        {
+            if (MapObjectCatalog.GetObjectTypeByIcn(part.IcnType, part.IcnIndex) == type)
+            {
+                return part;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -667,6 +852,69 @@ public sealed class Tile
     public bool IsPassableTo(Direction direction) => (direction & _tilePassabilityDirections) != 0;
 
     /// <summary>
+    /// Colors that still have the tile under the fog, <c>_fogColors</c> (<c>maps_tiles.h:421</c>).
+    /// </summary>
+    public PlayerColor FogColors => _fogColors;
+
+    /// <summary>
+    /// Whether any of the players still has the tile under the fog, <c>isFog( PlayerColorsSet )</c>
+    /// (<c>maps_tiles.h:301</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference has two overloads of <c>isFog</c> — one for a single color and one for a set — that
+    /// differ in whether <b>any</b> or <b>all</b> of the players must be in the fog. C# sees a single
+    /// bit set type, so the "all" variant is spelled <see cref="IsFogForAll"/> here; for one color both
+    /// answer the same.
+    /// </remarks>
+    /// <param name="colors">One or more player colors.</param>
+    /// <returns><see langword="true"/> when that player (or one of them) has not revealed the tile.</returns>
+    public bool IsFog(PlayerColor colors) => (_fogColors & colors) != PlayerColor.None;
+
+    /// <summary>
+    /// Whether every player of a set still has the tile under the fog, <c>isFog( PlayerColorsSet )</c>
+    /// (<c>maps_tiles.h:306</c>).
+    /// </summary>
+    /// <remarks>
+    /// The set is the union of an alliance's colors, and the reference answers <see langword="true"/>
+    /// only when <b>all</b> of them are still in the fog — one allied player who has seen the tile reveals
+    /// it for the whole alliance.
+    /// </remarks>
+    /// <param name="colors">One or more player colors.</param>
+    /// <returns><see langword="true"/> when the whole set has not revealed the tile.</returns>
+    public bool IsFogForAll(PlayerColor colors) => (_fogColors & colors) == colors;
+
+    /// <summary>
+    /// Reveals the tile for a set of players, <c>Tile::ClearFog()</c> (<c>maps_tiles.cpp:1576</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference also resets the pathfinder here, because a tile can be revealed without the hero
+    /// moving (a scouting level gained from a chest, a map bought in a Magellan's Maps object). The port
+    /// has no pathfinder yet and <see cref="World.ResetPathfinder"/> is already a placeholder, so the
+    /// call belongs to the world side and is left to whoever reveals tiles until then.
+    /// </remarks>
+    /// <param name="colors">Colors that reveal the tile.</param>
+    public void ClearFog(PlayerColor colors) => _fogColors &= ~colors;
+
+    /// <summary>
+    /// Directions in which the tile still has fog to draw, <c>_fogDirection</c> (<c>maps_tiles.h:427</c>).
+    /// </summary>
+    /// <remarks>
+    /// <c>Direction.Unknown</c> means "no fog at all"; otherwise the center bit is set and every bit of a
+    /// neighbour that is fogged too. It is a rendering cache, recomputed by the area reveal.
+    /// </remarks>
+    public Direction FogDirection => _fogDirection;
+
+    /// <summary>
+    /// Stores the fog directions, <c>setFogDirection()</c> (<c>maps_tiles.h:356</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference marks this <c>// Do NOT call this method directly!!!</c>: only the area reveal may
+    /// set the value, because a stale direction draws fog over a revealed tile.
+    /// </remarks>
+    /// <param name="fogDirection">Directions of the fog around the tile.</param>
+    public void SetFogDirection(Direction fogDirection) => _fogDirection = fogDirection;
+
+    /// <summary>
     /// Recomputes the cached object type from the object parts, <c>updateObjectType()</c>
     /// (<c>maps_tiles.cpp:1599</c>). Called after parts are removed or rearranged, and once per tile by
     /// <see cref="World.UpdatePassabilities"/>.
@@ -679,11 +927,10 @@ public sealed class Tile
     /// tile is water.
     /// </para>
     /// <para>
-    /// <b>The event branch is not ported.</b> The reference keeps the event type only when
-    /// <c>world.GetMapEvent()</c> finds the event data and resets it to <c>OBJ_NONE</c> when it does not;
-    /// the map event container is not in the port yet, so the type is always kept — which is the same as
-    /// the reference for every map whose events are intact. Note that the reference's constant is
-    /// <c>MP2::OBJ_EVENT</c>, an <em>action</em> value (<c>mp2.h:291</c>), i.e.
+    /// The event branch is special: the reference keeps the event type only when
+    /// <c>world.GetMapEvent()</c> finds the event data and resets it to <c>OBJ_NONE</c> when it does not,
+    /// which is how a map whose event object lost its information block stops being visitable. Note that
+    /// the reference's constant is <c>MP2::OBJ_EVENT</c>, an <em>action</em> value (<c>mp2.h:291</c>), i.e.
     /// <see cref="Mp2ObjectType.ActionEvent"/> here; <see cref="Mp2ObjectType.Event"/> is the non-action
     /// twin.
     /// </para>
@@ -697,8 +944,11 @@ public sealed class Tile
 
         if (_mainObjectType == Mp2ObjectType.ActionEvent)
         {
-            // The reference drops the type when the event data is missing; there is no event container
-            // yet, so the type is preserved (see the remarks).
+            if (world.GetMapEvent(Index) is null)
+            {
+                SetMainObjectType(Mp2ObjectType.None);
+            }
+
             return;
         }
 
@@ -798,10 +1048,9 @@ public sealed class Tile
     /// passability is computed — the reefs fix in particular changes what the passability has to be.
     /// </para>
     /// <para>
-    /// <b>The hero case of the water coast fix is not ported</b>: the reference asks the tile for its hero
-    /// and stores the "real" type on the hero, so that the hero is drawn over an empty tile. Heroes are
-    /// not ported, and the tile type is reset unconditionally; a tile that holds a hero still reads
-    /// <see cref="Mp2ObjectType.Coast"/> until heroes land.
+    /// The type is read through <c>getMainObjectType( false )</c>, i.e. through the hero standing on the
+    /// tile, because a map file cannot store a hero: what the file calls the tile's type is the type of
+    /// the object the hero later stands on.
     /// </para>
     /// </remarks>
     /// <param name="world">The world the tile belongs to.</param>
@@ -810,7 +1059,7 @@ public sealed class Tile
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        Mp2ObjectType originalObjectType = _mainObjectType;
+        Mp2ObjectType originalObjectType = GetMainObjectType(world, false);
 
         // The left tile of a skeleton on desert is stored as a non action object.
         if (originalObjectType == Mp2ObjectType.ActionSkeleton && _mainObjectPart.IcnType == Mp2ObjectIcnType.ObjnDsrt
@@ -845,7 +1094,17 @@ public sealed class Tile
         // Some maps have water tiles marked as coast, which they cannot be.
         if (originalObjectType == Mp2ObjectType.Coast && IsWater)
         {
-            SetMainObjectType(Mp2ObjectType.None);
+            // A hero on such a tile keeps the tile empty underneath instead of exposing the false coast.
+            Hero? hero = GetHero(world);
+
+            if (hero is not null)
+            {
+                hero.SetObjectTypeUnderHero(Mp2ObjectType.None);
+            }
+            else
+            {
+                SetMainObjectType(Mp2ObjectType.None);
+            }
 
             return;
         }
@@ -1166,8 +1425,8 @@ public sealed class Tile
     /// </para>
     /// <para>
     /// The reference reads the object type through <c>getMainObjectType( false )</c> to look through a
-    /// hero standing on the tile; heroes are not ported, so <see cref="MainObjectType"/> is the same
-    /// value.
+    /// hero standing on the tile: a hero is a temporary object, so what it covers decides the
+    /// passability.
     /// </para>
     /// </remarks>
     /// <param name="world">The world the tile belongs to.</param>
@@ -1210,7 +1469,7 @@ public sealed class Tile
             }
         }
 
-        Mp2ObjectType objectType = _mainObjectType;
+        Mp2ObjectType objectType = GetMainObjectType(world, false);
 
         if (Mp2ObjectTypes.IsActionObject(objectType))
         {
@@ -1341,6 +1600,34 @@ public sealed class Tile
     /// file, lanes 1 and 2 are filled by the extended object data of Resurrection maps.
     /// </summary>
     public uint[] Metadata => _metadata;
+
+    /// <summary>
+    /// What the objects of the tile pay every day, <c>Maps::getDailyIncomeObjectResources()</c>
+    /// (<c>maps_tiles_helper.cpp:372</c>).
+    /// </summary>
+    /// <remarks>
+    /// Only three object types pay a daily income, and all three store it in the metadata: a mine keeps
+    /// the resource in lane 0 and the amount in lane 1, and the alchemist lab and the sawmill are the
+    /// mercury and the wood "mines" of the original game. Every other object answers an empty fund and
+    /// trips the assertion of the reference, which is kept as <see cref="Debug.Assert(bool)"/>: the
+    /// callers ask this only for objects they own and already know to be income objects.
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
+    /// <returns>The daily income, empty for objects that pay nothing.</returns>
+    public Funds GetDailyIncomeObjectResources(World world)
+    {
+        switch (GetMainObjectType(world, false))
+        {
+            case Mp2ObjectType.AlchemistLab:
+            case Mp2ObjectType.Mine:
+            case Mp2ObjectType.Sawmill:
+                return new Funds((int)_metadata[0], _metadata[1]);
+
+            default:
+                Debug.Assert(false, "The tile does not hold an object that pays a daily income.");
+                return default;
+        }
+    }
 
     /// <summary>
     /// Whether one part draws a stream, the per part test of <c>isStream()</c>.

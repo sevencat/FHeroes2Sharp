@@ -2504,3 +2504,602 @@ M4 收尾时把参考源码逐文件核了一遍：`src/engine`（26 个）+ `sr
 
 **下一步**：`world_loadmap.cpp` 的对象表与 `Tile.setHero`/`getHero`（英雄占用）谁先都可以，但
 `world_loadmap` 是让整条链吃上真数据的入口，建议先它。
+
+### `World.LoadMap` 的可移植子集 + 对象 UID 计数器 + 对象表 action 类型修正 ✅
+
+`world_loadmap.cpp` 有 900 多行，一次搬完等于把 `castle`/`kingdom`/英雄一起搬。所以只搬
+「决定有哪些瓦片、它们能不能走」的那部分（ADR-067）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `World.LoadMap(Mp2Map)` | `world_loadmap.cpp:241` | 尺寸校验 → `Reset()` → 逐格 `Index`/`SetTerrain`/`Init` → add-on 链 → 排序 → 全图类型修复 → `PostLoad` |
+| `World.TryLoadMap(path, rejectPriceOfLoyalty)` | 同上的失败出口 | `Mp2Map.TryRead` 失败返回 `false`，不抛 |
+| `World.PostLoad(setTilePassabilities, updateUidCounterToMaximum)` | `world.cpp:1194` 的子集 | `UpdatePassabilities` → `ResetPathfinder` → 扫部件取最大 UID |
+| `World.GetNewObjectUid` 等四个 | `world_object_uid.cpp` | 计数器从全局静态改成世界实例属性（前置自增） |
+| `Tile.FixMP2MapTileObjectType(World)` | `maps_tiles.cpp:1321` | 沙漠骨架、绿洲顶部件、礁石、水格海岸、随机怪物占位符、PoL 类型 |
+| `Tile.UpdatePriceOfLoyaltyObjectType(...)` | `maps_tiles.cpp:319` | 只对 `XLoc1/2/3`；类型为 `None` 时走 `UpdateObjectType` 重建 |
+
+本轮真正的 bug 是**对象表的 action 位**，不是装载逻辑本身：
+
+* 参考的主类型写的是 `MP2::OBJ_ARTIFACT` / `OBJ_MONSTER` / `OBJ_CASTLE`，而这些是**带 action 位**的值
+  （`mp2.h` 里 `OBJ_ARTIFACT = OBJ_NON_ACTION_ARTIFACT + 128`）。端口的 C# 枚举把两者分名
+  （`Artifact` = 41、`ActionArtifact` = 169）。
+* `MapObjectCatalog.Generated.cs` 按**数值**配对，所以没问题；三个**手写**表（`Artifacts`、`Monsters`、
+  `Kingdom`）照 C++ 的**名字**直译，落成了非 action 值。
+* 后果不是「有点不一样」：`AddTown` 里 `mainObjectType - 128` 对 35/48 得到 65443/65456（`ushort` 环绕），
+  这个值进了城堡部件的 `ObjectType`，于是真实地图上 `MapObjectCatalog.GetObjectTypeByIcn` 返回 `0xFFB0`。
+* 三处改成 `ActionArtifact`/`ActionMonster`/`ActionCastle` 家族，文件头写明「参考的 `OBJ_X` 是 action 值」。
+  `LandscapeTownBasements` 与 `LandscapeFlags` 保持 `Castle`（参考在这两处特意用 `OBJ_NON_ACTION_CASTLE`）。
+
+另两条要记住的：
+
+* **`PostLoad` 的私有开关不是装饰**：编辑器重载传 `setTilePassabilities: false`（随后自己重算），
+  且不抬高 UID 计数器（编辑器自己维护）。写成 `PostLoad()` 无参就会把这两条语义丢掉。
+* **`ResetObjectUids` 不进 `Reset()`**：参考的地图装载也不重置它，装载后由文件里的 `LastObjectUid` 覆盖；
+  只有编辑器「新地图」用它。
+
+用例：`WorldLoadMapTests` 14 个方法 / 14 条（含真实 `Beltway.mp2` 72×72：索引连续、通行只能收窄、
+既有全禁也有全通），`MapObjectCatalogTests` 新增 2 条（全表 action 位断言 + 城基/旗帜的 `Castle` 断言）。
+`FHeroes2.Game.Tests` 522 → **539**，全解决方案 1130 条全绿，0 警告 0 错误。
+`world_loadmap.cpp` 与 `world_object_uid.cpp` 从「未转」转「部分」，覆盖率 26/43/180 → **26/45/178**。
+
+**下一步**：`Tile.setHero`/`getHero`（英雄占用决定格子通行，`updatePassability` 里那一支现在按
+「无英雄」算）；之后再回 `world_loadmap` 补城堡表/俘获对象/信息块。
+
+### 英雄占用：`Tile.setHero`/`getHero` + 最小 `Hero` 契约 ✅
+
+英雄本体几千行，瓦片这一侧只需要两样东西：**id** 和**英雄脚下的对象类型**。所以本轮只立契约（ADR-068）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Heroes.Hero` | `heroes.h:63` | 73 个 id 的取值域、`ObjectTypeUnderHero`、`SetObjectTypeUnderHero`、`IsValidId`；**没有**军队/技能/法术书/宝物/路径 |
+| `World.Heroes` / `AddHero` / `GetHero` | `AllHeroes` + `World::GetHeroes` | 列表 + 线性查找；重复 id 抛异常（参考靠「一 id 一槽」天然保证） |
+| `Tile.OccupantHeroId` / `GetHero` / `SetHero` | `maps_tiles.cpp:429` / `:434` | 瓦片只存 `uint8` id；放置时把当前类型停放到英雄身上，取下时还原 |
+| `Tile.GetMainObjectType(world, bool)` / `GetMainObjectTypeUnderHero` | `maps_tiles.cpp:463` / `:467` | `true` = 缓存（英雄站着时是 `OBJ_HERO`），`false` = 看穿英雄 |
+| `fixMP2MapTileObjectType` 的英雄分支 | `maps_tiles.cpp:1353` | 水格被标成海岸时，有英雄就把「空」存到英雄身上 |
+
+两个必须记住的点：
+
+* **`MP2::OBJ_HERO` 是 action 值（183）**，`Mp2ObjectType.Hero`（55）是 `OBJ_NON_ACTION_HERO`，注释写着
+  "Never set in maps"。写错成 55 的话，瓦片缓存一个游戏从不使用的类型，通行/寻路/渲染的 action 判定
+  全部落空。这是 ADR-067 同类错误的第二次现身，本轮在写代码时抓到。
+* **`updatePassability` 必须读 `false` 形态**（`maps_tiles.cpp:686`：英雄是临时对象），否则英雄站上去
+  就把格子的通行改了。`PassabilityLooksThroughTheHero` 钉住这条：站上去前后掩码必须一样。
+
+另外 `setMainObjectType()` 在参考里会 `world.resetPathfinder()`；端口的 setter 没有 world，复位写在
+`SetHero` 里（唯一有 world 的调用点），并注明将来给 setter 加带 world 的重载。
+
+用例：`HeroOccupancyTests` 13 条。`FHeroes2.Game.Tests` 539 → **552**，全解决方案 1143 条全绿，
+0 警告 0 错误。覆盖率不变（`heroes` 行仍 1/0/11：这一片只有 id 表加一个查找，记「部分」会让口径变虚）。
+
+### 地图对象查询 + `PostLoad` 三张缓存 ✅
+
+「这块格子上站着谁」有了（ADR-068），接着补「哪种对象在哪几格」——寻路、AI、事件、传送门都要它。
+参考里这一层是 `maps.cpp` 的三个查询 + `maps_tiles_helper.cpp` 的部件查找（ADR-069）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Tile.GetObjectPartByActionType` | `maps_tiles_helper.cpp:487` | 先主部件后地面部件，按 `getObjectTypeByIcn` 比类型；**只认 action 值** |
+| `World.GetObjectPositions` | `maps.cpp:613` / `MapsIndexesObject:65` | 按缓存类型找格子；`ignoreHeroes` 的默认语义是**看穿英雄** |
+| `World.GetObjectParts` | `maps.cpp:618` | 按**部件**找，连被小舟盖住的漩涡也能找到 |
+| `World.DoesObjectExistOnMap` | `maps.cpp:601` | 用 `getMainObjectType(false)`，英雄站着也算对象存在 |
+| `World.AllTeleports` / `AllWhirlpools` / `AllEyeOfMagi` | `world.cpp:1200-1230` | `PostLoad` 填的三张缓存，`Reset` 一并清 |
+
+三个坑记一下：
+
+* **`ignoreHeroes` 名字和语义相反**：参考比较 `getMainObjectType( !ignoreHeroes )`，所以默认 `true` 走的是
+  「看穿英雄」。写反了的效果是：英雄踩在资源上，资源就「从地图上消失」。
+* **又是 action 值**：`getObjectPartByActionType` 对没有 action 位的类型直接返回 null，调用方必须写
+  `ActionStoneLiths`(164) 而不是 `StoneLiths`(36)。ADR-067/068 的同一坑，第三次。
+* **漩涡要按部件找**：英雄下船后留下的小舟会把瓦片标成 boat，按类型找就漏了。
+
+用例：`MapObjectQueryTests` 9 条。`FHeroes2.Game.Tests` 552 → **561**，全解决方案 **1152** 条全绿，
+0 警告 0 错误。覆盖率不变（`maps.cpp` / `world.cpp` 仍是「部分」，这一片是补厚既有文件）。
+
+### `Rand` 门面 + 传送门/漩涡端点 ✅
+
+`Pcg32` 早就在，缺的是它上面那一层（线程级发生器、区间取数、洗牌、权重池），以及等它的两个端点查询
+（ADR-070）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Rand.CurrentThreadRandomDevice` | `rand.cpp:85` | `ThreadLocal<Pcg32>`，OS 熵种子；同线程一条连续序列 |
+| `Rand.Get` / `GetWithSeed` / `GetWithGen` | `rand.cpp:93/102/112` | 先交换上下界，所以 `Get(6)` = `[0,6]`；`GetWithSeed` 每次新建再丢弃 |
+| `Rand.Get<T>(IReadOnlyList<T>)` | `rand.h:196/205` | 空表抛 `ArgumentException`（参考是 `assert`） |
+| `Rand.Shuffle` / `ShuffleWithGen` | `rand.h:184/190` | 委托给 `Pcg32.Shuffle`（同一套 Fisher-Yates） |
+| `Rand.Queue` | `rand.h:224` / `rand.cpp:121` | 0 权重丢弃、空池返回 0、按权重线性切片 |
+| `World.GetTeleportEndPoints` / `NextTeleport` | `world.cpp:704/737` | 同 sprite 才配对；入口看穿英雄，候选用缓存类型 |
+| `World.GetWhirlpoolEndPoints` / `NextWhirlpool` | `world.cpp:748/790` | 候选再按 UID 排除同一漩涡的其它格 |
+
+**那个不对称是参考的，不是笔误**：入口用 `getMainObjectType(false)`（英雄踩在石阵上仍能传送），
+候选用缓存类型（英雄站在目的地就把它排除）。`world.cpp:710` 与 `:725` 一行之差，语义完全不同。
+
+`combineSeedWithValueHash` 没搬：它靠 `std::hash`，跨标准库本就不可复现，等地图随机生成时再定。
+
+用例：`RandTests` 10 条 + `TeleportTests` 6 条。`FHeroes2.Core.Tests` 182 → **192**，
+`FHeroes2.Game.Tests` 561 → **567**，全解决方案 **1168** 条全绿，0 警告 0 错误。
+`rand.cpp` 的 ✅ 现在名副其实（只差 `combineSeedWithValueHash`）。
+
+### 英雄表 `AllHeroes`：种族、肖像与招募池 ✅
+
+ADR-068 给 `World` 挂的 `AddHero` 是端口替身（`List<Hero>` + 线性查找）。参考没有这东西：英雄从一开始
+全在 `World::vec_heroes` 里，**槽的下标就是 id**（`heroes.cpp:2411`）。这一片把它换成正主，并补上按种族
+挑人的池子（ADR-071）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `AllHeroes` | `heroes.h:823` / `heroes.cpp:2265` | 73 槽按 id 索引；`Get`/`Clear`/`Count`/按 id 遍历 |
+| `AllHeroes.Init(MapVersion)` | `AllHeroes::Init` | 六族各九人 → SW 战役六人 → PoL 十一人（仅扩展地图）→ 调试英雄（release 不建） |
+| `AllHeroes.GetHeroForHire` | `heroes.cpp:2322` | 三段填充 + 避开自定义肖像 + 优先没被别的王国挂出的，最后 `Rand.Get` |
+| `HeroRaces` | `getHeroIdRangeForRace`（`heroes.cpp:38`）+ `Init` 的实参 | 1-54 九人一段，55-72 逐个给；`Race::NONE` 是 `{1,54}` |
+| `Hero.Race` / `Color` / `PortraitId` / `Modes` / `IsAvailableForHire` | `heroes.h` + `heroes.cpp:1954` | 种族是构造参数，肖像初值 = id，`Modes` 只搬 `Recruit`/`Jail`/`Custom` 三位 |
+
+几个要点：
+
+* **空槽是 `null`**：参考放 `Heroes(UNKNOWN, KNGT)` 占位只是因为 C++ 容器不能空，而每个消费者第一句
+  都是 `isValid()`——那正是 `null`。
+* **只有 id ≤ 54 能被雇**：战役与 PoL 英雄永不上市（`heroes.cpp:2349`）。同种族的都雇完时会回退到
+  任意种族，全都雇完才返回 null。
+* **雇人按肖像去重，不按 id**：两个英雄可以共用一张脸。
+* `HeroModes` 的值必须与参考逐位一致（存档里就是这个字），所以只搬三个用得到的位，其余等设置它们的系统。
+
+用例：`AllHeroesTests` 13 条 + `HeroOccupancyTests` 里那条重复 id 改成「一个槽一个对象」。
+`FHeroes2.Game.Tests` 567 → **580**，全解决方案 **1181** 条全绿，0 警告 0 错误。
+覆盖率：`heroes` 行 1/0/11 → **1/1/10**（合计 26/46/177），`heroes.cpp` 进「部分」。
+
+**下一步**：地图装载时按信息块建英雄（`world_loadmap.cpp` 的 `MP2::OBJ_HERO` 分支，信息块 76 字节里
+的肖像字节决定 id）——它要先有 `Kingdom::AllowRecruitHero`（每国英雄上限）和 `Hero::LoadFromMP2` 的
+可用子集（军队、神器、技能），以及 `Race::RAND` 按王国种族落地。
+
+### 地图装载建英雄：`Mp2HeroInfo` 与 `Hero.LoadFromMP2` ✅
+
+英雄的两半第一次接上：瓦片给位置和 `MINIHERO` 精灵（颜色 + 种族），76 字节的信息块给其余，
+两者用瓦片 `quantity` 字的 13 位值（= `Mp2InfoBlock.ObjectId`）挂钩（ADR-072）。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Mp2HeroInfo`（Assets） | `heroes.cpp:421-579` 的字段注释 | 76 字节块逐字段读出，保留文件原始值（引擎 id = +1） |
+| `World.CreateMapHeroes` | `world_loadmap.cpp:583-623` | 按 `Metadata` 找块的瓦片；肖像点名或抽招募池；建人 |
+| `World.PlaceMapHero` | `world_loadmap.cpp:1583-1586` | 删 `MINIHERO`、`Tile.SetHero`，把英雄站到瓦片上 |
+| `Hero.LoadFromMP2` | `heroes.cpp:421` | 清 mode、jail 位、位置/颜色、种族改判、自定义肖像/名字、巡逻 |
+| `Hero.MapIndex` / `AllHeroes.GetAtMapIndex` | `SetIndex` / `AllHeroes::Get( Point )` | 端口用瓦片下标代替点坐标 |
+| `HeroModes.Patrol` | `heroes.h:214` | `0x8000`，与存档逐位一致 |
+
+几个要点：
+
+* **选人两条路，第二条兜的是三件事**：肖像点名的英雄**已经站在地图上**、肖像点名的是 PoL 英雄而
+  当前地图没有那个槽、以及块里根本没有肖像——参考的 `if ( !hero || !hero->isAvailableForHire() )`
+  把它们一起接进 `GetHeroForHire( race )`。所以「PoL 肖像在非扩展地图上留空」是错的，实际是抽一个
+  同族英雄。
+* **自定义肖像自己就会置 `Custom`**（`heroes.cpp:486-488`），哪怕种族没被改判。
+* **`MiniHero` 必须在 `SetHero` 之前删**：否则瓦片的主对象仍是编辑器图标，英雄无处可站。
+* **顺序不能反**：先 `CreateMapHeroes`，再 `FixMP2MapTileObjectType` + `PlaceMapHero`——`SetHero` 要把
+  已经修正过的对象类型寄存到英雄身上。
+* **`LoadFromMP2` 不重置军队与技能**：默认主技能、初始法术、默认军队、神器、经验、二级技能、法术点与
+  移动点都要 `Army`/`Artifact`/`Skill`/`Spell` 与升级表，留给各自系统。现在的英雄只有「身份」。
+* **缺 `Kingdom::AllowRecruitHero`**：参考在一国英雄满额时丢弃多余的，端口没有王国，所以只会多不会少。
+
+用例：`Mp2HeroInfoTests` 4 条（长度、全零、逐字段、名字终止符）+ `WorldHeroLoadTests` 10 条。
+`FHeroes2.Assets.Tests` 264 → **268**，`FHeroes2.Game.Tests` 580 → **590**，全解决方案 **1195** 条全绿，
+0 警告 0 错误。覆盖率不变（`heroes` 1/1/10，合计 26/46/177）。
+
+**下一步**：`Hero` 的军队与技能（`LoadFromMP2` 里剩下的那半拉）、`MapRace.Random` 按王国种族落地，
+以及 `MP2::OBJ_JAIL` 分支（牢房里的英雄走 `isInJail = true` 并把第 60 字节当种族）。
+
+### 牢房里的英雄：第 60 字节的种族 ✅
+
+`MP2::OBJ_JAIL` 那一支（ADR-073）。它和普通英雄共用 `Hero.LoadFromMP2`，差别只在参数：
+瓦片上没有 `MINIHERO` 精灵，所以种族来自信息块第 60 字节，颜色是 `PlayerColor.None`，
+`isInJail = true`。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `World.FindInfoBlockTile` | `world_loadmap.cpp:473-483` | 找块属于哪块瓦片，认 `Hero`/`ActionHero`/`Jail`/`ActionJail` |
+| `World.CreateJailHero` | `world_loadmap.cpp:528-582` | 第 60 字节 → 种族（0…5，其余告警当骑士）；无主 + 牢里 |
+| `World.SelectMapHero` | `:567-573`、`:604-610` | 两支共用的选人：肖像点名 → 池子 |
+| `World.CreateMapHero` | `:583-623` | 原先那段从瓦片精灵取颜色/种族 + 池子 |
+
+要点：
+
+* **同一个字节两种含义**：巡逻英雄是巡逻半径，牢房英雄是种族——`Mp2HeroInfo.PatrolDistanceOrJailRace`
+  就是为这件事命名的。
+* **瓦片不归英雄**：参考没有 `setHero`，牢房对象留在瓦片上，英雄只是把坐标暂存到 `MapIndex` 等解救；
+  端口的 `Tile.OccupantHeroId` 因此仍是 `UnknownId`，`PlaceMapHero` 只看 `Hero`/`ActionHero`，天然跳过。
+* **不做 action 转换**：文件里存的是非 action 的 `OBJ_JAIL`(123)，`Tile.MainObjectType` 保留它，
+  访问时由 `Mp2ObjectTypes.BaseActionType` 给 `ActionJail`(251)——与「缓存存文件值、换算在使用处」一致。
+* **`SelectMapHero` 顺手去掉了一次复查**：返回 `Hero` 对象后，ADR-072 里「拿到 id 再 `_heroes.Get` 判空」
+  就是多余的了。
+
+用例：`WorldHeroLoadTests` 再加 4 条（牢房与 `PlayerColor.None`、改判种族、非法种族回落骑士、
+无肖像抽池子且瓦片仍属于监狱）。`FHeroes2.Game.Tests` 590 → **594**，全解决方案 **1199** 条全绿，
+0 警告 0 错误。覆盖率不变。
+
+**下一步**：信息块剩下的六支（告示、瓶子、事件、狮身人面、每日事件、传闻）——**都已落**（前两支与
+事件见下、后三支见再下）；`Hero` 的军队与技能仍是 `LoadFromMP2` 的另一半。
+
+### 告示与地面事件：地图对象容器 ✅
+
+`MP2::OBJ_SIGN`/`OBJ_BOTTLE` 与 `MP2::OBJ_EVENT` 两支（ADR-074）。这是端口第一次有「地图对象」这一层：
+对象自己带数据、按瓦片下标索引，和参考的 `map_objects` 对齐。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MapObject` | `maps_objects.h:42` | 瓦片下标 + UID（两者恒等，`setUIDAndIndex`） |
+| `MapSign` | `maps_objects.cpp:286` | marker + 消息；块长就是串长 |
+| `MapEvent` | `maps_objects.cpp:44` | 七种资源、神器（+1）、AI/一次性标志、六色位、消息 |
+| `MapObjects` | `world.h:73` | 按瓦片下标存取，同键覆盖 |
+| `World.ReadInfoBlocks` | `world_loadmap.cpp:466-688` | 原 `CreateMapHeroes`，按对象类型分派四支 |
+| `Tile.UpdateObjectType` | `maps_tiles.cpp:1599-1611` | 事件数据不在就清成 `None` |
+
+要点：
+
+* **资源顺序是坑**：文件里是 wood/mercury/ore/…，`Funds` 的构造参数却是 ore 打头，所以用具名参数写。
+* **神器 +1**：文件从 0 数、引擎从 1 数。
+* **空告示不填随机文案**：参考从本地化表随机抽一句，端口没有语言表与装载期随机源，留空并记为缺口。
+* **装载期不会清空事件类型**：`UpdatePassabilities` 只重算无类型的瓦片（参考也是这个条件），所以坏地图上
+  事件仍在；真正的清空发生在对象离开瓦片后的重算，测试显式调用 `UpdateObjectType` 钉住这条语义。
+
+用例：`WorldMapObjectTests` 6 条；`FHeroes2.Game.Tests` 594 → **600**，全解决方案 **1205** 条全绿，
+0 警告 0 错误。覆盖率不变（合计 26/46/177，`maps_objects.cpp` 原本就在「部分」里）。
+
+**下一步**：狮身人面（与事件同构、多 7 个答案）、每日事件与传闻（`World` 级列表）、城堡表（要
+`Castle` 系统）。
+
+### 狮身人面、每日事件与传闻：无瓦片的块 ✅
+
+信息块剩下能独立落地的三支一次做完（ADR-075）。前一支有瓦片，后两支**没有对象指向它**——它们和
+告示/事件挤在同一个 `InfoBlocks` 里，靠块自己的字节区分。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MapSphinx` | `maps_objects.cpp:166` | marker 0、七资源、神器、答案个数、8×13 字节答案、136 起的问题 |
+| `MapSphinx.IsCorrectAnswer` | `maps_objects.cpp:273` | 只比前 4 个字符（原版行为），答案小写 |
+| `MapSphinx.IsValid` | `maps_objects.h:117` | `validate()`：无奖励或无问题/答案即无效 |
+| `EventDate` | `world.cpp:1517` | marker 0、可负资源、AI 标志、首日/周期、六色、消息 |
+| `EventDate.IsAllowed` / `IsDeprecated` | `world.cpp:1647`、`world.h:177` | 日期判定（日期系统未移植，先钉语义） |
+| `World.Rumors` / `DailyEvents` | `world.h:558`、`:559` | 无瓦片块的两个去处 |
+| `World.ReadWorldBlock` | `world_loadmap.cpp:656-684` | `[0]==0 && [42]==1` → 事件，否则 ≥9 字节 → 传闻 |
+
+要点：
+
+* **前四字符**：玩家输入与答案都截到 4 个字符，所以 `abram` 答对 `abracadabra`——原版行为，不是 bug。
+* **「无神器」没有干净表示**：文件里 0 会被 `+1` 变成第一个神器，所以「没有」只能写 `0xFFFF`，加一后
+  越界。参考不校验，端口照做；`validate()` 只认 `Artifact::UNKNOWN`(0)。
+* **城堡块必须能匹配到瓦片**：它也以 `0x00` 开头、至少 70 字节，找不到瓦片就会被当传闻读出一串垃圾。
+  所以 `FindInfoBlockTile` 的匹配集合扩到了城堡（`HasReadableInfoBlock` → `HasInfoBlock`），匹配到的
+  城堡块在分派里 `default` 忽略。
+* **判别顺序**：先事件（`[42]==1`）后传闻，反了会把事件读成垃圾文本。
+
+用例：`WorldSphinxAndEventsTests` 7 条；`FHeroes2.Game.Tests` 600 → **607**，全解决方案 **1212** 条全绿，
+0 警告 0 错误。覆盖率不变（`maps_objects.cpp` 的**装载**转了，问答题/信息框那一侧没转）。
+
+**下一步**：城堡表（要 `Castle` 系统，最大的一块）、俘获对象、AI 区域。
+
+### 日期系统与每周/战斗对象分类 ✅
+
+`World` 的时钟（ADR-076）与 `mp2.cpp` 的两张对象分类表、`CountObeliskOnMaps()`（ADR-077）。时钟是
+`NewWeek`/`NewMonth` 与兽人月等玩法的前提，两张表是 `NewWeek` 刷新周产建筑与 AI 计算移动力的判据。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `World.Day/Week/Month/DayCount/WeekCount` | `world.h:371-394` | 显示值（1 起、按周/月取模）与总数 |
+| `World.IsBeginWeek/IsBeginMonth/IsLastDay/IsFirstWeek/IsLastWeek` | `world.h:396-419` | 五个裸取模判定 |
+| `World.DateString()` | `world.cpp:888` | `"month: X, week: Y, day: Z"`，不本地化 |
+| `World.NewDay()` | `world.cpp:425-460` | 三层嵌套递增 + 剪掉过期每日事件 |
+| `Mp2ObjectTypes.IsWeekLife/IsBattleLife` | `mp2.cpp:511-576` | 周产/巢穴（含 `Hero`）与幸运士气加成（含黑猫） |
+| `World.CountObeliskOnMaps()` | `world.cpp:900` | 数方尖碑，下限 6 |
+
+要点：
+
+* **0 是「最后一天」**：`LastDay()`/`LastWeek()` 是裸取模，新世界 `_day == 0` 于是 `Day == 7`、`Week == 4`，
+  而 `IsBeginWeek` 为假。照直觉把 0 当第一天会让整个周循环错一天，测试第一条钉住它。
+* **`NewDay` 只搬时钟与剪枝**：`NewMonth`（怪物之月）/`NewWeek`（周产刷新、怪物重掷、招募重置）与
+  三张表的 `NewDay`/`NewWeek` 依赖 `Week`/`Kingdoms`/`Castles`/`Monster`，按参考顺序在注释里标了插入点。
+* **剪枝用的是「刚过去的那一天」**：单次事件在触发后的第二天仍在表里，第三天才消失——参考行为，不是差一。
+* **两张表比较非 action 值**：传 `Action*` 一律 `false`（参考调用处传 `getMainObjectType( false )`），
+  用 `BaseActionType` 归一化会多刷一批对象。两表不相交也用全枚举遍历守住。
+
+用例：`WorldDateTests` 9 条 + `WorldTests` 2 条（方尖碑）+ Assets 的 `Mp2ObjectTypesTests` 47 条；
+`FHeroes2.Game.Tests` 607 → **618**，`FHeroes2.Assets.Tests` 268 → **315**，全解决方案 **1270** 条全绿，
+0 警告 0 错误。覆盖率不变（合计 26/46/177）。
+
+**下一步**：城堡表（要 `Castle` 系统，最大的一块）、俘获对象（`World::CaptureObject`，卡在
+`Tile.setOwnershipFlag`）、AI 区域；日期侧剩 `GetWeekType`/`NewWeek`/`NewMonth`。
+
+### 俘获对象、迷雾位、瓦片元数据读写 ✅
+
+三片一起：`map_captureobj`（ADR-078）、瓦片级迷雾（ADR-079）、`maps_tiles_helper.cpp` 的元数据读
+写（ADR-080）。它们互不依赖，但都落在 `Tile` 与 `World` 上，且都是「拾取/占矿/AI 绕路判断」的前置。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `CapturedObject` / `CapturedObjects` | `world.h:117-166`、`world.cpp:171-275` | 瓦片索引 → （对象类型, 颜色），有序 |
+| `World.CaptureObject` | `world.cpp:815` | 记录类型与主人（城堡分支、旗帜精灵未搬） |
+| `World.ColorCapturedObject` / `GetCapturedObject` / `HasCapturedObject` | `world.h:438-456` | 查询、插入语义、键存在性 |
+| `World.CountCapturedObject` / `CountCapturedMines` | `world.cpp:801` | 按类型计数；木=锯木厂、水银=炼金实验室 |
+| `World.ResetCapturedObjects` | `world.h:451` | 只改数据，不重画旗帜 |
+| `Tile.FogColors` / `IsFog` / `IsFogForAll` | `maps_tiles.h:301-306` | 单色与联盟两种判定 |
+| `Tile.ClearFog` / `FogDirection` / `SetFogDirection` | `maps_tiles.cpp:1576`、`maps_tiles.h:356` | 清位与绘制方向缓存 |
+| `Tile.GetFundsFromTile` / `GetArtifactFromTile` | `maps_tiles_helper.cpp:570-761` | 拾取所得；卷轴退化成 `SpellScroll` |
+| `Tile.DoesTileContainValuableItems` | `maps_tiles_helper.cpp:808` | AI 绕路判据（已访问的矿/箱子为假） |
+| `Tile.SetResourceOnTile` / `SetBarrierColorOnTile` / `ResetObjectMetadata` | `maps_tiles_helper.cpp:719-854` | 三个 lane 的写入口 |
+| `ArtifactCaptureCondition` | `maps_tiles_helper.h:53` | 守卫条件枚举，编号即地图数据 |
+
+要点：
+
+* **`Get` 插入、`GetColor` 不插入**：「条目存在但无主」与「从未易主」是两种状态，`HasCapturedObject`
+  专门暴露前者。
+* **木材与水银不走矿**：`OBJ_SAWMILL` / `OBJ_ALCHEMIST_LAB` 不是 `OBJ_MINE`，计数必须按对象类型，
+  其余资源才读 `metadata[0]`。
+* **迷雾是减法**：新瓦片对所有人黑（`PlayerColors.All`），`ClearFog` 清位；忘了初始化时表现为
+  「看不见」而不是「全图可见」。
+* **`IsFog` 与 `IsFogForAll`**：参考两个同名重载（任一 / 全部），C# 位集只有一个类型，联盟语义单独命名。
+* **`Wagon` 的 lane 1 是资源类型、lane 2 是数量**，不是「两条金币车道」——测试第一版就写错，注释也跟着错。
+* **卷轴只返回 `ArtifactType.SpellScroll`**：`Artifact` 未转，法术 id 留在 `metadata[1]`，注释写明缺口。
+
+用例：`CapturedObjectTests` 9 条 + `TileFogTests` 5 条 + `TileMetadataTests` 15 条；
+`FHeroes2.Game.Tests` 618 → **647**，全解决方案 1270 → **1299** 条全绿，0 警告 0 错误。
+覆盖率不变（合计 26/46/177）。
+
+**下一步**：城堡表（要 `Castle` 系统，最大的一块）、AI 区域、`World::NewWeek`/`NewMonth`
+（要 `Week`/`Kingdoms`/`Monster`）、`Maps::ClearFog` 与 `updateFogDirectionsInArea`（要半径揭示）。
+
+### 对象分类，地形代价，条件通行 ✅
+
+三片一起：`mp2.cpp` 剩下的十一个分类谓词（ADR-081）、`ground.cpp` 的移动代价与地形图像边界（ADR-082）、
+`maps_tiles.cpp` 的对象感知通行（ADR-083）。前两片是「游戏数据 + 纯函数」，第三片是路径查找器的最后一
+块地基——`heroes_move.cpp` / `world_pathfinding.cpp` 现在欠的只剩移动点记账本身。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Mp2ObjectTypes.IsDayLife` | `mp2.cpp:505` | 只有魔法井每日恢复 |
+| `Mp2ObjectTypes.IsInGameActionObject`（两个重载） | `mp2.cpp:590`、`:635` | action 位 + 基类型有 action 孪生；`ActionEvent` 是唯一例外 |
+| `Mp2ObjectTypes.IsWaterActionObject` | `mp2.cpp:599` | 水上的十六个对象；`default` 回落 in-game 判据 |
+| `Mp2ObjectTypes.IsRevisitAllowedForObject` | `mp2.cpp:578` | 排除漩涡 |
+| `Mp2ObjectTypes.IsValuableResourceObject` | `mp2.cpp:669` | 十六项 + `IsPickupObject` |
+| `Mp2ObjectTypes.IsCaptureObject` | `mp2.cpp:700` | 五个可易主对象 |
+| `Mp2ObjectTypes.IsPickupObject` | `mp2.cpp:717` | 十个拾取后消失的对象 |
+| `Mp2ObjectTypes.IsArtifactObject` | `mp2.cpp:739` | 与 `Tile.GetArtifactFromTile` 的 switch 同一张表 |
+| `Mp2ObjectTypes.IsBattleMandatoryIfObjectIsProtected` | `mp2.cpp:760` | 宝物与怪物，其余看 `IsCaptureObject` |
+| `Mp2ObjectTypes.IsSafeForFogDiscoveryObject` | `mp2.cpp:775` | 石阵/漩涡/告示，其余看「不是 action 对象」 |
+| `Mp2ObjectTypes.IsNeedStayFront` | `mp2.cpp:793` | 十个需要站在前面的对象 + 拾取物 |
+| `MapGrounds.GetPenalty` | `ground.cpp:169` | 九行代价表 × 四档寻路 |
+| `MapGrounds.RoadPenalty` 等五常量 | `ground.h:72-76` | 75 / 100 / 75 / 200 |
+| `MapGrounds.IsTerrainTransitionImage` | `ground.cpp:96` | 水/土 16、其余 38、沙滩 0 |
+| `MapGrounds.ContainsEmbeddedObjects` | `ground.cpp:119` | 45 / 23 / 7 三档，边界用 `>` |
+| `Tile.IsSuitableForUltimateArtifact` | `maps_tiles.cpp:1007` | 干燥、无主部件、无地面部件 |
+| `Tile.IsSuitableForDisembarkation` | `maps_tiles.cpp:1028` | 海岸直接通过；石头挡上岸 |
+| `Tile.IsSuitableForSummoningBoat` | `maps_tiles.cpp:1064` | 水面 + 灯塔旗可越过 |
+| `Tile.IsPassableFrom(World, …)` | `maps_tiles.cpp:1102` | 雾 → 船 → 友军 → 掩码 |
+| `Hero.IsFriends` | `heroes.h:437` | 暂等价于同色（联盟缺口只有这一处） |
+| `Game.Heroes.SkillLevel` | `Skill::Level` | `None`/`Basic`/`Advanced`/`Expert` |
+
+要点：
+
+* **回归的教训**：新增用例前先确认同名文件不存在。这一片第一版把 ADR-064 的 `TilePassabilityTests.cs`
+  （独立通行 14 条）整个覆盖成新用例，全量数字从 647 只涨到 652 才露馅；已 `git checkout --` 复原，
+  新用例另立 `TileObjectPassabilityTests.cs`。
+* **两次「测试错、参考对」**：`IsSuitableForSummoningBoat` 根本不看对象类型（已停着船的格子仍返回
+  `true`，两条船靠 `IsPassableFrom` 的 `ActionBoat` 分支区分）；`IsRevisitAllowedForObject( Whirlpool )`
+  两条路都是 `false`。都是先红后改测试，并在断言旁写下原因。
+* **第三条也是「测试错、参考对」**：`IsWaterActionObject` 的 `default` 是
+  `IsInGameActionObject(type)`，不是 `false`——水中的矿从船上可访问。
+* **影子索引**：`ObjnArti`/`ObjnRsrc` 的 `icnIndex % 2 == 0` 是影子、`1` 是本体，拿 0 当石头测不出东西。
+* **海岸不可替代**：`PassableDirections` 说海岸可过，但只有从水上来的英雄能上岸——这是两个判断必须并存的
+  原因，也是 `isPassableFrom` 里掩码必须放在最后的原因。
+* **地形图像边界用 `>`**：恰好 +45 的那张仍是纯地面；「统一成区间」会静默丢掉一格。
+
+用例：`Mp2ObjectTypesClassificationTests` 34 条（Assets）、`MapGroundPenaltyTests` 8 条、
+`TileObjectPassabilityTests` 12 条。`FHeroes2.Assets.Tests` 315 → **349**，`FHeroes2.Game.Tests` 647 →
+**667**，全解决方案 1299 → **1353** 条全绿，0 警告 0 错误。覆盖率不变（合计 26/46/177）：`mp2.cpp` 早已是
+✅、`maps_tiles.cpp` 与 `ground.cpp` 早已在「部分」里，这一片补的是它们名下的缺口。
+
+**下一步**：`heroes/heroes_move.cpp` + `world/world_pathfinding.cpp`（通行三件已齐：掩码、独立通行、
+条件通行；欠移动点记账 `GetPenalty` 已可用、`Skill::Level` 已就位），以及 `maps/visit.cpp` 的访问分派。
+
+### 地图扫描与守卫，距离度量，雾半径修正 ✅
+
+`maps.cpp` 收尾的第二片：把「周围有什么」的两个答案（**扫描**与**守卫**）搬到 `World`，把两个「大致多远」
+的度量搬到 `MapGeometry`，顺手修掉雾半径上一个把**错误当成参考表**的 bug。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `World.ScanAroundObject` | `maps.cpp:570`、`:588` | 单环扫描；两个重载合成一个默认参数 |
+| `World.HasNearbyObject` | `maps.cpp:576` | 见到第一个就返回，始终看穿英雄 |
+| `World.IsValidForDimensionDoor` | `maps.cpp:582` | 可进入 + 水陆同侧 + 不是 in-game action 对象 |
+| `World.ScanAroundObjectWithDistance` | `maps.cpp:594` | 方形邻域，按距离排序 |
+| `World.GetObjectPositions( center, … )` | `maps.cpp:632` | 全图命中按距离排序 |
+| `World.GetMonstersProtectingTile` | `maps.cpp:664` | 守卫清单；`checkObjectOnTile` 对应参考的早退 |
+| `World.IsTileUnderProtection` | `maps.cpp:639` | 中心格优先 |
+| `World.ForEachMonsterProtectingTile` | `maps.cpp:100` | 八邻域的固定顺序 + 斜向兜底 |
+| `MapGeometry.GetApproximateDistance` | `maps.cpp:691` | `max + min / 2` |
+| `MapGeometry.GetStraightLineDistance` | `maps.cpp:704` | `hypot` 截断 |
+| `MapGeometry.GetSquaredDistance` | `maps.cpp:184` | `ComparisonDistance` 的比较算术，提成可测的方法 |
+| `MapFog.SquaredRevealLimit`（修正） | `maps.cpp:531` | 减法只在半径 < 6 时生效 |
+
+要点：
+
+* **`ActionMonster` 不是 `Monster`**：地图上存的是带 128 位的 `OBJ_MONSTER`。第一版写 `Mp2ObjectType.Monster`，
+  守卫一条都找不到，测试第一轮就红。
+* **一次真实 bug**：`getSquaredScoutingRadiusLimit` 的减法带 `if ( scoutingDistance < 6 )` 条件，端口漏了条件，
+  半径 6 的上限算成 43（应为 49）、9 算成 91（应为 100）——寻路术宝物把视野推到 7 以上时一直是错的。
+  更糟的是测试里那行 `[InlineData(6, 43)]` 把错误值当成了「参考表」。已改公式（`< 6` 与 `_` 两支分开）、
+  改期望（`6 → 49`，补 `9 → 100`）。教训写进 ADR-086。
+* **守卫不是「周围的怪物」**：要站在前面使用的对象（`IsNeedStayFront`）不会引发战斗，除非瓦片上本身就是
+  怪物——那条早退是两条入口的分水岭。
+* **两个入口的早退不能互换**：`GetMonstersProtectingTile` 先问对象是否「站在前面用」，`IsTileUnderProtection`
+  先问瓦片上是不是怪物。
+* **八邻域顺序是契约**：参考手工展开八个方向，「先报告哪只怪物」对上层有意义；改用 `GetAroundIndexes`
+  会换顺序。
+* **排序不稳定是参考的性质**：距离相同的命中顺序未定义，`std::sort` 与 `List.Sort` 都不稳定，测试不依赖。
+* **两支没测到**：`ForEachMonsterProtectingTile` 的四条斜向兜底分支（要造出「斜向位被清、竖直位仍在」的掩码，
+  得在邻居上摆高物件并重算全图）与 `getVisibleMonstersAroundHero`（要 `Heroes` 的视野距离）——都记在
+  ADR-084 里，没装作测过。
+
+用例：`WorldMapScanTests` 15 条 + `MapFogTests` 多一行（18 → 19 条）。`FHeroes2.Game.Tests` 667 →
+**683**，全解决方案 1353 → **1369** 条全绿，0 警告 0 错误。覆盖率不变（合计 26/46/177）：`maps.cpp` 仍记
+「部分」，只是部分清单里几何、距离、扫描、守卫都已经划掉。
+
+**下一步**：`heroes/heroes_move.cpp` + `world/world_pathfinding.cpp` —— 扫描与守卫已可用（AI 的
+「这格能不能过、过去会不会打起来」两块都齐了），通行与地形代价也已就位，剩下的只有移动点记账与路径查找表。
+
+### 英雄的技能与经验 ✅
+
+英雄身上两块「不依赖任何系统」的数据：**次要技能**（枚举、数值表、种族初始技能、`SecSkills` 容器）
+与**经验/等级**（40 行阈值表 + 尾部增长公式）。它们是把英雄从「一个位置 + 一个种族」变成
+「一个有属性的单位」的最后一块拼图。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `SecondarySkill` | `skill.h:47-65` | 14 项，id 即表下标 |
+| `SecondarySkills.All` | `Skill::allSecondarySkills` | 14 项按 id 序 |
+| `SecondarySkills.InitialFillOrder` | `skill.cpp:626-681` | 构造器十四个 `if` 的书写顺序 |
+| `SecondarySkills.WitchsHutSkills` | `game_static.cpp:265` | 12 项，无领导/招魂 |
+| `SecondarySkills.GetValue` | `skill.cpp:119` | `secondarySkillValuesPerLevel` 的一行 |
+| `SecondarySkills.GetDiplomacySurrenderCostDiscount` | `skill.cpp:898` | 40 / 30 / 20 / 0 |
+| `PrimarySkillValues` | `skill_static.h:37-43` | 攻/防/力/知四元组 |
+| `SecondarySkillTable` | `skill_static.h:45-61` | 14 值一行，下标即技能 |
+| `FactionProperties` / `Factions.Get` | `game_static.cpp:37-89`、`:205` | 六族一行；非法种族返回 `null` |
+| `SecondarySkillLevel` | `skill.h:67-126` | `{ 技能, 等级 }` + `IsValid` |
+| `SecSkills` | `skill.cpp:621-780` | 最多 8 槽，可含空槽；`Add` / `FillMax` |
+| `HeroExperience.FromLevel` | `heroes.cpp:1512-1602` | 0–39 级硬编码，40+ 按 1.2% |
+| `HeroExperience.LevelFrom` | `heroes.cpp:1604` | 反查；1000 经验 = 2 级 |
+| `HeroExperience.MaxValue` | `getExperienceMaxValue()` | 2990600（39 级阈值） |
+
+要点：
+
+* **参考的字段是字母序**：`Skill::SecondarySkillValues`（`skill_static.h:45-61`）的十四个成员按技能名
+  排（`archery`、`ballistics`…），`game_static.cpp` 的行字面量也跟着字母序写。端口改成 id 序时
+  **只重排一次**（写在表里），取值路径不做映射；测试对十四行**逐行**断言，而不是抽查——
+  「一对技能互换」是这类错误唯一的表现形式，抽查正好漏过去。
+* **`Ballistics` 全零**：炮术的 25/50/100 在表里属于 Pathfinding（移动点），炮术那行是 `(0,0,0)`
+  ——它的效果写在攻城里，不在数值表里。照抄字母序会把它和寻路术换掉。
+* **填充顺序第三套**：种族初始技能既不是 id 序也不是字母序，是构造器十四个 `if` 的书写顺序。
+  骑士是 `leadership`（第 9 个 `if`）在 `ballistics`（第 10 个）之前，英雄界面照这个顺序列。
+* **空槽是数据**：`SecSkills` 存得下 `{ Unknown, None }`，`FillMax` 补到 8 个是为了存档定宽。
+  `Count`/`TotalLevel`/`GetLevel`/`Add` 全都靠**跳过无效项**处理空槽，与参考一致。
+* **第 9 个技能静默丢弃**：`Add` 的三步（升级 → 填空槽 → 追加）之后没位置就什么也不做。
+  参考就是静默的；保证不出现第 9 个是升级流程的责任。
+* **阈值属于下一级**：`FromLevel(1) = 1000` 意味着「1000 经验就是 2 级」，`LevelFrom(1000) == 2`。
+  第一版测试断言 `LevelFrom(threshold) == level`，红了之后确认是**测试错、参考对**，
+  测试与两个函数的注释一起改清楚。
+* **尾部用浮点**：40 级起 `previous + round(step * 1.2 / 100) * 100`，保留参考的浮点与
+  `AwayFromZero` 舍入；改成整数运算后中间值舍入点会漂，几十级后差出几百点。
+* **没转的两支**：`FindSkillsForLevelUp`（要两个随机种子与按种族权重抽取）、
+  `game_static.cpp` 里带系统依赖的其余函数（护城河减防、城墙远程惩罚、绿洲移动点、中立怪上限、
+  漩涡失踪率、雾发现距离）。前者等升级界面，后者等调用它们的系统。
+
+用例：`SecondarySkillsTests` 24 条（14 行数值 + None/Unknown + 排列检查 + 女巫小屋 + 外交折扣）、
+`FactionsTests` 27 条（六族逐族 + 两套权重各和为 100 + 分界 + 非法种族）、`SecSkillsTests` 11 条、
+`HeroExperienceTests` 55 条（40 行表 + 每级阈值一致性 + 尾部公式）。
+`FHeroes2.Game.Tests` 683 → **824**，全解决方案 1369 → **1510** 条全绿，0 警告 0 错误。
+覆盖率：`heroes` 行 1/1/10 → **1/2/9**（`skill.cpp` 转部分），`game` 行 2/3/23 → **2/4/22**
+（`game_static.cpp` 转部分），合计 26/46/177 → **26/48/175**。
+
+**下一步**：`heroes/heroes_move.cpp` + `world/world_pathfinding.cpp` —— 技能的数值与等级已经可用，
+通行与地形代价也就位，剩下的只有移动点记账（寻路术那行 25/50/100 终于有地方用了）与路径查找表。
+
+## 寻路与路线 ✅（2026-11-16）
+
+`world/world_pathfinding.cpp` 的玩家侧与 `heroes/route.cpp` 是同一件事的两半：前者回答「走哪条路、
+多贵」，后者回答「这条路记在哪、怎么一步步走掉」。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `WorldPathfinder` | `world_pathfinding.cpp:40-140` | 缓存、标签修正式搜索、八向松弛、「最后一格」 |
+| `WorldNode` | `world_pathfinding.h` 的 `WorldNode` | `{ From, Cost, RemainingMovePoints }` |
+| `PlayerWorldPathfinder` | `world_pathfinding.cpp:220-330` | 五元组缓存、`buildPath`、`processCurrentNode` |
+| `World.Pathfinder` | 参考的全局 `world.pathfinder` | `??=` 惰性创建；`ResetPathfinder()`/`LoadMap` 丢缓存 |
+| `RouteStep` | `route.h` 的 `Route::Step` | `{ Index, From, Direction, Penalty }`，代价是**单步** |
+| `HeroPath` | `route.h:120-215`、`route.cpp:38-414` | 队列语义 + 传送标记 + 绿格计数 |
+
+要点：
+
+* **队列的追加顺序是结果的一部分**：参考用 `std::vector` 当队列、边遍历邻居边追加，等代价路线不覆盖。
+  换成 `Queue<int>` 语义等价但实现不同、换成优先队列则**不等价**——等代价时选哪条路会变。
+  见 `WorldPathfinder.ProcessWorldMap` 的索引循环。
+* **地形代价取出发格**：`getMovementPenalty()` 用 `fromTile.ground`，只有道路要两端都是道路
+  （`RoadPenalty = 75`）。取目标格会让整张地图的代价系统性偏低，且很难在单格测试里看出来。
+* **「最后一格」规则**：剩余点 ≥ 出发格代价但 < 目标格代价时可以走，并花光剩余点。
+  AI 寻路器报 `maxMovePoints == 0`，因此**不**享受折扣——这条判据写在基类里，AI 侧不用重写。
+* **船的对角切角查的是拐角背后**：不是目标格。目标格自己的通行是第二个问题。
+* **怪物「可到达、不可穿过」**：不可穿过的格子照样写入缓存（这样「能走到它旁边」成立），但不展开；
+  有守卫时只从该格试探「走向怪物」的一步，且**不入队**——打不打是玩家的事。
+* **`world` 全局变量的替换**：参考读 `world.pathfinder`，端口把 `World` 注入构造函数并由
+  `World.Pathfinder` 持有，两个世界不共享缓存。
+* **`Route::Path` 存的 `from` 是必需的**：相邻格的 `from` 可以反推，但**起点**不行，
+  而「英雄是否还站在路线起点」靠 `FrontFrom` 判断。
+* **`Direction.Unknown` 就是传送**：方向未知 + 落点在图内 = 跳跃；方向已知 + 落点在图内 = 一步。
+  这个编码参考里没有注释，是从两个互为补集的判断反推的。
+* **`GetAllowedSteps` 不做「最后一格」折扣**：它算的是界面标绿、今天真能走完的步数，
+  与寻路器的「能不能到」是两个问题。
+* **端口替换**：参考的 `const Heroes *` 指针改成参数——`reEvaluateIfNeeded()` 收五个值
+  （起点/颜色/剩余点/寻路术等级/一回合上限），`hasAllowedSteps()`/`GetAllowedSteps()` 收 `movePoints`。
+  等 `Hero` 有移动点后加重载转调，调用点不用改。
+* **没转的两支**：`AIWorldPathfinder`/`ObjectValueStorage`（要军队与对象价值表）、
+  `HeroPath.GetIndexSprite`（260 行 `ICN::ROUTE` 精灵表，等渲染侧）、`HeroPath.String`（调试字符串）。
+* **有意不移植的断言**：参考假设方形地图（偏移量按行宽算），端口删掉该断言——偏移是行增量，
+  对任意形状都精确，边界由 `IsValidDirection()` 守住；测试地图不必是方形。
+
+用例：`WorldPathfinderTests` 26 条（直线/对角代价、地形取出发格、寻路术四档沙漠、道路两端、雾、
+水陆、切角、「最后一格」三态、起点无路径、链条连续、最后一行不回绕、怪物、缓存复用、越界、
+世界唯一寻路器、换地图换寻路器）、`HeroPathTests` 21 条（空路线约定、`SetPath`/`Show`/`Hide`、
+首尾索引、`NextStepDirection`、`PopFront`/`Truncate`、移动与传送合法性、`HasAllowedSteps`/
+`GetAllowedSteps` 各档、`CalculatePenalty`、与 `BuildPath` 联调）。
+`FHeroes2.Game.Tests` 824 → **871**，全解决方案 1510 → **1557** 条全绿，0 警告 0 错误。
+覆盖率：`world` 行 0/3/2 → **0/4/1**（`world_pathfinding` 转部分），`heroes` 行 1/2/9 → **1/3/8**
+（`route.cpp` 转部分），合计 26/48/175 → **26/50/173**。
+
+**下一步**：`heroes/heroes_move.cpp` —— 要先让 `Hero` 拥有军队与移动点，否则整支都是动画记账；
+或者转 `world_pathfinding.cpp` 的 AI 侧，但它同样卡在军队与对象价值表上。
+
+## 军队、移动点与英雄行走 ✅（2026-11-16）
+
+先给 `Hero` 装上军队与移动点，再转 `heroes/heroes_move.cpp`：前者是后者的记账基础
+（每走一格扣的是「最慢兵种决定的每日额度」），后者是前者的消费者。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MonsterStatistics` | `monster/monster_info.cpp` | 通用数值表（等级/生长/造价）与战斗数值表（攻防伤血速射） |
+| `DwellingMonsters` | `Monster::FromDwelling` | 住所索引 × 种族 → `MonsterType` |
+| `Troop` | `army/army_troop.cpp` | `{ Monster, Count }` + 按「每兵 × 数量」算的血、伤、造价 |
+| `Army` | `army/army.cpp` | 五槽、最慢/最快/首个、合并、清空、`Reset` 初始军队 |
+| `Hero.Army.cs` | `heroes.cpp:972`、`:1782`、`heroes_move.cpp:468` | `Army`/`SecondarySkills`/`MovePoints`、`GetMaxMovePoints`、`_updateMovementPoints`、`_applyMovementPenalty` |
+| `Hero.Movement.cs` | `heroes/heroes_move.cpp` | 九帧状态机、转向块、像素偏移、帧循环与四个小查询 |
+| `IHeroMovementHandler` | 清雾/小地图/对象动作/AI 四个缺失子系统 | 接缝接口 + 空实现 |
+
+要点：
+
+* **最慢兵种是每日移动点的唯一来源**：空军队是 **0** 而不是「按极慢算」；水上固定 1500，与载了什么无关。
+* **`_updateMovementPoints` 的 33/66 是乘分数**：1500 上基础航海术 2000（不是 1995）、高级 2500（不是
+  2490）。按百分比算会系统性少 5–10 点，整张图累积成「少走一格」。
+* **灯塔 +500 加在技能放大之后**：航海术不放大灯塔那 500，且只在亲水那一支生效。
+* **一格九帧，帧号 = `_spriteIndex % 9`**：帧 0 是「记账点在不在前面绕不过去的对象」、帧 1 清雾、
+  帧 8 才真的移动；直行时帧 8 之后 `++_spriteIndex` **跳过站立帧**，否则每格之间闪一下站姿。
+* **`_direction` 与 `_spriteIndex` 是同一个不变量**：参考是 `_direction{ RIGHT }` + `_spriteIndex{ 18 }`
+  （18 正是朝右那块的站姿）。第一版写成 `Bottom`，于是 `SetValidDirectionSprite()` 一律把精灵修回 36，
+  `Move()` 的帧 0 判定全部错位——写测试时才发现。
+* **转向块 45~53 与走动共用同一个精灵索引**：五个方向块（0/9/18/27/36，左右共用一块镜像），
+  一次 90° 转向要连续 7 次（逆时针）或 6 次（顺时针）`AngleStep`；`framesToSkip = clamp(4/倍速,1,3)`
+  让基线速度是「每三帧动一帧」。
+* **`Move()` 允许走完已经跨出去的那一格**：移动点耗尽时若帧在 2..8 或正在转向，仍推完这一帧，
+  否则精灵卡在两格之间。
+* **`isNeedStayFrontObject()` 只留对象表一支**：城堡驻军与船长下船两支没有对象可查。
+* **端口替换**：全局 `world` → 参数 `World`；`isControlHuman()` → `Hero.IsControlHuman`；
+  动画倍速 → `Hero.AnimationSpeedMultiplier`；`Scout`/`Action`/`ActionNewPosition`/`ScoutRadar`
+  → `IHeroMovementHandler`（默认空实现），调用次数与时序保留。
+* **没转**：神器 `LAND_MOBILITY`/`SEA_MOBILITY`、马厩 400 点、幸运士气与军队强度、军队间调兵与
+  `GetJoinSolution`、行走音效与淡入淡出。均在类注释里逐条记着。
+
+用例：`TroopTests` 14 条（空槽回落到 Unknown 行、每兵×数量、造价、弓手标记、等级、拷贝/重置）、
+`ArmyTests` 42 条（21 个方法 + 初始兵数 9 档 + 住所映射 12 行：五槽、负索引、合并三支、满员、
+并列取先、计数与总血、清空、`Reset` 三态）、`HeroArmyTests` 26 条（14 个方法 + 六档基数 + Logistics 三档
++ Navigation 三档：空军队 0、33/66 精确值、水上不吃后勤、灯塔同色/异色、陆地不加灯塔、加点、扣点两态）、
+`HeroMovementTests` 37 条（帧 0/1/2..7/8、停在对象前、跳帧三态、`jumpToNextTile` 两支、转向两个方向、
+跳帧数、像素偏移五组、`Move` 守卫与 midStep、方向查询、精灵修复、占位迁移、深水半格）。
+`FHeroes2.Game.Tests` 871 → **990**，全解决方案 1557 → **1676** 条全绿，0 警告 0 错误。
+覆盖率：`army` 行 0/1/2 → **0/2/1**（`army.cpp`/`army_troop.cpp` 转部分），`heroes` 行 1/3/8 →
+**1/4/7**（`heroes_move.cpp` 转部分），合计 26/50/173 → **26/52/171**。
+
+**下一步**：`heroes/heroes.cpp` 的剩余主体（`LoadFromMP2`、`Action`、`ActionNewPosition`）现在有了
+军队与移动点可以挂，或者补 `army.cpp` 的幸运/士气/强度（战斗侧要用）。

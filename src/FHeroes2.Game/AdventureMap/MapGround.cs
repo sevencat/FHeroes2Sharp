@@ -30,7 +30,7 @@ public enum MapGround
 }
 
 /// <summary>Helpers of <see cref="MapGround"/>.</summary>
-public static class MapGrounds
+public static partial class MapGrounds
 {
     /// <summary>The first terrain image of water, <c>WATER_START_IMAGE_INDEX</c> of the reference.</summary>
     public const ushort WaterStartImageIndex = 0;

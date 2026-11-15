@@ -13,13 +13,15 @@ public sealed class MapFogTests
     [InlineData(3, 13)]
     [InlineData(4, 21)]
     [InlineData(5, 31)]
-    [InlineData(6, 43)]
+    [InlineData(6, 49)]
     [InlineData(7, 66)]
     [InlineData(8, 90)]
+    [InlineData(9, 100)]
     public void SquaredRevealLimit_FollowsTheReferenceTable(int distance, int expected)
     {
-        // ( distance + 1 ) ^ 2 - distance, with the two exceptions getSquaredScoutingRadiusLimit makes
-        // for the scouting values only artifacts can reach.
+        // ( distance + 1 ) ^ 2 - distance while the radius is below six, the plain ( distance + 1 ) ^ 2 from
+        // six on, and the two hardcoded exceptions getSquaredScoutingRadiusLimit makes for the scouting
+        // values only artifacts can reach.
         Assert.Equal(expected, MapFog.SquaredRevealLimit(distance));
     }
 

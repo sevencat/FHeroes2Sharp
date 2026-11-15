@@ -207,6 +207,37 @@ public sealed class MapObjectCatalogTests
         }
     }
 
+    /// <summary>
+    /// Every object the reference builds from an <c>MP2::OBJ_*</c> action constant must be stored with
+    /// the action bit. The two exceptions are the castle extras, which the reference builds from
+    /// <c>MP2::OBJ_NON_ACTION_CASTLE</c> on purpose (<c>map_object_info.cpp:3779</c> for the basements):
+    /// they are pieces of a castle, never a whole object of their own.
+    /// </summary>
+    [Fact]
+    public void ObjectsWithAnActionCounterpartAreStoredWithTheActionType()
+    {
+        foreach (ObjectGroup group in Enum.GetValues<ObjectGroup>())
+        {
+            if (group is ObjectGroup.GroupCount or ObjectGroup.LandscapeFlags or ObjectGroup.LandscapeTownBasements)
+            {
+                continue;
+            }
+
+            Assert.All(MapObjectCatalog.GetObjectsByGroup(group), info => Assert.True(
+                !Mp2ObjectTypes.CanBeActionObject(info.ObjectType) || Mp2ObjectTypes.IsActionObject(info.ObjectType),
+                $"{group}: {info.ObjectType} has an action counterpart but is stored without the action bit."));
+        }
+    }
+
+    [Fact]
+    public void CastleBasementsAndFlagsUseTheNonActionCastleType()
+    {
+        // The reference names MP2::OBJ_NON_ACTION_CASTLE here: a basement or a flag is a piece of a
+        // castle that is placed next to it, not an interactable object.
+        Assert.All(MapObjectCatalog.GetObjectsByGroup(ObjectGroup.LandscapeTownBasements), info => Assert.Equal(Mp2ObjectType.Castle, info.ObjectType));
+        Assert.All(MapObjectCatalog.GetObjectsByGroup(ObjectGroup.LandscapeFlags), info => Assert.Equal(Mp2ObjectType.Castle, info.ObjectType));
+    }
+
     [Fact]
     public void MineVariantsAreIndependentCopiesWithTheirOwnResource()
     {

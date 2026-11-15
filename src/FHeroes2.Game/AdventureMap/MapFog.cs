@@ -167,9 +167,25 @@ public sealed class MapFog
     }
 
     /// <summary>
-    /// The squared distance limit of a reveal radius — <c>getSquaredScoutingRadiusLimit</c>, including
-    /// its two exceptions for the high scouting values an artifact can reach.
+    /// The squared distance limit of a reveal radius — <c>getSquaredScoutingRadiusLimit</c>
+    /// (<c>maps.cpp:531</c>), including its two exceptions for the high scouting values an artifact can
+    /// reach and the cutoff below which the reference shaves a tile off the disc.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The limit is <c>( distance + 1 ) ^ 2</c>, minus <c>distance</c> <b>only while the radius is below
+    /// six</b>. The subtraction is not a rounding tweak: it reproduces the disc of the original game, which
+    /// is visibly smaller than a circle of radius <c>distance + 1</c> for the small radii a hero starts
+    /// with. At six and above the limit is the plain square, so a hero with scouting artifacts reveals a
+    /// full circle.
+    /// </para>
+    /// <para>
+    /// Seven and eight are hardcoded because the original game does not follow the formula there: the
+    /// reference notes the values have to sit in <c>[66, 72]</c> and <c>[90, 98]</c> respectively.
+    /// </para>
+    /// </remarks>
+    /// <param name="distance">The scouting distance in tiles.</param>
+    /// <returns>The squared distance a tile has to stay below to be revealed.</returns>
     public static int SquaredRevealLimit(int distance)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(distance);
@@ -178,7 +194,8 @@ public sealed class MapFog
         {
             7 => 66,
             8 => 90,
-            _ => (distance + 1) * (distance + 1) - distance,
+            < 6 => ((distance + 1) * (distance + 1)) - distance,
+            _ => (distance + 1) * (distance + 1),
         };
     }
 

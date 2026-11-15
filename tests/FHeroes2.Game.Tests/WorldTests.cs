@@ -163,4 +163,26 @@ public sealed class WorldTests
         Assert.Empty(world.Tiles);
         Assert.Null(world.Geometry);
     }
+
+    [Fact]
+    public void AMapWithoutObelisksStillNeedsSixPuzzlePieces()
+    {
+        var world = new World();
+        world.GenerateUninitializedMap(4);
+
+        // CountObeliskOnMaps() clamps to six so that the puzzle can always be solved (world.cpp:900).
+        Assert.Equal(6u, world.CountObeliskOnMaps());
+    }
+
+    [Fact]
+    public void ObelisksAreCountedOnTheMap()
+    {
+        var world = new World();
+        world.GenerateUninitializedMap(4);
+        world.GetTile(0).SetMainObjectType(Mp2ObjectType.Obelisk);
+        world.GetTile(5).SetMainObjectType(Mp2ObjectType.Obelisk);
+        world.GetTile(6).SetMainObjectType(Mp2ObjectType.Mine);
+
+        Assert.Equal(2u, world.CountObeliskOnMaps());
+    }
 }
