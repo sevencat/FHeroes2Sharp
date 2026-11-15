@@ -137,3 +137,36 @@ public enum ArtifactType : int
 // IMPORTANT! Put all new artifacts just above this line.
     ArtifactCount,
 }
+/// <summary>
+/// The predicates of the artifact ids, <c>Artifact::isValid()</c> (<c>artifact.h:186-189</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Four ids are numbers but not artifacts: <see cref="ArtifactType.Unknown"/> (an empty slot),
+/// <see cref="ArtifactType.EditorAnyUltimateArtifact"/> (the map editor's placeholder) and the three holes the
+/// original game left in the middle of the list (<see cref="ArtifactType.Unused84"/> to
+/// <see cref="ArtifactType.Unused86"/>). The reference keeps them in range so that the sprite index stays a
+/// subtraction, and rejects them here.
+/// </para>
+/// <para>
+/// <see cref="ArtifactType.ArtifactCount"/> is not a valid artifact either: it is the sentinel, and the check
+/// <c>id &lt; ARTIFACT_COUNT</c> is what excludes it.
+/// </para>
+/// </remarks>
+public static class ArtifactTypes
+{
+    /// <summary>
+    /// Whether the id names an artifact a hero can own, <c>Artifact::isValid()</c>.
+    /// </summary>
+    /// <param name="artifact">The id to check.</param>
+    /// <returns>Whether the id names an artifact.</returns>
+    public static bool IsValid(ArtifactType artifact)
+    {
+        int id = (int)artifact;
+
+        return id != (int)ArtifactType.Unknown
+            && id != (int)ArtifactType.EditorAnyUltimateArtifact
+            && id < (int)ArtifactType.ArtifactCount
+            && (id < (int)ArtifactType.Unused84 || id > (int)ArtifactType.Unused86);
+    }
+}

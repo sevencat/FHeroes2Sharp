@@ -1,6 +1,9 @@
 using System.Collections;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
+using FHeroes2.Game.Castle;
+using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
 
 namespace FHeroes2.Game.Army;
@@ -17,15 +20,21 @@ namespace FHeroes2.Game.Army;
 /// <c>Army::GetColor()</c> returns for an army without a commander.
 /// </para>
 /// <para>
-/// Not ported, in one list, because they are all blocked on the same missing tables:
-/// <c>GetStrength()</c> (needs <c>Troop::GetStrength()</c>, i.e. the monster abilities),
-/// <c>GetMorale()</c>/<c>GetLuck()</c> (artifacts and secondary skills of the commander), the battle
-/// helpers (<c>GetCurrentUnit</c>, <c>GetSlowestTroop</c> is here but <c>GetWeakestTroop</c> is strength
-/// based), <c>UpgradeTroops</c> (castle dwellings), the join-by-condition helpers used by wandering
-/// monsters (<c>GetMonsterJoinCondition</c>), <c>TroopSizeString</c> and <c>String</c> (translated text).
+/// Not ported, in one list, because they are all blocked on the same missing tables: the castle and artifact
+/// terms of <c>GetMoraleModificator()</c>/<c>GetLuckModificator()</c> (<c>inCastle()</c>, the artifact bag —
+/// the army has no way to ask a hero yet), the battle helpers (<c>GetCurrentUnit</c>, <c>GetWeakestTroop</c>
+/// is strength based), <c>UpgradeTroops</c> (castle dwellings), the join-by-condition helpers used by
+/// wandering monsters (<c>GetJoinSolution</c>, <c>GetMonsterJoinCondition</c>), the troop shuffling between
+/// armies (<c>MoveTroops</c>, <c>SwapTroops</c>, <c>JoinStrongestFromArmy</c>), <c>TroopSizeString</c> and
+/// <c>String</c> (translated text).
+/// </para>
+/// <para>
+/// The commander back-pointer of the reference is a nullable <see cref="IArmyCommander"/> here: the port has no
+/// <c>HeroBase</c> to point at, and the strength calculation only needs four calls on it. An army without one is
+/// a town's garrison or a wandering monster stack, and is worth what its troops are worth.
 /// </para>
 /// </remarks>
-public sealed class Army : IEnumerable<Troop>
+public sealed partial class Army : IEnumerable<Troop>
 {
     /// <summary>Number of slots, <c>Army::maximumTroopCount</c> (<c>army.h:97</c>).</summary>
     public const int MaximumTroopCount = 5;
@@ -200,6 +209,245 @@ public sealed class Army : IEnumerable<Troop>
         return hitPoints;
     }
 
+    /// <summary>
+    /// Whether every valid slot holds the same monster, <c>Troops::AllTroopsAreTheSame()</c>
+    /// (<c>army.cpp:487</c>).
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when no two valid slots differ. An empty army counts as the same: the
+    /// reference's loop finds nothing to compare and returns <see langword="true"/>.
+    /// </returns>
+    public bool AllTroopsAreTheSame()
+    {
+        MonsterType first = MonsterType.Unknown;
+
+        foreach (Troop troop in _slots)
+        {
+            if (!troop.IsValid)
+            {
+                continue;
+            }
+
+            if (first == MonsterType.Unknown)
+            {
+                first = troop.Monster;
+            }
+            else if (troop.Monster != first)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether every valid slot holds an undead stack, <c>Troops::AllTroopsAreUndead()</c>
+    /// (<c>army.cpp:413</c>).
+    /// </summary>
+    /// <returns>
+    /// <see langword="false"/> for an empty army — the reference keeps a "saw a valid slot" flag and
+    /// returns it, because an army with nothing in it cannot be undead.
+    /// </returns>
+    public bool AllTroopsAreUndead()
+    {
+        bool hasValidTroop = false;
+
+        foreach (Troop troop in _slots)
+        {
+            if (!troop.IsValid)
+            {
+                continue;
+            }
+
+            hasValidTroop = true;
+
+            if (!troop.IsUndead)
+            {
+                return false;
+            }
+        }
+
+        return hasValidTroop;
+    }
+
+    /// <summary>
+    /// The luck the army fights with, <c>Army::GetLuck()</c> (<c>army.cpp:1200</c>).
+    /// </summary>
+    /// <returns>
+    /// Without a commander the reference falls back to <see cref="GetLuckModificator()"/>. The port's army
+    /// has no commander, so a hero's luck is asked of the hero (<c>Hero.GetLuck()</c>) and this is the
+    /// army's own share.
+    /// </returns>
+    public int GetLuck() => GetLuckModificator();
+
+    /// <summary>
+    /// The luck an army has without its hero, <c>Army::GetLuckModificator()</c> (<c>army.cpp:1206</c>).
+    /// </summary>
+    /// <returns>
+    /// <see cref="Luck.Normal"/>: the only term left in the reference is the castle the army stands in
+    /// (<c>Castle::GetLuckModificator</c>), which the port has no <c>Castle</c> for yet.
+    /// </returns>
+    public int GetLuckModificator() => Luck.Normal;
+
+    /// <summary>
+    /// The morale the army fights with, <c>Army::GetMorale()</c> (<c>army.cpp:1220</c>).
+    /// </summary>
+    /// <returns>Without a commander, <see cref="GetMoraleModificator()"/>.</returns>
+    public int GetMorale() => GetMoraleModificator();
+
+    /// <summary>
+    /// The morale an army has without its hero, <c>Army::GetMoraleModificator()</c>
+    /// (<c>army.cpp:1226</c>): a bonus for a single-race army, a penalty for every race past the second,
+    /// and one more penalty for undead in the ranks.
+    /// </summary>
+    /// <returns>
+    /// The sum, not clamped — the reference leaves the clamp to the caller
+    /// (<c>Morale::Normalize()</c> in <c>Heroes::getMoraleWithModifiers</c>).
+    /// </returns>
+    /// <remarks>
+    /// Two terms of the reference are missing for want of their subjects: the castle modificator
+    /// (<c>inCastle()</c>) and the "Arm of the Martyr" artifact, which adds the undead penalty to a living
+    /// army. Both are additions to the value, so the rest of the computation is unaffected.
+    /// </remarks>
+    public int GetMoraleModificator()
+    {
+        HashSet<MapRace> races = [];
+        bool hasUndead = false;
+
+        foreach (Troop troop in _slots)
+        {
+            if (!troop.IsValid)
+            {
+                continue;
+            }
+
+            races.Add(troop.GetRace());
+            hasUndead = hasUndead || troop.IsUndead;
+        }
+
+        int result = Morale.Normal;
+
+        switch (races.Count)
+        {
+            case 0:
+            case 2:
+                break;
+
+            case 1:
+                // One race: "All troops +1", but not for undead and not for five stacks of one monster.
+                if (!hasUndead && !AllTroopsAreTheSame())
+                {
+                    ++result;
+                }
+
+                break;
+
+            default:
+                result -= races.Count - 2;
+                break;
+        }
+
+        if (hasUndead)
+        {
+            --result;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The commander of the army, <c>commander</c> (<c>army.h:305</c>).
+    /// </summary>
+    /// <remarks>
+    /// A hero in the port's case. The reference also points it at a battle-only captain; both are behind
+    /// <see cref="IArmyCommander"/>, which is the four methods the strength calculation needs.
+    /// </remarks>
+    public IArmyCommander? Commander { get; set; }
+
+    /// <summary>
+    /// Whether the army is a hero's and has only one stack left, <c>Army::SaveLastTroop()</c>
+    /// (<c>army.cpp:1758-1761</c>).
+    /// </summary>
+    /// <remarks>
+    /// The battle, the castle dialog and the AI all ask "can this army afford to give a stack away". A garrison
+    /// answers no whatever its size — only a hero who loses his last stack loses the game — which is one of the
+    /// two places <see cref="IArmyCommander.IsHeroes"/> is read.
+    /// </remarks>
+    /// <returns><see langword="true"/> for a hero's army with exactly one occupied slot.</returns>
+    public bool SaveLastTroop() => Commander?.IsHeroes == true && OccupiedSlotCount == 1;
+
+    /// <summary>
+    /// The strength of the army, <c>Army::GetStrength()</c> (<c>army.cpp:1291-1333</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference walks the five stacks and for every one of them takes
+    /// <c>Troop::GetStrengthWithBonus(attack, defense)</c>, scales shooters by the hero's archery with a square
+    /// root, multiplies by the morale factor for the stacks morale applies to, multiplies everything by the luck
+    /// factor, and finally adds <c>GetMagicStrategicValue()</c> once when the army is not empty and has a
+    /// commander.
+    /// </para>
+    /// <para>
+    /// Without a commander — a town's garrison, a wandering monster stack — the archery factor, the attack and
+    /// defense bonuses and the magic value are all zero, which is what the reference computes too: every one of
+    /// them is guarded by <c>commander != nullptr</c>. The morale and luck factors are the army's own numbers and
+    /// stay in both cases.
+    /// </para>
+    /// <para>
+    /// The reference's fifth term, <c>GetMagicStrategicValue()</c>, is currently zero in the port because the
+    /// hero has no spell book yet; see <see cref="IArmyCommander.GetMagicStrategicValue"/>.
+    /// </para>
+    /// </remarks>
+    /// <returns>The summed strength of the stacks, with the commander, morale and luck applied.</returns>
+    public double GetStrength()
+    {
+        double result = 0;
+
+        int morale = GetMorale();
+        int luck = GetLuck();
+
+        IArmyCommander? commander = Commander;
+        uint archery = commander?.GetSecondarySkillValue(SecondarySkill.Archery) ?? 0;
+        int bonusAttack = commander?.GetAttack() ?? 0;
+        int bonusDefense = commander?.GetDefense() ?? 0;
+
+        bool troopsExist = false;
+
+        foreach (Troop troop in _slots)
+        {
+            if (troop.IsEmpty)
+            {
+                continue;
+            }
+
+            troopsExist = true;
+
+            double strength = troop.GetStrengthWithBonus(bonusAttack, bonusDefense);
+
+            if (archery > 0 && troop.IsArchers)
+            {
+                strength *= Math.Sqrt(1 + archery / 100.0);
+            }
+
+            if (troop.IsAffectedByMorale)
+            {
+                strength *= 1 + ((morale < 0) ? morale / 12.0 : morale / 24.0);
+            }
+
+            strength *= 1 + luck / 24.0;
+
+            result += strength;
+        }
+
+        if (commander != null && troopsExist)
+        {
+            result += commander.GetMagicStrategicValue(result);
+        }
+
+        return result;
+    }
+
     /// <summary>Whether a slot holds the monster, <c>Troops::HasMonster()</c> (<c>army.cpp:402</c>).</summary>
     /// <param name="monster">Monster to look for.</param>
     /// <returns><see langword="true"/> when a valid slot has it.</returns>
@@ -344,19 +592,19 @@ public sealed class Army : IEnumerable<Troop>
 
         if (!defaultArmy)
         {
-            JoinTroop(DwellingMonsters.FromDwelling(Race, Dwelling.Monster1), 1, false);
+            JoinTroop(DwellingMonsters.FromDwelling(Race, BuildingType.DwellingMonster1), 1, false);
 
             return;
         }
 
-        JoinMonsters(DwellingMonsters.FromDwelling(Race, Dwelling.Monster1));
+        JoinMonsters(DwellingMonsters.FromDwelling(Race, BuildingType.DwellingMonster1));
 
         if (GetRandom(1, 10) == 1)
         {
             return;
         }
 
-        JoinMonsters(DwellingMonsters.FromDwelling(Race, Dwelling.Monster2));
+        JoinMonsters(DwellingMonsters.FromDwelling(Race, BuildingType.DwellingMonster2));
 
         void JoinMonsters(MonsterType monster)
         {

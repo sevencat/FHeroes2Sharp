@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 
@@ -16,11 +18,12 @@ namespace FHeroes2.Game.Army;
 /// </para>
 /// <para>
 /// Not ported: <c>GetName()</c>/<c>GetPluralName()</c> (translated strings), <c>GetAttackString()</c> and
-/// the three siblings (display), <c>isUndead()</c>/<c>isFlying()</c>/<c>isAffectedByMorale()</c> (monster
-/// abilities, <c>monster_info.cpp</c>), <c>GetStrength()</c>/<c>GetStrengthWithBonus()</c> (they need the
-/// cached <c>monsterBaseStrength</c>, which is computed from those abilities), <c>GetUpgrade()</c> and the
-/// upgrade cost (they need the dwelling bits of <c>castle.h</c>), and the battle-only overrides
-/// (<c>isBattle()</c>, <c>GetHitPointsLeft()</c>, the mode flags).
+/// the three siblings (display), and the battle-only overrides (<c>isBattle()</c>,
+/// <c>GetHitPointsLeft()</c>, the mode flags). The ability queries (<c>isUndead()</c>,
+/// <c>isAffectedByMorale()</c>) are here since <see cref="MonsterAbilities"/> landed; the rest of them are
+/// battle rules and wait for the battle engine. The upgrade pair is here since
+/// <see cref="MonsterUpgrades"/> landed — the dwelling check that decides whether an upgrade is *available*
+/// lives in the castle dialog, not in the troop.
 /// </para>
 /// </remarks>
 public sealed class Troop
@@ -70,6 +73,27 @@ public sealed class Troop
     /// <summary>Whether the stack shoots, <c>Monster::isArchers()</c>.</summary>
     public bool IsArchers => GetBattleStats().IsArchers;
 
+    /// <summary>Whether the stack flies, <c>Monster::isFlying()</c>.</summary>
+    public bool IsFlying => MonsterAbilities.IsFlying(_monster);
+
+    /// <summary>Whether the stack is undead, <c>Monster::isUndead()</c> (<c>monster.h:237</c>).</summary>
+    public bool IsUndead => MonsterAbilities.IsUndead(_monster);
+
+    /// <summary>
+    /// Whether morale applies to the stack, <c>Monster::isAffectedByMorale()</c> (<c>monster.h:287</c>):
+    /// everything except the undead and the four elementals.
+    /// </summary>
+    public bool IsAffectedByMorale => MonsterAbilities.IsAffectedByMorale(_monster);
+
+    /// <summary>
+    /// The race of the stack's monster, <c>Monster::GetRace()</c> (<c>monster.cpp:136</c>).
+    /// </summary>
+    /// <returns>
+    /// The race of the table row; <see cref="MapRace.None"/> for a neutral creature. The army's morale
+    /// counts the distinct races, so this is the value it groups by.
+    /// </returns>
+    public MapRace GetRace() => MonsterStatistics.GetGeneralStats(_monster).Race;
+
     /// <summary>The level of the monster, <c>Monster::GetMonsterLevel()</c>.</summary>
     public int MonsterLevel => MonsterStatistics.GetGeneralStats(_monster).Level;
 
@@ -94,12 +118,94 @@ public sealed class Troop
     public Funds GetCost() => MonsterStatistics.GetGeneralStats(_monster).GetCost();
 
     /// <summary>
+    /// The strength of the stack, <c>Troop::GetStrength()</c> (<c>army_troop.cpp:52</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference multiplies the strength of one creature by the count without looking at
+    /// <c>isValid()</c> — an empty stack is a stack of zero creatures, which is the same answer.
+    /// </remarks>
+    /// <returns>The strength of one creature times the count.</returns>
+    public double GetStrength() => MonsterStatistics.GetMonsterStrength(_monster) * _count;
+
+    /// <summary>
+    /// The strength of the stack with a flat attack and defense bonus, <c>Troop::GetStrengthWithBonus()</c>
+    /// (<c>army_troop.cpp:57</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is how a hero's attack and defense skills reach the strength of the army: the reference adds them
+    /// to every stack's own attack and defense before computing the creature strength, so the bonus grows with
+    /// the base stats of the creature rather than being a flat percentage.
+    /// </remarks>
+    /// <param name="bonusAttack">Attack to add, normally the hero's attack skill.</param>
+    /// <param name="bonusDefense">Defense to add, normally the hero's defense skill.</param>
+    /// <returns>The strength of one creature times the count.</returns>
+    public double GetStrengthWithBonus(int bonusAttack, int bonusDefense)
+    {
+        Debug.Assert(bonusAttack >= 0 && bonusDefense >= 0);
+
+        MonsterBattleStats stats = GetBattleStats();
+
+        return MonsterStatistics.GetMonsterStrength(_monster, stats.Attack + bonusAttack, stats.Defense + bonusDefense) * _count;
+    }
+
+    /// <summary>
     /// Cost of the whole stack, <c>Troop::GetTotalCost()</c> (<c>army_troop.cpp:93</c>).
     /// </summary>
     /// <returns>The per-creature cost times the count.</returns>
     public Funds GetTotalCost() => GetCost() * _count;
 
-    /// <summary>Whether the stack holds the given monster, <c>Troop::isMonster()</c>.</summary>
+    /// <summary>
+    /// Whether the stack can be upgraded, <c>Troop::isAllowUpgrade()</c> inherited from
+    /// <c>Monster::isAllowUpgrade()</c> (<c>monster.h:257</c>).
+    /// </summary>
+    /// <remarks>
+    /// True for any monster with an upgrade, whatever the castle says. The other half of the reference's test —
+    /// "and the castle of this race has the upgraded dwelling" — belongs to
+    /// <c>Troops::UpgradeTroops</c>, which needs a castle the port does not have yet.
+    /// </remarks>
+    public bool IsAllowUpgrade => MonsterUpgrades.IsAllowUpgrade(_monster);
+
+    /// <summary>
+    /// The creature this stack upgrades into, <c>Monster::GetUpgrade()</c> (<c>monster.cpp:285</c>).
+    /// </summary>
+    /// <remarks>
+    /// The monster itself when it has no upgrade, so a caller may upgrade a stack of peasants and get the same
+    /// stack back rather than an error.
+    /// </remarks>
+    /// <returns>The upgraded monster, or <see cref="Monster"/> when there is none.</returns>
+    public MonsterType GetUpgrade() => MonsterUpgrades.GetUpgrade(_monster);
+
+    /// <summary>
+    /// Turns the whole stack into its upgraded monster, <c>Monster::Upgrade()</c> (<c>monster.h:168</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference only rewrites the id — the creatures are not replaced, so the count survives, and the
+    /// health that a stack may have lost in battle would survive too (<c>Monster::Upgrade()</c> is called on a
+    /// <c>Troop</c> whose count is all it has). A stack of green dragons becomes red dragons, and calling it
+    /// again makes black dragons: the chain is walked one step at a time.
+    /// </remarks>
+    public void Upgrade() => _monster = MonsterUpgrades.GetUpgrade(_monster);
+
+    /// <summary>
+    /// What upgrading one creature costs, <c>Troop::GetUpgradeCost()</c> — public in the reference only
+    /// through <c>Monster::GetUpgradeCost()</c> being protected and <c>GetTotalUpgradeCost()</c> being the
+    /// public door (<c>army_troop.h:96</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference's comment is explicit that this must only be called after <see cref="IsAllowUpgrade"/>:
+    /// for a monster without an upgrade it returns an empty <see cref="Funds"/>, which is a fine answer but a
+    /// misleading one if the caller meant to charge for something.
+    /// </remarks>
+    /// <returns>Twice the price difference, or an empty <see cref="Funds"/>.</returns>
+    public Funds GetUpgradeCost() => MonsterUpgrades.GetUpgradeCost(_monster);
+
+    /// <summary>
+    /// What upgrading the whole stack costs, <c>Troop::GetTotalUpgradeCost()</c> (<c>army_troop.cpp:98</c>).
+    /// </summary>
+    /// <returns>The per-creature upgrade cost times the count.</returns>
+    public Funds GetTotalUpgradeCost() => GetUpgradeCost() * _count;
+
+    /// <summary>Whether the stack holds the given monster, <c>Troop::isMonster()</c>.
     /// <param name="monster">Monster to compare with.</param>
     /// <returns><see langword="true"/> when the ids are equal.</returns>
     public bool IsMonster(MonsterType monster) => _monster == monster;

@@ -73,25 +73,25 @@
 | `engine` | 26 | 7 | 7 | 12 |
 | `agg` | 6 | 1 | 2 | 3 |
 | `ai` | 9 | 0 | 0 | 9 |
-| `army` | 4 | 0 | 0 | 4 |
+| `army` | 4 | 0 | 2 | 2 |
 | `audio` | 1 | 0 | 0 | 1 |
 | `battle` | 18 | 0 | 0 | 18 |
 | `campaign` | 3 | 0 | 0 | 3 |
-| `castle` | 11 | 0 | 0 | 11 |
+| `castle` | 11 | 0 | 4 | 7 |
 | `dialog` | 29 | 2 | 3 | 24 |
 | `editor` | 18 | 1 | 4 | 13 |
 | `game` | 28 | 2 | 4 | 22 |
 | `gui` | 33 | 8 | 10 | 15 |
 | `h2d` | 1 | 0 | 0 | 1 |
-| `heroes` | 12 | 1 | 3 | 8 |
-| `kingdom` | 14 | 0 | 2 | 12 |
+| `heroes` | 12 | 1 | 4 | 7 |
+| `kingdom` | 14 | 0 | 4 | 10 |
 | `maps` | 17 | 3 | 7 | 7 |
-| `monster` | 3 | 0 | 1 | 2 |
-| `resource` | 4 | 1 | 1 | 2 |
-| `spell` | 4 | 0 | 0 | 4 |
+| `monster` | 3 | 0 | 2 | 1 |
+| `resource` | 4 | 1 | 2 | 1 |
+| `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 0 | 2 | 1 |
 | `world` | 5 | 0 | 4 | 1 |
-| **合计** | **249** | **26** | **50** | **173** |
+| **合计** | **249** | **27** | **61** | **161** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -198,6 +198,92 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
 `world_pathfinding.cpp` 只差 AI 侧的四个子类（`AIWorldPathfinder`/`ObjectValueStorage` 那一半要军队与
 对象价值表）；`route.cpp` 只差 `GetIndexSprite`（260 行 `ICN::ROUTE` 精灵表，等渲染侧）与 `String`；
 `heroes_move.cpp` 仍未动（它整个是动画与移动点记账，等 `Hero` 有军队与移动点）。
+
+2026-11-16：军队、移动点与英雄行走（ADR-095~098）：`Army`/`Troop`（五槽、最慢兵种、合并、`Reset`）、
+`Hero.Army`（`GetMaxMovePoints` 的六档基数表与 `_updateMovementPoints` 的 4/3、5/3 取整、灯塔 +500）、
+`Hero.Movement`（九帧状态机、45~53 转向块、像素偏移、`Move` 的 `midStep` 守卫）与 `IHeroMovementHandler`
+接缝。`army` 行 0/0/4 → **0/2/2**（`army.cpp`/`army_troop.cpp` 进「部分」），`heroes` 行 1/3/8 →
+**1/4/7**（`heroes_move.cpp` 进「部分」），合计 26/50/173 → **26/52/171**。`army.cpp` 还差军队强度、
+调兵与 `GetJoinSolution`（都要 `Troop::GetStrength` 与城堡）；`heroes_move.cpp` 还差清雾/对象动作/
+小地图/渲染四个子系统与音效——调用点已按帧序保留在接缝里。
+
+2026-11-16：幸运、士气与怪物能力（ADR-099）：`Luck`/`Morale` 两把七档尺子与 `Normalize`、
+`MonsterAbilities`（32 项能力的位标记表，108 条语句 50 个兵种）、`Troop` 的 `GetRace`/`IsUndead`/
+`IsAffectedByMorale`、`Army` 的 `AllTroopsAreTheSame`/`AllTroopsAreUndead` 与 `GetMoraleModificator`
+（单一种族 +1、超过两种每多一种 −1、带亡灵再 −1）、`Hero.GetLuck`/`GetMorale` 的技能项。
+`kingdom` 行 0/2/12 → **0/4/10**（`luck.cpp`/`morale.cpp` 进「部分」，只差文案），`monster` 行的
+`monster_info.cpp` 从「未转」补成「部分」（行数与合计不变），合计 26/52/171 → **26/55/168**。
+`luck.cpp`/`morale.cpp` 只差 `String`/`Description` 的翻译文案；`monster_info.cpp` 还差能力的
+数值与法术载荷（战斗侧才用）；`Army::GetStrength` 与城堡、神器两项修正仍未转。
+
+2026-11-16：兵种强度与法术 id（ADR-100）：`SpellType`（73 id + 哨兵）、能力实例
+`MonsterAbilityInstance`（掩码改为从实例派生）、`GetMonsterBaseStrength`/`GetMonsterStrength`、
+`Troop.GetStrength*` 与 `Army.GetStrength`。`spell` 行 0/0/4 → **0/1/3**（`spell.h` 进「部分」），
+`monster` 行 0/1/2 → **0/2/1**，合计 26/55/168 → **26/56/167**。`spell.h` 只转了 id 枚举（等级、
+学派、图标、施法与整个 `spell.cpp` 都未转）；`monster_info.cpp` 只差 `weaknesses` 与战斗图标/音效；
+`Army::GetStrength` 的英雄侧三项（箭术、攻防、魔法战略值）此时只留了 `IArmyCommander` 接缝。
+
+2026-11-16：神器袋与英雄四维（ADR-101）：`ArtifactTypes.IsValid`、`ArtifactTable`（105 行数值表）、
+`ArtifactBonuses`（三堆 + 第四堆「按神器类型累加」）、`ArtifactBag`（平铺 14 格、魔法书置顶右移、
+两种求和）、`PrimarySkill`/`Hero.PrimarySkills`（四维 + 神器修正 + clamp）与 `IArmyCommander`
+（`Army.Commander`）。`resource` 行 1/1/2 → **1/2/1**（`artifact_info.cpp` 进「部分」），
+合计 26/56/167 → **26/57/166**。`artifact_info.cpp` 只差 `ArtifactData::getDescription` 与
+`getArtifactDescription` 两支文案；`artifact.cpp` 从「只有 id 枚举」扩到「`BagArtifacts` 全转」，
+仍差 `Artifact` 类的名字/描述/精灵索引与 `getArtifactValue`/`getTotalArtifactMultipliedPercent`；
+`artifact_ultimate.cpp` 未动。`Army.GetStrength` 的箭术（√ 放大）与英雄攻防已接上，
+魔法战略值仍是 0（缺法术书与法力点）。
+
+2026-11-16：法术书、法力点与魔法战略值（ADR-102）：`SpellTable`（73 行数值表，由脚本从 `spell.cpp`
+解析）、`Spell`（等级、七条特性谓词、`GetStrategicValue`）、`SpellStorage`（去重追加、把神器上的
+`ADD_SPELL` 并进来）、`Hero.Spells`（法术书/卷轴、`SpellPoints`、`GetMaxSpellPoints`、`HasSpell`、
+`GetMagicStrategicValue`）。`spell` 行 0/1/3 → **1/1/2**（`spell_storage.cpp` 进「已转」），
+合计 26/57/166 → **27/57/165**。`spell.cpp` 只差名字/描述文案、随机取法术、战斗侧的指向谓词与
+`spellPoints( hero )` 的减耗（要 `getTotalArtifactMultipliedPercent`）；`Spell::getStrategicValue` 的
+召唤分支照抄参考把**法术** id 当怪物 id 用（44..47 = 法师/大法师/巨人/泰坦），是参考的 bug，
+端口为保持 AI 数值一致也照抄，`SpellTests` 钉住了这条。
+
+2026-11-16：队伍的整理、统计与比较（ADR-103）：`Army.Troops.cs` 把 `Troops` 的容器半边搬过来 ——
+`GetOptimized`、`MergeSameMonsterTroops`/`MergeSameMonsterOnce`、`SortStrongest`、
+`GetWeakestTroop`/`GetStrongestTroop`、`GetCountMonsters`、`GetTroopsStrength`、
+`GetReinforcementValue`、`IsStrongerThan`、`IsMeleeDominantArmy`、`GetStrongestMonster`、
+`ResetInvalidMonsters`，外加 `Troop.IsFlying`。`Troops::GetStrength()` 与 `Army::GetStrength()`
+拆成两个方法（前者只加兵、后者再乘士气/幸运/英雄项），因为参考只在比较「容器」时用前者。
+`army` 行不变（`army.cpp` 仍是「部分」），合计仍 27/57/165。两军之间的调兵
+（`JoinStrongest`/`MoveTroops`/`SwapTroops`）要 `IArmyCommander.isHeroes()`，留给下一批。
+
+2026-11-15：两军之间的调兵（ADR-104）：`IArmyCommander` 补 `IsHeroes`（`Hero` 恒真），
+`Army.Transfer.cs` 落地 `JoinStrongest`（四趟：同槽、填空槽、五强者交换、退回；末尾按「二十分之一」规则
+给英雄留兵）、`JoinStrongestFromArmy`、`MoveTroops`（先并自己的重复、`monsterIdToKeep` 的换位、两趟搬运、
+英雄最后一堆只留一个）、`SwapTroops(Army)`、`SwapTroops(Troop, Troop)`，另有 `SaveLastTroop`。
+`MoveTroops` 里的那个 lambda 拆成私有方法 `MoveTroopsInto`。`army` 行不变（仍是「部分」），
+合计仍 27/57/165。剩下 `UpgradeMonsters`、`SplitTroopIntoFreeSlots` 一族与 `GetJoinSolution`。
+
+2026-11-15：升级线（ADR-105）：`MonsterUpgrades` 落地 `GetUpgrade`/`GetDowngrade`（各 21 行，龙是唯一的
+两级链）、`IsAllowUpgrade`（写成 `GetUpgrade(m) != m`，不另立表）、`GetUpgradeCost`（差价 ×2，无升级返回空
+`Funds`）；`Troop` 补 `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost`/`GetTotalUpgradeCost`；
+`Army.UpgradeMonsters` 按兵种原地升级。测试里两条是整表不变量（21 行全部保持种族与等级、更强、更贵、
+降级回到原兵种，并按种族计数 5/3/4/3/3/3）。`monster` 与 `army` 行仍为「部分」，合计仍 27/57/165。
+`UpgradeTroops` 仍缺 `Castle`。
+
+2026-11-15：城堡建筑表（ADR-106）：`Game.Castle.BuildingType`（33 项位掩码，照参考的 `castle.h:68-110`，
+含 `MageGuild`/`DwellingMonsters`/`DwellingUpgrades` 三个组合掩码）；`CastleBuildings` 落地
+`GetCost`（86 行造价表，逐行照抄，含六行同价的 `Well2` 与六行不同的 `Spec`）、
+`GetRequirement`（前置掩码，按兵营 × 种族二维）、`GetUpgradeForBuilding`（五条全种族 + 六族各自的住所链，
+术士的龙是唯一两级）、`IsDwelling`（12 个单一位，掩码不算）。`Monsters.Dwelling` 那个临时类删掉，
+住所位改用 `BuildingType`，`DwellingMonsters.FromDwelling` 换成收 `BuildingType`。`castle` 行
+0/0/11 → **0/3/8**，合计 27/57/165 → **27/60/162**。测试里 `TheCastleUpgradesAndTheMonsterUpgradesAgree`
+把城堡的住所升级与 `MonsterUpgrades` 对成同一件事（各 21 条）。
+
+2026-11-15：城堡骨架（ADR-107）：`Game.Castle.Castle` 落地 `castle.cpp` 里**不需要世界**的那一半 ——
+构造与 `_postLoad()` 的无图部分、`isBuild`/`isCastle`/`isBuildingDisabled` 与三个种族 `Spec` 谓词、
+`GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、`GetActualDwelling`/`GetUpgradeBuilding`/
+`GetMonstersInDwelling`/`IsExactBuildingBuilt`、`CheckBuyBuilding`/`AllowBuyBuilding`/
+`GetAllBuildingStatus`、`BuyBuilding`、`ActionNewDay`、`AddBuildings`、`SetDefaultBuildings`、
+`ChangeColor`；`BuildingStatus` 枚举同批（`castle.h`）。参考的三个全局被挪成参数或属性：
+`Kingdom::AllowPayment`/`OddFundsResource` → `in Funds treasury` 参数、`Settings` 的地图版本 → 构造参数、
+`HasSeaAccess()` 的扫水 → 可写属性 `HasSeaAccess`。`castle` 行 0/3/8 → **0/4/7**，合计 27/60/162 →
+**27/61/161**。测试 17 条，重点是 `CheckBuyBuilding` 的**判定顺序**（已建 → 禁用位 → 三个特例 → 法师
+公会逐级 → 今天能否建 → 帐篷/城堡规则 → 种族特有升级 → 前置位 → 资源）与六族 × 两版本整表扫。
 
 ### `engine`（26）
 
@@ -337,27 +423,70 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
   「最后一格」规则、船的对角切角与怪物「只到不穿」（ADR-091），`PlayerWorldPathfinder` 是五元组
   缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
   都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；❌ `world_regions`
-* `ai`（9）、`army`（4）、`battle`（18）、`campaign`（3）、`castle`（11）、`heroes`（12）、`spell`（4）、
-  `h2d`（1）、`audio`（1）：**全部未转**，只有 `heroes` 例外——◐ `direction.cpp` 已转；`heroes.cpp` 转成
+* `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）、`audio`（1）：**全部未转**
+* `castle`（11）：◐ `castle.h` 的 `BuildingType` 位掩码已转（`Game.Castle.BuildingType`，33 项含三个组合
+  掩码，ADR-106）；◐ `castle_building_info.cpp` 的前置表 `GetRequirement` 与升级表
+  `GetUpgradeForBuilding` 已转（ADR-106），名字/描述（译文）与图标矩形表（要 AGG）未转；
+  ◐ `buildinginfo.cpp` 的 86 行造价表 `GetCost` 与 `isDwelling` 已转（ADR-106），`BuildingInfo` 那个
+  界面构件（要 `Castle`）未转；◐ `castle.cpp`→`Game.Castle.Castle` 的**无世界骨架**已转（ADR-107）：
+  构造 + `_postLoad()` 的无图那半、`isBuild`/`isCastle`/`isBuildingDisabled`/三个种族 `Spec` 谓词、
+  `GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、`GetActualDwelling`/`GetUpgradeBuilding`/
+  `GetMonstersInDwelling`/`IsExactBuildingBuilt`、`CheckBuyBuilding`/`AllowBuyBuilding`/
+  `GetAllBuildingStatus`、`BuyBuilding`、`ActionNewDay`、`AddBuildings`、`SetDefaultBuildings`、
+  `ChangeColor`；未转招募（`RecruitMonster`/`getRecruitLimit`/`getAvailableArmy`）、`ActionNewWeek`/
+  `ActionNewMonth` 的周产井水加成、税收与法师公会法术、`_postLoad()` 的填货尾巴、`GetPowerModificator`
+  与 AI 访问价值；❌ `castle_heroes`、`castle_masons_guild`、`castle_recruit`、`castle_ui`、
+  `castle_switch`、`castle_building_info` 的其余部分
+* `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
+  `AllTroopsAreTheSame`/`AllTroopsAreUndead`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
+  ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
+  `MergeSameMonsterTroops`/`SortStrongest`/`GetWeakestTroop`/`GetStrongestTroop`/`GetCountMonsters`/
+  `GetTroopsStrength`/`GetReinforcementValue`/`IsStrongerThan`/`IsMeleeDominantArmy`/
+  `GetStrongestMonster`/`ResetInvalidMonsters`/`UpgradeMonsters`，ADR-103/105；`Army.Transfer.cs` 的两军
+  调兵：`JoinStrongest`/`JoinStrongestFromArmy`/`MoveTroops`/两个 `SwapTroops`/`SaveLastTroop`，
+  `IArmyCommander.IsHeroes`，ADR-104）、
+  `army_troop.cpp`→`Troop`（数值、血伤造价、种族/亡灵/士气/飞行四条能力查询、`GetStrength*`、
+  `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost*`，ADR-095/099/100/103/105）；
+  `UpgradeTroops`（要 `Castle`）、`SplitTroopIntoFreeSlots` 与三个同族（要拖单堆的界面）、
+  `GetJoinSolution`、`ArrangeFor*` 与城堡/神器那两项修正未转；❌ `army_bar.cpp`、`army_ui_helper.cpp`
+* `spell`（4）：✅ `spell_storage.cpp`→`SpellStorage`（去重、书后追加神器上的 `ADD_SPELL`、
+  `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、七条特性谓词、
+  `GetStrategicValue`，ADR-102），名字/描述文案、随机取法术、战斗侧的指向谓词与 `spellPoints(hero)`
+  的减耗未转；❌ `spell_book.cpp`
+* `heroes`（12）：◐ `direction.cpp` 已转；`heroes.cpp` 转成
   「部分」：`AllHeroes::Init` / `Clear` / `GetHeroForHire`、`isAvailableForHire`、`getHeroIdRangeForRace`
   （`Game/Heroes/AllHeroes`、`HeroRaces`，ADR-071）与 `Heroes::LoadFromMP2` 的前半（位置/颜色/种族改判/
   肖像/名字/巡逻，ADR-072）已落，另有 `Hero` 的 id 取值域、种族/颜色/肖像、mode 位、`isFriends`（暂等价于
-  同色，ADR-083）、瓦片占用契约（ADR-062/068/071）与经验/等级表（`HeroExperience`，ADR-090）；
+  同色，ADR-083）、瓦片占用契约（ADR-062/068/071）、经验/等级表（`HeroExperience`，ADR-090）、
+  军队与移动点（ADR-095/096）、`GetLuck`/`GetMorale` 的技能项（ADR-099）与 `heroes_base` 的法术书/
+  法力点/`GetMagicStrategicValue`（ADR-102）；
   `skill.cpp` 也记「部分」：14 项枚举、数值表、种族初始技能、`SecSkills`、外交折扣已转（ADR-087~089），
   只差 `FindSkillsForLevelUp`（要随机种子）与技能名/描述文案；`route.cpp` 也记「部分」：
   `Route::Step`→`RouteStep`（ADR-093）与 `Route::Path`→`HeroPath` 的队列语义
   （`FrontIndex`/`FrontFrom`/`FrontDirection`/`FrontPenalty`/`NextStepDirection`、`Truncate`/
   `PopFront`/`Show`/`Hide`/`IsValidForMovement`/`IsValidForTeleportation`/`GetAllowedSteps`，
-  ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；未转 `GetIndexSprite`
-  （260 行 `ICN::ROUTE` 精灵表，等渲染侧）与 `String`；移动、军队、法术书、AI 动作仍未转
-* `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`；❌ `experience`、
-  `kingdom_overview`、`kingdom`、`luck`、`morale`、`payment`、`profit`、`puzzle`、`resource_trading`、
+  ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；`heroes_move.cpp` 也记「部分」：
+  九帧状态机、转向块、像素偏移、帧循环（`Hero.Movement`，ADR-097），清雾/对象动作/小地图/渲染四个
+  缺失子系统走 `IHeroMovementHandler` 接缝（ADR-098）；未转 `GetIndexSprite`（260 行 `ICN::ROUTE`
+  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转
+* `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`、`luck.cpp`→`Luck`、
+  `morale.cpp`→`Morale`（两把七档尺子与 `Normalize`，ADR-099）；❌ `experience`、
+  `kingdom_overview`、`kingdom`、`payment`、`profit`、`puzzle`、`resource_trading`、
   `speed`、`view_world`、`week`
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
-  `monster.cpp` 只有 ID 与 `MINIMON` 帧号；❌ `monster_anim`、`monster_info`
-* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.h` 的 id 枚举已转
-  （`Game.Resources.ArtifactType`，105 项含 `ArtifactCount`），类行为未转；❌ `artifact_info`、
-  `artifact_ultimate`
+  `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength` 与升级关系（`MonsterUpgrades` 的
+  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）；◐ `monster_info.cpp`：
+  通用数值表、战斗数值表、住所映射（`DwellingMonsters`，ADR-095；住所位本身已搬进 `BuildingType`，
+  ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）与两条
+  强度（`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）已转，`weaknesses` 与战斗图标/音效未转；
+  `RandomMonster`/`GetRandomMonster`/`GetDwellingFromMonster` 等随机与住所反查未转；❌ `monster_anim`
+* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.cpp`→`ArtifactBag`
+  （平铺 14 格、魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、`getTotalArtifactEffectValue`
+  的两种求和，ADR-101）与 `artifact.h` 的 id 枚举（`Game.Resources.ArtifactType`，105 项含
+  `ArtifactCount`，`ArtifactTypes.IsValid`），`Artifact` 类自己的名字/描述/精灵索引与
+  `getArtifactValue`/`getTotalArtifactMultipliedPercent` 未转；◐ `artifact_info.cpp`→`ArtifactTable`/
+  `ArtifactBonuses`（105 行数值表、`getArtifactData`、六个 `isBonus*`/`isCurse*` 谓词，ADR-101），
+  `ArtifactData::getDescription`/`getArtifactDescription` 两支文案未转；❌ `artifact_ultimate`
 * `system`（3）：◐ `players.cpp`→`PlayerColor`/`HumanPlayers`、`settings.cpp`（只有语言与分辨率种子）；
   ❌ `bitmodes`
 
@@ -367,9 +496,10 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
    `MonsterType` / `ArtifactType` 两个 id 枚举都已落地（表大小与枚举锚点分别钉在 `MapObjectCatalogTests`、
    `IdEnumTests`）。`Tile::getMainObjectType` 的缓存字段也已随第 3 条落地（ADR-066）。
 2. `heroes/heroes_move.cpp` + `maps/visit.cpp` —— 英雄移动与路径预览，`MapFog` 的增量更新挂在这里。
-   `world/world_pathfinding.cpp` 的玩家侧与 `route.cpp` 已落（ADR-091~094）：路径查找表有了
-   （`World.Pathfinder.ReEvaluateIfNeeded` + `BuildPath`），路线队列也有了（`HeroPath`），
-   剩下的是移动点记账与动画那半边——它要 `Hero` 真的拥有军队与移动点。
+   `world/world_pathfinding.cpp` 的玩家侧、`route.cpp`（ADR-091~094）与 `heroes_move.cpp` 的状态机
+   （ADR-095~098）都已落：路径查找、路线队列、军队与移动点、九帧动画都在。剩下的是它调用的四个子系统
+   ——清雾（`Scout`）、对象动作（`Action`）、图层重绘（`ActionNewPosition`）与小地图（`ScoutRadar`），
+   调用点已按帧序留在 `IHeroMovementHandler` 里，接上实现即可。
 3. `world/world.cpp`、`world_loadmap.cpp`、`world_object_uid.cpp` —— 可变世界状态，`castle`/`kingdom`/
    `army` 都依赖它。   `World` 的骨架与 `updatePassabilities` 已立（ADR-065/066），`Tile` 的邻居通行也已
    接上；`world_loadmap` 的瓦片循环 + add-on 链 + 类型修复 + `PostLoad` 子集与 `world_object_uid` 的
@@ -377,7 +507,7 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
    地图对象查询与石阵/漩涡/法师之眼缓存也已落（ADR-069），装载时按信息块建英雄并落到格子上也已落
    （ADR-072），牢房里的英雄同样已落（ADR-073），告示/瓶子与地面事件的对象装载也已落（ADR-074），
    狮身人面与无瓦片的每日事件/传闻块同样已落（ADR-075）。信息块的六个分支到这里全部落地。
-   下一步是 `PostLoad` 里剩下的城堡表（要 `Castle` 系统）、俘获对象与 AI 区域。
+   下一步是 `PostLoad` 里剩下的城堡表（`Castle` 骨架已立，ADR-107，只差按信息块建城与落格）与 AI 区域。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
 5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
    `audio_manager.cpp`（音乐播放，现在只有元数据）。

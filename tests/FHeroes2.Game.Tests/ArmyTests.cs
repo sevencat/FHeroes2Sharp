@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.Army;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Monsters;
 using ArmyStack = FHeroes2.Game.Army.Army;
 
@@ -355,19 +356,19 @@ public sealed class ArmyTests
     }
 
     [Theory]
-    [InlineData(MapRace.Knight, Dwelling.Monster1, MonsterType.Peasant)]
-    [InlineData(MapRace.Barbarian, Dwelling.Monster1, MonsterType.Goblin)]
-    [InlineData(MapRace.Sorceress, Dwelling.Monster1, MonsterType.Sprite)]
-    [InlineData(MapRace.Warlock, Dwelling.Monster1, MonsterType.Centaur)]
-    [InlineData(MapRace.Wizard, Dwelling.Monster1, MonsterType.Halfling)]
-    [InlineData(MapRace.Necromancer, Dwelling.Monster1, MonsterType.Skeleton)]
-    [InlineData(MapRace.Knight, Dwelling.Monster2, MonsterType.Archer)]
-    [InlineData(MapRace.Knight, Dwelling.Upgrade2, MonsterType.Ranger)]
-    [InlineData(MapRace.Warlock, Dwelling.Upgrade2, MonsterType.Gargoyle)]
-    [InlineData(MapRace.Knight, Dwelling.Monster6, MonsterType.Paladin)]
-    [InlineData(MapRace.Warlock, Dwelling.Upgrade7, MonsterType.BlackDragon)]
-    [InlineData(MapRace.None, Dwelling.Monster1, MonsterType.Unknown)]
-    public void ADwellingNamesItsMonster(MapRace race, uint dwelling, MonsterType expected)
+    [InlineData(MapRace.Knight, BuildingType.DwellingMonster1, MonsterType.Peasant)]
+    [InlineData(MapRace.Barbarian, BuildingType.DwellingMonster1, MonsterType.Goblin)]
+    [InlineData(MapRace.Sorceress, BuildingType.DwellingMonster1, MonsterType.Sprite)]
+    [InlineData(MapRace.Warlock, BuildingType.DwellingMonster1, MonsterType.Centaur)]
+    [InlineData(MapRace.Wizard, BuildingType.DwellingMonster1, MonsterType.Halfling)]
+    [InlineData(MapRace.Necromancer, BuildingType.DwellingMonster1, MonsterType.Skeleton)]
+    [InlineData(MapRace.Knight, BuildingType.DwellingMonster2, MonsterType.Archer)]
+    [InlineData(MapRace.Knight, BuildingType.DwellingUpgrade2, MonsterType.Ranger)]
+    [InlineData(MapRace.Warlock, BuildingType.DwellingUpgrade2, MonsterType.Gargoyle)]
+    [InlineData(MapRace.Knight, BuildingType.DwellingMonster6, MonsterType.Paladin)]
+    [InlineData(MapRace.Warlock, BuildingType.DwellingUpgrade7, MonsterType.BlackDragon)]
+    [InlineData(MapRace.None, BuildingType.DwellingMonster1, MonsterType.Unknown)]
+    public void ADwellingNamesItsMonster(MapRace race, BuildingType dwelling, MonsterType expected)
     {
         Assert.Equal(expected, DwellingMonsters.FromDwelling(race, dwelling));
     }

@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.Spells;
 
 namespace FHeroes2.Game.Monsters;
 
@@ -26,11 +28,9 @@ public enum MonsterSpeed : uint
 /// </summary>
 /// <remarks>
 /// The reference also carries <c>abilities</c> and <c>weaknesses</c> (vectors of <c>MonsterAbilityType</c>)
-/// and a cached <c>monsterBaseStrength</c> computed from them, and the battle engine reads
-/// <c>icnIds</c>/sounds next to these numbers. None of that is here: abilities need the spell ids of
-/// <c>spell.h</c>, the visuals need the battle renderer, and the strength cannot be computed without the
-/// abilities. What is left is the part the adventure map asks for — how fast a stack is, how much damage it
-/// deals, how many hit points it has and how many shots it carries.
+/// and a cached <c>monsterBaseStrength</c> computed from them. The abilities live in
+/// <see cref="MonsterAbilities"/> and the two strengths are computed here from them; the weaknesses and the
+/// <c>icnIds</c>/sounds are battle-side data that waits for the battle engine and the renderer.
 /// </remarks>
 /// <param name="Attack">Attack skill.</param>
 /// <param name="Defense">Defense skill.</param>
@@ -120,6 +120,57 @@ public static class MonsterStatistics
     }
 
     /// <summary>
+    /// The strength of one creature against a default opponent, <c>Monster::GetMonsterStrength()</c>
+    /// (<c>monster.cpp:105</c>: <c>attackDefenseFactor * baseStrength</c>, i.e. <c>1 + attack * 0.1 +
+    /// defense * 0.05</c> times the base strength).
+    /// </summary>
+    /// <remarks>
+    /// The reference lets a subclass override <c>GetAttack()</c>/<c>GetDefense()</c> — the battle engine uses
+    /// that to pass a hero's or a spell's bonus in. There are no subclasses here, so the bonuses come in as
+    /// arguments and a negative value means "take the stats of the creature".
+    /// </remarks>
+    /// <param name="monster">The creature.</param>
+    /// <param name="attack">Attack skill to use, or a negative value for the creature's own.</param>
+    /// <param name="defense">Defense skill to use, or a negative value for the creature's own.</param>
+    /// <returns>The strength of one creature.</returns>
+    public static double GetMonsterStrength(MonsterType monster, int attack = -1, int defense = -1)
+    {
+        MonsterBattleStats stats = GetBattleStats(monster);
+
+        if (attack < 0)
+        {
+            attack = stats.Attack;
+        }
+
+        if (defense < 0)
+        {
+            defense = stats.Defense;
+        }
+
+        double attackDefense = 1.0 + attack * 0.1 + defense * 0.05;
+
+        return attackDefense * GetMonsterBaseStrength(monster);
+    }
+
+    /// <summary>
+    /// The base strength of one creature — its stats and abilities with no bonuses —,
+    /// <c>getMonsterBaseStrength()</c> (<c>monster_info.cpp:45-132</c>).
+    /// </summary>
+    /// <param name="monster">The creature.</param>
+    /// <returns>The base strength, zero for the unknown monster and the random markers.</returns>
+    public static double GetMonsterBaseStrength(MonsterType monster)
+    {
+        int index = (int)monster;
+
+        if (index < 0 || index >= BaseStrength.Value.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(monster), monster, "Not a monster type.");
+        }
+
+        return BaseStrength.Value[index];
+    }
+
+    /// <summary>
     /// <c>Monster::isValid()</c> (<c>monster.h:196</c>): neither the unknown monster nor one of the five
     /// editor-only random markers.
     /// </summary>
@@ -127,6 +178,131 @@ public static class MonsterStatistics
     /// <returns><see langword="true"/> for a real creature.</returns>
     public static bool IsValid(MonsterType monster) =>
         monster > MonsterType.Unknown && monster < MonsterType.RandomMonster;
+
+    /// <summary>
+    /// The base strength of every monster, folded once from the stats and the ability table.
+    /// </summary>
+    /// <remarks>
+    /// The reference fills <c>battleStats.monsterBaseStrength</c> the same way at start-up. Every factor below
+    /// is a guess the original authors wrote down as a comment; they are copied verbatim, including the ones
+    /// that look odd (<c>DOUBLE_DAMAGE_TO_UNDEAD</c> is worth 1.15 because roughly a seventh of the creatures
+    /// are undead).
+    /// </remarks>
+    private static readonly Lazy<double[]> BaseStrength = new(BuildBaseStrength);
+
+    private static double[] BuildBaseStrength()
+    {
+        double[] strength = new double[BattleStats.Length];
+
+        for (int index = 0; index < BattleStats.Length; index++)
+        {
+            MonsterType monster = (MonsterType)index;
+            MonsterBattleStats stats = BattleStats[index];
+            MonsterAbility abilities = MonsterAbilities.Get(monster);
+
+            bool Has(MonsterAbility ability) => (abilities & ability) != 0;
+
+            // A creature that takes no retaliation effectively has more hit points: it lives through the
+            // attacks it would have eaten back.
+            double effectiveHitPoints = stats.HitPoints * (Has(MonsterAbility.NoEnemyRetaliation) ? 1.4 : 1.0);
+
+            double damagePotential = (stats.DamageMin + stats.DamageMax) / 2.0;
+
+            if (Has(MonsterAbility.DoubleShooting))
+            {
+                Debug.Assert(stats.IsArchers, "DOUBLE_SHOOTING on a creature without shots.");
+
+                damagePotential *= 2;
+            }
+            else if (Has(MonsterAbility.DoubleMeleeAttack))
+            {
+                // Melee attacker will lose potential on second attack after retaliation.
+                damagePotential *= Has(MonsterAbility.NoEnemyRetaliation) ? 2 : 1.75;
+            }
+
+            if (Has(MonsterAbility.DoubleDamageToUndead))
+            {
+                damagePotential *= 1.15; // 15% of all Monsters are Undead, deals double damage.
+            }
+
+            if (Has(MonsterAbility.TwoCellMeleeAttack))
+            {
+                damagePotential *= 1.2;
+            }
+
+            if (Has(MonsterAbility.UnlimitedRetaliation))
+            {
+                damagePotential *= 1.25;
+            }
+
+            if (Has(MonsterAbility.AllAdjacentCellMeleeAttack) || Has(MonsterAbility.AreaShot))
+            {
+                damagePotential *= 1.3;
+            }
+
+            double monsterSpecial = 1.0;
+
+            if (stats.IsArchers)
+            {
+                monsterSpecial += Has(MonsterAbility.NoMeleePenalty) ? 0.5 : 0.4;
+            }
+
+            if (Has(MonsterAbility.Flying))
+            {
+                monsterSpecial += 0.3;
+            }
+
+            if (Has(MonsterAbility.EnemyHalving))
+            {
+                monsterSpecial += 1;
+            }
+
+            if (Has(MonsterAbility.SoulEater))
+            {
+                monsterSpecial += 2;
+            }
+
+            if (Has(MonsterAbility.HpDrain))
+            {
+                monsterSpecial += 0.3;
+            }
+
+            if (MonsterAbilities.TryGetInstance(monster, MonsterAbility.SpellCaster, out MonsterAbilityInstance caster))
+            {
+                // This is a tricky evaluation. Spell casting ability depends on a type of spell and chance to
+                // inflict the spell.
+                switch (caster.Spell)
+                {
+                case SpellType.Paralyze:
+                case SpellType.Blind:
+                case SpellType.Petrify:
+                    monsterSpecial += caster.Percentage / 100.0;
+                    break;
+                case SpellType.Dispel:
+                case SpellType.Curse:
+                    // These spell are very weak and do not impact much during battle.
+                    monsterSpecial += caster.Percentage / 100.0 / 10.0;
+                    break;
+                default:
+                    Debug.Assert(false, "A new spell casting ability needs a weight in getMonsterBaseStrength().");
+                    break;
+                }
+            }
+
+            // Higher speed gives initiative advantage/first attack. Remap speed value to -0.2...+0.15,
+            // AVERAGE is 0. Punish slow speeds more as unit won't participate in first rounds and slows down
+            // strategic army.
+            int speedDifference = (int)stats.Speed - (int)MonsterSpeed.Average;
+
+            monsterSpecial += (speedDifference < 0) ? speedDifference * 0.1 : speedDifference * 0.05;
+
+            // Additional HP and Damage effectiveness diminishes with every combat round; strictly x4 HP ==
+            // x2 unit count.
+            strength[index] = Math.Sqrt(damagePotential * effectiveHitPoints) * monsterSpecial;
+        }
+
+        return strength;
+    }
 
     // attack | defence | damageMin | damageMax | hp | speed | shots
     private static readonly MonsterBattleStats[] BattleStats =

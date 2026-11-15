@@ -2,6 +2,8 @@
 [Bb]in/
 [Oo]bj/
 [Aa]rtifacts/
+# ... but the artifact sources of the game are not build output.
+!src/FHeroes2.Game/Artifacts/
 *.user
 *.suo
 *.cache

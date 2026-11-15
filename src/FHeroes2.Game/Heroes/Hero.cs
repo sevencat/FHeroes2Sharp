@@ -10,7 +10,8 @@ namespace FHeroes2.Game.Heroes;
 /// <remarks>
 /// <para>
 /// <b>This is the identity plus the two fields a tile and a tavern need, not the hero.</b> The army, the
-/// secondary skills, the spell book, the artifacts, the route, the experience and the movement points all
+/// secondary skills, the four primary skills and the artifacts are in their own partial files, and the spell
+/// book with the spell points in <c>Hero.Spells.cs</c>; the route, the experience and the movement points still
 /// arrive with the systems that consume them. What is here is the contract that
 /// <see cref="Maps.Tile.SetHero"/> / <see cref="Maps.Tile.GetHero"/> close over
 /// (<c>maps_tiles.cpp:429-460</c>) — the numeric id and the object type the hero is standing on — plus the
@@ -125,6 +126,10 @@ public sealed partial class Hero
         Id = id;
         Race = race;
         PortraitId = id;
+
+        // The reference's Army points back at its commander from the constructor; the port's army has a
+        // nullable commander and this is the one place that fills it in.
+        _army.Commander = this;
     }
 
     /// <summary>The id of the hero, <c>GetID()</c> (<c>heroes.h:330</c>).</summary>
@@ -180,6 +185,17 @@ public sealed partial class Hero
     /// <param name="color">Color to test.</param>
     /// <returns><see langword="true"/> when the hero serves that color.</returns>
     public bool IsFriends(PlayerColor color) => Color == color;
+
+    /// <summary>
+    /// Whether this is a hero, <c>HeroBase::isHeroes()</c> (<c>heroes_base.cpp:91</c>).
+    /// </summary>
+    /// <remarks>
+    /// True by definition: the reference answers <c>GetType() == HEROES</c> so that the battle-only
+    /// <c>Captain</c> can answer false with the same call. The port has no captain yet; when it lands it
+    /// implements <see cref="IArmyCommander"/> and this class does not change. The army asks the question to
+    /// know whether it may be emptied — see <see cref="Army.SaveLastTroop"/>.
+    /// </remarks>
+    public bool IsHeroes => true;
 
     /// <summary>
     /// The object the hero is standing on, <c>getObjectTypeUnderHero()</c> (<c>heroes.h:405</c>).

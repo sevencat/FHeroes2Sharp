@@ -3103,3 +3103,475 @@ ADR-068 给 `World` 挂的 `AddHero` 是端口替身（`List<Hero>` + 线性查�
 
 **下一步**：`heroes/heroes.cpp` 的剩余主体（`LoadFromMP2`、`Action`、`ActionNewPosition`）现在有了
 军队与移动点可以挂，或者补 `army.cpp` 的幸运/士气/强度（战斗侧要用）。
+
+## 幸运、士气与怪物能力 ✅（2026-11-16）
+
+`Army::GetMoraleModificator()` 要问「这一队里有亡灵吗」，而亡灵与否写在 `monster_info.cpp` 的能力表里。
+那张表此前一行没转，却是四五个子系统的公共前提，于是这一批先把能力表整体落地，再在其上写幸运/士气。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Kingdom.Luck` | `kingdom/luck.cpp` | 七档尺子 `CURSED..IRISH` 与 `Normalize`（欠 `String`/`Description` 文案） |
+| `Kingdom.Morale` | `kingdom/morale.cpp` | 七档尺子 `TREASON..BLOOD` 与 `Normalize`（同上） |
+| `Monsters.MonsterAbilities` | `monster_info.cpp:388-590` | 32 项能力的位标记 + 108 条语句的 50 行表 + 七个小查询 |
+| `Troop.GetRace`/`IsUndead`/`IsAffectedByMorale` | `monster.cpp:136`、`monster.h:237/287` | 种族（给士气按种族分组）与两条能力查询 |
+| `Army.GetMoraleModificator`/`GetLuckModificator` | `army.cpp:1206/1226` | 单一种族 +1、每多一种 −1、带亡灵再 −1 |
+| `Army.AllTroopsAreTheSame`/`AllTroopsAreUndead` | `army.cpp:487/413` | 两个 `Troops` 谓词，空军队的默认值**不同** |
+| `Hero.GetLuck`/`GetMorale` | `heroes.cpp:1033/1069` | 技能项（`Luck`/`Leadership` 每级 1 点）+ 夹紧 |
+
+要点：
+
+* **两把尺子都是 `int`，不是 `enum`**：参考本身是匿名 enum，值要相加再夹紧。两个类型分开，是为了
+  「幸运值不能当士气值传」——参考用两个命名空间表达的就是这个意思。
+* **`Normalize` 夹到 `CURSED..IRISH` / `TREASON..BLOOD`，`UNKNOWN = -4` 不在区间内**：它只是
+  「英雄还没上场」的初值，`Normalize` 永远不会返回它。
+* **能力表只存「有/没有」，而且是 33 位**：参考每个能力实例还带一个百分比和一个法术 id（战斗算术 +
+  法术体系），冒险地图只问有没有。`NONE` 之外 32 项，最后一项的位在 `1 << 32`，`uint` 上写
+  `1u << 32` 会绕回 `1u << 0` 静默变成「双格」——所以底层是 `ulong`，并有测试钉住每位互不相同。
+* **108 条语句用脚本生成，不手抄**：正则抽 `(monster, ability)` 对、按参考顺序去重输出，生成后补注释
+  与文件头。测试钉住分布：50 个兵种至少一项、亡灵 11、元素 4、飞行 13、龙 4、双格 16。
+* **士气修正那个反直觉分支照抄**：单一种族时不是无条件 +1，而是「**且** 五个槽不是同一种兵」才 +1；
+  两个种族 0；三个及以上每多一种 −1；有亡灵再 −1；结果**不夹紧**（参考留给调用方 normalize）。
+  `MapRace.None`（幽灵、元素）也是集合里的一个种族。
+* **两个谓词的空军队默认值不同**：`AllTroopsAreTheSame()` → `true`（没有可比的槽），
+  `AllTroopsAreUndead()` → `false`（有一个「见过有效槽」的标志）。这两条正是士气两个分支的入口。
+* **`Army` 没有 commander，所以 `GetLuck()`/`GetMorale()` 退化为修正项**（参考在 `GetCommander()`
+  为空时正是这样）。英雄侧只含技能项；访问对象效果、神器与「最大幸运」神器三项未转，都是加法项，
+  接进来不用重算已有部分。
+* **没转**：`Army::GetStrength`（要 `Troop::GetStrength` 与英雄攻防/箭术）、城堡与神器两项修正、
+  `Luck`/`Morale` 的文案、能力载荷（百分比 + 法术 id）。
+
+用例：`MonsterAbilitiesTests` 9 条（亡灵/元素/龙/飞行/双格五张名单、士气是否生效、有能力的兵种数、
+三行完整掩码、位标记互不相同）、`LuckMoraleTests` 35 条（两把尺子的九个夹紧点各一组、空军队、
+单一种族 +1、同兵种无加成、两/三/四种族、亡灵叠加、中立种族算一档、两个 `Troops` 谓词的默认值、
+英雄无技能与三级技能各一组）。`FHeroes2.Game.Tests` 990 → **1034**，全解决方案 1676 → **1720** 条
+全绿，0 警告 0 错误。覆盖率：`kingdom` 行 0/2/12 → **0/4/10**（`luck.cpp`/`morale.cpp` 进「部分」），
+`monster` 行的 `monster_info.cpp` 从「未转」补成「部分」（行数不变），合计 26/52/171 → **26/55/168**。
+
+**下一步**：`Army::GetStrength`（`Troop::GetStrengthWithBonus` + `Monster::GetMonsterStrength`，
+能力表已就位，缺的是箭术与法力那两项）或者 `heroes.cpp` 的 `Action`/`ActionNewPosition`
+（`IHeroMovementHandler` 正等着这两个实现）。
+
+## 兵种强度与法术 id ✅（2026-11-16）
+
+`getMonsterBaseStrength()` 是「一支军队值多少」的第一块砖，而它读的第一个载荷就是
+`SPELL_CASTER` 的法术 id。于是这一批从 `spell.h` 的 id 枚举开始，一路把能力载荷、两条强度、
+`Troop.GetStrength*` 与 `Army.GetStrength` 全部落地。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Spells.SpellType` | `spell/spell.h:38-120` | 73 个 id + `Count` 哨兵，`SpellTypes.IsValid` |
+| `Monsters.MonsterAbilityInstance` | `monster_info.h:174` | 能力实例（Type / Percentage / Value），载荷不再丢弃 |
+| `MonsterAbilities.GetInstances`/`TryGetInstance` | 同上 | 按参考顺序取实例；掩码改为从实例派生 |
+| `MonsterStatistics.GetMonsterBaseStrength` | `monster_info.cpp:45-132` | 12 个系数 + 速度非对称 + 法术施放者按法术分组 |
+| `MonsterStatistics.GetMonsterStrength` | `monster.cpp:105` | `1 + attack*0.1 + defense*0.05`，攻防可外部指定 |
+| `Troop.GetStrength`/`GetStrengthWithBonus` | `army_troop.cpp:52/57` | 一只兵 × 数量；加成先加在攻防上再折 |
+| `Army.GetStrength` | `army.cpp:1291` | 五槽求和 + 己方士气系数 + 幸运系数 |
+
+要点：
+
+* **只转 id，不转 `Spell` 对象**：等级/学派/图标/施法属于战斗引擎，而 id 是被数据文件与能力表引用的
+  常量。`RANDOM`/`RANDOM1..5`/`PETRIFY` 也在编号里，所以 `Count` 是 73 而不是 67。
+* **能力表从「掩码」变「实例 + 派生掩码」**：上一批只存了「有/没有」，把参考构造函数里的两个数字丢了；
+  现在表存实例、掩码静态折出来，**只有一份数据**，`Get()` 语义不变、旧测试一条没改。
+* **两个数字的含义随能力而变**：`MAGIC_RESISTANCE,25,0` 是概率、`SPELL_CASTER,20,Blind` 是概率+法术、
+  `MORAL_DECREMENT,100,1` 是概率+士气量、`ENEMY_HALVING,10,0` 是触发概率。参考没有统一说法，照抄并逐条注明。
+* **强度的每个系数都照抄**：亡灵双倍伤害只记 1.15（全兵种约七分之一是亡灵）、有「不受反击」的双击是 ×2
+  否则 ×1.75、速度**非对称**（慢一档 −0.1、快一档 +0.05），末了 `sqrt(damage × effectiveHP)`。
+* **缓存必须 `Lazy`**：两张数值表声明在类末尾，若把 `BaseStrength` 写成普通静态字段放前面，类型初始化会
+  先算强度后建表，`BattleStats` 还是 `null` —— 实测 `TypeInitializationException` + `NullReferenceException`，
+  相关测试全红。改成 `Lazy<double[]>` 后顺序问题消失且仍只算一次。
+* **`Army::GetStrength` 拆成两半**：箭术（平方根放大）、英雄攻防（进 `GetStrengthWithBonus`）与魔法战略值
+  都要英雄，留在 `Hero` 侧；士气与幸运系数在无英雄时也生效，留在 `Army`。`GetStrengthWithBonus` 的签名
+  先按参考保留，英雄那三项接进来时不用改这里的算术。
+* **期望值不来自 C# 回读**：一次性 Python 脚本按参考公式从参考的数值表/能力表重算（不引用 C#），
+  结果写进 `[InlineData]`。漏因子、串行、速度方向反了都会变成数字不符，而不是两边一起错。
+
+用例：`SpellTypeTests` 24 条（22 个 id 锚点 + 成员数 + `IsValid` 边界）、`MonsterStrengthTests` 29 条
+（9 个基础强度、9 个强度、攻防因子、速度非对称、法术施放者三档、全表最强/最弱、未知与随机标记为 0、
+兵力×数量、加成先加攻防、空军队、军队士气系数、亡灵不受士气、无英雄时幸运中性）、
+`MonsterAbilitiesTests` 9 → **13** 条（载荷数值、每种免疫法术一条实例、掩码等于实例并集、无表兵种为空）。
+`FHeroes2.Game.Tests` 1034 → **1091**，全解决方案 1720 → **1777** 条全绿，0 警告 0 错误。
+覆盖率：`spell` 行 0/0/4 → **0/1/3**（`spell.h` 进「部分」），合计 26/55/168 → **26/56/167**。
+
+**下一步**：`Hero.GetAttack`/`GetDefense`（神器袋，`GetStrengthWithBonus` 正等着它）与
+`Army::GetMagicStrategicValue`（法术书 + 法力点），这样 `Army.GetStrength` 的英雄侧三项就能补齐；
+或者回到 `heroes.cpp` 的 `Action`/`ActionNewPosition`（`IHeroMovementHandler` 的另外两个空位）。
+## 神器袋与英雄四维 ✅（2026-11-16）
+
+`Army::GetStrength` 的三个英雄项（箭术、攻防、魔法战略值）一直空着，因为「英雄」只是个接口。这一批把
+`heroes_base.cpp` 的四维与神器袋、`artifact.cpp` 的 `BagArtifacts`、`artifact_info.cpp` 的整张数值表
+一起落地，让 `Army.GetStrength` 真的能吃英雄加成。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Resources.ArtifactType` + `ArtifactTypes.IsValid` | `artifact.h:65-189` | 复用已有的 105 项 id 枚举；`isValid` 谓词按 `SpellTypes` 的写法并进来 |
+| `Artifacts.ArtifactBonus`/`ArtifactCurse`/`ArtifactData` | `artifact_info.h:116-195` | 一个类型 + 一个数值，`Spell` 属性把数值读成法术 id |
+| `ArtifactTable` | `artifact_info.cpp:586-982` | 105 行数值表 + `getArtifactData`；`UNKNOWN` 与哨兵共用 `ArtifactData.Empty` |
+| `ArtifactBonuses` | `artifact_info.cpp:839-947` | 六个 `isBonus*`/`isCurse*` 谓词，逐条照抄 |
+| `ArtifactBag` | `artifact.cpp:517-889` | 平铺 14 格、魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、两种求和 |
+| `Heroes.PrimarySkill`/`Hero.PrimarySkills` | `heroes_base.h:222-260`、`heroes_base.cpp:180-360` | 四维 base + 神器修正 + clamp，`Increase`/`Set` |
+| `Army.IArmyCommander`/`Army.Commander` | `HeroBase*` 回指针 | 攻防、二级技能、魔法战略值四个方法的接缝 |
+| `Army.GetStrength` | `army.cpp:1291` | 补上 `GetStrengthWithBonus` 的英雄攻防、箭术 `√(1+v/100)` 与末尾的魔法战略值 |
+
+要点：
+
+* **id 枚举不再复制一份**：`Resources.ArtifactType` 早就在（`MapObjectCatalog`/`TileMetadata` 都在用），
+  本批最初又建了一个同名 105 项枚举，等于让两个源文件永远同步。现在整批代码只用 `ArtifactType`，
+  `isValid` 按 `SpellType`/`SpellTypes` 的既有写法并入 `ArtifactType.cs`。顺带发现
+  `.gitignore` 第 4 行的 `[Aa]rtifacts/`（VS 的构建输出规则）把 `src/FHeroes2.Game/Artifacts/`
+  整个目录吞了 —— `git status` 看不见、`rg` 也搜不到，加了一行 `!src/FHeroes2.Game/Artifacts/`。
+* **数值表由脚本从参考解析，不手抄**：105 个神器、每行最多六条 bonus/curses 手抄必错。生成器解析
+  `artifact.h` 的枚举与 `artifact_info.cpp` 的 `emplace_back`，三个非字面值（`Spell::NONE` 与
+  `Spell::TOWN_PORTAL` 查 `spell.h` 的枚举下标、`GameStatic::getCastleWallRangedPenalty()` = 50）
+  也从参考算出来。
+* **三类叠加其实是四堆**：参考的 `isBonusCumulative`/`isBonusMultiplied`/`isBonusUnique` 不构成划分，
+  三个都不命中的是 `getArtifactDescription` 里那第四堆 `[ cumulative per artifact type ]` —— 士气、
+  幸运、移动点、每日法力点、`ADD_SPELL` 等 15 个 bonus 与 `MORALE` 这一条 curse。`getTotalArtifactEffectValue`
+  对它按「每个神器 id 只算一次」求和（两个流浪者之靴还是 +600），对 cumulative 才是每份都算。
+  测试因此改成「至多一堆 + 第四堆成员清单」，而不是「恰好一堆」——后者是错的假设。
+* **魔法书不是第一个空格**：`PushArtifact` 里书固定占第 0 格并把其余右移，第二本直接拒绝；`Remove`
+  只清第一个副本且不挪动别人（UI 依赖位置）。14 格没有武器/盾牌/头盔的装备位，参考也没有。
+* **四维的 clamp 不一样**：攻防 0..255，法力与知识 **1..255**（英雄不可能没法力）；`IncreasePrimarySkill`
+  与 `SetPrimarySkill` 另按 0..255 截一次。`heroes_base.cpp` 的加成是 base + 神器修正再截，
+  两个「终极之剑」累计成 +24 是因为 `ATTACK_SKILL` 是 cumulative。
+* **英雄加成的方向是「加到兵种自身数值上」**：`GetStrengthWithBonus(atk, def)` 里英雄攻防与兵种攻防
+  相加再折 `1 + atk*0.1 + def*0.05`，不是替换。测试初版按替换写，6.9 vs 10.8 一眼看穿。
+* **`IArmyCommander` 而不是 `HeroBase`**：参考里 `Army` 存 `HeroBase*`，端口只抽 `Army` 真正调的
+  四个方法，`Commander` 可空 —— 城堡守军与野怪就是空的那个，`Army.GetStrength` 因此无英雄也能算。
+
+用例：`ArtifactTests` 28 条（10 个 id 锚点、成员数、三坑 + 编辑器占位不可用、魔法书/金弓/战斗套装/空白
+卷轴的数值、三条诅咒、占位行、99 个有效神器都有行、三堆抽查、四堆划分）、`ArtifactBagTests` 11 条
+（14 格、满包、书置顶、第二本、`Remove` 只清一个、`Count`/`IsPresent`、累计 vs 按 id、诅咒双堆、
+空包、`ContainSpell`）、`HeroPrimarySkillsTests` 12 条（初值、下限、神器加成、两份累计、诅咒减法力、
+`Increase`/`Set`、255 截断、`GetMagicStrategicValue` 为 0、`Army.Commander` 回指、军队强度吃英雄攻防、
+箭术只放大射手）。`FHeroes2.Game.Tests` 1091 → **1142**，全解决方案 1777 → **1828** 条全绿，
+0 警告 0 错误。覆盖率：`resource` 行 1/1/2 → **1/2/1**（`artifact_info.cpp` 进「部分」），
+合计 26/56/167 → **26/57/166**。
+
+**下一步**：城堡的 `GetAttackModificator`/`GetDefenseModificator`（`Army.GetStrength` 在城里还差这
+一项）与 `Army::GetMagicStrategicValue`（法术书 + 法力点，现在恒 0）；或者回到 `heroes.cpp` 的
+`Action`/`ActionNewPosition`（`IHeroMovementHandler` 的另外两个空位）。
+## 法术书、法力点与魔法战略值 ✅（2026-11-16）
+
+ADR-101 把 `Army.GetStrength` 的英雄攻防与箭术接上了，魔法战略值那一项还恒 0 —— 因为英雄没有法术书，
+也没有法力点。这一批把 `spell.cpp` 的数值表与特性、`spell_storage.cpp` 的容器、`heroes_base` 的法术书/
+法力点一起落地，`GetMagicStrategicValue` 于是真的能算。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Spells.SpellStats`/`SpellTable` | `spell.cpp:42-150` | 73 行数值表（耗法、移动点、最少移动点、图标、`extraValue`），由脚本从参考解析 |
+| `Spells.Spell` | `spell.h:31-333`、`spell.cpp:152-750` | 值类型包装 id；等级、`IsCombat`/`IsDamage`/`IsResurrect`/`IsSummon`/`IsMassActions`/`IsMindInfluence`、`Damage`/`Resurrect`/`ExtraValue`/`SpellPoints` 与 `GetStrategicValue` |
+| `Spells.SpellStorage` | `spell_storage.cpp:30-108` | 去重追加（书 + 神器上的 `ADD_SPELL`）、`Remove`、`IsPresent`、`GetSpells(level)` |
+| `Heroes.Hero`（`Hero.Spells.cs`） | `heroes_base.h:118-150`、`heroes_base.cpp:172-190`、`heroes_base.cpp:358-377`、`heroes.cpp:967-970` | `MagicBook`（书本身）、`GetAllSpells`（书 + 卷轴）、`HasSpellBook`、`HasSpell`、`SpellPoints`/`SetSpellPoints`、`GetMaxSpellPoints`（10 × 知识）、`GetMagicStrategicValue` |
+
+要点：
+
+* **数值表照旧由脚本解析，不手抄**：73 行的五个数字里有几个是「看起来像手误」的值 —— 次元门的
+  `movePoints` 225 与 `minMovePoints` 69、城镇门的 20 点、`VIEW_ALL` 只要 3 点 —— 手抄没有意义。
+* **`Spell` 是值类型**：参考把 id 枚举放在类里、行为也在类里，移植保留这个分法 —— `SpellType` 是存档与
+  地图用的编号，`Spell` 是法术书里存的那个值（一个 int），与 `ArtifactType`/`ArtifactBag` 的分工一致。
+  构造函数照抄参考的越界归零（`id < 0 || id >= SPELL_COUNT` → `NONE`），坏文件不会索引到表外。
+* **`isCombat` 是拒绝清单**：十八条冒险地图法术之外全是战斗法术，所以 `NONE` 与 `PETRIFY` 之外的
+  「零耗」占位法术也会被判成战斗法术 —— 战略值那边靠 `casts == 0` 兜住，而不是靠 `isCombat`。
+* **战略值是凹的，且有上限**：`casts = min(10, 现有法力 / 单次耗法)`，`casts == 1` 时修正为 1，
+  否则 `casts - 0.05 × casts²` —— 所以两次施法是 1.8 而不是 2，十次是 5 而不是 10：满法力的法师不
+  比半法力强一倍。召唤分支连这个修正都不乘（参考就是直接返回）。
+* **参考的召唤分支是个 bug，照抄**：`spell.cpp:263` 写的是 `Monster( id ).GetMonsterStrength()`，把
+  **法术** id 当**怪物** id 传了进去，于是四个召唤术量的是 44..47 号怪 —— 法师、大法师、巨人、泰坦，
+  而不是四种元素。AI 的军队强度排名依赖这个数字，所以端口照抄表达式（`(MonsterType)(int)Type`）
+  并在 XML 注释、`SpellTests.ASummonIsMeasuredWithTheWrongMonster` 与 ADR-102 里写清楚，
+  免得后人当成手误「修」掉。
+* **`spellPoints( hero )` 只转了一半**：参考用英雄参数走 `BagArtifacts::getTotalArtifactMultipliedPercent`
+  给法术减耗（法力之泉那类神器），那个函数还没转，所以端口只保留 `hero == nullptr` 的分支 —— 列表价。
+  注释里点明了，没有假装。
+* **书是神器，没有书就没有法术**：`getAllSpells()` 在没书时返回空容器，而不是卷轴 —— 知道法术不等于
+  能施法；`GetMaxSpellPoints` 读的是**有效**知识（神器加成算在内），因此永远是 10 的倍数且不小于 10。
+* **卷轴在端口里不带法术**：参考的 `Artifact::getSpellId()` 在 `ADD_SPELL` 为 `NONE` 时回落到神器自己的
+  `ext` 字节（卷轴的每实例载荷），而 `ArtifactBag` 是平铺的 id，没有载荷。所以一张卷轴什么也不加，
+  `BATTLE_GARB` 的传送门这类**表里写死**的才进得来。测试里 `ASpellScrollCarriesNoSpellInThePort` 把这个
+  缺口钉成断言，而不是让它悄悄错。
+
+用例：`SpellTests` 37 条（表行数与 8 行锚点、占位法术全零、越界归零、9 个等级的 45 个断言、
+9 个 `isCombat`、伤害/复活的 `extraValue`、四召唤七群体、四条心智法术、耗法、伤害/群体/召唤/冒险
+四支战略值与 10 次上限）、
+`SpellStorageTests` 9 条（空、去重、拒绝 `NONE`、合并保留顺序、`Remove` 返回值、按等级筛、`GetSpells(-1)`
+是副本、战斗套装的传送门、无 `ADD_SPELL` 的神器不贡献、卷轴不贡献）、`HeroSpellsTests` 10 条
+（新英雄无书无法力、书是神器、没书时书里的法术不可达、卷轴并入、`skipBag`、最大法力点随知识、
+setter 不截断、没法力就没有魔法值、取最好而非求和、冒险法术不计入、军队强度增量恰好等于魔法值）。
+`FHeroes2.Game.Tests` 1142 → **1198**，全解决方案 1828 → **1884** 条全绿，0 警告 0 错误。
+覆盖率：`spell` 行 0/1/3 → **1/1/2**，合计 26/57/166 → **27/57/165**。
+
+**下一步**：城堡的 `GetAttackModificator`/`GetDefenseModificator`（`Army.GetStrength` 在城里那两项修正，
+以及 `castle/*` 整块的入口）；或者 `spell_book.cpp` 的筛选（书已经有数据，只差分类与排序），
+再或者回到 `heroes.cpp` 的 `Action`/`ActionNewPosition`。
+## 队伍的整理、统计与比较 ✅（2026-11-16）
+
+`Army` 到 ADR-102 为止只会「往里塞、往外拿、清空、算强度」。参考里 `Troops` 还有一整层容器操作 ——
+去重、排序、找最弱、算补给价值、比强弱、判断是不是肉搏军 —— AI 与英雄交换界面全靠它。这一批把这层搬过来。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Army.Troops.cs`（新 partial 文件） | `army.cpp:324-700` | `GetOptimized`、`MergeSameMonsterTroops`/`MergeSameMonsterOnce`、`SortStrongest`、`GetWeakestTroop`/`GetStrongestTroop`、`GetCountMonsters`、`GetTroopsStrength`、`GetReinforcementValue` |
+| 同上 | `army.cpp:1573-1603` | `IsStrongerThan`（带 `safetyRatio`）、`IsMeleeDominantArmy` |
+| 同上 | `army.cpp:1758-1782` | `GetStrongestMonster`、`ResetInvalidMonsters` |
+| `Troop.IsFlying` | `Monster::isFlying()` | 肉搏判定需要的第五条能力查询 |
+
+要点：
+
+* **端口没有 `Troops`，只有五格**：参考的 `Troops` 是 `std::vector<Troop*>`、`Army` 在它上面加五格与英雄。
+  端口只有 `Army`（五格）。所以 `MergeSameMonster*`/`SortStrongest` 原地改槽，`GetOptimized` 与
+  `GetReinforcementValue` 需要动态容器时才临时建一个 `List<Troop>`，并放**副本**进去（参考放的是新
+  `Troop` 对象）。
+* **两个 `GetStrength`，不能合并**：`Troops::GetStrength()` 只是兵的强度之和，`Army::GetStrength()` 还要乘
+  士气、幸运、英雄攻防、箭术与魔法值。参考在比较「容器」时只用前者 —— `getReinforcementValue` 的注释
+  写得很明白（合并后的容器里是 `Troop` 而不是 `ArmyTroop`，所以没有英雄加成）。端口因此有
+  `GetTroopsStrength()` 与 `GetStrength()` 两个方法，而不是一个带 flag 的。测试实测：同一支单种族军队
+  的 `GetStrength()`（25.42）比 `GetTroopsStrength()`（24.4）大，差的正是 25/24 的士气因子。
+* **补给价值不是「补给的强度」**：参考把两军合起来、去重、按强度降序、截到五格再相减。于是
+  「五个强槽 + 一个弱补给」的价值是 **0**（弱兵被挤掉），而「五个弱槽 + 一条龙」的价值是
+  `龙 − 被挤掉的那个最弱兵`，**小于**龙本身的强度。两个反直觉的情形各有一条测试钉住；只测「等于补给
+  自身强度」的那种情形会让实现退化成加法而没人发现。
+* **`SortStrongest` 用不稳定排序是照抄**：参考是 `std::sort`，端口用 `Array.Sort`，两者都不稳定，所以
+  测试只断言「降序」与「多重集合不变」，不断言同强度之间的次序。另一点是空槽必须显式排到最后 ——
+  空槽的强度是 0，与「一个 0 强度兵种」的槽会打平，靠比较器保证无效槽永远在后。
+* **`GetStrongestMonster` 比的是「每个兵」**：参考写的是 `troop->GetMonster().GetMonsterStrength()`，
+  于是一千个农民（整堆更强）也输给一只绿龙。调用方是战斗与 AI 的「这支军队派出了什么兵」，
+  问的是兵种不是总量，所以照抄并在注释里写明。
+* **`IsStrongerThan` 对空目标是 `true`**：参考在比较任何数值之前就 `return true`，于是空军队对空军队也
+  是「更强」。这不是笔误，是「没有敌人要打」的调用路径依赖的语义，测试里显式钉住。
+* **`ResetInvalidMonsters` 修的是「有名无兵」的槽**：id 合法但数量为 0 的槽 `IsValid` 为假却记着一个怪物，
+  参考把它抹成 `UNKNOWN`，这样地图画槽时不必先问 `isValid()`。
+* **没转的三件事写清楚了**：`JoinStrongest`/`MoveTroops`/`SwapTroops` 是三处**两军之间**搬兵，
+  要 `IArmyCommander.isHeroes()`（接口还没有这个问题）；`UpgradeMonsters` 要 `Monster::GetUpgrade()`
+  那张 66 行表；`ArrangeForCastleDefense`/`ArrangeForWhirlpool`/`ActionToSirens` 属于地图对象。
+
+用例：`ArmyTroopsTests` 19 条（去重、单次去重逐次释放槽、无重复时返回假、`GetOptimized` 的首现顺序与
+副本语义、空军队、降序排序与空槽在后、最弱/最强槽是活引用、按兵种计数、`GetTroopsStrength` 与
+`GetStrength` 的差、同兵种补给等于自身强度、被挤掉的补给价值为 0、强补给要扣掉被挤掉的自己人、
+`safetyRatio`、空目标恒胜、肉搏判定含飞行、最强兵种按单兵算、修复有名无兵的槽）。
+`FHeroes2.Game.Tests` 1198 → **1217**，全解决方案 1884 → **1903** 条全绿，0 警告 0 错误。
+覆盖率不变（`army.cpp` 仍是「部分」），合计 27/57/165。
+
+**下一步**：`IArmyCommander.isHeroes()` + `JoinStrongest`/`MoveTroops`/`SwapTroops`（两军调兵，
+英雄交换界面与 AI 合兵都要它），或者 `Monster::GetUpgrade()` + `UpgradeMonsters`/`UpgradeTroops`。
+## 两军之间的调兵 ✅（2026-11-15）
+
+ADR-103 之后 `Army` 会整理自己，但还不会跟另一支军队交换任何东西 —— `JoinStrongest`/`MoveTroops`/
+`SwapTroops` 一直卡在「`isHeroes()` 还没人问」上。这一批把 `IArmyCommander.IsHeroes` 补上，
+`Army.Transfer.cs` 落地两军调兵的五个方法。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Army.JoinStrongest(giver, keepAtLeastOneSlotForGiver)` | `army.cpp:702-832` | 四趟：同槽搬/并 → 填空槽 → 五强者交换 → 退回；末尾给英雄留兵 |
+| `Army.JoinStrongestFromArmy(giver)` | `army.cpp:1426-1430` | 只多一句 `giver.Commander?.IsHeroes` |
+| `Army.MoveTroops(from, monsterIdToKeep)` | `army.cpp:1432-1526` | 并自己的重复 → 换位 → 两趟搬运 → 英雄最后一堆留一个 |
+| `Army.SwapTroops(Army)` / `SwapTroops(Troop, Troop)` | `army.cpp:1528-1540`、`1753-1756` | 只换五格；换两堆的 `Monster`/`Count` |
+| `Army.SaveLastTroop()` | `army.cpp:1758-1761` | `Commander?.IsHeroes == true && OccupiedSlotCount == 1` |
+| `IArmyCommander.IsHeroes` + `Hero.IsHeroes` | `heroes_base.cpp:91` | 参考是 `GetType() == HEROES`，端口里英雄恒真 |
+
+要点：
+
+* **四趟的顺序不是随便排的**：先按槽位对齐（同槽空则整堆搬、同兵种则合并），再填空槽（这一步顺带把
+  跨槽的同兵种并掉），然后才进「装不下」的分支，最后把没留下的退回。前两趟能解决绝大多数合兵，
+  第三趟才是真正的排序决策 —— 少了前两趟，第三趟会把本来能原样搬过去的堆也拆开重排。
+* **第三趟内部也是四步**：先把**自己**的重复堆并掉（腾出空槽，参考的 `assert` 默认这一步能成）、
+  让对方的强者填空、再拿自己最弱的槽跟对方最强的槽对调、对调一次重排一次，直到对方最强也不比自己
+  最弱强；最后剩下的退回。测试不写死「谁留在谁那儿」，而是断言**兵员守恒**加
+  「留下的最弱 ≥ 退回的最强」—— 后者才是「五个最强」这句话的可验证形式。
+* **英雄留兵是二十分之一规则**：合并后接收方不为空、而给出方是英雄且被清空时，若自己最弱一堆的
+  强度低于全军的 1/20，整堆还给英雄；否则按 `1/20 ÷ 该堆强度 × 数量` 切一份还回去，上限是这堆的
+  一半，下限是一个兵。这三个夹取顺序（先算、再压一半、再抬到 1）是有意照抄的 ——
+  它会产生一个怪癖：**只有一个兵**的军队会把那一个兵整堆还给英雄，接收方反而空了。
+  `ASingleCreatureOfAHeroIsNotSplitInTwo` 把这个怪癖钉成断言（`count / 2 == 0` → 再抬到 1 的链条），
+  免得后人以为「至少留一个」没实现。
+* **`MoveTroops` 先并自己的重复**：五个槽里有两堆同样的兵时，那一格是白占的。参考在搬之前先
+  `MergeSameMonsterTroops()`，`MovingTroopsMergesTheReceiversDuplicatesFirstToMakeRoom` 钉住这条 ——
+  不并的话龙会「无处可去」，尽管军队只有四种兵。
+* **`monsterIdToKeep` 是先换位再搬，不是「不许搬」**：参考先把接收方的那堆保留兵种跟给出方的一堆别的
+  兵**交换**，把要留的兵种全集中到给出方，然后才搬。两趟搬运的顺序（先搬别的兵种、再搬要留的兵种）
+  保证了「该留的」不会被「可能搬得动的」挤掉。`TheMonsterToKeepIsExchangedWithoutACreatureChangingSides`
+  与 `TheMonsterToKeepIsMovedOnceThereIsRoom` 分别钉住「接收方满时它真的留下」和「有空位时它照样搬走」——
+  后者说明「保留」是愿望不是承诺。
+* **换军只换五格**：参考的 `Assign` 是 `Troops` 的方法，只拷五格，`Army` 的种族/颜色/指挥官不动。
+  端口照此只拷槽位（`AssignSlots` 先 `Clean()`，再逐格拷有效堆），测试断言换完之后种族不变。
+* **参考的 `assert` → `Debug.Assert`**：和端口别处一致，只在 Debug 构建里检查调用方的前置条件；
+  几个 `JoinTroop` 的「这里不可能失败」也写成 `Debug.Assert(false, …)` 而不抛异常 ——
+  参考在 Release 里继续跑，端口也不在半路炸掉界面。
+* **实例方法与静态方法重载**：`SwapTroops(Army)` 与 `SwapTroops(Troop, Troop)` 同名，编译期按参数类型
+  选；测试里 `ArmyStack.SwapTroops(left, right)` 就是静态那个。
+
+用例：`ArmyTransferTests` 19 条（同槽合并、跨槽搬移不掉兵、七堆变五强者、英雄按份留兵、弱堆整堆退回、
+驻军可被清空、单兵怪癖、自己合自己无操作、强堆换掉最弱、`MoveTroops` 全能装下/英雄最后一堆留一个/
+先并重复/装满就停/保留兵种换位/有空位时照样搬/自己搬自己抛异常、换军只换五格、换两堆、`SaveLastTroop`
+的四种组合）。`FHeroes2.Game.Tests` 1217 → **1236**，全解决方案 1903 → **1922** 条全绿，0 警告 0 错误。
+覆盖率不变（`army.cpp` 仍是「部分」），合计 27/57/165。
+
+**下一步**：`Monster::GetUpgrade()` + `UpgradeMonsters`/`UpgradeTroops`（升级兵种，AI 与城堡都要），
+或者 `SplitTroopIntoFreeSlots` 一族（拖单堆的界面），再或者城堡的
+`GetAttackModificator`/`GetDefenseModificator`。
+## 升级线 ✅（2026-11-15）
+
+ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还缺一张表 —— 参考的 `Monster::GetUpgrade()`
+（`monster.cpp:285-336`）。这一批把升级关系、降价、以及建立在它上面的 `Troop::Upgrade` 与
+`Troops::UpgradeMonsters` 落地。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MonsterUpgrades.GetUpgrade` | `monster.cpp:285-336` | 21 条映射，其余自映射 |
+| `MonsterUpgrades.GetDowngrade` | `monster.cpp:232-283` | 反向 21 条，顶部自映射 |
+| `MonsterUpgrades.IsAllowUpgrade` | `monster.h:257` | 写成 `GetUpgrade(m) != m` |
+| `MonsterUpgrades.GetUpgradeCost` | `monster.cpp:830-838` | `(升级后价 - 原价) * 2`，无升级返回空 `Funds` |
+| `Troop.IsAllowUpgrade`/`GetUpgrade`/`Upgrade` | `army_troop.h`（继承 `Monster`） | 只改 id，数量不变 |
+| `Troop.GetUpgradeCost`/`GetTotalUpgradeCost` | `army_troop.cpp:98` | 单个与整堆 |
+| `Army.UpgradeMonsters(monster)` | `army.cpp:324-332` | 按兵种原地升级，别的堆不碰 |
+
+要点：
+
+* **表只有 21 行，不是 66 行**：升级的是每个种族除一级兵与两个特殊兵之外的那几个 —— 骑士 5（弓箭手、
+  枪兵、剑士、骑兵、圣骑士），野蛮人 3（半兽人、食人魔、巨魔），女巫 3（矮人、精灵、德鲁伊），
+  术士 3（牛头人、绿龙、红龙），巫师 3（铁人、法师、巨人），亡灵 4（僵尸、木乃伊、吸血鬼、尸巫）。
+  亡灵的骨龙没有升级，所以是 4 而不是 3。测试按种族计数钉住这 5/3/3/3/3/4。
+* **龙是唯一的两级链**：绿 → 红 → 黑。因此 `GetUpgrade` 在链顶不是自逆的，`GetDowngrade` 必须是一张
+  独立的表而不是「在升级表里反查」——反查会得到两个候选（绿龙既可以是红龙的降级，也不出现在别人的
+  升级里）。
+* **`IsAllowUpgrade` 不另立表**：参考写的是 `id != GetUpgrade().id`，端口照写。若另写一张「可升级名单」，
+  两张表迟早会不一致，而不一致的表现是「对话框上的升级按钮点了没反应」—— 最难查的那类。
+* **升级只改 id**：`Monster::Upgrade()` 是 `id = GetUpgrade().id`，所以数量天然保留，堆里的伤兵语义也保留
+  （`Troop` 没有逐兵血量，只有数量）。连升两次就沿链条走一步：绿龙 → 红龙 → 黑龙，第三次是空操作。
+* **费用是差价的两倍**：`(upgr.GetCost() - GetCost()) * 2`。测试用两个有代表性的价格钉住单位换算 ——
+  弓箭手 150 → 游侠 200 是 100 金；红龙 3500 金 1 硫 → 黑龙 4000 金 2 硫是 1000 金 2 硫（注意资源也参与
+  差价，不只是金币）。没有升级时参考返回空 `Funds`，端口照做，于是调用方可以直接累加而不必先问。
+* **`GetUpgradeCost` 在参考里是 `protected`**：公开的门是 `GetTotalUpgradeCost`。端口把两个都做成公开，
+  并在注释里保留了参考的叮嘱（先问 `IsAllowUpgrade`，否则拿到的是误导性的「免费」）。
+* **`UpgradeTroops(Castle)` 没转**：它比 `UpgradeMonsters` 多问两件事 —— 城堡种族是否等于兵的种族、
+  城堡是否建了升级后的住所 —— 两件都要 `Castle`，而端口还没有城堡。这条写进了 `Army.Troops.cs`
+  的文件注释，免得后人以为漏了。
+* **测试里两条是整表扫描**：21 行全部检查「种族不变、等级不变、更强、更贵」，再加一条「降级回到原兵种」。
+  手写「弓箭手变游侠」的测试抓不到第 17 行写错一个字，扫一遍能。
+
+用例：`MonsterUpgradeTests` 10 条（龙链两级与链顶自映射、21 条与按种族计数、整表保持种族与等级且更强、
+降级回原、无升级者自映射且免费（黑龙的降级不是自己）、可升级者一定有费用、两条具体价格、
+升级保留数量且可连升、整堆费用随数量、按兵种升级只动那一种）。
+`FHeroes2.Game.Tests` 1236 → **1246**，全解决方案 1922 → **1932** 条全绿，0 警告 0 错误。
+覆盖率不变（`monster`/`army` 仍是「部分」），合计 27/57/165。
+
+**下一步**：`Castle` 的最小骨架（种族、建筑位、`isBuild`），它是 `UpgradeTroops`、招募与建造的共同前置；
+或者 `SplitTroopIntoFreeSlots` 一族（拖单堆的界面）；再或者回到 `Kingdom`（资源与英雄名册）。
+## 城堡建筑表 ✅（2026-11-15）
+
+`castle`（11 个 cpp）一直是「全部未转」，而它挡着 `UpgradeTroops`、招募、建造与地图上的城堡对象。这批
+从最底层起：建筑本身的元数据 —— 位掩码、造价、前置、升级线、是不是住所。没有任何对象状态，因此没有
+`Castle` 类也能落地，并且能整表校验。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.Castle.BuildingType` | `castle.h:68-110` | 33 项位掩码 + 3 个组合掩码 |
+| `CastleBuildings.GetCost(building, race)` | `buildinginfo.cpp:203-212` | 86 行造价表 |
+| `CastleBuildings.GetRequirement(race, building)` | `castle_building_info.cpp:1097-1350` | 前置掩码（兵营 × 种族） |
+| `CastleBuildings.GetUpgradeForBuilding(race, building)` | `castle_building_info.cpp:980-1095` | 五条全种族 + 六族住所链 |
+| `CastleBuildings.IsDwelling(building)` | `buildinginfo.cpp:253-273` | 12 个单一位 |
+| `DwellingMonsters.FromDwelling(race, BuildingType)` | `Monster::FromDwelling` | 参数从 `uint` 换成建筑位 |
+
+要点：
+
+* **位掩码是 `uint`，不是 `int`**：`DWELLING_UPGRADE7` 是 `0x80000000`，参考的枚举里它已经出了
+  `int` 的正数范围（C++ 靠实现定义才没炸）。端口的 `BuildingType : uint` 因此不是风格选择，是必须。
+* **两个名字故意不长**：`Well2`（参考 `BUILD_WEL2`，其实是各族的「地标」建筑：农场、垃圾堆、水晶花园、
+  瀑布、果园、骷髅堆）与 `Spec`（`BUILD_SPEC`：防御工事、竞技场、彩虹、地牢、图书馆、暴风雪）。改漂亮
+  名字的唯一后果是搜不到参考。
+* **住所位从 `Monsters.Dwelling` 搬进来**：ADR-095 那会儿城堡模块还不存在，住所位以 `uint` 常量的形式
+  寄在怪物那一侧，注释里写着「城堡落地时搬过去」。这批兑现了：`Dwelling` 类删除，`FromDwelling` 收
+  `BuildingType`，`Army.Reset` 与测试直接写 `BuildingType.DwellingMonster1`。
+* **造价表逐行照抄，包括六行同价的 `Well2`**：本来可以合并成一行「全种族 1000 金」，但那样这张表就跟参考
+  没法并排对照了，而 86 行的转录唯一的质量保证就是并排对照。`Spec` 六行本来就不同（1500+15 矿到
+  1500+各 5 资源），正好说明这个位置确实按种族分化。
+* **前置表是二维的，因为「需要什么」按种族裁剪**：骑士的弓箭手只要农民房，女巫的要农民房 + 酒馆；术士的
+  牛头人只要石像鬼塔，亡灵的吸血鬼要墓穴 + 盗贼公会。参考用嵌套 switch 表达，端口写成 `(building, race)`
+  的元组 switch —— 同一个形状，顺序仍是「先建筑、后种族」。
+* **只有两处前置指向非兵营建筑**：`Spec` 只有法师城要 `MageGuild1`；`DwellingUpgrade7`（黑龙穴）要
+  `DwellingUpgrade6`（红龙穴）—— 全游戏唯一「升级的前置是另一个升级」的地方。
+* **`MapRace.Random` 在两张表里都有一份**：前置表对它答「无」（还没分到种族），升级表却给它一套完整的
+  升级线（含第二段龙）。这是参考的原样，测试把这两条都钉住了 —— 否则「随机城在建城前什么都不能建」
+  会被当成 bug 修掉。
+* **两条整表不变量撑起 86 行 + 60 行转录**：`EveryDwellingATownCanReachIsPricedAndNothingElseIs`
+  （沿升级链求可达集合，可达 ⟺ 有价，且价不为零 —— 多一行/少一行都会炸）；
+  `EveryPrerequisiteIsItselfBuildableInThatTown`（前置不能要求本城造不出来的东西）。
+* **城堡的升级链和怪物升级表是同一件事**：`TheCastleUpgradesAndTheMonsterUpgradesAgree` 遍历六族的
+  可达住所，凡「升级后不是自己」的，要求 `MonsterUpgrades.GetUpgrade(住所里的兵) == 升级后住所里的兵`，
+  并数出 21 条 —— 与 ADR-105 的 21 行升级表严丝合缝。两张表分开写、互相验证，这是它们最有价值的用法。
+
+用例：`CastleBuildingsTests` 14 条（城堡 5000+20 木+20 矿、六族 `Spec` 造价、亡灵神龛、16 个通用建筑
+同价、住所可达即有钱、升级链终止、法师公会逐级与帐篷变城堡、黑龙穴、弓箭手的前置（女巫多一个酒馆）、
+法师城图书馆、通用建筑无前置、前置自身可建、两张升级表对齐、恰好 12 个住所位）。
+`FHeroes2.Game.Tests` 1246 → **1260**，全解决方案 1932 → **1946** 条全绿，0 警告 0 错误。
+`castle` 行 0/0/11 → **0/3/8**，合计 27/57/165 → **27/60/162**。
+
+**下一步**：`Castle` 本体（种族、`building` 位、`isBuild`/`isFort`、`CheckBuyBuilding`、招募与周产），
+它一来 `UpgradeTroops` 就能落地；或者 `Kingdom` 的资源与英雄名册；再或者城堡的两条强度修正
+（`GetAttackModificator`/`GetDefenseModificator`）。
+
+## 城堡骨架 ✅（2026-11-15）
+
+`castle.cpp` 有 2500 行，其中一半要世界、王国、英雄与渲染。这批只切出**不需要这些**的那一半 —— 恰好是
+「建造」这条线从头到尾能自洽的部分：位掩码、每天一次的许可、买与不能买的理由、住所的货架。有了它，
+`UpgradeTroops`、地图装载的城堡表、招募（下一批）都有了落点，且整条链路都能在没有地图的情况下测。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.Castle.BuildingStatus` | `castle.h:111` | 10 项：`AllowBuild`…`UnknownCondition` |
+| `Castle(int tileIndex, MapRace race, MapVersion version)` | `castle.cpp:428` `_postLoad()` 的无图部分 | 空住所、空驻军、当天可建 |
+| `IsBuild` / `IsCastle` / `IsBuildingDisabled` | `castle.h:321` / `:178` / `:377` | 位判断；`IsCastle` 看 `Castle` 位 |
+| `IsLibraryBuilt` / `IsFortificationBuilt` / `IsNecromancyShrineBuild` | `castle.h:228/238/191` | 种族 + `Spec`/`Shrine` 位 |
+| `GetLevelMageGuild` | `castle.cpp:955` | 公会 1..5 级 |
+| `CountBuildings` | `castle.cpp:564-581` | 22 位上限；亡灵按版本在酒馆/神龛之间选 |
+| `GetBuildingValue` | `castle.cpp:613-662` | 城堡 +5、第六住所 +6、黑龙巢 +2、五个升级 +1、公会 +1..+4 |
+| `GetActualDwelling` / `GetUpgradeBuilding` | `castle.cpp:1931` / `:1960` | 升到链顶的住所 / 一步升级 |
+| `GetMonstersInDwelling` | `castle.cpp:1108` | 三名字共用第六格 |
+| `IsExactBuildingBuilt` | `castle.cpp:731` | 升级的前置看「确切那一级」 |
+| `CheckBuyBuilding` / `AllowBuyBuilding` | `castle.cpp:1137-1234` / `castle.h:207` | 九道判定，顺序即语义 |
+| `GetAllBuildingStatus` | `castle.cpp:1236-1258` | 三次扫描：可建 → 缺钱 → 缺前置 |
+| `BuyBuilding` | `castle.cpp:1260-1324` | 扣款（`-=` 后 `Trim`）、建城堡清帐篷、住所满货、花掉许可 |
+| `ActionNewDay` | `castle.cpp:833-836` | 还回许可 |
+| `AddBuildings` | `castle.cpp:407-410` | 装载/编辑器直接置位 |
+| `SetDefaultBuildings` | `castle.cpp:537-562` | 第一住所必有、第二住所按难度掷点 |
+| `ChangeColor` | `castle.cpp:949` | 连驻军一起换色 |
+
+要点：
+
+* **`CheckBuyBuilding` 的判定顺序就是它的语义**：已建 → 禁用位 → 三个特例（船坞要水、神龛只给亡灵且
+  只在 `Price of Loyalty`、亡灵没有酒馆）→ 法师公会逐级 → **今天还能不能建** → 帐篷/城堡规则 → 种族特有
+  升级 → 前置位 → 资源。参考靠书写顺序表达优先级，端口逐条照排；测试也是逐条钉住「谁先回答」。
+  最容易读错的两处：公会逐级在「今天不能建」**之前**（所以没有一级公会时二级答 `BuildDisabled` 而不是
+  `NotToday`），而种族特有升级在它**之后**。
+* **`AlreadyBuilt` 判的是「任一位命中」**：参考写的是 `_constructedBuildings & build`，所以问一个组合掩码
+  （如 `DwellingMonsters`）只要建了其中一个就算已建。`IsBuild` 却要求**全部**位命中 —— 两个函数一个 `&`、
+  一个 `& == build`，不能互相替换。`IsExactBuildingBuilt` 因此单独存在：升级的前置必须是「确切那一级」。
+* **三个全局变成参数或属性**：`Kingdom::AllowPayment()`/`OddFundsResource()` → `in Funds treasury` 参数
+  （王国落地后传 `kingdom.GetFunds()`，调用点不用改）；`Settings` 的地图版本 → 构造参数 `Version`；
+  `HasSeaAccess()`（扫周围瓦片找水）→ 可写属性，由装载或测试回答。
+* **许可花在 `BuyBuilding` 的末尾**：不论建的是什么，许可都花掉；建城堡顺手把帐篷清掉 —— 帐篷只是「还没
+  城墙」时的占位，参考用 `&= ~BUILD_TENT`。
+* **住所是「货架」，不是「建筑」**：`_getDwelling()` 把原住所与它的升级映射到同一格（第六格回答三个名字：
+  `DwellingMonster6`/`Upgrade6`/`Upgrade7`）。所以升完级货不动，`GetMonstersInDwelling` 对链上任意一级
+  都答同一个数。`BuyBuilding` 的填货只发生在**原住所**上：升级不重填。
+* **周产来自 `MonsterStatistics.GetGeneralStats(...).BaseGrowth`**：不另抄一张成长表，与 ADR-095 的住所
+  映射接上即可。
+* **掷点走可注入的 `Pcg32`**：`SetDefaultBuildings` 的第二个住所按难度掷（简单 75 / 普通 50 / 困难 25 /
+  专家 10 / 不可能 0），默认走 `Rand` 门面，测试传固定种子 —— 与 `Army.Reset` 同一道缝。测试掷 200 次
+  验证「难度越低、有第二住所的比例越高」，而不是钉死某一次的布尔值。
+* **命名空间撞名用别名**：`FHeroes2.Game.Castle` 命名空间里有 `Castle` 类型，`FHeroes2.Game.Army` 里也有
+  `Army`。源文件里 `using ArmyTroops = FHeroes2.Game.Army.Army;`，测试里 `using CastleTown = ...Castle;`。
+  改名会让所有调用点与参考脱节，别名只在文件头出现一次。
+
+用例：`CastleTests` 17 条（新城什么都没有且当天可建；第二住所按难度掷点；建城堡前只有城堡可卖；城墙一到
+帐篷就没了；一天只建一次；公会逐级；船坞要水；亡灵用神龛换酒馆；只有术士有黑龙穴；住所落成即满货；
+升级与原住所同一格；黑龙穴在龙链末端；`CountBuildings` 不数升级与帐篷；`GetBuildingValue` 的三项加权；
+`IsExactBuildingBuilt` 要求下面每一级；六族 × 两版本整表扫「能建的都能建、不能建的都有理由」；
+`GetAllBuildingStatus` 的优先级）。
+`FHeroes2.Game.Tests` 1260 → **1277**，全解决方案 1946 → **1963** 条全绿，0 警告 0 错误。
+`castle` 行 0/3/8 → **0/4/7**，合计 27/60/162 → **27/61/161**。
+
+**下一步**：招募（`RecruitMonster`/`getRecruitLimit`/`getAvailableArmy`）—— 有了货架与 `Troop`，只差钱；
+或者 `UpgradeTroops`（现在两个条件都齐了）；或者地图装载的城堡表（`Castle::LoadFromMP2` 的 76 字节块
++ `PostLoad` 落格）。
