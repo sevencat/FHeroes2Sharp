@@ -5,10 +5,10 @@
 | 程序集 | 职责 | 允许依赖 |
 | --- | --- | --- |
 | `FHeroes2.Core` | 几何、随机数、二进制 IO、索引图像与调色板、精灵与变换层、重着色调色板表、PNG 导出/读回、BMP 导出、光标主题与热点、日志、计时、版本信息 | 无 |
-| `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码 | Core |
+| `FHeroes2.Assets` | AGG 归档、资源定位、资源聚合（base + 资料片）、ICN 精灵与帧动画、TIL 图块与单色光标解码、MP2 地图读出与写出（`Maps.Mp2Map` / `Mp2MapWriter`）、场景目录（`Maps.Mp2FileInfo` / `MapCatalog`） | Core |
 | `FHeroes2.Rendering` | 呈现与文本的后端无关抽象 | Core |
-| `FHeroes2.Game` | 世界状态、回合、AI、存档；含参考 `gui/` 里直接依赖 `Assets` 门面的那部分（`Gui/Text.cs` 排版层、`Editor/`），因为门面在 `FHeroes2.Game`，放 `Rendering` 会形成反向引用 | Core, Assets, Rendering |
-| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox` / `Dialogs.ScenarioSelectionDialog`）、界面流转 | Core, Assets, Rendering, Game |
+| `FHeroes2.Game` | 冒险地图视图（`AdventureMap/`：`AdventureMapView`、`MapFrame`、`Minimap`、`IconBar`、`ButtonsPanel`，M4）；参考 `gui/` 里直接依赖 `Assets` 门面的那部分（`Gui/Text.cs` 排版层、`Fonts/` 字形派生、`Editor/`），因为门面在 `FHeroes2.Game`，放 `Rendering` 会形成反向引用；世界状态、回合、AI、存档从 M5 起逐步进来 | Core, Assets, Rendering |
+| `FHeroes2.UI` | 对话框栈、控件（`Widgets.Button` / `Widgets.ButtonBase` / `Widgets.ButtonSprite` / `Widgets.ButtonArtwork` / `Widgets.ButtonGroup` / `Widgets.DoorHighlight` / `Dialogs.FrameBox` / `Dialogs.StandardWindow` / `Dialogs.MessageBox` / `Dialogs.SettingsDialog` / `Dialogs.LanguageSelectionDialog` / `Dialogs.ScenarioSelectionDialog`）、界面流转 | Core, Assets, Rendering, Game |
 | `FHeroes2.App` | SDL3 宿主、呈现、字体、场景、命令行 | 全部 |
 
 依赖方向单向；`Core` 不得引用任何 SDL 类型，这样解码与算法可以在无 GPU 的测试进程里跑。
@@ -49,8 +49,9 @@ Run()     → SDL_Init(Video) / TTF_Init()；打开 AssetBundle（失败则记�
             CreateScenes()：DiagnosticsScene 总是建好，--scene menu 时再建 MainMenuScene（缺资源则为 null），
                             --scene editor 时直接建 EditorScene（ADR-040，没有菜单就在它后面）；
                             EditorScene 持有 MapEditorView（光标/网格）与 MapEditSession（笔刷/笔划/撤销，
-                            ADR-041），两个都在 Game 层、都能脱离窗口测试
-Loop()    → PollEvent（ESC 退出、F2 切语言、F11 全屏、F12 截图、鼠标移动/按键 → MainMenuScene、窗口关闭）、
+                            ADR-041），两个都在 Game 层、都能脱离窗口测试；
+                            场景选择确认后由 ConfirmScenario() 读地图、追加 AdventureMapScene（M4）
+Loop()    → PollEvent（ESC 退出、F2 切语言、F11 全屏、F12 截图、鼠标移动/按键 → 当前 IScene、窗口关闭）、
             FrameTimer、场景动画、smoke 帧数控制
 Draw()    → 组装 DiagnosticsState → 场景绘制 → 上传脏区 → 绑定目标纹理 → 帧纹理 1:1 → 覆盖层
             → 截图 → 放大呈现 → RenderPresent
@@ -88,13 +89,13 @@ Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF
 
 | 参考符号 | C# | 状态 |
 |---|---|---|
-| `World & world` | `Game.World.Current`（`WorldMap`） | 待建；M4 起随 `world.cpp` 一起移植 |
+| `World & world` | `Game.World.Current`（`WorldMap`） | 待建：PLAN「还差的主干」第 3 条，随 `world.cpp` / `world_loadmap.cpp` 一起进来（M5） |
 | `Settings::Get()` | `Game.Settings.Current`（`SettingsData`） | 待建；`CommandLineOptions` 目前只覆盖命令行开关 |
 | `Cursor::Get()` | `Game.Cursor.Current`（`CursorState`） | 待建；光标状态现在由各场景自己持有 |
-| `LocalEvent` / `CampaignSaveData` | 同名门面 | 待建（M4 / 战役） |
+| `LocalEvent` / `CampaignSaveData` | 同名门面 | 待建：键鼠事件现在由 `GameHost` 直接分派给场景；战役解析尚未开始 |
 | `AdventureMap::Get()` | `App.AdventureMapScene`（实例，构造传参） | 已有；参考的 `redraw()` 对应场景的脏标记 |
 | `EditorInterface::Get()` | `App.EditorScene`（实例） | 已有 |
-| `BattlePlanner` / `Planner` / `Result` | — | 未移植（M5） |
+| `BattlePlanner` / `Planner` / `Result` | — | 未移植：M7，要等 `army` 与 `castle` 落定（PLAN「还差的主干」第 4 条） |
 | `AGG::` 命名空间 | `Assets.AssetBundle`（实例，组合根持有） | 已有；打开归档、读条目 |
 | `Assets::getImage( ICN, frame )` | `Game.Assets.Current.GetImage( "CELLWIN.ICN", 2 )` | 已建；解码结果按 (文件, 帧) 缓存，换 `Current` 时清空 |
 | `AudioManager::` | `App.Audio.AudioPlayer`（实例） | 已有 |
@@ -108,6 +109,34 @@ Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF
 
 测试注意：静态门面在 xUnit 里是进程级共享状态，动到门面的测试要挂进同一个 collection（或
 `[CollectionDefinition(DisableParallelization = true)]`），否则并行跑会互相改写 `Current`。
+
+## 移植粒度与冲突处理（ADR-057）
+
+参考实现（快照 commit `6c51acfdc`，见 `REFERENCE.md`）与已有代码不一致时，按下面的顺序判定。
+不存在「两套实现并存」，也没有「运行时开关切回自研」这种状态——冲突处理完，旧代码就删掉。
+
+| 冲突类型 | 处理 | 例子 |
+|---|---|---|
+| 常量、坐标、帧号、文件格式 | **以参考为准**，改掉旧值并删除写过它的代码 | 编辑器拾取区写死 124，按 `instrumentPanelHeight` 应为 140（ADR-056） |
+| 参考有、端口暂时画不出 | **占位但不生效**，不自己发明交互 | 九宫格工具按钮只做三个可点，其余 `ToolAt` 返回 `null`（ADR-049/056） |
+| 结构、语言层面的差异 | **允许**，但不得为了「更像参考」而变得更差 | 实例 + 构造传参替代单例（ADR-057 第 4 条）、不可变类型替代原地改写、不引入指针与宏 |
+| 参考行为本身要妥协 | 在 ADR 里写明这是一处偏离、偏了什么、为什么 | `SettingsDialog` 的选项改成 OK 时一次性应用，参考是即刻生效（ADR-027） |
+
+三条判定依据：
+
+1. **粒度是函数级**：同名、同顺序、同常量，`updateTerrainTransitionOnTile` /
+   `makeInstrumentPanelBackground` 这类名字直接沿用，grep 两边能对上；行级 1:1 已明确否决（ADR-057 后果末条）。
+2. **改粒度要三处一起改**：`PLAN.md` 的「总体原则」、本节、以及对应 ADR 的「后果」。
+3. **对拍是前提**：没有基线截图、逐字节比对或单测的界面不动——否则「按参考重画」只是换一种猜法。
+
+回退靠分支而不是开关：大改造先打备份点再开分支（`backup/pre-facade-2026-11-14`、
+`refactor/global-facade`），`main` 始终可运行。小改动由 ADR 的「背景 — 决策 — 后果」三段留痕：
+背景写谁发现的、拿什么对的（截图、用户指出、参考行号），决策写参考出处，后果写基线变化。
+
+编辑器是这套规则的样板：ADR-048（黑卡写字）→ ADR-049（照参考格子画、对象选择器退回名字表）→
+ADR-050（笔刷行占掉名字条）→ ADR-054/056（整块按参考重画，删掉五行文字、拾取区改由舱高推导）。
+至今仍与参考不同的只剩：对象拾取器是名字表（对象目录未移植，PLAN「还差的主干」第 1 条）、
+六个工具按钮占位、没有悬停反馈、`EditorPanel` 在 `App` 而非 `Game`。
 
 ## 移植注释
 
@@ -139,7 +168,9 @@ commit `6c51acfdc`），路径相对参考仓库根，固定以 `参考：` 起�
 SimSun 在 12 px 有内嵌点阵，小字号下比纯轮廓字体锐利得多；想要硬边像素可设
 `FHEROES2_TEXT_CRISP=1`，把覆盖率量化为 0/255（见 ADR-017）。
 M2 加入 `Assets.Fonts.BitmapFont`（`FONT.ICN`/`SMALFONT.ICN` 精灵表，`BitmapFontSize.Small|Normal`；
-大字号由 `FONT.ICN` 运行时放大，见 ADR-018），布局与绘制都产出 8 bit 索引像素，因此与调色板/变换层天然一致。
+`BitmapFontSize.Large` 它仍然拒绝。大号以及黄/灰/白/渐变这几种面统一由 `Game.Gui.FontGlyphTable` 从
+`FONT.ICN` 派生：放大两倍 + `PAL::GetPalette` 重着色 + `generateGradientFont`（ADR-018/020），
+派生面按（归档包, 字号, 颜色）缓存；布局与绘制都产出 8 bit 索引像素，因此与调色板/变换层天然一致。
 CJK 或 `U+00FF` 以上字符由 `Assets.Fonts.TrueTypeGlyphSource` 补位：`Sevencat.GlyphRaster`（纯托管、
 内嵌文泉驿微米黑）做光栅化，覆盖率经 `GlyphCoverageRamp` 量化到 `KB.PAL` 的灰阶（ADR-019）。
 两个 provider 都实现 `IGlyphSource`，`GlyphText` 负责唯一的布局实现：`Measure` / `DrawLine` /
@@ -239,8 +270,9 @@ AssetProbe maps                        把结果打成一张表（含被跳过�
 
 目录规则与 `Settings::FindFiles("maps", …)` 一致，但多了一条：只有当前目录真的是数据目录
 （含 `Heroes2.agg`）才去它的父级找 `Maps/`，否则用户顺手指一个临时目录就会去扫无关位置。
-tile / addon / 对象表仍归 M4 的地图加载器（`world_loadmap.cpp` / `map_object_info.cpp`），
-`Mp2FileInfo` 不假装自己是一张地图（ADR-032）。
+`Mp2FileInfo` 不假装自己是一张地图（ADR-032）：tile / addon / 英雄位置由 M4 的地图加载器
+（`Assets.Maps.Mp2Map`）读走，对象身份仍取自 tile 里的 `mapObjectType` 字节——对象目录
+（参考 `maps/map_object_info.cpp`）还没移植，是 PLAN「还差的主干」第 1 条，也是拾取与信息框的前置。
 
 ## 场景选择窗口（M3 的第一个界面）
 
@@ -264,9 +296,46 @@ App.Scenes.ScenarioArtwork        ICN 名字 → 上面那份美术（ICN 编号
 方向键与 PageUp/PageDown/Home/End 不是字符，走 `MoveScenarioSelection` / `MoveScenarioPage` /
 `SelectFirst…` / `SelectLast…`，由 `GameHost.HandleKeyDown` 在窗口打开时接管。列表是 `MapCatalog.ReadAll` 的结果再按尺寸过滤，
 惰性读一次、整个会话复用。
-确认后 `ConfirmScenario()` 把 `Mp2FileInfo` 交回宿主——这只是 M4 地图加载器的入口，
-当前只记日志并改状态栏（ADR-033）。
+确认后 `ConfirmScenario()` 把 `Mp2FileInfo` 交回 `GameHost`，后者按它读地图并建 `AdventureMapScene`
+（M4 的入口；ADR-033 说的「只记日志」到此为止）。
 
+
+## 冒险地图（M4）
+
+地图加载在资源层，视图与界面构件在 `FHeroes2.Game`，场景只做拼装：
+
+```
+Assets.Maps.Mp2Map.Read(path)       tile / addon / 英雄位置（Mp2MapHero 已带颜色）
+      ↓
+Game.AdventureMap.AdventureMapView  地形 → 四层地面对象（TERRAIN 3 / BACKGROUND 2 / SHADOW 1 / OBJECT 0）
+                                    → 怪物 → 船 → 英雄 → 顶部对象；按层遍历整个视口，不按 tile
+                                    （ADR-036/037/059/060）
+      ↓
+Game.AdventureMap.MapFrame          ADVBORD.ICN 外壳：448×448 视口、雷达舱、面板舱；几何只此一处
+                                    （ADR-054），视口先画进独立缓冲再贴，脏区随之收敛
+      ↓
+Game.AdventureMap.Minimap           tile 字段直接着色（ADR-038），落点取 MapFrame.Radar
+Game.AdventureMap.IconBar           LOCATORS 帧的城堡图标条（ADR-055）
+Game.AdventureMap.ButtonsPanel      八格按钮面板，禁用走 DARKENING、缺帧留空（ADR-058）
+      ↓
+Game.AdventureMap.MapFog            CLOF32.TIL 整瓦 + CLOP32.ICN 边界件，压在地图之后、界面之前（ADR-061）
+      ↓
+App.Scenes.AdventureMapScene        滚动、状态栏、雷达拖拽、每帧脏标记（ADR-042）
+```
+
+状态的持有者是场景与 `MapFrame`，不是参考的 `Interface::AdventureMap` 单例：舱位矩形、滚动位置、
+雷达抓取都是实例字段，所以这一层能脱开窗口单测。资源栏、路径预览、拾取与信息框、雾的增量揭示
+都还没进来——它们的前提是 `world` 与对象目录，见 `PLAN.md` 的「还差的主干」。
+
+## 编辑器（E1–E3b）
+
+`--scene editor` 直接进 `App.Scenes.EditorScene`，状态放在 `Game.Editor`：
+
+* `MapEditorView` 管光标、网格与笔刷轮廓，`MapEditSession` 管笔刷、笔划、撤销栈与保存，两者都不碰窗口。
+* 保存是「只改 tile 区」的原地补丁，新建地图才走全量写出（ADR-043/044）；对象放置抄真实地图的预设，
+  add-on 只增不回收（ADR-045）；地形接缝改一格要动九格（ADR-046）。
+* 外壳、面板、按钮阵列与属性框都照参考坐标摆（ADR-048…056），对象名与怪物名取参考的字符串表（ADR-053）。
+* 未做的是规格窗口那一批（事件、谣言、狮身人面像、随机地图生成器），列在 `PLAN.md` 的 `editor` 未转清单里。
 
 ## 错误处理
 

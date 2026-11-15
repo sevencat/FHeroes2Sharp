@@ -330,8 +330,18 @@ public static class Mp2ObjectTypes
 
     /// <summary>
     /// <c>MP2::getBaseActionObjectType</c>: the action variant of <paramref name="type"/>, or the value
-    /// itself when there is no action counterpart (an event object is the documented exception).
+    /// itself when there is no action counterpart.
     /// </summary>
+    /// <remarks>
+    /// The action variant does not exist for every object: the reference keeps a list of the types that
+    /// never carry the action bit (<c>isObjectCanBeAction</c>, <c>mp2.cpp:38</c> — the terrain-like
+    /// decorations such as trees, mountains and lakes), and the caller is expected to compare the result
+    /// with the input to find out whether a counterpart exists. Returning <c>type | 128</c> for those
+    /// would make <see cref="IsActionObject"/> answer <see langword="true"/> for a tree, which
+    /// <c>Tile.UpdatePassability</c> reads as "the tile below is a tall action object".
+    /// </remarks>
+    /// <param name="type">Object type to correct.</param>
+    /// <returns>The action variant, or <paramref name="type"/> when there is none.</returns>
     public static Mp2ObjectType BaseActionType(Mp2ObjectType type)
     {
         if (IsActionObject(type))
@@ -339,13 +349,50 @@ public static class Mp2ObjectTypes
             return type;
         }
 
-        if (type == Mp2ObjectType.Event)
+        if (!CanBeActionObject(type))
         {
             return type;
         }
 
         return (Mp2ObjectType)((ushort)type | (ushort)Mp2ObjectType.ActionObjectType);
     }
+
+    /// <summary>
+    /// <c>isObjectCanBeAction</c> of the reference (<c>mp2.cpp:38</c>): <see langword="false"/> for the
+    /// objects that have no action counterpart. The list is the reference's — the decorations
+    /// <c>MP2::OBJ_COAST</c> through <c>MP2::OBJ_FROZEN_LAKE</c> — and must not be "simplified" to
+    /// "everything can be an action object": <c>getBaseActionObjectType</c> is what tells an action
+    /// object apart from its non-action twin when the map only stores the non-action value.
+    /// </summary>
+    /// <param name="type">Object type to test.</param>
+    /// <returns><c>true</c> when the type has an action variant.</returns>
+    public static bool CanBeActionObject(Mp2ObjectType type) => type switch
+    {
+        Mp2ObjectType.None => false,
+        Mp2ObjectType.Coast => false,
+        Mp2ObjectType.NothingSpecial => false,
+        Mp2ObjectType.MossyRock => false,
+        Mp2ObjectType.TarPit => false,
+        Mp2ObjectType.Reefs => false,
+        Mp2ObjectType.Trees => false,
+        Mp2ObjectType.Mountains => false,
+        Mp2ObjectType.Volcano => false,
+        Mp2ObjectType.Flowers => false,
+        Mp2ObjectType.Rock => false,
+        Mp2ObjectType.WaterLake => false,
+        Mp2ObjectType.Mandrake => false,
+        Mp2ObjectType.DeadTree => false,
+        Mp2ObjectType.Stump => false,
+        Mp2ObjectType.Crater => false,
+        Mp2ObjectType.Cactus => false,
+        Mp2ObjectType.Mound => false,
+        Mp2ObjectType.Dune => false,
+        Mp2ObjectType.LavaPool => false,
+        Mp2ObjectType.Shrub => false,
+        Mp2ObjectType.SwampyLake => false,
+        Mp2ObjectType.FrozenLake => false,
+        _ => true,
+    };
 
     /// <summary>
     /// <c>MP2::doesObjectNeedExtendedMetadata</c>: these objects store a UID in <c>quantity1</c> /

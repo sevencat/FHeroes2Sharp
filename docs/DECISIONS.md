@@ -297,7 +297,9 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 
 1. `FHeroes2.Assets.Fonts.BitmapFont` 从 `AssetBundle` 读 `FONT.ICN`/`SMALFONT.ICN`，一个字符一个
    `Sprite`。`BitmapFontSize.Large` 暂不支持（`Load` 抛 `NotSupportedException`），因为参考实现是
-   运行时放大而不是独立资源。
+   运行时放大而不是独立资源。**后续**：`BitmapFont` 仍然拒绝 `Large`，但大号与黄/灰/白/渐变这几种面
+   已改由 `Game.Gui.FontGlyphTable` 从 `FONT.ICN` 派生（放大两倍 + `PAL::GetPalette` 重着色），
+   见 ADR-020 与 `REFERENCE.md` 的 `ui_text` 行。
 2. **索引移位**：ICN 表从字符 `0x20`（空格）开始，`game_assets.cpp::processICN()` 会在表头
    `insert(32, imageArray[0])` 让「索引 = 字符码」。`FromIcn()` 前置同样的 32 个副本，因此
    128 个字形 = 96 个 ICN sprite + 32。不做这一步整表会错位（`'A'` 变成 `'!'`）。
@@ -321,7 +323,10 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
 
 * 0x80 以上字符在 `BitmapFont` 里一律画 `?`；CJK 文本请用 `TrueTypeGlyphSource`（ADR-019 已落地）。
 * `modifyBaseNormalFont()` 的若干像素修补（`$`、`%`、`&`、`-`、`\`、`|`、小写 `k`）与码页扩展尚未移植，
-  它们只影响字形外观，不影响布局；等主菜单拼好后按需补齐并用截图对拍。
+  它们只影响字形外观，不影响布局；等主菜单拼好后按需补齐并用截图对拍。**后续**：字形修补已由
+  `Game.Gui.FontRepairs` 补齐，译版资材的插帧/对调/截断由 `FontAssetFixes` 与 `FontFrenchRepairs`
+  接手（顺序：修补 → 资材修正 → 派生）；仍缺的是各代码页的按钮字形补充（`generateCP1250GoodButtonFont`
+  这一批），见 `REFERENCE.md` 的「计划中」。
 * 字体测试只依赖 `FONT.ICN`/`SMALFONT.ICN`，数据缺失时提前返回（ADR-010）；渲染摘要先打印不硬断言。
 
 ## ADR-019：TrueType 字形用 `Sevencat.GlyphRaster`（纯托管），覆盖率量化回原版灰阶
@@ -393,6 +398,8 @@ M0 的 `SdlTextRenderer`（SDL3_ttf）只服务诊断文本，风格与主菜单
    `[25,21,16,12,10]` → 黄色 `[124,121,118,115,114]`。于是 TrueType 的 CJK 字形与位图字体同色，
    不需要第二套光栅化或逐像素调色。
 5. 渐变字体（黄金 / 白银）暂不实现，等主菜单标题需要时再移植 `generateGradientFont()`。
+   **后续**：已移植，落在 `Game.Gui.FontGlyphTable` 的渐变面（每帧放大 6 px 留描边位、刷纵向渐变后依次叠
+   内描边/黑边/外描边）；参考只生成两套渐变面，端口同样只做这两套。
 
 **理由**：
 
@@ -596,7 +603,9 @@ _( "New Game" ), _( "Start a single or multi-player game." ), Dialog::ZERO )`）
 
 1. 边框用 `BUYBUILD.ICN` 的六块精灵拼，不用 `ADVBORD.ICN` 九宫格。参考实现的
    `Dialog::FrameBox` 就是前者（`ResizableFrameBox( boxAreaWidthPx, height, -1, buttons )`），
-   `DrawBorder()`/`ADVBORD` 属于另一支（更大的窗口），继续留在「未移植」。
+   `DrawBorder()`/`ADVBORD` 属于另一支（更大的窗口），继续留在「未移植」。**后续**：ADVBORD 的九宫格
+   已在 ADR-048（编辑器）与 ADR-054（冒险地图 `MapFrame`）落地，但那两支都是「地图外壳」；
+   对话框侧的 `DrawBorder()` 仍未移植。
 2. 版式照 `dialog_box.cpp` 抄算术，包括不对称：顶 99 px（左列第 4 帧）+ 中段 + 底 81 px
    （第 6 帧）；中段把第 5/1 帧**从第 10 行起切 35 行**重复；文字区固定 244 宽、最小 70 高
    （两块切片）；`showButtons` 先把 40 px 的按钮行加进高度再数切片。
@@ -632,7 +641,9 @@ _( "New Game" ), _( "Start a single or multi-player game." ), Dialog::ZERO )`）
 
 * 只有无按钮的消息框。带 OK/Cancel 的窗口需要 `ButtonGroup` 与按钮精灵定位（`renderButton` 的
   padding 规则），设置/语言选择/分辨率对话框仍未移植——它们大多还依赖 `StandardWindow`
-  （`SURDRBKG` 拉伸 + 抖动过渡 + 背景压暗），那是下一块工作。
+  （`SURDRBKG` 拉伸 + 抖动过渡 + 背景压暗），那是下一块工作。**后续**：`ButtonGroup` 与
+  `StandardWindow` 都已落地（见 `REFERENCE.md` 的 `ui_button` / `ui_window` 行），设置对话框（ADR-027）
+  与语言选择窗口已经用上；分辨率窗口与其余设置页仍未做。
 * `FrameBox` 目前只有「好」界面的一份：`BUYBUILE.ICN`（邪恶界面）会用到 `Settings` 的
   界面类型开关，等 M8 的设置持久化一起做。
 * 提示框的文案取自 `.mo`，中文长句（如门的说明）在 244 px 内折成两行——与参考实现的折行
@@ -725,7 +736,8 @@ ADR-025 把平台收口到 win-x64 之后更没有保留的必要。
 **背景**：主菜单左下角的门在原版里是 `dialog::openGameSettings()` 的入口。那个窗口有分辨率、
 音量、全屏、快捷方式、语言等十余组控件，其中分辨率/全屏要动 SDL 的窗口与缩放（`SdlPresenter`
 目前只在构造时接收这两个值），音量要接音频后端（M2 尚未接），所以一次补齐只会得到一堆画得像
-却不起作用的控件。
+却不起作用的控件。**后续**：音频后端已由 ADR-030 接上（`App.Audio.AudioPlayer`，SDL3_mixer，
+音乐与音效各一条音量），所以「音量」这一组现在有实际落点；分辨率/全屏仍缺运行时重建路径。
 
 **决策**：
 
@@ -1024,7 +1036,9 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
 4. 图块按需解码并缓存（`ObjectSpriteSet`），缺失文件只记一次，不让每 tile 重试；绘制逻辑只依赖
    `IObjectSpriteSource`，所以对象层可以在没有游戏数据的机器上单测。
 5. 不移植的部分明确列为遗留：动画帧表、`tileUnfit`（超过 1×1 tile 的对象整体上移再画）、
-   主对象类型推断（`Maps::getMainObjectType`）、英雄/怪物/船的专属渲染器。
+   主对象类型推断（`Maps::getMainObjectType`）、英雄/怪物/船的专属渲染器。**后续**：英雄/怪物/船的
+   专属渲染器已由 ADR-037 / ADR-059 / ADR-060 落地；主对象类型推断仍未做，现在是拾取与信息框的
+   唯一卡点（PLAN「还差的主干」第 1 条）。
 
 **后果**：
 
@@ -1110,6 +1124,8 @@ tile／addon 解析（`world_loadmap.cpp` + `maps_tiles.cpp`，还包括对象�
 5. **布局先叠加，不抢占地图**：参考的地图区是 448×448 @ (16,16)，右侧与底部被 `ADVBORD.ICN` 面板
    占掉。本端口还没有面板美术（ADR 待补），所以雷达放在参考坐标 (480,16) 上**盖住地图右上角**，并
    用 1 px 黑框圈住面板。等界面外壳落地时，只改 `AdventureMapScene` 的布局常量，`Minimap` 本身不动。
+   **后续**：外壳已由 ADR-054 落地（`MapFrame`），雷达现在取 `MapFrame.Radar`，落点与参考的 (480,16)
+   一致，`Minimap` 确实一行没改；面板舱也已由 ADR-055（图标条）与 ADR-058（按钮面板）填上。
 
 **后果**：
 
@@ -1842,7 +1858,8 @@ if (dirty.IsEmpty)
 
 **后果**：
 
-* 清单与四条规矩进 `ARCHITECTURE.md` 的「全局状态与门面」一节；数据类（`World`、`EditorInterface`、
+* 清单与四条规矩进 `ARCHITECTURE.md` 的「全局状态与门面」一节；冲突判定顺序与判例后来单独立成
+  同文件的「移植粒度与冲突处理」一节。数据类（`World`、`EditorInterface`、
   `BattlePlanner`）不造 `IWorldProvider` 之类接口，`Current` 指向有 owner 的实例。
 * 粒度本身是**总纲级**约束，`PLAN.md` 的「总体原则」同步加了第 3 条（起初漏了，只在 ADR 与
   `ARCHITECTURE.md` / `PROGRESS.md` / `REFERENCE.md` 里落过）。今后改移植粒度时，`PLAN.md` 与
@@ -2001,7 +2018,8 @@ if (dirty.IsEmpty)
 2. **八个 `if` 的顺序与「地图外算已雾」都照 `maps_tiles_helper.cpp` 的 `updateFogDirection`**：
    参考先把缓存填 1、越界项不写，所以边界瓦片的雾会「伸到地图外」；`IsFoggedOrOutside` 把这条写成
    显式判断。`FogDirection` 的位与参考的 `DIRECTION_*` 一一对应（中心 + 八方向），`FogDirections`
-   给 `All`、`CenterRow`、四个角等常用复合掩码。
+   给 `All`、`CenterRow`、四个角等常用复合掩码。（ADR-062 把这两个类型改名为 `Maps.Direction` /
+   `Maps.Directions`，位与语义不变。）
 3. **`FogFrames.Resolve` 保持参考 if/else 的原始判定顺序**：整瓦取 `( column + row ) % 4`，其余落
    34 帧边界表；`Flipped` 对应 `BlitOnTile( ..., revert )`，落位 `x = tileWidth - sprite.x() - sprite.width()`。
    非法掩码回退整瓦（参考的 `switch` 默认分支）。
@@ -2030,4 +2048,203 @@ if (dirty.IsEmpty)
   包围盒 `(78;47)-(87;56)`，即只有半径 4 的圆盘 + 聚焦城堡的半径 5。
 * 遗留：没有脏矩形缓存；英雄移动、侦察兵与视野类法术都没有增量更新（每次改 `MapFog` 要显式
   `UpdateDirections`）；MP2 没有雾位，「关雾」只能靠不传 `MapFog`，所以还做不到参考的「探索过的雾变暗」。
+
+## ADR-062：`FogDirection` 并入 `Maps.Direction`；`maps.cpp` 的几何函数按「尺寸即实例」移植
+
+**背景**：`Maps::Tile` 与英雄移动要用的第一块地基是 `src/fheroes2/maps/maps.cpp` 的几何函数——
+`GetPoint`、`GetIndexFromAbsPoint`、`GetDirection`、`GetDirectionIndex`、`getDirectionPoint`、
+`isValidDirection`、`isValidAbsIndex`、`isValidAbsPoint`、`getAroundIndexes`。它们全部只读
+`world.w()` / `world.h()`，不碰任何瓦片。方向类型本身是 `heroes/direction.h` 的位掩码枚举（顶左 1、
+顶 2、…、中心 0x100），而本项目为迷雾精灵表建过一个同值同义的 `AdventureMap.FogDirection`
+（ADR-061 第 2 条）。
+
+**决策**：
+
+1. **不再有第二个方向类型**：`FogDirection` / `FogDirections` 从 `AdventureMap` 移到
+   `Game.Maps.Direction` / `Directions`，位值与参考逐条对齐（`TopLeft=1` … `Left=0x80`、`Center=0x100`），
+   并把参考里的宏一并搬来：`TopRow`、`BottomRow`、`CenterRow`、`LeftColumn`、`CenterColumn`、
+   `RightColumn`、`All`、`Around`、四个角件、`AllCorners`；函数 `String`、`IsDiagonal`、`Reflect`、
+   `ShortDistanceClockWise`、`Contains`（参考的 `contains()`）逐行照抄。迷雾那五个文件只改类型名，
+   行为由既有迷雾用例守住。参考把枚举放在 `namespace Direction` 里再在外层写同名函数，
+   C# 不能同时有同名类型与类，所以枚举叫 `Direction`、函数集中在 `Directions`。
+2. **`MapGeometry` 是「尺寸即实例」的值对象**：参考每个函数都读全局 `world`，本项目还没有 `world`。
+   把宽高塞进静态字段会造出可变的全局状态，测试之间互相污染，于是改成
+   `readonly record struct MapGeometry( int width, int height )`——它承载的正是这些函数从
+   `world` 拿的那两个数，函数签名之后与参考一致。`world` 落地时持有它一个实例并转发即可。
+3. **`getAroundIndexes` 的第二个重载保持静态**：参考本来就有一个显式收 `( index, width, height, distance )`
+   的重载，供地图还没载入时调用（`world_loadmap.cpp` 用它看邻居），照抄为静态方法；实例方法
+   转发并填入自己的宽高。半径的方形裁剪、`index > width * height`（而不是 `>=`）这个参考的边界写法
+   都保留，并在代码注释里写明。
+4. **不可能的分支抛异常**：`getDirectionPoint` 对非方向值，参考是 `assert( 0 )` 后返回 `(-1, 0)`；
+   端口抛 `ArgumentOutOfRangeException`——这个值只能由写错的调用方产生，静默返回会变成一个离奇坐标。
+   与 ADR-037「不做静默兜底」同一条规矩。
+
+**后果**：
+
+* 新增 `Maps/Direction.cs`（枚举 + `Directions`）与 `Maps/MapGeometry.cs`（9 个几何函数）；
+  删除 `AdventureMap/FogDirection.cs`，`MapFog`、`FogFrame`、`AdventureMapView` 与两个迷雾测试文件改成新名字。
+* 新增 `DirectionTests` 10 条、`MapGeometryTests` 12 条（位值、复合掩码、`Reflect`、`ShortDistanceClockWise`、
+  `String`；4×3 地图上的 index ↔ point、`GetDirection` 与 `GetDirectionIndex` 互逆、边界上的
+  `IsValidDirection`、「允许的步一定落在合法索引上」的全量对拍、`getAroundIndexes` 的裁剪与半径）。
+* 迷雾精灵表、英雄/怪物图层、基线截图全部不变（纯改名 + 新增几何）。
+* 下一步：`Maps::Tile` 与 `world` 可以开始搬了，几何部分不再缺。
+
+## ADR-063：`Maps::Tile` 分片移植，先搬不依赖 `world` 的那半边
+
+**背景**：`maps_tiles.cpp` 1663 行、`maps_tiles.h` 437 行，一大半函数直接读写全局 `world`、英雄表、
+迷雾、region 图和地面过渡表。一次搬完等于把 `world` 一起搬，违背 ADR-057「一次一支、能验证」的节奏。
+
+**决策**：
+
+1. **按「能不能只靠瓦片自己回答」切片**。本轮搬：`ObjectPart` 与 `Tile` 的对象层
+   （三件容器、`sortObjectParts`、`removeObjects`、`replaceObject`、`updateObjectImageIndex`、
+   `updateTileObjectIcnIndex`、三个查询函数）、对象类型缓存、metadata、地形图号与 flags、
+   道路位（`isSpriteRoad`/`updateRoadFlag`/`isRoad`）、通行掩码（`getPassable`/`isPassableFrom`/
+   `isPassableTo`）、`Init( MP2TileInfo )`、`getGround`/`isWater`。
+   明确不搬（随 `world`）：`getHero`/`setHero`、`getMainObjectType( ignoreObjectUnderHero )`、
+   船、迷雾位（`MapFog` 已覆盖，ADR-061）、`setInitialPassability`/`updatePassability`/
+   `getTileIndependentPassability`、`updateObjectType`、`removeObjectPartsByUID` 的尾部（碰邻居）、
+   `fixMP2MapTileObjectType`、`getIndexOfMainTile`、`isAnyTallObjectOnTile`、`isDetachedObject`、
+   `isShadow`（要 `isValidShadowSprite` 那张表）、所有权旗标、`String()`、序列化运算符。
+2. **`Tile` 用类不用结构**：参考是值类型，但只在存档运算符里拷贝；端口的三件容器是堆上的，
+   拷贝语义要等序列化那一步再定，现在做成 `sealed class` 并在注释里写明。
+3. **`sortObjectParts` 的两个坑都在注释里写清**：
+   (a) 参考用 `std::list::sort`（稳定），`List<T>.Sort` 不稳定、会把同层部件重排，所以端口走
+   `OrderByDescending` 这条稳定路径；
+   (b) 参考把列表按层**降序**排完后再从尾往前找第一个非 `FLAG32`，所以被提为 main 的是**层值最小**
+   的那个（有 object 层就选 object 层），不是「最上层」——变量名 `highestPriorityPartIter` 说的是
+   「当主对象」的优先级。用例把这条钉住了，避免后人按直觉改反。
+4. **保留两个参考怪癖**：`removeObjects` 之后不动对象类型（参考自己留了 TODO）；
+   `isPassabilityTransparent` 在空瓦片上是 `false`（默认 main 部件在 object 层），且该函数在参考里
+   没有任何调用点——端口照抄而不「修好」。
+5. **`setMainObjectType` 里少了 `world.resetPathfinder()`**：路径查找器还不存在，缓存的类型照参考写入，
+   重置留给 `world` 那一步。`Init` 也不设地形（参考由 `world_loadmap.cpp` 另行 `setTerrain`）。
+
+**后果**：新增 `Maps/ObjectPart.cs`、`Maps/Tile.cs`；`TileTests` 21 条（Init 的 metadata/图层/裂纹特例/
+道路位、排序与 flag 跳过、移主部件、移除/替换/换图、三个查询、`doesObjectExist` 只看主层与地面层、
+空瓦片不透明的怪癖、`isSpriteRoad` 三张表、默认全向可通行）。`FHeroes2.Game.Tests` 442 → **475**。
+`maps_tiles.cpp` 仍是「部分」，覆盖率合计不变（26/42/181）。
+
+## ADR-064：`Maps::Tile` 第二片——把「不碰邻居」的通行计算提前搬完
+
+**背景**：ADR-063 把 `setInitialPassability`/`updatePassability`/`getTileIndependentPassability` 都推给了
+`world`。但 `getTileIndependentPassability` 只读本瓦片的部件，唯一的依赖是 `maps_tiles.cpp` 匿名命名空间里
+那几张「对象分类」小表（阴影图号、短对象、可脱离对象、组合对象、暗礁图号）与 `mp2.cpp` 的
+`getActionObjectDirection`。如果等 `world` 一起搬，`world` 那一步会同时背着「全局状态」和「对象分类表」
+两坨不相干的东西，出问题时分不清是哪边的错。
+
+**决策**：
+
+1. **对象分类集中到 `Game/Maps/TileObjectTraits.cs`**，不散落在 `Tile` 里。参考里这些是文件级 `static`，
+   语义上属于「瓦片上的部件是什么」这一层，将来 `world` 的通行重算、绘制、`isAnyTallObjectOnTile`
+   与寻路都要用；`Tile` 只是第一个调用方。名字取 `TileObjectTraits` 而不是重复 `MapsTiles`。
+2. **阴影表用 `Mp2ObjectIcnType` 而不是参考的 `ICN` id**：`getIcnIdFromObjectIcnType` 在
+   `MTNSHAD`/`OBJNCRCK`/… 这几张表上都是 1:1，多绕一层没有收益。17 张表的数值逐字照抄，
+   包括重复项，不「去重整理」——以后对表出问题，能一眼看出是抄错还是参考本来如此。
+3. **`GetActionObjectDirection` 的 `case` 必须写 `Action*`**：`MP2::MapObjectType` 里 action 值 =
+   同义的非 action 值 + `OBJ_ACTION_OBJECT_TYPE`(128)，而对象目录存的是 action 值。写成非 action 名
+   编译得过、运行时永远走 `default`——这是一个只有对拍才抓得到的坑，注释与用例都钉住了。
+   `default` 保留 `Debug.Assert` 后返回 `Direction.Unknown`，**不抛**：参考也只在断言后返回，
+   且这个函数在遍历所有部件时被调用，抛异常等于把「未知对象」升级成崩溃，改变行为。
+4. **遍历顺序照抄**：主部件 → 地面层部件**逆序**（层值从大到小）→ 逐部件取 `&` 交集；遇到 action
+   对象立刻返回它自己的方向；`top` 层不参与。地面层逆序这条最容易按直觉写正，`TilePassabilityTests`
+   两条用例把它夹住。
+5. **`IsStreamPart` 的两段图号照抄**：`OBJNMUL2` 的 `< 14` 与 `218..231`，不做「看起来更整齐」的合并。
+6. **`SetInitialPassability` 纯赋值**，不碰邻居、不发通知；`updatePassability` 与英雄占用仍留给 `world`。
+
+**后果**：新增 `Game/Maps/TileObjectTraits.cs`；`Tile` 补 `IsStream`/`IsShadow`/`GetTileIndependentPassability`/
+`SetInitialPassability` 与两个私有辅助。`TilePassabilityTests` 12 个方法、15 条用例（道路/溪流/`FLAG32`
+四种图号用 Theory）：空瓦片全通、object 层挡中下两行、主部件同样被检查、地形层永不挡、阴影永不挡、
+action 对象用自身方向（木材全通 / 矿只可下方进入）、主部件优先且 action 提前终止、暗礁全禁、
+`SetInitialPassability` 写入的掩码能被 `IsPassableFrom` 读到、`IsStream` 两段图号、`IsShadow` 要求全部部件
+都是阴影。`FHeroes2.Game.Tests` 475 → **490**，全解决方案 1081 条全绿，0 警告 0 错误。
+`maps_tiles.cpp` 仍是「部分」，覆盖率合计不变（26/42/181）——剩下的通行相关只剩 `updatePassability` 与
+英雄占用，两者都要 `world`。
+
+## ADR-065：`World` 先立骨架——尺寸、瓦片表、取瓦片，其余随各自系统
+
+**背景**：`world.h` 592 行、`world.cpp` 1691 行，`World` 一个类里塞了二十多个容器（英雄、城堡、王国、
+俘获对象、地图对象、事件、谣言、区域图）和一百多个成员函数。而 `Maps::Tile` 剩下的成员
+（`updateObjectType`、`updatePassability`、`getHero`/`setHero`、`isAnyTallObjectOnTile`）全都只是
+「读 `world`」。先搬整个 `World` 等于把 `heroes`/`castle`/`kingdom`/`army` 一起搬，那是 PLAN 里第 4 条
+的顺序，不能倒过来。
+
+**决策**：
+
+1. **只搬 `width`/`height`/`vec_tiles` 与围绕它们的三件事**：两个 `getTile`、`generateUninitializedMap`、
+   `Reset`，外加 `ResetPathfinder()` 的空占位。其余成员一律等所属系统——日期（`_day`/`_week`/`_month`
+   与 `NewDay` 一族吃王国与事件）、`Defaults()`（建王国/英雄/城堡）、俘获对象、地图对象、区域图、
+   静态分析、`updatePassabilities`（要 `Tile.updateObjectType` 与 `updatePassability`）。
+2. **门面照 ADR-056，构造函数改 `internal`**：`World.Current` 就是参考的 `World::Get()` / 全局 `world`。
+   参考的构造函数是 private（配 `World::Get()` 里的函数内静态变量，是标准单例），但这样测试与「第二张
+   地图」（编辑器、预览）都造不出独立实例；`internal` 让 `FHeroes2.Game.Tests` 能 `new World()`，生产代码仍只走
+   `Current`。`sealed class` 代替参考里删掉的拷贝/移动构造。
+3. **命名空间用根 `FHeroes2.Game`，不建 `...World` 子命名空间**：类名 `World` 与 `FHeroes2.Game.World`
+   同名会让命名空间内的每次引用都多一层解析歧义，而参考里这也是一个顶层类型（`world.h` 的
+   `class World`，全局 `world`）。
+4. **`Geometry` 是 `MapGeometry?`**：ADR-062 说 `world` 落地时持有 `MapGeometry` 并转发，但
+   `MapGeometry` 拒绝 0 维，而参考的 `World` 初始就是 0 × 0。空世界返回 `null`，有地图时返回一个按
+   当前尺寸构造的值——`MapGeometry` 是 `readonly record struct`，每次取都等价，不必存字段。
+5. **`getTile( x, y )` 只校验算出来的索引，不校验坐标**：参考写的是 `vec_tiles.at( y * width + x )`，
+   所以 `x == width` 会静默落到下一行第一格、负 `x` 会借上一行。`WorldTests` 把这个怪癖钉住，
+   不「顺手加校验」——所有调用方的坐标都来自 `MapGeometry`，那里不会越界。
+6. **`GenerateUninitializedMap` 不设瓦片索引**：参考只 `resize`，索引由 loader 逐个 `setIndex`
+   （`world_loadmap.cpp:279`），`generateBattleOnlyMap` 则自己循环设。端口照抄，测试断言新建瓦片的
+   `Index` 仍是 0——在这里补上会让「loader 忘了设索引」变成静默通过。参考同函数里还有三件事没搬：
+   往 `Settings` 写 `Maps::FileInfo`、`Defaults()`、`vec_tiles.empty()` 的断言。
+7. **`Reset()` 从 private 改 public**：参考只被析构与两个 loader 调用，而两个 loader 都还没搬；
+   编辑器场景与测试都需要「回到空世界」。这是显式记录的偏差，不是疏忽。
+8. **`ResetPathfinder()` 是空方法**：`world_pathfinding.cpp` 与 `AI::Planner` 都不存在，但
+   `Tile::setMainObjectType` 以及将来所有改地图的路径都要调它；先把调用点留好，省得以后逐个改两次。
+
+**后果**：新增 `src/FHeroes2.Game/World/World.cs`；`WorldTests` 8 个方法 / 17 条用例（空世界、
+`Current` 是同一个实例、生成 N×N 的默认瓦片、索引留在 0、`Geometry` 跟随尺寸、坐标与索引一致、
+坐标不校验的环绕、越界抛 `ArgumentOutOfRangeException`、非正尺寸报错、重新生成前先清空、`Reset`）。
+`FHeroes2.Game.Tests` 490 → **507**，全解决方案 1098 条全绿，0 警告 0 错误。
+`world.cpp` 从「未转」转「部分」，覆盖合计 26/42/181 → **26/43/180**（总数仍是 249）。
+
+## ADR-066：`Maps::Tile` 第三片——邻居相关的通行与对象类型，把 `world` 传给瓦片
+
+**背景**：ADR-065 立完 `World` 骨架后，`Tile` 剩下的成员全都能写了。它们不是一堆独立函数，而是一条
+调用链：`updatePassability` → `isDetachedObject` → `getIndexOfMainTile`，以及 `updatePassability` →
+`isAnyTallObjectOnTile`，再加上 `updateObjectType`（`World::updatePassabilities` 第一趟就要它）。
+拆开搬等于为了「一次只改一点」而把同一条链分三轮，每轮都得留一个临时的假实现。
+
+**决策**：
+
+1. **一次搬完整条链**：`UpdateObjectType`、`UpdatePassability`、`IsAnyTallObjectOnTile`、
+   `IsDetachedObject`、`GetIndexOfMainTile`（`static`）+ `World.UpdatePassabilities`。这五个是同一个语义
+   单元——「一个瓦片能不能走，取决于它自己和它上下左右的邻居」。
+2. **`World` 作为参数显式传入，不走 `World.Current`**：`Tile` 是 `World` 的成员，让瓦片反向持有
+   `World` 会形成环，还会让「没挂到世界上的瓦片」变成运行期炸弹；`World.Current` 则让每个测试都得去
+   改全局静态量。签名因此是 `UpdatePassability(World world)`、`IsDetachedObject(World world)` 等，
+   `World.UpdatePassabilities()` 传 `this`，测试传自己的局部世界——并行安全，且与 `MapGeometry`
+   的「尺寸由调用方拿着走」一致（ADR-062）。参考里这些是全局 `world`，所以**每个调用点**都要记得传；
+   目前只有 `World.UpdatePassabilities` 一处。
+3. **修正 `Mp2ObjectTypes.BaseActionType` 为忠实版**：旧实现是「不是 action 值就加 128（`Event` 除外）」，
+   而参考的 `getBaseActionObjectType` 先问 `isObjectCanBeAction`——树、山、湖这类装饰没有 action 对应值。
+   旧实现会让 `isOffGameActionObject(correctedObjectType)` 对树也返回真，`updatePassability` 就会把每一棵
+   树下面那格判成「上方是不可进入的高物体」。同时补上 `CanBeActionObject`（`mp2.cpp:38` 的 23 项表）。
+   注意参考的 `MP2::OBJ_EVENT` 是 **action 值**（`mp2.h:291`，`OBJ_NON_ACTION_EVENT + 128`），端口里
+   对应 `Mp2ObjectType.ActionEvent`，`Event` 是非 action 孪生值——旧实现对 `Event` 的特判正好反了。
+   这一改没有既有调用方、没有既有测试，纯粹修正。
+4. **`updateObjectType` 的事件分支不搬**：参考在这里查 `world.GetMapEvent()`，找不到就把类型清成
+   `OBJ_NONE`；事件容器还没有，所以类型一律保留——这等于参考「事件数据完好」时的行为，而不是「猜一个」。
+   瓦片类型判定的其余部分（主部件 → 地面层逆序 → 顶部件 → 海崖）逐字照抄。
+5. **断言分两类**：`assert( _tilePassabilityDirections == getTileIndependentPassability() )`（重复调用检查）
+   保留为 `Debug.Assert`——release 里参考也只是继续算，抛异常会改变行为；`assert( part._uid != 0 )`
+   （数据完整性）**不搬**，同理：release 里是空操作，把它变成异常等于让一张怪地图直接崩掉，
+   而参考的容错正是「算出来难看但能进游戏」。
+6. **`SetMainObjectType` 里参考的 `world.resetPathfinder()` 仍然欠着**：`Tile` 现在没有世界引用，
+   等路径查找器落地时在与它同一步处理（ADR-065 也留了这条）。
+7. **测试必须自己设 `Tile.Index`**：`GenerateUninitializedMap` 故意不设索引（ADR-065），而这里的每一个
+   邻居查找都是 `index ± 1 / ± width` 算出来的。测试里那条「手工设索引」的循环就是 loader 的活儿，
+   顺便证明了「忘了设索引」会立刻表现为错乱，而不是静默通过。
+
+**后果**：`World` 新增 `UpdatePassabilities()`；`Tile` 新增五个成员；`TileNeighbourPassabilityTests` 13 个方法 /
+15 条用例（空陆地世界全通、贴底边不可通行、陆上物体压在水上不可通行、下方同 UID 延续不可通行、
+action 对象不被邻居收窄、顶出物体的上格报告、左上对角被高物体吃掉、邻居顶向可通时不吃对角、
+第一行没有高物体、海崖判定、水面不变海崖、事件类型保留、`IsDetachedObject` 三个分支、
+`GetIndexOfMainTile` 的两条出口）。`FHeroes2.Game.Tests` 507 → **522**，全解决方案 1113 条全绿，
+0 警告 0 错误。覆盖率合计不变（26/43/180，总数 249）：`maps_tiles.cpp` 与 `world.cpp` 本来就在「部分」里。
 

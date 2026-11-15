@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Tests;
 
@@ -80,7 +81,7 @@ public sealed class MapFogTests
         {
             for (int column = 0; column < fog.Width; ++column)
             {
-                Assert.Equal(FogDirections.All, fog.GetDirection(column, row));
+                Assert.Equal(Directions.All, fog.GetDirection(column, row));
             }
         }
 
@@ -95,20 +96,20 @@ public sealed class MapFogTests
 
         fog.UpdateDirections(PlayerColor.Blue);
 
-        Assert.Equal(FogDirection.Unknown, fog.GetDirection(2, 2));
+        Assert.Equal(Direction.Unknown, fog.GetDirection(2, 2));
 
         // The four tiles that touch the hole lose the bits that point at it.
-        Assert.Equal(FogDirections.All & ~FogDirection.Right, fog.GetDirection(1, 2));
-        Assert.Equal(FogDirections.All & ~FogDirection.Left, fog.GetDirection(3, 2));
-        Assert.Equal(FogDirections.All & ~FogDirection.Bottom, fog.GetDirection(2, 1));
-        Assert.Equal(FogDirections.All & ~FogDirection.Top, fog.GetDirection(2, 3));
+        Assert.Equal(Directions.All & ~Direction.Right, fog.GetDirection(1, 2));
+        Assert.Equal(Directions.All & ~Direction.Left, fog.GetDirection(3, 2));
+        Assert.Equal(Directions.All & ~Direction.Bottom, fog.GetDirection(2, 1));
+        Assert.Equal(Directions.All & ~Direction.Top, fog.GetDirection(2, 3));
 
         // Only the two neighbours that touch the hole are cleared, so the diagonal tiles keep the bits
         // that point at their fogged straight neighbours.
-        Assert.Equal(FogDirections.All & ~FogDirection.BottomRight, fog.GetDirection(1, 1));
-        Assert.Equal(FogDirections.All & ~FogDirection.BottomLeft, fog.GetDirection(3, 1));
-        Assert.Equal(FogDirections.All & ~FogDirection.TopRight, fog.GetDirection(1, 3));
-        Assert.Equal(FogDirections.All & ~FogDirection.TopLeft, fog.GetDirection(3, 3));
+        Assert.Equal(Directions.All & ~Direction.BottomRight, fog.GetDirection(1, 1));
+        Assert.Equal(Directions.All & ~Direction.BottomLeft, fog.GetDirection(3, 1));
+        Assert.Equal(Directions.All & ~Direction.TopRight, fog.GetDirection(1, 3));
+        Assert.Equal(Directions.All & ~Direction.TopLeft, fog.GetDirection(3, 3));
     }
 
     [Fact]
@@ -122,7 +123,7 @@ public sealed class MapFogTests
         fog.UpdateDirections(PlayerColor.Blue);
 
         Assert.Equal(0, fog.CountFogged());
-        Assert.Equal(FogDirection.Unknown, fog.GetDirection(0, 0));
+        Assert.Equal(Direction.Unknown, fog.GetDirection(0, 0));
     }
 
     [Fact]
@@ -133,7 +134,7 @@ public sealed class MapFogTests
         fog.UpdateDirections(PlayerColor.None);
 
         Assert.Equal(0, fog.CountFogged());
-        Assert.Equal(FogDirection.Unknown, fog.GetDirection(1, 1));
+        Assert.Equal(Direction.Unknown, fog.GetDirection(1, 1));
     }
 
     [Fact]
@@ -152,12 +153,12 @@ public sealed class MapFogTests
         MapFog fog = MapFog.CreateForMap(map, PlayerColor.Blue);
 
         Assert.False(fog.IsFogged(2, 2, PlayerColor.Blue));
-        Assert.Equal(FogDirection.Unknown, fog.GetDirection(2, 2));
+        Assert.Equal(Direction.Unknown, fog.GetDirection(2, 2));
 
         // The red hero is invisible for blue: ( 6; 6 ) stays under the fog, three tiles away from the
         // edge of the blue disc, and ( 8; 8 ) is a whole fogged tile.
         Assert.True(fog.IsFogged(6, 6, PlayerColor.Blue));
-        Assert.Equal(FogDirections.All, fog.GetDirection(8, 8));
+        Assert.Equal(Directions.All, fog.GetDirection(8, 8));
 
         Assert.Equal(81 - CountRevealed(2, 2, MapFog.HeroRevealDistance, 9, 9), fog.CountFogged());
     }

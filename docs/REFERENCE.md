@@ -4,6 +4,10 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
 ## 已移植
 
+> 本节只收「已能跑、有对拍或测试」的映射。逐文件的覆盖率总表（`src/engine` + `src/fheroes2` 共 249 个
+> `.cpp` 的三态统计、未转清单与依赖顺序）在 `docs/PLAN.md` 的「参考文件覆盖率（逐文件盘点）」；
+> 「部分可用」在那边单列一档，本节不重复。
+
 | C++ | C# | 备注 |
 | --- | --- | --- |
 | `src/engine/agg_file.h/.cpp`（`AGGFile`） | `FHeroes2.Assets.Agg.AssetArchive` | 打开即逐条校验名称哈希；含越界/重复检测 |
@@ -37,14 +41,12 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `getDialogHeight()` / `showMessage( header, body, Dialog::ZERO )`（`src/fheroes2/gui/ui_dialog.cpp`） | `FHeroes2.UI.Dialogs.MessageBox` | 标题 `normalYellow` + 正文 `normalWhite`，都按 244 px 折行居中；标题上方与正文上方各 10 px（`textOffsetY`）；无按钮、无 UI 元素（ADR-024） |
 | `Game::MainMenu()` 的右键提示（`showStandardTextMessage( ..., Dialog::ZERO )`） | `MainMenuScene.SetRightButton` + `MessageBox` | 按住右键创建、松开丢弃；招牌标题/说明与门的「Game Settings」文案取自同一份 `.mo` |
 | `src/fheroes2/gui/ui_window.cpp`（`fheroes2::StandardWindow`） | `FHeroes2.UI.Dialogs.StandardWindow` + `StandardWindowChrome` | 边框来自 `SURDRBKG.ICN`（横）与 `WINLOSE.ICN`（竖 + 四角），内部铺 `STONEBAK.ICN`；角块 22、可重复边框起点 43、接缝 10、底纹让位 22；阴影只挂在左/下 16 px（`TotalArea` 比窗口宽 16）；4 个用例与 C++ 逐字节相同（`tools/scripts/CompareWindowWithReference.ps1`） |
-| `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装；消息框走的是 `BUYBUILD.ICN`（见上两行） |
+| `DrawBorder()` / `ADVBORD.ICN` 边框 | `MapFrame`（地图外壳，ADR-048）；对话框侧未移植 | `ADVBORD.ICN` 单张 640×480；九宫格拼装已用于冒险地图外壳（448×448 视口），对话框边框仍走 `BUYBUILD.ICN`（见上两行） |
 | `ICN::getAnimatedIcnIndex()`（`src/fheroes2/agg/icn.cpp`）+ `Game::DelayType::MAIN_MENU_DELAY`（`game_delays.cpp`） | `FHeroes2.Assets.Icn.IcnAnimation` | 帧表按场景声明（起始帧 + 帧数 + 每帧时长），计时同 `fheroes2::TimeDelay`：整帧才前进、长停顿跳帧不补播 |
 | `src/fheroes2/gui/ui_button.cpp`（`Button` / `ButtonSprite` / `ButtonBase` / `ButtonGroup`） | `FHeroes2.UI.Widgets.Button` + `ButtonState` / `ButtonBase` + `ButtonSprite` + `ButtonGroup` + `Dialogs.DialogButton` | 主菜单招牌 = `Button`（三帧精灵 + hover 状态机，`Area` 取 released 的包围盒 = ICN 的 `OffsetX/OffsetY`，缺帧回退）；对话框按钮 = `ButtonSprite`（released/pressed/可选 disabled，禁用时过 `PAL::DARKENING`）+ `ButtonGroup`（按下与松开都在区内才算点击、按住只点亮按下所在的按钮、OK/Enter 与 CANCEL/Escape 热键、单个 OK/CANCEL 两个热键都能关）；自动摆位 = `ButtonGroup.CreateStandard`（`ButtonGroup( area, types )`），文字按钮只移植了精灵侧（`ButtonArtwork`），标签仍待 `BUTTON_*_FONT_*` 字体表 |
-| `DrawBorder()` / `ADVBORD.ICN` 对话框边框 | 未移植（M3 起的对话框用） | `ADVBORD.ICN` 已能解码（单张 640×480），尚无九宫格拼装 |
 | `Translation::gettext()` + `Settings::getGameLanguage()` | `FHeroes2.App.Localization.GameText` | 一个语言一个实例；英文 = msgid，`zh_CN` = `.mo`；`--lang` / `F2` 切换 |
 | `LocalEvent` 的鼠标坐标换算（窗口 → 逻辑像素） | `PresentationViewport.TryToLogical` | 整数倍 + 黑边；黑边上的点返回 `false` |
 | `Display::render()` 的文字叠加 | `Scenes.IScene.DrawOverlay` | 只有诊断屏用（SDL3_ttf）；真实画面全部走索引字形 |
-
 | `src/fheroes2/gui/ui_button.cpp` 的 `resizeButton()` / `addButtonShine()` / `makeTransparentBackground()` | `FHeroes2.UI.Widgets.ButtonArtwork`（`Resize` / `AddShine` / `MakeTransparentBackground`） | 空按钮按「宽三等分、高五等分」重复拉伸，四角原样保留；只有「两个方向都变大」那一支有中空区，用原图中心像素填充（`centralPosition = w*h/2 - 1 - min(w,h)/2`）；闪光像素的绝对坐标表、`width > 50` / `> 96` / `height > 25` 三层条件、Good/Evil 两套配色（10 / 37,15 / 39,16）逐像素移植 | 
 | `getButtonSpecificValues()` + `getTextAdaptedSprite()`（同上文件） | `FHeroes2.UI.Widgets.DialogButtonTemplate` + `ButtonTemplateMetrics` | 6 个模板的 `textAreaBorders` / `minimumTextArea` / `maximumTextArea` / `backgroundBorders` / released、pressed 文字偏移全部照抄（Good/Evil 最小文字区 86×15、边框 10×8、偏移 6,4 / 5,5）；文字色只保留调色板 id（`WhiteFont` / `GrayFont`） |
 | `ButtonGroup( const Rect & area, const int buttonTypes )` | `FHeroes2.UI.Widgets.ButtonGroup.CreateStandard` + `IDialogButtonArtworkSource` / `DialogButtonArtwork` | YES\|NO、OK\|CANCEL、单个 OK、单个 CANCEL 四支；一对按钮的左右各留 `(area.width - w1 - w2)/4`，单个按钮居中并贴底；精灵自带的 `OffsetX/OffsetY` 由 `ButtonSprite` 叠在摆位坐标上（与参考实现相同） |
@@ -59,15 +61,17 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
 ## 计划中
 
-| C++ | 计划 C# | 里程碑 |
-| --- | --- | --- |
-| `src/engine/image_tool.cpp`（图像缩放） | `ImageOps.Resize`（最近邻，颜色层与透明度层各一份，`engine/image.cpp:3087`） | 已搬单层与双层两条路径；「输出带透明度、输入不带」那条按 `transformTable` 反查的分支未搬（无全量 `transformTable` 数据） |
-| `src/engine/h2d_file.h` | `Assets/H2D/H2DArchive` | M3 |
-| `src/engine/audio/*`、`82M` 解码 | `Assets/Audio/*` | M2/M7 |
-| `src/fheroes2/gui/ui_font.cpp`（各代码页的 `generateCP1250GoodButtonFont` … 补充字形）与 `SubpixelResize` | `Game.Gui.ButtonFont`、`Core.Imaging.ImageOps` | M2 |
-| `src/fheroes2/gui/ui_language.*` 的语言切换部分（`getResourceLanguage` 已搬） | `Assets.Localization.*` | M2 |
-| `src/fheroes2/world/*`、`army`、`battle` | `FHeroes2.Game.*` | M3–M7 |
-| `src/engine/serialize.h` | `Game/Persistence/*`（自研 schema） | M8 |
+> 这里只排长期未动的项；未转清单的完整名单（184 个）与「还差的主干」的先后顺序见 `PLAN.md` 同一节。
+
+| C++ | 计划 C# | 里程碑 | 备注 |
+| --- | --- | --- | --- |
+| `src/engine/image_tool.cpp`（图像缩放余量） | `ImageOps.Resize`（最近邻，颜色层与透明度层各一份，`engine/image.cpp:3087`） | 未排期 | 单层与双层两条路径已搬；「输出带透明度、输入不带」那条按 `transformTable` 反查的分支未搬（无全量 `transformTable` 数据） |
+| `src/engine/h2d_file.h` | `Assets/H2D/H2DArchive` | 未排期（M3 遗留） | 场景列表走 MP2 已够用；H2D 只在读原版存档与战役时才是必需的 |
+| `src/engine/audio/*`（`audio_xmi2mid`、`mus`、`xmi`）、`82M` 解码 | `Assets/Audio/*` | M7 | 音乐/音效播放已有 `AudioPlayer`，现在只能播 AGG 里现成的音轨；转换与 82M 是战斗与过场才要 |
+| `src/fheroes2/gui/ui_font.cpp`（各代码页的 `generateCP1250GoodButtonFont` … 补充字形）与 `SubpixelResize` | `Game.Gui.ButtonFont`、`Core.Imaging.ImageOps` | 未排期 | 只有非英文资材的按钮字形需要；`SubpixelResize` 目前没有调用者 |
+| `src/fheroes2/gui/ui_language.*` 的语言切换部分 | `Assets.Localization.*` | 未排期 | `getResourceLanguage` 已搬；运行时换资材语言还没入口（`--lang` / `F2` 只换 `.mo`） |
+| `src/fheroes2/world/*`、`army`、`castle`、`kingdom`、`battle` | `FHeroes2.Game.*` | M5–M7 | 顺序见 `PLAN.md`「还差的主干」：`world` → `kingdom` → `castle` → `army` → `battle` |
+| `src/engine/serialize.h` | `Game/Persistence/*`（自研 schema） | M8 | 不做与原版互通 |
 
 ## 文件格式速查
 

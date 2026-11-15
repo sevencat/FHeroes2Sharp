@@ -2269,6 +2269,238 @@ M4 收尾时把参考源码逐文件核了一遍：`src/engine`（26 个）+ `sr
 
 **结论**：M4 之后缺的是 `world` + `kingdom` + `castle` + `army` + `battle` 这条主干，以及它前面的
 拾取与移动（`map_object_info` → `heroes_move` + `world_pathfinding` + `visit`）。`battle` 最大（18 个
-文件、约 620 KB），必须等 `army` 与 `castle` 落定才能动。两处与本期盘点同时修正的数字口径：合并
-`agg/xmi.cpp` 进未转（XMI→MIDI 没有对应实现，`MusicTrackCatalog` 只读目录），故 `agg` 是 1 / 2 / 3
-而不是早先口头报的 1 / 3 / 2；文件总数是 249（`src/engine` 26 + `src/fheroes2` 223），不是 248。
+文件、约 620 KB），必须等 `army` 与 `castle` 落定才能动。
+
+**口径备注**：`agg/xmi.cpp` 归未转（XMI→MIDI 没有对应实现，`MusicTrackCatalog` 只读目录），所以
+`agg` 是 1 / 2 / 3；文件总数 249（`src/engine` 26 + `src/fheroes2` 223），三态相加 25 + 40 + 184 = 249。
+
+## 对象目录（2026-11-15，M5 前置）
+
+`map_object_info.cpp` 的第一批落地，代码在 `src/FHeroes2.Game/Maps/`：
+
+* `ObjectLayerType`、`ObjectPartInfo` / `LayeredObjectPartInfo`、`ObjectInfo`、`ObjectGroup` 按参考命名，
+  组号与图层值原样保留——编辑器存地图时按组号与组内索引引用对象，顺序不能改。
+* `MapObjectCatalog` 承担 `objectData`、`populateObjectData` 与五个查询。参考的
+  `static bool isPopulated` 换成静态构造（CLR 保证只执行一次），`try_emplace` 的「先到先得」
+  语义用 `Dictionary.TryAdd`。
+* 表已填三组：roads 513（512 种方向布局 + 城堡入口路）、streams 13、trees 69。roads 由
+  `tools/scripts/GenerateObjectTables.ps1` 从参考逐行生成（373 个 part、263 处复制 + 末尾的循环），
+  手抄不可行。
+
+### 对象目录第二批：其余 20 组全部落地 ✅
+
+参考的 `populateObjectData` 调 20 个 `populate*()`，第二批把余下 17 组一次补齐，**21 个组现在都不空**：
+
+| 组 | 数量 | 来源 |
+| --- | --- | --- |
+| LandscapeMountains / Rocks / Water | 63 / 40 / 12 | 生成 |
+| LandscapeMiscellaneous | 147 | 生成 |
+| LandscapeTownBasements / Flags | 8 / 14 | 生成 |
+| AdventureDwellings / Mines / PowerUps | 25 / 56 / 23 | 生成 |
+| AdventureTreasures / Water / Miscellaneous | 13 / 13 / 71 | 生成 |
+| AdventureArtifacts | 96 | 手写，`MapObjectCatalog.Artifacts.cs` |
+| KingdomHeroes | 42 | 生成 |
+| KingdomTowns | 14 | 手写，`MapObjectCatalog.Kingdom.cs` |
+| Monsters | 71 | 手写，`MapObjectCatalog.Monsters.cs` |
+| MapExtras | 7 | 生成 |
+
+* 生成器扩到 `tools/scripts/GenerateMapObjectTables.ps1`：新增 `Resource::` 按值配对（C++
+  `resource.h` 的 `enum` 与 C# `Mp2ResourceType`，含十六进制与 `|` 组合值）、初始化列表区间
+  `for ( const auto type : { .. } )`（元素类型由列表项反推）、`std::make_pair` 对列表
+  `for ( const auto & [type, offset] : { .. } )`、`size_t` 计数循环。
+* 整数语义按需对齐：参考的 `uint8_t` 局部量与计数器一律生成为 `uint`（它们最终是 ICN 索引，本来就是字）；
+  由有符号局部量算出的 part 索引补上 C++ 的隐式转换（`(uint)( ... )`）；`metadata[i]` 存资源/有符号值时同样补
+  `(uint)`。`uint + int` 三元式按 C# 的整型提升规则回到声明类型。
+* 复制语义：`objects.emplace_back( object )`（无 `std::move`）生成 `objects.Add(object.Copy())`。参考只在
+  mines 里这么做——推入后弹掉最后一个 part 再换资源推入，两个对象必须是独立实例，无法共用引用。
+* 手写三个文件的原因：KingdomTowns 的参考用 `addTown` lambda（生成器不做 lambda，改成私有 helper
+  `AddTown`）；Monsters 走 `Monster` 枚举、Artifacts 的循环边界是 `Artifact` 枚举成员。两个枚举当时尚未移植，
+  先按数值写成常量，随后在下一小节补上了枚举并删掉常量。
+* 校验：逐个函数比对「参考 `objects.emplace_back` 句数 = 生成 `objects.Add(` 句数」，17 组全部相等（1:1 逐行）；
+  表大小钉进 `MapObjectCatalogTests`。
+* `MapObjectCatalogTests` 现有用例：21 组大小、每组非空、每个对象都有 ground part、mines 五个资源副本相互独立
+  且 `metadata[0]` 为 Ore/Sulfur/Crystal/Gems/Gold、flags 七个颜色各两份（ICN 索引 `color*2` 与 `color*2+1`）、
+  宝物的 id 顺序与 Magic Book 的临时帧、怪物的 `id - 1` 帧号。
+
+### 两个 id 枚举：`MonsterType` / `ArtifactType` ✅
+
+上一节留的依赖缺口补齐，两个枚举都由 `tools/scripts/GenerateIdEnums.ps1` 从参考逐行生成：
+
+| C# | 参考 | 成员数 | 锚点 |
+| --- | --- | --- | --- |
+| `Game.Monsters.MonsterType` | `monster/monster.h` 的 `enum MonsterType : int32_t` | 73（`Unknown`…`MonsterCount`） | `Peasant=1`、`WaterElement=66`、`RandomMonster=67`、`MonsterCount=72` |
+| `Game.Resources.ArtifactType` | `resource/artifact.h` 里 `class Artifact` 的匿名 `enum : int32_t` | 105（`Unknown`…`ArtifactCount`） | `ArcaneNecklace=9`、`BlackPearl=81`、`MagicBook=82`、`SpellScroll=87`、`SpadeNecromancy=103`、`ArtifactCount=104` |
+
+* 命名：`MonsterType` 用参考自己的枚举名；参考给宝物枚举没起名字，端口叫 `ArtifactType`，因为 `Artifact`
+  要留给带行为的类（对应参考的 `class Artifact`），与 `MonsterType` 对 `class Monster` 的做法对称。
+* 生成规则：`SCREAMING_CASE` → PascalCase（`RANDOM_MONSTER_LEVEL_1` → `RandomMonsterLevel1`、`UNUSED_84` →
+  `Unused84`），保留参考的空行与注释分组，遇到带显式值的成员或无法识别的行直接报错（防止编号被悄悄改掉）。
+* **生成枚举当场抓到一个错误**：手写时期我把 `ARTIFACT_COUNT` 算成 103（PoL 段 16 个），实际是 104 —— PoL 段是
+  `SPELL_SCROLL=87`…`SPADE_NECROMANCY=103` 共 17 个，宝物表因此是 96 条而不是 95 条（末条 ICN 205）。
+  这正是「id 由参考生成、不靠手算」的价值。
+* `MapObjectCatalog.Monsters.cs` / `.Artifacts.cs` 里的 11 个 `*Id` 常量删除，改用枚举成员。
+* 用例：`IdEnumTests` 6 条（两个枚举的锚点、成员无空洞无重复、`*_COUNT` 等于最大 id 加一）、
+  `MapObjectCatalogTests` 加 2 条（宝物表 id 顺序与 Magic Book 帧 207、怪物表 `id - 1` 帧与五个随机项）。
+  `FHeroes2.Game.Tests` 360 个用例全通过，`dotnet build` 0 警告 0 错误。
+
+**待办**
+
+1. KingdomTowns 若要回到生成器，需先让生成器支持 lambda 与枚举减法的 `static_cast`。
+2. `Assets.Maps.Mp2MonsterName` 仍是按 id 硬编码的 72 条名字表（它在 Assets 层，引用不到 `Game` 的
+   `MonsterType`）；等需要名字表与枚举互相校验时再决定是搬枚举还是加一层映射。
+3. `class Monster` / `class Artifact` 的行为（`monster.cpp`、`artifact.cpp`）仍未移植，随 `army` / 英雄装备进场。
+
+没做：`Tile::getMainObjectType`。它读 `Tile` 的缓存字段（`_mainObjectType` 与对象层信息），而 `Tile`
+类要等 `world` 那一步；现在硬搬到 `Mp2TileInfo` 上会造出一个没有宿主的函数，与 ADR-057 的落点不符。
+
+### 地图几何与方向：`Direction` / `Directions` / `MapGeometry` ✅
+
+`world` 与 `Maps::Tile` 的地基，参考 `src/fheroes2/maps/maps.cpp` 的几何部分 + `heroes/direction.h/.cpp`：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.Maps.Direction`（enum，位掩码） | `heroes/direction.h` 的 `namespace Direction` | `TopLeft=0x1` … `Left=0x80`、`Center=0x100`、`Unknown=0` |
+| `Game.Maps.Directions`（静态类） | `direction.h` 的宏与 `direction.cpp` 的函数 | `TopRow`/`BottomRow`/`CenterRow`/三条竖列/`All`/`Around`/四角件/`AllCorners`、`Contains`、`String`、`IsDiagonal`、`Reflect`、`ShortDistanceClockWise`、`AllNeighboringDirections` |
+| `Game.Maps.MapGeometry`（`readonly record struct`） | `maps.cpp` | `GetPoint`、`GetIndexFromAbsPoint`（两个重载）、`GetDirection`、`GetDirectionIndex`、`GetDirectionPoint`、`IsValidDirection`、`IsValidAbsIndex`、`IsValidAbsPoint`、`GetAroundIndexes`（实例 + 显式宽高的静态重载）、`TileCount` |
+
+* **`FogDirection` / `FogDirections` 并入 `Direction` / `Directions`**（ADR-062）：迷雾表是它们此前的唯一
+  用户，值一直与 `DIRECTION_*` 逐位相同，留着就是同一个枚举两份定义。`MapFog`、`FogFrame`、
+  `AdventureMapView` 与 `MapFogTests`、`FogFramesTests` 只改类型名，雾的 57 条用例原样通过。
+* **宽高改成实例而不是静态字段**：参考每个函数都读全局 `world`，端口按「尺寸即实例」把
+  `( width, height )` 做成 `MapGeometry` 的值，函数内部逻辑与参考逐行一致；`world` 落地后持有它并转发。
+  `getAroundIndexes( index, width, height, distance )` 的重载照参考保留为静态——`world_loadmap.cpp`
+  在地图还没建好时就用它看邻居。
+* 参考的边界怪癖保留并注明：`getAroundIndexes` 判的是 `index > width * height`（不是 `>=`），
+  所以恰好等于瓦片总数的索引仍会算出「地图下方一行被裁剪后的环」；`getDirectionPoint` 对非方向值
+  参考是 `assert( 0 )` 后返回 `(-1, 0)`，端口抛 `ArgumentOutOfRangeException`（ADR-037 的规矩）。
+* 用例：`DirectionTests` 10 条、`MapGeometryTests` 12 条。后者在 4×3 地图上钉住 index ↔ point 互逆、
+  九宫格的八个方向、`GetDirection` 与 `GetDirectionIndex` 互逆、四条边界上的 `IsValidDirection`，
+  并对「`IsValidDirection` 允许的每一步都必须落在合法索引上且方向可还原」做全图对拍。
+  `FHeroes2.Game.Tests` 360 → **442**，全量 951 → **1033**，0 警告 0 错误。
+
+**下一步**（`world` / `Tile` 的前置已经齐了）：`Maps::Tile`（`maps_tiles.h` 330 行 + `.cpp` 1663 行，
+先搬对象层三件 `MapObjectPart` 与 `getMainObjectType` 的缓存）、随后 `world.h/world.cpp` 的骨架，
+再回到 `heroes_move.cpp` + `world_pathfinding.cpp` + `maps/visit.cpp`。
+
+### `Maps::Tile` 第一片：对象层、地形位、道路位、通行掩码 ✅
+
+`src/fheroes2/maps/maps_tiles.cpp` 的「只靠瓦片自己就能回答」的那一半（ADR-063）：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.Maps.ObjectPart`（struct） | `maps_tiles.h:58` `ObjectPart` | `Uid`/`LayerType`/`IcnType`/`IcnIndex`（默认 255）、`IsPassabilityTransparent`、值相等 |
+| `Game.Maps.Tile`（sealed class） | `maps_tiles.h:99` `Tile` | `Init(MP2TileInfo)`、三件容器（main/ground/top）与它们的增删改查、`SortObjectParts`、`RemoveObjects`、`ReplaceObject`、`UpdateObjectImageIndex`、`UpdateTileObjectIcnIndex`、`GetObjectIdByObjectIcnType`、`GetValidObjectIcnTypes`、`ContainsAnyObjectIcnType`、`ContainsSprite`、`DoesObjectExist`、`MainObjectType`/`SetMainObjectType`、`Metadata`、`SetTerrain`/`Ground`/`IsWater`/`TerrainFlags`、`IsSpriteRoad`/`UpdateRoadFlag`/`IsRoad`、`PassableDirections`/`IsPassableFrom`/`IsPassableTo` |
+
+三个必须记住的参考细节（都写进了注释与用例）：
+
+* **排序后提为 main 的是层值最小的部件**：参考按层降序排完再从尾往前找第一个非 `FLAG32`，
+  所以有 object 层部件时主对象就是它；变量名 `highestPriorityPartIter` 指的是「当主对象」的优先级。
+* **`std::list::sort` 是稳定的**，`List<T>.Sort` 不是，端口改用 `OrderByDescending` 才没有把同层部件重排。
+* **空瓦片的 `IsPassabilityTransparent` 是 `false`**（默认 main 部件在 object 层），且该函数在参考里
+  没有调用点；`RemoveObjects` 之后也不更新对象类型（参考自己留了 TODO）。两处照抄，不「顺手修」。
+
+用例：`TileTests` 21 条，覆盖 `Init` 的 metadata 公式 / 图层低两位 / 裂纹 226 下移 / 道路位、
+排序与 flag 跳过、主部件下移、移除与换图、三个查询函数、`DoesObjectExist` 只看主层与地面层、
+`IsSpriteRoad` 三张索引表、默认全向可通行。`FHeroes2.Game.Tests` 442 → **475**。
+
+未搬（随 `world`，ADR-063 第 1 条列全）：`getHero`/`setHero`、`getMainObjectType( ignoreObjectUnderHero )`、
+船、迷雾位、`setInitialPassability`/`updatePassability`、`updateObjectType`、`removeObjectPartsByUID`
+的尾部、`fixMP2MapTileObjectType`、`getIndexOfMainTile`、`isAnyTallObjectOnTile`、`isDetachedObject`、
+`isShadow`、所有权旗标、`String()`、序列化。
+
+**下一步**：`Maps::Tile` 剩下的部分是 `world` 的镜像，先立 `world.h/world.cpp` 的骨架
+（`w`/`h`/`vec_tiles`/`vec_heroes`/`resetPathfinder` 的占位），再把通行计算与英雄占用接上去。
+
+### `Maps::Tile` 第二片：独立通行计算 ✅
+
+把 ADR-063 里「明确不搬」的 `getTileIndependentPassability` / `setInitialPassability` 提前搬了（ADR-064），
+连同它们在 `maps_tiles.cpp` 匿名命名空间里全部依赖：阴影图号表、短对象、可脱离对象、组合对象、
+暗礁图号，以及 `mp2.cpp` 的 `getActionObjectDirection`。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.Maps.TileObjectTraits`（静态类） | `maps_tiles.cpp` 匿名命名空间 + `mp2.cpp:815` | 17 张 ICN 阴影图号表、`IsValidShadowSprite`、`IsObjectPartShadow`、`IsShortObject`、`IsDetachedObjectType`、`IsCombinedObject`、`IsValidReefsSprite`、`GetActionObjectDirection` |
+| `Tile.GetTileIndependentPassability` | 同名 | 主部件 → 地面层逆序 → 逐部件取交集；action 对象立即返回；`top` 层不参与 |
+| `Tile.SetInitialPassability` | 同名 | 纯赋值，不碰邻居 |
+| `Tile.IsStream` / `Tile.IsShadow` | 同名 | `IsStreamPart` 两段图号（`OBJNMUL2` `< 14`、`218..231`）；`IsShadow` 要求主部件与地面层**全部**是阴影 |
+
+两个只有对拍才抓得到的坑：
+
+* **`GetActionObjectDirection` 的 `case` 必须是 `Action*` 值**：`MP2::MapObjectType` 里 action 值 =
+  同义非 action 值 + 128，对象目录存的正是 action 值。写成非 action 名能编译、也永远走 `default`。
+  `default` 照参考 `assert` 后返回 `Direction.Unknown`，**不抛**——这个函数在遍历里被调用，
+  抛异常等于把「未知对象」升级成崩溃。
+* **地面层部件是逆序（层值从大到小）遍历的**，不是从头到尾；写正了在单部件用例上照样通过，
+  只有多部件重叠时才露。
+
+用例：`TilePassabilityTests` 12 个方法 / 15 条（道路与溪流、`FLAG32` 用 Theory）。`FHeroes2.Game.Tests`
+475 → **490**，全解决方案 1081 条全绿，0 警告 0 错误。
+
+**下一步**：`world.h/world.cpp` 骨架（`w`/`h`/`vec_tiles`/`vec_heroes`/`resetPathfinder`），
+然后 `Tile.updatePassability` 与英雄占用。
+
+### `World` 骨架：尺寸、瓦片表、取瓦片 ✅
+
+`src/fheroes2/world/world.cpp` 的第一片（ADR-065）。`World` 在参考里同时装着二十多个容器，这里只立
+`Tile` 剩下的成员真正需要的那部分：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Game.World`（sealed class） | `world.h:197` | `Current`（= `World::Get()`）、`Width`/`Height`、`Tiles`、`Size`、`Geometry`、`GetTile(x,y)`、`GetTile(index)`、`GenerateUninitializedMap`、`Reset`、`ResetPathfinder` |
+
+四条必须记住的细节（都进了注释与用例）：
+
+* **`getTile( x, y )` 不校验坐标，只校验算出来的索引**：`x == width` 会静默落到下一行第一格，负 `x`
+  会借上一行。参考写的就是 `vec_tiles.at( y * width + x )`。
+
+* **`generateUninitializedMap` 不设瓦片索引**：参考只 `resize`，索引由 loader 逐个 `setIndex`
+  （`world_loadmap.cpp:279`），`generateBattleOnlyMap` 自己循环设。端口若在这里补上，loader 忘了设
+  索引就永远查不出来。
+
+* **`Geometry` 是 `MapGeometry?`**：`MapGeometry` 拒绝 0 维，而世界的初始尺寸就是 0 × 0，所以空世界
+  返回 `null`；有地图时按当前尺寸现造一个值（`readonly record struct`，不必存字段）。
+
+* **构造函数是 `internal`**：参考是 private + `World::Get()`。端口改成 `internal` 让测试与将来的
+  第二张地图（编辑器/预览）能造独立实例；生产代码只走 `World.Current`（ADR-056 的门面）。
+
+未搬（随各自系统）：英雄/城堡/王国/俘获对象/地图对象容器、日期与事件、谣言、区域图、`Defaults()`、
+静态分析、`updatePassabilities`、`world.h` 里那一百多个成员函数。
+
+用例：`WorldTests` 8 个方法 / 17 条。`FHeroes2.Game.Tests` 490 → **507**，全解决方案 1098 条全绿，
+0 警告 0 错误。`world.cpp` 从「未转」转「部分」，覆盖合计 26/42/181 → **26/43/180**（总数 249 不变）。
+
+**下一步**：把 `Tile` 剩下的世界相关成员接上——`updateObjectType`、`updatePassability`（碰邻居）、
+`getHero`/`setHero`，以及 `World.updatePassabilities`；之后才是 `world_loadmap.cpp` 的对象表。
+
+### `Maps::Tile` 第三片 + `World.UpdatePassabilities`：邻居相关的通行 ✅
+
+`Tile` 里凡是「要看邻居」的部分，一次搬完（ADR-066）——它们是一条调用链，拆开搬只会造出临时的假实现：
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Tile.UpdatePassability(World)` | `maps_tiles.cpp:657` | 高物体吃掉左上/右上对角；自身对象与下格冲突则整格禁行；action 对象只看自己 |
+| `Tile.UpdateObjectType(World)` | `:1599` | 主部件 → 地面层逆序 → 顶部件 → 海崖（邻居有水） |
+| `Tile.IsAnyTallObjectOnTile(World)` | `:1767` | 本格物体的 UID 是否出现在上一格的 top 层 |
+| `Tile.IsDetachedObject(World)` | `:1854` | 城堡/矿/祭坛这类「不挂在下面」的对象；要看主格 |
+| `Tile.GetIndexOfMainTile(Tile, World)` | `:1798` | 半径 3 格内按「action 类型 + 共享 UID」找主格 |
+| `World.UpdatePassabilities()` | `world.cpp:1177` | 两趟：先补空类型 + 存独立掩码，再逐格收窄 |
+
+三条必须记住的：
+
+* **`World` 是参数，不是 `World.Current`**：瓦片反向持有世界会成环，用静态门面则每个测试都要动全局。
+  参考里是全局 `world`，所以每个调用点都得记着传——目前只有 `World.UpdatePassabilities` 一处。
+* **`Mp2ObjectTypes.BaseActionType` 被修正为忠实版**（补 `CanBeActionObject`，`mp2.cpp:38`）：旧实现
+  「非 action 就加 128」会让树/山/湖也算成 action 对象，于是每棵树下面那格都被判成禁区。顺带修正了
+  `Event` 分支——参考的 `MP2::OBJ_EVENT` 是 **action 值**，对应端口的 `ActionEvent`。
+* **`updateObjectType` 的事件分支没搬**：参考查 `world.GetMapEvent()` 决定是否清类型，事件容器还没有，
+  所以类型一律保留（= 参考「事件数据完好」时的行为）。
+
+断言策略：重复调用检查用 `Debug.Assert`（release 行为与参考一致），数据完整性断言（`_uid != 0`）不搬
+——把它变成异常等于让一张怪地图直接崩掉，而参考的容错正是「算出来难看但能进游戏」。
+
+用例：`TileNeighbourPassabilityTests` 13 个方法 / 15 条。测试里手工设 `Tile.Index` 是必须的
+（`GenerateUninitializedMap` 故意不设，ADR-065），那段循环就是 loader 的活儿。
+`FHeroes2.Game.Tests` 507 → **522**，全解决方案 1113 条全绿，0 警告 0 错误。
+
+**下一步**：`world_loadmap.cpp` 的对象表与 `Tile.setHero`/`getHero`（英雄占用）谁先都可以，但
+`world_loadmap` 是让整条链吃上真数据的入口，建议先它。

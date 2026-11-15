@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.AdventureMap;
 
@@ -653,7 +654,7 @@ public sealed class AdventureMapView
         _fog is not null
         && column >= 0 && column < _map.Width
         && row >= 0 && row < _map.Height
-        && _fog.GetDirection(column, row) == FogDirections.All;
+        && _fog.GetDirection(column, row) == Directions.All;
 
     /// <summary>
     /// Whether the tile and the tile above it are under the fog. A boat and a sailing hero reach over
@@ -682,8 +683,8 @@ public sealed class AdventureMapView
 
         foreach ((int column, int row, int left, int top, Mp2TileInfo tile) in VisibleTiles())
         {
-            FogDirection direction = _fog.GetDirection(column, row);
-            if (direction == FogDirection.Unknown)
+            Direction direction = _fog.GetDirection(column, row);
+            if (direction == Direction.Unknown)
             {
                 continue;
             }
@@ -699,7 +700,7 @@ public sealed class AdventureMapView
     }
 
     /// <summary>Draws the fog piece of one tile, the sprite choice of <c>Maps::drawFog</c>.</summary>
-    private void DrawFogTile(PixelBuffer target, FogDirection direction, int column, int row, int left, int top)
+    private void DrawFogTile(PixelBuffer target, Direction direction, int column, int row, int left, int top)
     {
         FogFrame frame = FogFrames.Resolve(direction, column, row, _map.Width);
 

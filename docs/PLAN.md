@@ -14,6 +14,7 @@
    （分层、不可变类型、没有指针）。**不做行级 1:1**：行级翻译会继承宏、全局单例与 `SDL_Surface` 的
    原地改写语义。全局状态用 `static X Current` 门面照抄（对应 `X::Get()`），第二版改 DI 只动门面赋值处。
    推理顺序、常量、if/else 分支都要能逐条指回参考文件名与函数名（注释里写清）。
+   与既有实现冲突时怎么改、哪些偏离允许，见 `ARCHITECTURE.md` 的「移植粒度与冲突处理」一节。
 4. **不提交任何原版资源**：GPLv2 项目，仓库只含代码与可再分发字体。
 5. **每个里程碑都能运行、能验证**：可执行 + 测试 + 截图/日志证据。
 
@@ -82,15 +83,45 @@
 | `game` | 28 | 2 | 3 | 23 |
 | `gui` | 33 | 8 | 10 | 15 |
 | `h2d` | 1 | 0 | 0 | 1 |
-| `heroes` | 12 | 0 | 0 | 12 |
+| `heroes` | 12 | 1 | 0 | 11 |
 | `kingdom` | 14 | 0 | 2 | 12 |
-| `maps` | 17 | 3 | 6 | 8 |
+| `maps` | 17 | 3 | 7 | 7 |
 | `monster` | 3 | 0 | 1 | 2 |
-| `resource` | 4 | 1 | 0 | 3 |
+| `resource` | 4 | 1 | 1 | 2 |
 | `spell` | 4 | 0 | 0 | 4 |
 | `system` | 3 | 0 | 2 | 1 |
-| `world` | 5 | 0 | 0 | 5 |
-| **合计** | **249** | **25** | **40** | **184** |
+| `world` | 5 | 0 | 1 | 4 |
+| **合计** | **249** | **26** | **43** | **180** |
+
+2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
+所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
+
+2026-11-15 夜：`monster.h` / `artifact.h` 的 id 枚举生成到 `MonsterType`（73 项）与 `ArtifactType`
+（105 项），`resource` 的 `artifact` 从「未转」转为「部分」（只有 id 枚举，类行为未转）。
+
+2026-11-15 深夜：`heroes/direction.h`+`direction.cpp` 全部转完（`Game/Maps/Direction`+`Directions`，
+同时把 `AdventureMap.FogDirection` 并进来，ADR-062），`maps.cpp` 的九个几何函数转完
+（`Game/Maps/MapGeometry`），`heroes` 行从 0/0/12 变成 1/0/11、合计 26/42/181。
+`maps.cpp` 本来就记在「部分」里，行数不变，只在部分清单里补明几何已齐。
+
+2026-11-16 凌晨：`maps_tiles.cpp` 的 `Tile` 第一片（`ObjectPart` + 对象层 + 地形位 + 道路位 +
+通行掩码 + `Init`）落地（ADR-063）。它本来就在「部分」里，行数与合计都不变，只更新部分清单；
+剩下的 `Tile` 成员是 `world` 的镜像。
+
+2026-11-16 凌晨：`Tile` 第二片（`getTileIndependentPassability`/`setInitialPassability`、`isStream`/`isShadow`
+与它们依赖的对象分类表，集中在 `Game/Maps/TileObjectTraits`，ADR-064）落地。同样记在「部分」里，
+行数与合计不变；现在只剩 `updatePassability` 与英雄占用等真正要 `world` 的部分。
+
+2026-11-16 凌晨：`world.cpp` 的骨架（`World` 的 `w()`/`h()`/瓦片表/`getTile`/`generateUninitializedMap`/
+`Reset()`/`ResetPathfinder()` 占位，ADR-065）落地，`world` 行从 0/0/5 变成 0/1/4，合计 26/43/180
+（总数仍是 249）。`world.h` 的其余容器与日期、事件、区域、静态分析随各自系统；`world_loadmap.cpp`
+与 `world_pathfinding.cpp` 仍未动。
+
+2026-11-16 凌晨：`Tile` 第三片（`updatePassability`、`updateObjectType`、`isAnyTallObjectOnTile`、
+`isDetachedObject`、`getIndexOfMainTile`）与 `World::updatePassabilities` 落地（ADR-066），并把
+`Mp2ObjectTypes.BaseActionType` 修正成参考的 `getBaseActionObjectType`（补 `isObjectCanBeAction`）。
+两个文件本来都在「部分」里，行数与合计不变；`maps_tiles.cpp` 现在只差英雄占用、船的、迷雾位与
+`isCoast`，`world.cpp` 只差英雄/城堡/王国/事件等容器与地图装载。
 
 ### `engine`（26）
 
@@ -165,36 +196,57 @@
 
 * ✅ `ground.cpp`→`MapGround`；`mp2.cpp`+`mp2_helper.cpp`→`Mp2Map`/`Mp2TileInfo`/`Mp2AddonInfo`/
   `Mp2ObjectData`
-* ◐ `maps.cpp`（只 `drawFog`→`MapFog`/`DrawFog` 与部分 `ClearFog`）；`maps_fileinfo.cpp`→
+* ◐ `maps.cpp`（几何部分全部已转：`Game/Maps/MapGeometry` 的 index ↔ point、`GetDirection`、
+  `GetDirectionIndex`、`getDirectionPoint`、`isValidDirection`、`isValidAbs(Index|Point)`、`getAroundIndexes`，
+  外加 `Game/Maps/Direction`+`Directions` 照 `direction.h/.cpp` 逐条移植；渲染侧只有
+  `drawFog`→`MapFog`/`DrawFog` 与部分 `ClearFog`）；`maps_fileinfo.cpp`→
   `Mp2FileInfo`/`MapCatalog`；`maps_objects.cpp`→`Mp2ObjectPreset`/`Mp2ObjectName`（对象表子集）；
-  `maps_tiles.cpp`（`Tile` 结构与雾位已转，`isCoast`/`updateFogDirection` 部分）；
+  `maps_tiles.cpp`（雾位 + `Tile` 的对象层/地形位/道路位/通行掩码/`Init`/独立通行计算/`isStream`/
+  `isShadow`/`updatePassability`/`updateObjectType`/`isAnyTallObjectOnTile`/`isDetachedObject`/
+  `getIndexOfMainTile` 已转，`isCoast`/`updateFogDirection` 部分；只剩英雄占用、船的、迷雾位）；
   `maps_tiles_helper.cpp`（`updateFogDirectionsInArea`、`updateTerrainTransitionOnTile` 已转）；
   `maps_tiles_render.cpp`（`drawByObjectIcnType`/`drawFog`/`drawMainObjectTiles` 已转）
-* ❌ `map_object_info.cpp`（`getMainObjectType`，拾取的前置）、`position.cpp`、`visit.cpp`、
+* ◐ `map_object_info.cpp`→`Game/Maps/MapObjectCatalog`：`ObjectInfo` / `ObjectPartInfo` /
+  `LayeredObjectPartInfo` / `ObjectGroup` 与 `getObjectsByGroup`、`getObjectPartByIcn`、
+  `getGroundLevelOccupiedTileOffset` 等查询已转；**参考的 20 个 `populate*()` 全部落地，21 个组无空表**
+  （roads 513、streams 13、landscape 3+40+69+12+147+8+14、adventure 25+56+23+13+96+13+71、
+  kingdom 42+14、monsters 71、extras 7），其中 17 组由 `GenerateMapObjectTables.ps1` 逐行生成，
+  kingdom towns / monsters / artifacts 手写（lambda；id 现用 `MonsterType` / `ArtifactType` 枚举，
+  见 `PROGRESS.md`）；
+  `Tile::getMainObjectType` 依赖 `Tile` 的缓存字段，随 `world` 一起搬
+* ❌ `position.cpp`、`visit.cpp`、
   `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
   `map_random_generator.cpp`、`map_random_generator_helper.cpp`、`map_random_generator_info.cpp`
 
 ### 其余目录
 
+* `world`（5）：◐ `world.cpp` 搬了骨架与通行重算——`World` 的 `w()`/`h()`、瓦片表与两个 `getTile`、
+  `generateUninitializedMap`、`Reset`、`ResetPathfinder` 占位（ADR-065）、`updatePassabilities`（ADR-066）；
+  英雄/城堡/王国/俘获对象/地图对象这些容器、日期与事件、区域图、静态分析都未转；
+  ❌ `world_loadmap`、`world_pathfinding`、`world_object_uid`、`world_regions`
 * `ai`（9）、`army`（4）、`battle`（18）、`campaign`（3）、`castle`（11）、`heroes`（12）、`spell`（4）、
-  `world`（5）、`h2d`（1）、`audio`（1）：**全部未转**
+  `h2d`（1）、`audio`（1）：**全部未转**
 * `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`；❌ `experience`、
   `kingdom_overview`、`kingdom`、`luck`、`morale`、`payment`、`profit`、`puzzle`、`resource_trading`、
   `speed`、`view_world`、`week`
-* `monster`（3）：◐ `monster.cpp`（ID 与 `MINIMON` 帧号）；❌ `monster_anim`、`monster_info`
-* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；❌ `artifact`、`artifact_info`、
+* `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
+  `monster.cpp` 只有 ID 与 `MINIMON` 帧号；❌ `monster_anim`、`monster_info`
+* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.h` 的 id 枚举已转
+  （`Game.Resources.ArtifactType`，105 项含 `ArtifactCount`），类行为未转；❌ `artifact_info`、
   `artifact_ultimate`
 * `system`（3）：◐ `players.cpp`→`PlayerColor`/`HumanPlayers`、`settings.cpp`（只有语言与分辨率种子）；
   ❌ `bitmodes`
 
 ### 还差的主干（按依赖顺序）
 
-1. `maps/map_object_info.cpp` —— 拾取、信息框与 `ActionToObject` 的总闸；现在 `Mp2TileInfo.ObjectType`
-   直接用文件里的 `mapObjectType`。
+1. `maps/map_object_info.cpp` —— 拾取、信息框与 `ActionToObject` 的总闸。类型、全部 21 组表与它们依赖的
+   `MonsterType` / `ArtifactType` 两个 id 枚举都已落地（表大小与枚举锚点分别钉在 `MapObjectCatalogTests`、
+   `IdEnumTests`）。`Tile::getMainObjectType` 的缓存字段也已随第 3 条落地（ADR-066）。
 2. `heroes/heroes_move.cpp` + `world/world_pathfinding.cpp` + `maps/visit.cpp` —— 英雄移动与路径预览，
    `MapFog` 的增量更新挂在这里。
 3. `world/world.cpp`、`world_loadmap.cpp`、`world_object_uid.cpp` —— 可变世界状态，`castle`/`kingdom`/
-   `army` 都依赖它。
+   `army` 都依赖它。`World` 的骨架与 `updatePassabilities` 已立（ADR-065/066），`Tile` 的邻居通行也已
+   接上；下一步是 `world_loadmap` 的对象表（让整条链吃上真数据）与 `Tile.setHero`/`getHero`。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
 5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
    `audio_manager.cpp`（音乐播放，现在只有元数据）。

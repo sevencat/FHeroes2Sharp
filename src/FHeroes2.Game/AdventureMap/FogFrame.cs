@@ -1,3 +1,5 @@
+using FHeroes2.Game.Maps;
+
 namespace FHeroes2.Game.AdventureMap;
 
 /// <summary>
@@ -29,24 +31,24 @@ public static class FogFrames
     /// <summary>Number of images in <c>CLOF32.TIL</c>, the four whole tiles of the fog.</summary>
     public const int FullTileCount = 4;
 
-    private const FogDirection Top = FogDirection.Top;
-    private const FogDirection TopRight = FogDirection.TopRight;
-    private const FogDirection Right = FogDirection.Right;
-    private const FogDirection BottomRight = FogDirection.BottomRight;
-    private const FogDirection Bottom = FogDirection.Bottom;
-    private const FogDirection BottomLeft = FogDirection.BottomLeft;
-    private const FogDirection Left = FogDirection.Left;
-    private const FogDirection TopLeft = FogDirection.TopLeft;
-    private const FogDirection Straight = Top | Bottom | Left | Right;
+    private const Direction Top = Direction.Top;
+    private const Direction TopRight = Direction.TopRight;
+    private const Direction Right = Direction.Right;
+    private const Direction BottomRight = Direction.BottomRight;
+    private const Direction Bottom = Direction.Bottom;
+    private const Direction BottomLeft = Direction.BottomLeft;
+    private const Direction Left = Direction.Left;
+    private const Direction TopLeft = Direction.TopLeft;
+    private const Direction Straight = Top | Bottom | Left | Right;
 
     /// <summary>
     /// Resolves the fog piece of a tile. <paramref name="column"/> plus <paramref name="row"/> picks
     /// the whole tile variant and <paramref name="row"/> times <paramref name="width"/> plus
     /// <paramref name="column"/> is the tile index the two row pieces are split by.
     /// </summary>
-    public static FogFrame Resolve(FogDirection direction, int column, int row, int width)
+    public static FogFrame Resolve(Direction direction, int column, int row, int width)
     {
-        if (direction == FogDirections.All)
+        if (direction == Directions.All)
         {
             return new FogFrame(true, (column + row) % FullTileCount, false);
         }
@@ -77,72 +79,72 @@ public static class FogFrames
         {
             index = 8;
         }
-        else if (Contains(direction, FogDirections.CenterColumn) && (direction & (Left | Right)) == 0)
+        else if (Contains(direction, Directions.CenterColumn) && (direction & (Left | Right)) == 0)
         {
             index = 9;
         }
-        else if (Contains(direction, FogDirections.CenterRow) && (direction & (Top | Bottom)) == 0)
+        else if (Contains(direction, Directions.CenterRow) && (direction & (Top | Bottom)) == 0)
         {
             index = 29;
         }
-        else if (direction == (FogDirections.All & ~TopRight))
+        else if (direction == (Directions.All & ~TopRight))
         {
             index = 15;
         }
-        else if (direction == (FogDirections.All & ~TopLeft))
+        else if (direction == (Directions.All & ~TopLeft))
         {
             index = 15;
             flipped = true;
         }
-        else if (direction == (FogDirections.All & ~BottomRight))
+        else if (direction == (Directions.All & ~BottomRight))
         {
             index = 22;
         }
-        else if (direction == (FogDirections.All & ~BottomLeft))
+        else if (direction == (Directions.All & ~BottomLeft))
         {
             index = 22;
             flipped = true;
         }
-        else if (direction == (FogDirections.All & ~(TopRight | BottomRight)))
+        else if (direction == (Directions.All & ~(TopRight | BottomRight)))
         {
             index = 16;
         }
-        else if (direction == (FogDirections.All & ~(TopLeft | BottomLeft)))
+        else if (direction == (Directions.All & ~(TopLeft | BottomLeft)))
         {
             index = 16;
             flipped = true;
         }
-        else if (direction == (FogDirections.All & ~(TopRight | BottomLeft)))
+        else if (direction == (Directions.All & ~(TopRight | BottomLeft)))
         {
             index = 17;
         }
-        else if (direction == (FogDirections.All & ~(TopLeft | BottomRight)))
+        else if (direction == (Directions.All & ~(TopLeft | BottomRight)))
         {
             index = 17;
             flipped = true;
         }
-        else if (direction == (FogDirections.All & ~(TopLeft | TopRight)))
+        else if (direction == (Directions.All & ~(TopLeft | TopRight)))
         {
             index = 18;
         }
-        else if (direction == (FogDirections.All & ~(BottomLeft | BottomRight)))
+        else if (direction == (Directions.All & ~(BottomLeft | BottomRight)))
         {
             index = 23;
         }
-        else if (direction == (FogDirections.All & ~FogDirections.TopRightCorner))
+        else if (direction == (Directions.All & ~Directions.TopRightCorner))
         {
             index = 13;
         }
-        else if (direction == (FogDirections.All & ~FogDirections.TopLeftCorner))
+        else if (direction == (Directions.All & ~Directions.TopLeftCorner))
         {
             index = 13;
             flipped = true;
         }
-        else if (direction == (FogDirections.All & ~FogDirections.BottomRightCorner))
+        else if (direction == (Directions.All & ~Directions.BottomRightCorner))
         {
             index = 14;
         }
-        else if (direction == (FogDirections.All & ~FogDirections.BottomLeftCorner))
+        else if (direction == (Directions.All & ~Directions.BottomLeftCorner))
         {
             index = 14;
             flipped = true;
@@ -165,72 +167,72 @@ public static class FogFrames
             index = 12;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | Top | TopLeft)
+        else if (Contains(direction, Directions.CenterRow | Bottom | Top | TopLeft)
                  && (direction & (BottomLeft | BottomRight | TopRight)) == 0)
         {
             index = 19;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | Top | TopRight)
+        else if (Contains(direction, Directions.CenterRow | Bottom | Top | TopRight)
                  && (direction & (BottomLeft | BottomRight | TopLeft)) == 0)
         {
             index = 19;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | Top | BottomLeft)
+        else if (Contains(direction, Directions.CenterRow | Bottom | Top | BottomLeft)
                  && (direction & (TopRight | BottomRight | TopLeft)) == 0)
         {
             index = 20;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | Top | BottomRight)
+        else if (Contains(direction, Directions.CenterRow | Bottom | Top | BottomRight)
                  && (direction & (TopRight | BottomLeft | TopLeft)) == 0)
         {
             index = 20;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | Top)
+        else if (Contains(direction, Directions.CenterRow | Bottom | Top)
                  && (direction & (TopRight | BottomRight | BottomLeft | TopLeft)) == 0)
         {
             index = 21;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | BottomLeft)
+        else if (Contains(direction, Directions.CenterRow | Bottom | BottomLeft)
                  && (direction & (Top | BottomRight)) == 0)
         {
             index = 24;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom | BottomRight)
+        else if (Contains(direction, Directions.CenterRow | Bottom | BottomRight)
                  && (direction & (Top | BottomLeft)) == 0)
         {
             index = 24;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | Left | TopLeft)
+        else if (Contains(direction, Directions.CenterColumn | Left | TopLeft)
                  && (direction & (Right | BottomLeft)) == 0)
         {
             index = 25;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | Right | TopRight)
+        else if (Contains(direction, Directions.CenterColumn | Right | TopRight)
                  && (direction & (Left | BottomRight)) == 0)
         {
             index = 25;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | BottomLeft | Left)
+        else if (Contains(direction, Directions.CenterColumn | BottomLeft | Left)
                  && (direction & (Right | TopLeft)) == 0)
         {
             index = 26;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | BottomRight | Right)
+        else if (Contains(direction, Directions.CenterColumn | BottomRight | Right)
                  && (direction & (Left | TopRight)) == 0)
         {
             index = 26;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | TopLeft | Top)
+        else if (Contains(direction, Directions.CenterRow | TopLeft | Top)
                  && (direction & (Bottom | TopRight)) == 0)
         {
             index = 30;
         }
-        else if (Contains(direction, FogDirections.CenterRow | TopRight | Top)
+        else if (Contains(direction, Directions.CenterRow | TopRight | Top)
                  && (direction & (Bottom | TopLeft)) == 0)
         {
             index = 30;
@@ -254,40 +256,40 @@ public static class FogFrames
             index = 28;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Top)
+        else if (Contains(direction, Directions.CenterRow | Top)
                  && (direction & (Bottom | TopLeft | TopRight)) == 0)
         {
             index = 31;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | Right)
+        else if (Contains(direction, Directions.CenterColumn | Right)
                  && (direction & (Left | TopRight | BottomRight)) == 0)
         {
             index = 32;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | Left)
+        else if (Contains(direction, Directions.CenterColumn | Left)
                  && (direction & (Right | TopLeft | BottomLeft)) == 0)
         {
             index = 32;
             flipped = true;
         }
-        else if (Contains(direction, FogDirections.CenterRow | Bottom)
+        else if (Contains(direction, Directions.CenterRow | Bottom)
                  && (direction & (Top | BottomLeft | BottomRight)) == 0)
         {
             index = 33;
         }
-        else if (Contains(direction, FogDirections.CenterRow | FogDirections.BottomRow) && (direction & Top) == 0)
+        else if (Contains(direction, Directions.CenterRow | Directions.BottomRow) && (direction & Top) == 0)
         {
             index = evenOdd != 0 ? 0 : 1;
         }
-        else if (Contains(direction, FogDirections.CenterRow | FogDirections.TopRow) && (direction & Bottom) == 0)
+        else if (Contains(direction, Directions.CenterRow | Directions.TopRow) && (direction & Bottom) == 0)
         {
             index = evenOdd != 0 ? 4 : 5;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | FogDirections.LeftColumn) && (direction & Right) == 0)
+        else if (Contains(direction, Directions.CenterColumn | Directions.LeftColumn) && (direction & Right) == 0)
         {
             index = evenOdd != 0 ? 2 : 3;
         }
-        else if (Contains(direction, FogDirections.CenterColumn | FogDirections.RightColumn) && (direction & Left) == 0)
+        else if (Contains(direction, Directions.CenterColumn | Directions.RightColumn) && (direction & Left) == 0)
         {
             index = evenOdd != 0 ? 2 : 3;
             flipped = true;
@@ -301,5 +303,5 @@ public static class FogFrames
         return new FogFrame(false, index, flipped);
     }
 
-    private static bool Contains(FogDirection value, FogDirection mask) => (value & mask) == mask;
+    private static bool Contains(Direction value, Direction mask) => (value & mask) == mask;
 }

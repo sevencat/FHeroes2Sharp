@@ -1,4 +1,5 @@
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Tests;
 
@@ -13,7 +14,7 @@ public sealed class FogFramesTests
     [InlineData(3, 8, 3)]
     public void FullFog_UsesTheCheckerboardOfTheFourTiles(int column, int row, int variant)
     {
-        FogFrame frame = FogFrames.Resolve(FogDirections.All, column, row, 12);
+        FogFrame frame = FogFrames.Resolve(Directions.All, column, row, 12);
 
         Assert.True(frame.IsFullTile);
         Assert.Equal((column + row) % FogFrames.FullTileCount, variant);
@@ -26,7 +27,7 @@ public sealed class FogFramesTests
     {
         // The renderer never asks for a visible tile, so the mask without the centre bit only has to
         // resolve to one of the thirty-four pieces.
-        FogFrame frame = FogFrames.Resolve(FogDirection.Unknown, 2, 3, 10);
+        FogFrame frame = FogFrames.Resolve(Direction.Unknown, 2, 3, 10);
 
         Assert.False(frame.IsFullTile);
         Assert.Equal(10, frame.Index);
@@ -37,7 +38,7 @@ public sealed class FogFramesTests
     {
         // A mask without the centre bit but with both horizontal neighbours is not one of the
         // thirty-four pieces; the reference logs "invalid direction for fog" and paints a whole tile.
-        FogFrame frame = FogFrames.Resolve(FogDirection.Left | FogDirection.Right, 2, 3, 10);
+        FogFrame frame = FogFrames.Resolve(Direction.Left | Direction.Right, 2, 3, 10);
 
         Assert.True(frame.IsFullTile);
         Assert.Equal(1, frame.Index);
@@ -46,7 +47,7 @@ public sealed class FogFramesTests
     [Fact]
     public void AnIsolatedHole_HasItsOwnPiece()
     {
-        FogFrame frame = FogFrames.Resolve(FogDirection.Center, 4, 4, 10);
+        FogFrame frame = FogFrames.Resolve(Direction.Center, 4, 4, 10);
 
         Assert.False(frame.IsFullTile);
         Assert.Equal(10, frame.Index);
@@ -54,12 +55,12 @@ public sealed class FogFramesTests
     }
 
     [Theory]
-    [InlineData(FogDirection.Top, 6)]
-    [InlineData(FogDirection.Right, 7)]
-    [InlineData(FogDirection.Bottom, 8)]
-    public void ASingleStraightNeighbour_HasItsOwnPiece(FogDirection straight, int index)
+    [InlineData(Direction.Top, 6)]
+    [InlineData(Direction.Right, 7)]
+    [InlineData(Direction.Bottom, 8)]
+    public void ASingleStraightNeighbour_HasItsOwnPiece(Direction straight, int index)
     {
-        FogFrame frame = FogFrames.Resolve(FogDirection.Center | straight, 4, 4, 10);
+        FogFrame frame = FogFrames.Resolve(Direction.Center | straight, 4, 4, 10);
 
         Assert.False(frame.IsFullTile);
         Assert.Equal(index, frame.Index);
@@ -69,8 +70,8 @@ public sealed class FogFramesTests
     [Fact]
     public void TheLeftEdge_IsTheMirroredRightEdge()
     {
-        FogFrame right = FogFrames.Resolve(FogDirection.Center | FogDirection.Right, 4, 4, 10);
-        FogFrame left = FogFrames.Resolve(FogDirection.Center | FogDirection.Left, 4, 4, 10);
+        FogFrame right = FogFrames.Resolve(Direction.Center | Direction.Right, 4, 4, 10);
+        FogFrame left = FogFrames.Resolve(Direction.Center | Direction.Left, 4, 4, 10);
 
         Assert.Equal(7, right.Index);
         Assert.False(right.Flipped);
@@ -82,12 +83,12 @@ public sealed class FogFramesTests
     public void AStripWithoutTheSideNeighbours_UsesTheColumnOrRowPiece()
     {
         FogFrame column = FogFrames.Resolve(
-            FogDirection.Center | FogDirection.Top | FogDirection.Bottom,
+            Direction.Center | Direction.Top | Direction.Bottom,
             4,
             4,
             10);
         FogFrame row = FogFrames.Resolve(
-            FogDirection.Center | FogDirection.Left | FogDirection.Right,
+            Direction.Center | Direction.Left | Direction.Right,
             4,
             4,
             10);
@@ -103,7 +104,7 @@ public sealed class FogFramesTests
     [InlineData(true, 15)]
     public void OneMissingDiagonal_UsesTheFifteenPiece(bool mirror, int index)
     {
-        FogDirection direction = FogDirections.All & ~(mirror ? FogDirection.TopLeft : FogDirection.TopRight);
+        Direction direction = Directions.All & ~(mirror ? Direction.TopLeft : Direction.TopRight);
 
         FogFrame frame = FogFrames.Resolve(direction, 4, 4, 10);
 
@@ -116,7 +117,7 @@ public sealed class FogFramesTests
     [InlineData(true, 22)]
     public void OneMissingDiagonalOfTheBottomRow_UsesTheTwentyTwoPiece(bool mirror, int index)
     {
-        FogDirection direction = FogDirections.All & ~(mirror ? FogDirection.BottomLeft : FogDirection.BottomRight);
+        Direction direction = Directions.All & ~(mirror ? Direction.BottomLeft : Direction.BottomRight);
 
         FogFrame frame = FogFrames.Resolve(direction, 4, 4, 10);
 
@@ -131,9 +132,9 @@ public sealed class FogFramesTests
     {
         // The three bits of a corner are discovered together, so the mask is the whole fog minus one
         // of the four corner sets rather than minus a single diagonal.
-        FogDirection corner = mirror ? FogDirections.TopLeftCorner : FogDirections.TopRightCorner;
+        Direction corner = mirror ? Directions.TopLeftCorner : Directions.TopRightCorner;
 
-        FogFrame frame = FogFrames.Resolve(FogDirections.All & ~corner, 4, 4, 10);
+        FogFrame frame = FogFrames.Resolve(Directions.All & ~corner, 4, 4, 10);
 
         Assert.Equal(index, frame.Index);
         Assert.Equal(mirror, frame.Flipped);
@@ -144,9 +145,9 @@ public sealed class FogFramesTests
     [InlineData(true, 14)]
     public void OneDiscoveredCornerOfTheBottomRow_TakesThePieceOfThatCorner(bool mirror, int index)
     {
-        FogDirection corner = mirror ? FogDirections.BottomLeftCorner : FogDirections.BottomRightCorner;
+        Direction corner = mirror ? Directions.BottomLeftCorner : Directions.BottomRightCorner;
 
-        FogFrame frame = FogFrames.Resolve(FogDirections.All & ~corner, 4, 4, 10);
+        FogFrame frame = FogFrames.Resolve(Directions.All & ~corner, 4, 4, 10);
 
         Assert.Equal(index, frame.Index);
         Assert.Equal(mirror, frame.Flipped);
@@ -157,7 +158,7 @@ public sealed class FogFramesTests
     [InlineData(1, 0, 0)]
     public void TheBottomRowStrip_IsSplitByTheParityOfTheTileIndex(int column, int row, int index)
     {
-        FogDirection direction = FogDirections.CenterRow | FogDirections.BottomRow;
+        Direction direction = Directions.CenterRow | Directions.BottomRow;
 
         Assert.Equal(index, FogFrames.Resolve(direction, column, row, 10).Index);
     }
@@ -167,7 +168,7 @@ public sealed class FogFramesTests
     [InlineData(1, 0, 4)]
     public void TheTopRowStrip_IsSplitByTheParityOfTheTileIndex(int column, int row, int index)
     {
-        FogDirection direction = FogDirections.CenterRow | FogDirections.TopRow;
+        Direction direction = Directions.CenterRow | Directions.TopRow;
 
         Assert.Equal(index, FogFrames.Resolve(direction, column, row, 10).Index);
     }
@@ -177,7 +178,7 @@ public sealed class FogFramesTests
     [InlineData(1, 0, 2)]
     public void TheLeftColumnStrip_IsSplitByTheParityOfTheTileIndex(int column, int row, int index)
     {
-        FogDirection direction = FogDirections.CenterColumn | FogDirections.LeftColumn;
+        Direction direction = Directions.CenterColumn | Directions.LeftColumn;
 
         Assert.Equal(index, FogFrames.Resolve(direction, column, row, 10).Index);
     }
@@ -187,7 +188,7 @@ public sealed class FogFramesTests
     [InlineData(1, 0, 2)]
     public void TheRightColumnStrip_IsTheMirroredLeftColumnStrip(int column, int row, int index)
     {
-        FogDirection direction = FogDirections.CenterColumn | FogDirections.RightColumn;
+        Direction direction = Directions.CenterColumn | Directions.RightColumn;
 
         FogFrame frame = FogFrames.Resolve(direction, column, row, 10);
 
