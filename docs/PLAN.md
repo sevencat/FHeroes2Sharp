@@ -659,7 +659,8 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   每日回蓝（含神秘术加成）与日/周/战后三个清理、运气/士气按访问类型集合重算（`Hero.Visit`、`Hero.Morale`、
   `GameStatic`，ADR-122）；
   `skill.cpp` 也记「部分」：14 项枚举、数值表、种族初始技能、`SecSkills`、外交折扣已转（ADR-087~089），
-  只差 `FindSkillsForLevelUp`（要随机种子）与技能名/描述文案；`route.cpp` 也记「部分」：
+  技能名（`SecondarySkills.GetName`，英文原文）与两套图标索引（`GetIndexSprite1`/`GetIndexSprite2`，
+  ADR-137）也已转，只剩描述文案；`route.cpp` 也记「部分」：
   `Route::Step`→`RouteStep`（ADR-093）与 `Route::Path`→`HeroPath` 的队列语义
   （`FrontIndex`/`FrontFrom`/`FrontDirection`/`FrontPenalty`/`NextStepDirection`、`Truncate`/
   `PopFront`/`Show`/`Hide`/`IsValidForMovement`/`IsValidForTeleportation`/`GetAllowedSteps`，

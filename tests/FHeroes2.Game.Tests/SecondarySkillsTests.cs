@@ -100,4 +100,35 @@ public sealed class SecondarySkillsTests
     {
         Assert.Equal(expected, SecondarySkills.GetDiplomacySurrenderCostDiscount(level));
     }
+
+    [Theory]
+    [InlineData(SecondarySkill.Pathfinding, "Pathfinding")]
+    [InlineData(SecondarySkill.EagleEye, "Eagle Eye")]
+    [InlineData(SecondarySkill.Estates, "Estates")]
+    public void GetName_ReturnsTheReferenceText(SecondarySkill skill, string name)
+    {
+        Assert.Equal(name, SecondarySkills.GetName(skill));
+    }
+
+    [Fact]
+    public void GetName_OfUnknownIsEmpty()
+    {
+        Assert.Equal(string.Empty, SecondarySkills.GetName(SecondarySkill.Unknown));
+    }
+
+    [Fact]
+    public void GetIndexSprite1_IsTheIdItself()
+    {
+        Assert.Equal(0, SecondarySkills.GetIndexSprite1(SecondarySkill.Unknown));
+        Assert.Equal(1, SecondarySkills.GetIndexSprite1(SecondarySkill.Pathfinding));
+        Assert.Equal(14, SecondarySkills.GetIndexSprite1(SecondarySkill.Estates));
+    }
+
+    [Fact]
+    public void GetIndexSprite2_IsOneLowerAndFFForUnknown()
+    {
+        Assert.Equal(0xFF, SecondarySkills.GetIndexSprite2(SecondarySkill.Unknown));
+        Assert.Equal(0, SecondarySkills.GetIndexSprite2(SecondarySkill.Pathfinding));
+        Assert.Equal(13, SecondarySkills.GetIndexSprite2(SecondarySkill.Estates));
+    }
 }

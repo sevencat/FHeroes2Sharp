@@ -4867,3 +4867,10 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 让「每行恰好缺一格」这件事看得见；`Direction` 是位标志，因此另有一个 `DirectionIndex()` 把八个方向折成
 0..7。`HeroPathTests` 增 21 条（五块起点 + 两个越界代价、九对方向、五对无箭头），Game 测试
 1772 → **1793**，全解决方案 **2510** 条全绿。`Route::Path::String()`、行走音效与淡入淡出仍未搬。
+
+### 追加：技能名与两套图标索引 ✅
+
+`skill.cpp:407-455` 的三支落地到 `SecondarySkills`：`GetName`（十四项英文原文，无翻译层时即参考行为）、
+`GetIndexSprite1`（id 本身，`ICN::SECSKILL`）与 `GetIndexSprite2`（id − 1，`EDITOR` 用，非法值 `0xFF`）。
+`SecondarySkillsTests` 增 6 条，Game 测试 1793 → **1799**，全解决方案 **2516** 条全绿。
+`skill.cpp` 只剩描述文案与 `FindSkillsForLevelUp` 之外的杂项。

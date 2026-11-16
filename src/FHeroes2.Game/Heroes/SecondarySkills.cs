@@ -31,6 +31,63 @@ public static class SecondarySkills
     public const int Count = 14;
 
     /// <summary>
+    /// The English name of a skill, <c>Skill::Secondary::String()</c> (<c>skill.cpp:417-455</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference returns <c>_( "..." )</c>, the translation-table lookup. The port has no translation
+    /// layer, so the original English text is returned — which is what the reference does without a
+    /// translation loaded, and what a screen shows. An unknown skill asserts in the reference and answers an
+    /// empty string here, because a name is drawn and an assertion would take the whole screen down.
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <returns>The name, or an empty string for <see cref="SecondarySkill.Unknown"/>.</returns>
+    public static string GetName(SecondarySkill skill) => skill switch
+    {
+        SecondarySkill.Pathfinding => "Pathfinding",
+        SecondarySkill.Archery => "Archery",
+        SecondarySkill.Logistics => "Logistics",
+        SecondarySkill.Scouting => "Scouting",
+        SecondarySkill.Diplomacy => "Diplomacy",
+        SecondarySkill.Navigation => "Navigation",
+        SecondarySkill.Leadership => "Leadership",
+        SecondarySkill.Wisdom => "Wisdom",
+        SecondarySkill.Mysticism => "Mysticism",
+        SecondarySkill.Luck => "Luck",
+        SecondarySkill.Ballistics => "Ballistics",
+        SecondarySkill.EagleEye => "Eagle Eye",
+        SecondarySkill.Necromancy => "Necromancy",
+        SecondarySkill.Estates => "Estates",
+        _ => string.Empty
+    };
+
+    /// <summary>
+    /// The sprite of a skill in the skill list, <c>Skill::Secondary::GetIndexSprite1()</c>
+    /// (<c>skill.cpp:407-410</c>).
+    /// </summary>
+    /// <remarks>
+    /// The id <b>is</b> the sprite index inside <c>ICN::SECSKILL</c>, so a valid skill answers itself and
+    /// anything else answers zero.
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <returns>The sprite index, zero for an invalid skill.</returns>
+    public static int GetIndexSprite1(SecondarySkill skill) =>
+        skill > SecondarySkill.Unknown && skill <= SecondarySkill.Estates ? (int)skill : 0;
+
+    /// <summary>
+    /// The same sprite for <c>ICN::EDITOR</c>, <c>Skill::Secondary::GetIndexSprite2()</c>
+    /// (<c>skill.cpp:412-415</c>).
+    /// </summary>
+    /// <remarks>
+    /// The editor's list has no placeholder for "no skill", so the index is one lower and an invalid skill is
+    /// <c>0xFF</c> — the reference's way of saying "draw nothing", kept as a number because the editor reads
+    /// it as one.
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <returns>The sprite index, <c>0xFF</c> for an invalid skill.</returns>
+    public static int GetIndexSprite2(SecondarySkill skill) =>
+        skill > SecondarySkill.Unknown && skill <= SecondarySkill.Estates ? (int)skill - 1 : 0xFF;
+
+    /// <summary>
     /// The fourteen skills in id order, i.e. <c>Skill::allSecondarySkills</c>. Used wherever the reference
     /// walks "every skill" — the level-up blacklist, the weight tables, the debug dump.
     /// </summary>
