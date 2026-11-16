@@ -5253,3 +5253,56 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 `getTotalArtifactEffectValue( bonus, description )` 的 `description` 重载（都是文字），以及 `ArtifactsBar`
 （1104-1381 行，装备栏的点击/拖放界面）。`artifact_info.cpp` 的两支描述文案同理；`SetSpell` 的 `ext` 字段随
 卷轴界面一起补。序列化（`operator<<`/`>>`）与 `GetPuzzleMapSurface` 按惯例留在 serialize/UI 批次。
+
+## ADR-143：`spell` 收尾——谓词/定价进 `Spell`，数值公式进 `SpellInfo`，页状态进 `SpellBook` ✅
+
+**背景**：`spell` 四个文件里 `spell_storage.cpp` 早已转完（ADR-102），另外三个都只搬了一半：`spell.cpp` 有数值表、
+等级与七条特性谓词，但目标/元素/守卫那批谓词、`spellPoints(hero)` 的四类神器减耗、`SuitableForSpellBook` 与
+随机查询都没落；`spell_info.cpp`（426 行）整份没动；`spell_book.cpp` 也没动。三个文件是同一个调用链——法师公会
+要 `SuitableForSpellBook`，法术书要过滤与翻页，施法要减耗后的费用——所以一起做。
+
+**决定**：
+
+1. **不造 `Spell` 值类型，也不搬运 `Hero`**：端口沿用既有形状——`SpellType`（id）+ `SpellTable`（73 行）+ 只读
+   包装 `Spell`。参考里 `spell.cpp` 的成员方法全部落在 `Spell` 上，唯独 `spellPoints( const HeroBase * )` 换成
+   `SpellPoints( ArtifactBag? )`：它真正需要的只是英雄身上的乘法减免，传空袋就等于参考里的 `hero == nullptr`。
+   这样 `Spells/` 目录不认识 `Hero`/`HeroBase`，层依赖不倒退。
+2. **减耗逐件乘、最低 1 点**：`GetTotalMultipliedPercent` 返回的是列表（ADR-142），照参考逐件 `cost = cost*(100-p)/100`
+   而不是求和，四次整数截断保留原顺序；最后钳到 1（参考的 `std::max<u32>( 1, ... )`）。四种减免类型（祝福/诅咒、
+   四种召唤、四种精神法术）各映射到哪个 `ArtifactBonusType` 与参考的 switch 一致。
+3. **`SuitableForSpellBook` 修掉旧的错误排除**：上一版手写排除了 `ViewMines`（怕它进公会）。参考只按
+   `Level() >= 1` 过滤：`ViewMines`/`ViewResources` 都是一级法术、本来就该出现；占位符、`Petrify` 与 `None` 的等级
+   是 0，自动出局。`exclude` 参数对应参考的 `spellToExclude`（巫术/法师塔的抽签用）。非法等级（0、>5、<-1）返回空表，
+   照参考的 `assert` + 空表。
+4. **随机抽法术用端口自己的 `Rand`**：参考在 `Rand::Get( 0, count-1 )` 上按等级均匀抽，端口 `RandomSpell` 同样在
+   `SuitableForSpellBook( level )` 的结果上均匀抽；空表抛 `ArgumentOutOfRangeException`（参考的 `assert` 换成语义
+   明确的异常，因为它会被法师公会每层调用一次，静默返回 `None` 更容易掩盖表错误）。
+5. **`spell_info.cpp` 的数值公式只用「法术点 + 神器袋」两参数**：六条公式（伤害、召唤数量、治疗量、复活量、守卫
+   数量、催眠 HP）读的是法术的 `extraValue` 与三/四类乘法百分比，`ArtifactBag?` 足够；地图上的四条查询（最近城堡、
+   召唤船落点、可召唤船、英雄是否近水）收 `World`/`Hero`，因为参考用的就是它们。`getSpellDescription` 是文案拼装
+   （连英雄名字、最近城的名字都要），按惯例不转，留在 UI 批次。
+6. **`MapGeometry?` 走模式匹配**：`world.Geometry` 在空世界（`new World()` 还没装图）是 `null`，参考在那种状态下
+   不可能被调用，端口选择返回 `-1`/`false` 而不是抛异常——这四支都是「问一句现在能不能放船」，没有世界就等于不能。
+7. **召唤船查 `ActionBoat` 而不是 `Boat`**：参考的 `MP2::OBJ_BOAT` 带动作位（`mp2.h:315`），而 `GetObjectPositions`
+   在 `ignoreHeroes = false` 时比的是**缓存**的类型，`Tile.SetBoat` 缓存的正是 `ActionBoat`。测试第一次跑出 `-1` 就是
+   这一处：查非动作值永远空表。这条抄错的枚举值已改并留注释。
+8. **保留参考的两个怪癖**：`getSummonableBoat` 返回的是「距离 > 1 的第一条船」而不是最近的船（`GetObjectPositions`
+   已按距离排过，所以通常体现不出来，但它是参考的写法）；原版地图上 AI（`isControlAI` 且非 `isAiAutoControlMode`）
+   不能召唤中立船。
+9. **`SpellBook` 只搬规则与页状态**：参考里英雄的法术书**就是** `SpellBook`（继承 `SpellStorage`）。端口把英雄的
+   存储留作 `SpellStorage`，`SpellBook` 只管「当前标签、首法术下标、四个翻页动作、`Open` 的起始状态块」，并且
+   `SetFilter` 是**静态**方法——返回一份排好序的列表，不动英雄的书。理由：玩家上次看到第几页是 UI 状态，没有规则读它；
+   而 `SetFilter` 每次切标签都要重建列表，做成实例方法就必须先给 `SpellBook` 塞一份书。
+10. **卷轴暂时加不进法术书**：`SetFilter` 照参考「先复制书、再追加神器上的卷轴」，但卷轴还不带具体法术（ADR-142），
+    所以这一步现在贡献为零；补 `ext` 的那天这一支不用改。
+
+**后果**：新增 `Game/Spells/SpellInfo.cs`、`Game/Spells/SpellBook.cs`；`Spell.cs` 追加十五条谓词、`SpellPoints`、
+`DimensionDoorDistance`、`TotalSpellsPerLevel`、`RandomSpell`，并修正 `SuitableForSpellBook`。测试 27 条新增：
+`SpellTests` 追加 10（治疗量、目标谓词、元素/守卫、四类减耗与最低 1 点、公会法术表 12/11/16/16/10 共 65 条、
+`View` 法术可学、排除集、随机等级、传送门 14 格）、`SpellInfoTests` 8、`SpellBookTests` 9。Game 2005 → **2022**，
+全解决方案 2745 → **2772** 全绿，`-warnaserror` 0 警告。覆盖率：`spell` 行 1/1/2 → **1/3/0**，合计
+**41/61/147** → **41/63/145**。
+
+**遗留**：`spell.cpp` 仍记 ◐——73 个法术名与描述文案（参考走 `_()`，端口没有翻译层）、`operator<<`/`>>`；
+`spell_info.cpp` 仍记 ◐——`getSpellDescription` 的文案拼装；`spell_book.cpp` 仍记 ◐——`SpellBook::Open` 的绘制与
+输入循环（同一批的 `ArtifactsBar` 也在等 UI 批次）。

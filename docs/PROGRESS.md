@@ -5047,3 +5047,39 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 �
 **遗留**：`artifact.cpp` 仍记 ◐——`Artifact::GetName`/描述文案、`String()` 与 `description` 重载（文字），
 `ArtifactsBar`（装备栏界面）；`artifact_info.cpp` 的两支描述文案同理；`SetSpell` 的 `ext` 随卷轴界面补。
 序列化与 `GetPuzzleMapSurface` 留在 serialize/UI 批次。
+
+### 追加：`spell` 收尾（2026-11-17）
+
+`src/fheroes2/spell/` 剩下的三块一起落地（ADR-143）：`spell.cpp` 的谓词/定价/随机查询、整份
+`spell_info.cpp` 的公式与地图查询、`spell_book.cpp` 的过滤与页状态。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Spells/Spell.cs`（追加） | `spell.cpp:562-776`、`spellPoints`、`SuitableForSpellBook` | 十五条谓词（治疗、亡灵/存活、单体、无焦点、驱散、友/敌/任意、火/冷/元素、守卫、仅内置）、`Restore()`、`SpellPoints(bag)` 的四类神器减耗（逐件乘、最低 1 点）、`DimensionDoorDistance()`、`TotalSpellsPerLevel`、`RandomSpell`，并修正 `SuitableForSpellBook` 只按等级过滤 |
+| `Game/Spells/SpellInfo.cs`（新） | `spell_info.cpp:69-426` | 六条公式（伤害、召唤数量、治疗量、复活量、守卫数量、催眠 HP，均带神器乘法百分比）与两条距离助手；地图查询四条：`GetNearestCastle`（平方距离、首个胜平局）、`GetPossibleBoatPosition`（英雄格的方向通行性 + 邻居 `IsSuitableForSummoningBoat`）、`GetSummonableBoat`（己方/他国/中立三档 + 原版 AI 限制）、`IsHeroNearWater` |
+| `Game/Spells/SpellBook.cs`（新） | `spell_book.h:28-90`、`spell_book.cpp:200-262`、`496-552` | `[Flags] SpellBookFilter`、`SpellsPerPage = 6`/`SpellsPerScreen = 12`、`BeginSession`（四个起始状态分支 + 过期下标回首页）、`SelectFilter`、两个翻页动作、`ResetState`、`ScreenSpells` 切片、静态 `SetFilter`（复制书 + 卷轴 + 按冒险/战斗过滤 + 按 id 排序） |
+
+要点：
+
+* **不把 `Hero` 拖进 `Spells/`**：`spellPoints( hero )` 换成 `SpellPoints( ArtifactBag? )`，空袋等价参考的
+  `hero == nullptr`；`spell_info` 的公式同样只收法术点与袋子，只有真正读地图的四条查询收 `World`/`Hero`。
+* **减耗是乘法不是加法**：`GetTotalMultipliedPercent` 给列表，逐件 `cost*(100-p)/100` 再逐次截断，末尾钳到 1。
+* **`SuitableForSpellBook` 修了旧错**：以前手写排除 `ViewMines`，参考只按 `Level() >= 1`；`View` 系法术本就该进
+  法师公会，占位符与 `Petrify` 因等级为 0 自然出局。等级表现在是 12/11/16/16/10，合计 65 条可学法术。
+* **召唤船查的是 `ActionBoat`**：`MP2::OBJ_BOAT` 带动作位，而 `GetObjectPositions( ..., ignoreHeroes: false )` 比的是
+  缓存类型，`SetBoat` 缓存的正是 `ActionBoat`；写成 `Boat` 会永远拿到空表（新测试第一次就是这么挂的）。
+* **保留两个怪癖**：返回「距离 > 1 的第一条船」而非最近的；原版地图上 AI 不召中立船（玩家托管时例外）。
+* **法术书只搬规则**：英雄的存储仍是 `SpellStorage`，`SpellBook` 只管标签/下标/翻页/会话起始，`SetFilter` 是静态
+  方法返回列表、不动英雄的书；`Open` 的绘制与输入留给 UI 批次。
+* **卷轴暂时贡献为零**：`SetFilter` 照参考追加神器上的卷轴，但卷轴还不带法术 id（ADR-142）。
+
+用例 27 条新增：`SpellTests` 追加 10（`TheHealingSpellsCarryTheirRestoreValue`、目标谓词、元素/守卫、四类减耗、
+最低 1 点、公会法术表、`View` 可学、排除集、随机等级、传送门 14 格）、`SpellInfoTests` 8（三类元素加成互不串台、
+召唤/治疗/复活/守卫/催眠、最近城堡平局、放船落点、近水、可召唤船的四种组合）、`SpellBookTests` 9（两个标签的
+切分与排序、不动原书、会话起始三分支、过期下标、标签开关、翻页止于两端、切片、卷轴）。Game 2005 → **2022**，
+全解决方案 2745 → **2772** 全绿，0 警告 0 错误。覆盖率：`spell` 行 1/1/2 → **1/3/0**，合计 **41/61/147** →
+**41/63/145**。
+
+**遗留**：`spell.cpp` 仍记 ◐——73 个法术名与描述文案（参考走 `_()`，端口无翻译层）、序列化运算符；`spell_info.cpp`
+仍记 ◐——`getSpellDescription` 的文案拼装（要英雄名、最近城名）；`spell_book.cpp` 仍记 ◐——`SpellBook::Open` 的
+绘制与输入循环，与 `ArtifactsBar` 同批。

@@ -1,5 +1,8 @@
 using FHeroes2.Assets.Maps;
 
+using FHeroes2.Core.Random;
+
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Monsters;
 
 namespace FHeroes2.Game.Spells;
@@ -15,19 +18,20 @@ namespace FHeroes2.Game.Spells;
 /// <c>Spell</c> around by const reference — it is one integer.
 /// </para>
 /// <para>
-/// <b>What is ported</b>: the numbers (<see cref="SpellTable"/>), the level, and the predicates the strategic
-/// value and the spell book need — <see cref="IsCombat"/>, <see cref="IsDamage"/>, <see cref="IsResurrect"/>,
-/// <see cref="IsSummon"/>, <see cref="IsMassActions"/>, <see cref="IsMindInfluence"/> — plus
-/// <see cref="GetStrategicValue"/>.
+/// <b>What is ported</b>: the numbers (<see cref="SpellTable"/>), the level, every predicate the battle engine
+/// and the spell book ask — the traits (<see cref="IsCombat"/>, <see cref="IsDamage"/>, <see cref="IsRestore"/>,
+/// <see cref="IsResurrect"/>, <see cref="IsSummon"/>, <see cref="IsMassActions"/>, <see cref="IsMindInfluence"/>,
+/// <see cref="IsFire"/>, <see cref="IsCold"/>, <see cref="IsElementalSpell"/>, <see cref="IsBuiltinOnly"/>,
+/// <see cref="IsGuardianType"/>), the targeting rules (<see cref="IsSingleTarget"/>,
+/// <see cref="IsApplyToFriends"/>, <see cref="IsApplyToEnemies"/>, <see cref="IsApplyToAnyTroops"/>,
+/// <see cref="IsEffectDispel"/>, <see cref="IsUndeadOnly"/>, <see cref="IsAliveOnly"/>,
+/// <see cref="IsApplyWithoutFocusObject"/>) — the strategic value, the spell point cost including the artifact
+/// reduction, and the random-spell queries (<see cref="RandomSpell"/>, <see cref="TotalSpellsPerLevel"/>,
+/// <see cref="SuitableForSpellBook"/>, <see cref="WeightForRace"/>).
 /// </para>
 /// <para>
-/// <b>What is not</b>: every method that needs the text layer (<c>GetName</c>, <c>GetDescription</c>,
-/// <c>getDescription</c>), the targeting predicates the battle engine asks (<c>isSingleTarget</c>,
-/// <c>isApplyToFriends</c>, <c>isApplyToEnemies</c>, <c>isApplyToAnyTroops</c>, <c>isEffectDispel</c>,
-/// <c>isUndeadOnly</c>, <c>isAliveOnly</c>, <c>isApplyWithoutFocusObject</c>), the random-spell queries
-/// (<c>getRandomSpell</c>, <c>getTotalSpellsPerLevel</c>, <c>weightForRace</c>) and the spell point reduction
-/// of <c>spellPoints( hero )</c>, which walks
-/// <c>BagArtifacts::getTotalArtifactMultipliedPercent</c> — not ported yet.
+/// <b>What is not</b>: every method that needs the text layer (<c>GetName</c>, <c>GetDescription</c>) and the
+/// serialize operators, which the port leaves to the batch that ports <c>serialize.cpp</c>.
 /// </para>
 /// </remarks>
 public readonly record struct Spell
@@ -178,6 +182,142 @@ public readonly record struct Spell
         or SpellType.Hypnotize;
 
     /// <summary>
+    /// The hit points the spell heals, <c>Spell::Restore()</c> (<c>spell.cpp:450-462</c>).
+    /// </summary>
+    /// <returns>The <c>extraValue</c> of the two healing spells, zero for everything else.</returns>
+    public uint Restore() => Type is SpellType.Cure or SpellType.MassCure ? ExtraValue() : 0;
+
+    /// <summary>Whether the spell heals, <c>isRestore()</c> (<c>spell.h:203</c>).</summary>
+    /// <returns>Whether <see cref="Restore"/> is not zero.</returns>
+    public bool IsRestore() => Restore() != 0;
+
+    /// <summary>
+    /// Whether the spell only affects undead troops, <c>Spell::isUndeadOnly()</c>
+    /// (<c>spell.cpp:562-575</c>).
+    /// </summary>
+    /// <remarks>
+    /// The three spells are the ones that are defined by the undead: raising them and the two holy blasts that
+    /// hit only them. The battle engine uses this to decide whether a stack can be a target at all.
+    /// </remarks>
+    /// <returns>Whether the spell works on undead troops alone.</returns>
+    public bool IsUndeadOnly() => Type is SpellType.AnimateDead or SpellType.HolyWord or SpellType.HolyShout;
+
+    /// <summary>
+    /// Whether the spell only affects living troops, <c>Spell::isAliveOnly()</c>
+    /// (<c>spell.cpp:577-595</c>).
+    /// </summary>
+    /// <remarks>
+    /// The eight spells that are meaningless on a corpse: the bless/curse pair, the two death blasts that feed
+    /// on the living, and resurrection.
+    /// </remarks>
+    /// <returns>Whether the spell works on living troops alone.</returns>
+    public bool IsAliveOnly() => Type is SpellType.Bless or SpellType.MassBless or SpellType.Curse
+        or SpellType.MassCurse or SpellType.DeathRipple or SpellType.DeathWave or SpellType.Resurrect
+        or SpellType.ResurrectTrue;
+
+    /// <summary>
+    /// Whether the spell needs one stack picked out, <c>Spell::isSingleTarget()</c>
+    /// (<c>spell.cpp:597-632</c>).
+    /// </summary>
+    /// <remarks>
+    /// The twenty-five spells the battle engine asks the player to click a stack for. Everything else either
+    /// covers the whole battlefield or picks its own targets, which is the
+    /// <see cref="IsApplyWithoutFocusObject"/> list.
+    /// </remarks>
+    /// <returns>Whether the spell is cast on a single stack.</returns>
+    public bool IsSingleTarget() => Type is SpellType.LightningBolt or SpellType.Teleport or SpellType.Cure
+        or SpellType.Resurrect or SpellType.ResurrectTrue or SpellType.Haste or SpellType.Slow
+        or SpellType.Blind or SpellType.Bless or SpellType.StoneSkin or SpellType.SteelSkin or SpellType.Curse
+        or SpellType.AntiMagic or SpellType.Dispel or SpellType.Arrow or SpellType.Berserker
+        or SpellType.Paralyze or SpellType.Hypnotize or SpellType.ColdRay or SpellType.DisruptingRay
+        or SpellType.DragonSlayer or SpellType.BloodLust or SpellType.AnimateDead
+        or SpellType.MirrorImage or SpellType.Shield;
+
+    /// <summary>
+    /// Whether the spell is cast without a target stack, <c>Spell::isApplyWithoutFocusObject()</c>
+    /// (<c>spell.cpp:634-654</c>).
+    /// </summary>
+    /// <remarks>
+    /// The mass spells and the summons need no target because they apply to the whole side, plus the seven
+    /// spells that hit everything at once.
+    /// </remarks>
+    /// <returns>Whether the spell needs no target stack.</returns>
+    public bool IsApplyWithoutFocusObject() => IsMassActions() || IsSummon()
+        || Type is SpellType.DeathRipple or SpellType.DeathWave or SpellType.Earthquake
+        or SpellType.HolyWord or SpellType.HolyShout or SpellType.Armageddon or SpellType.ElementalStorm;
+
+    /// <summary>
+    /// Whether the spell takes a spell effect off the target, <c>Spell::isEffectDispel()</c>
+    /// (<c>spell.cpp:672-686</c>).
+    /// </summary>
+    /// <returns>Whether the spell is one of the four dispels.</returns>
+    public bool IsEffectDispel() => Type is SpellType.Cure or SpellType.MassCure or SpellType.Dispel
+        or SpellType.MassDispel;
+
+    /// <summary>
+    /// Whether the spell may target either side, <c>Spell::isApplyToAnyTroops()</c>
+    /// (<c>spell.cpp:688-700</c>).
+    /// </summary>
+    /// <returns>Whether the spell is one of the two dispels that work on friend and foe alike.</returns>
+    public bool IsApplyToAnyTroops() => Type is SpellType.Dispel or SpellType.MassDispel;
+
+    /// <summary>
+    /// Whether the spell may be cast on friendly stacks, <c>Spell::isApplyToFriends()</c>
+    /// (<c>spell.cpp:702-731</c>).
+    /// </summary>
+    /// <returns>Whether the spell is one of the eighteen friendly spells.</returns>
+    public bool IsApplyToFriends() => Type is SpellType.Bless or SpellType.BloodLust or SpellType.Cure
+        or SpellType.Haste or SpellType.Shield or SpellType.StoneSkin or SpellType.DragonSlayer
+        or SpellType.SteelSkin or SpellType.AnimateDead or SpellType.AntiMagic or SpellType.Teleport
+        or SpellType.Resurrect or SpellType.MirrorImage or SpellType.ResurrectTrue or SpellType.MassBless
+        or SpellType.MassCure or SpellType.MassHaste or SpellType.MassShield;
+
+    /// <summary>
+    /// Whether the spell may be cast on enemy stacks, <c>Spell::isApplyToEnemies()</c>
+    /// (<c>spell.cpp:752-776</c>).
+    /// </summary>
+    /// <returns>Whether the spell is one of the thirteen hostile spells.</returns>
+    public bool IsApplyToEnemies() => Type is SpellType.MassSlow or SpellType.MassCurse or SpellType.Curse
+        or SpellType.Arrow or SpellType.Slow or SpellType.Blind or SpellType.ColdRay
+        or SpellType.DisruptingRay or SpellType.LightningBolt or SpellType.ChainLightning
+        or SpellType.Paralyze or SpellType.Berserker or SpellType.Hypnotize;
+
+    /// <summary>Whether the spell is a fire spell, <c>isFire()</c> (<c>spell.h:224</c>).</summary>
+    /// <returns>Whether the spell is Fireball or Fireblast.</returns>
+    public bool IsFire() => Type is SpellType.Fireball or SpellType.FireBlast;
+
+    /// <summary>Whether the spell is a cold spell, <c>isCold()</c> (<c>spell.h:229</c>).</summary>
+    /// <returns>Whether the spell is Cold Ray or Cold Ring.</returns>
+    public bool IsCold() => Type is SpellType.ColdRay or SpellType.ColdRing;
+
+    /// <summary>
+    /// Whether the spell belongs to one of the magic schools' damaging elementals,
+    /// <c>isElementalSpell()</c> (<c>spell.h:234-248</c>).
+    /// </summary>
+    /// <remarks>
+    /// The seven spells a magic mirror can be told to reflect as an elemental — fire, cold and lightning.
+    /// </remarks>
+    /// <returns>Whether the spell is one of the seven elemental spells.</returns>
+    public bool IsElementalSpell() => Type is SpellType.ColdRay or SpellType.ColdRing or SpellType.Fireball
+        or SpellType.FireBlast or SpellType.LightningBolt or SpellType.ChainLightning
+        or SpellType.ElementalStorm;
+
+    /// <summary>
+    /// Whether the spell is part of a creature and cannot be learned,
+    /// <c>isBuiltinOnly()</c> (<c>spell.h:250-253</c>).
+    /// </summary>
+    /// <returns>Whether the spell is Petrify, the medusa's gaze.</returns>
+    public bool IsBuiltinOnly() => Type == SpellType.Petrify;
+
+    /// <summary>
+    /// Whether the spell guards a tile instead of affecting troops, <c>Spell::isGuardianType()</c>
+    /// (<c>spell.cpp:387-401</c>).
+    /// </summary>
+    /// <returns>Whether the spell is Haunt or one of the four elemental guardians.</returns>
+    public bool IsGuardianType() => Type is SpellType.Haunt or SpellType.SetEGuardian
+        or SpellType.SetAGuardian or SpellType.SetFGuardian or SpellType.SetWGuardian;
+
+    /// <summary>
     /// The number the behaviour of the spell reads, <c>Spell::ExtraValue()</c> (<c>spell.cpp:479-482</c>).
     /// </summary>
     /// <returns>The <c>extraValue</c> column of the table.</returns>
@@ -187,12 +327,72 @@ public readonly record struct Spell
     /// What the spell costs to cast, <c>Spell::spellPoints()</c> (<c>spell.cpp:173-219</c>).
     /// </summary>
     /// <remarks>
-    /// The hero parameter of the reference is dropped: it only picks the artifact bonus that lowers the cost
-    /// through <c>BagArtifacts::getTotalArtifactMultipliedPercent</c>, which the port does not have yet. So
-    /// this is the <c>hero == nullptr</c> branch — the list price.
+    /// The <c>hero == nullptr</c> branch of the reference: the list price from the table, no artifact taken
+    /// into account.
     /// </remarks>
     /// <returns>The spell points the spell costs.</returns>
     public uint SpellPoints() => SpellTable.Get(Type).SpellPoints;
+
+    /// <summary>
+    /// What the spell costs a hero carrying <paramref name="bag"/>,
+    /// <c>Spell::spellPoints( const HeroBase * )</c> (<c>spell.cpp:173-219</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only four kinds of spell are ever cheaper: the ones whose cost reduction artifacts exist — bless, curse,
+    /// summoning and mind influence. Every reduction is applied to the running cost one artifact at a time and
+    /// truncated, in slot order, exactly like the reference; the cost never goes below one point.
+    /// </para>
+    /// <para>
+    /// The hero argument of the reference is replaced by its bag: that is the only part of the hero the method
+    /// reads, and taking the bag keeps this file free of <c>Hero</c>.
+    /// </para>
+    /// </remarks>
+    /// <param name="bag">The artifacts of the hero, or null for a hero without any.</param>
+    /// <returns>The spell points the spell costs that hero.</returns>
+    public uint SpellPoints(ArtifactBag? bag)
+    {
+        if (bag is null)
+        {
+            return SpellPoints();
+        }
+
+        ArtifactBonusType reduction = Type switch
+        {
+            SpellType.Bless or SpellType.MassBless => ArtifactBonusType.BlessSpellCostReductionPercent,
+            SpellType.Curse or SpellType.MassCurse => ArtifactBonusType.CurseSpellCostReductionPercent,
+            SpellType.SummonEElement or SpellType.SummonAElement or SpellType.SummonFElement
+                or SpellType.SummonWElement => ArtifactBonusType.SummoningSpellCostReductionPercent,
+            SpellType.Blind or SpellType.Paralyze or SpellType.Berserker or SpellType.Hypnotize
+                => ArtifactBonusType.MindInfluenceSpellCostReductionPercent,
+            _ => ArtifactBonusType.None,
+        };
+
+        if (reduction == ArtifactBonusType.None)
+        {
+            return SpellPoints();
+        }
+
+        int cost = (int)SpellPoints();
+
+        foreach (int percent in bag.GetTotalMultipliedPercent(reduction))
+        {
+            cost = cost * (100 - percent) / 100;
+        }
+
+        return cost < 1 ? 1u : (uint)cost;
+    }
+
+    /// <summary>
+    /// How far Dimension Door takes a hero, <c>Spell::CalculateDimensionDoorDistance()</c>
+    /// (<c>spell.cpp:803-822</c>).
+    /// </summary>
+    /// <remarks>
+    /// A fixed fourteen tiles before the spell power is added: the reference returns
+    /// <c>14 + hero->GetPower()</c> where this constant is the fourteen.
+    /// </remarks>
+    /// <returns>The tiles the spell covers before the spell power is added.</returns>
+    public static int DimensionDoorDistance() => 14;
 
     /// <summary>The movement points casting the spell on the adventure map costs, <c>movePoints()</c>.</summary>
     /// <returns>The movement points the cast costs.</returns>
@@ -303,40 +503,75 @@ public readonly record struct Spell
 
     /// <summary>
     /// The spells that may be put into a mage guild of that level,
-    /// <c>getAllSpellIdsSuitableForSpellBook()</c> (<c>spell.cpp:562-580</c>).
+    /// <c>getAllSpellIdsSuitableForSpellBook()</c> (<c>spell.cpp:532-560</c>).
     /// </summary>
     /// <remarks>
-    /// 过滤的是「能进法术书的」：<see cref="SpellType.Random"/> 一族与 <see cref="SpellType.Petrify"/> 不算，
-    /// 它们是占位符与美杜莎的凝视；<see cref="SpellType.ViewMines"/> 也不在表里，参考把它留给了地图。
+    /// The reference filters by <c>Level() &gt;= 1</c> alone: the placeholders (<see cref="SpellType.Random"/>
+    /// and its five level slots) and <see cref="SpellType.Petrify"/> are level zero, so they fall out by
+    /// themselves, while <see cref="SpellType.ViewMines"/> and <see cref="SpellType.ViewResources"/> are level
+    /// one and <b>are</b> in the list — a guild may teach them. The port used to keep an extra hand-written
+    /// exclusion list that left ViewMines out; it is gone.
     /// </remarks>
-    /// <param name="level">Spell level to keep, or a negative number for all five.</param>
+    /// <param name="level">Spell level to keep, negative for all five.</param>
     /// <param name="exclude">Spells to leave out, the <c>excludeSpells</c> set of the reference.</param>
-    /// <returns>The ids, in table order.</returns>
+    /// <returns>The ids, in table order; empty for a level that no spell has.</returns>
     public static IReadOnlyList<SpellType> SuitableForSpellBook(int level = -1, IReadOnlySet<SpellType>? exclude = null)
     {
+        if (level < -1 || level == 0 || level > 5)
+        {
+            return [];
+        }
+
         List<SpellType> result = [];
 
-        for (SpellType spell = SpellType.Fireball; spell < SpellType.Count; spell++)
+        for (int id = 1; id < (int)SpellType.Count; id++)
         {
-            if (spell is SpellType.Random or SpellType.Random1 or SpellType.Random2 or SpellType.Random3
-                or SpellType.Random4 or SpellType.Random5 or SpellType.Petrify or SpellType.ViewMines)
+            Spell spell = new(id);
+
+            if (spell.Level() < 1 || (level != -1 && spell.Level() != level))
             {
                 continue;
             }
 
-            if (level > 0 && new Spell(spell).Level() != level)
+            if (exclude is not null && exclude.Contains(spell.Type))
             {
                 continue;
             }
 
-            if (exclude is not null && exclude.Contains(spell))
-            {
-                continue;
-            }
-
-            result.Add(spell);
+            result.Add(spell.Type);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// How many spells a mage guild of that level may draw from, <c>getTotalSpellsPerLevel()</c>
+    /// (<c>spell.cpp:563-575</c>).
+    /// </summary>
+    /// <param name="level">The spell level, one to five.</param>
+    /// <returns>The number of spells of that level; zero for any other level.</returns>
+    public static uint TotalSpellsPerLevel(int level) => (uint)SuitableForSpellBook(level).Count;
+
+    /// <summary>
+    /// A random spell of that level, <c>Spell::getRandomSpell()</c> (<c>spell.cpp:578-620</c>).
+    /// </summary>
+    /// <remarks>
+    /// Uniform over the spells of the level, the placeholders and the built-in spells excluded. The reference
+    /// asserts that the level has spells; the port throws instead, because an empty draw is a programming
+    /// error and the assert would only fire in debug builds.
+    /// </remarks>
+    /// <param name="level">The spell level, one to five.</param>
+    /// <returns>A spell of that level.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The level has no spells.</exception>
+    public static Spell RandomSpell(int level)
+    {
+        IReadOnlyList<SpellType> spells = SuitableForSpellBook(level);
+
+        if (spells.Count == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(level), level, "No spell of this level exists.");
+        }
+
+        return new Spell(Rand.Get(spells));
     }
 }

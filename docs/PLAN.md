@@ -90,10 +90,10 @@ ADR-140、ADR-141、ADR-142）单独重算过。
 | `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 2 | 2 | 0 |
-| `spell` | 4 | 1 | 1 | 2 |
+| `spell` | 4 | 1 | 3 | 0 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **41** | **61** | **147** |
+| **合计** | **249** | **41** | **63** | **145** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -683,9 +683,13 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `UpgradeTroops` 已转，ADR-108）；`SplitTroopIntoFreeSlots` 与三个同族（要拖单堆的界面）、
   `GetJoinSolution`、`ArrangeFor*` 与城堡/神器那两项修正未转；❌ `army_bar.cpp`、`army_ui_helper.cpp`
 * `spell`（4）：✅ `spell_storage.cpp`→`SpellStorage`（去重、书后追加神器上的 `ADD_SPELL`、
-  `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、七条特性谓词、
-  `GetStrategicValue`，ADR-102），名字/描述文案、随机取法术、战斗侧的指向谓词与 `spellPoints(hero)`
-  的减耗未转；❌ `spell_book.cpp`
+  `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、全部特性/指向/
+  元素/守卫谓词、`GetStrategicValue`、`SpellPoints(bag)` 的四类神器减耗、`SuitableForSpellBook`/
+  `TotalSpellsPerLevel`/`RandomSpell`，ADR-102/143），只剩名字与描述文案、流序列化；
+  ◐ `spell_info.cpp`→`SpellInfo`（六条数值公式与四条地图查询：最近城堡、召唤船位置、可召唤船、
+  英雄是否近水，ADR-143），只剩 `getSpellDescription` 的文案拼装；
+  ◐ `spell_book.cpp`→`SpellBook`（过滤、翻页、会话起始状态与 `SetFilter` 列表，ADR-143），
+  绘制与输入循环留给 UI 批次
 * `heroes`（12）：◐ `direction.cpp` 已转；`heroes.cpp` 转成
   「部分」：`AllHeroes::Init` / `Clear` / `GetHeroForHire`、`isAvailableForHire`、`getHeroIdRangeForRace`
   （`Game/Heroes/AllHeroes`、`HeroRaces`，ADR-071）与 `Heroes::LoadFromMP2` 的前半（位置/颜色/种族改判/
