@@ -1,3 +1,5 @@
+using FHeroes2.Assets.Maps;
+
 using FHeroes2.Game.Monsters;
 
 namespace FHeroes2.Game.Spells;
@@ -270,5 +272,71 @@ public readonly record struct Spell
         }
 
         return armyStrength * 0.04 * amountModifier;
+    }
+
+    /// <summary>
+    /// How likely the spell is to turn up in a mage guild of <paramref name="race"/>,
+    /// <c>Spell::weightForRace()</c> (<c>spell.cpp:483-560</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 十是「随便挑」，零是「几乎不挑」——参考的掷骰是 <c>Rand::Get( 0, 10 ) &gt; weight</c> 才跳过，
+    /// 所以 0 仍有十分之一的概率被选中，而不是永不出现。法师公会的掷骰循环因此要多试几次，见
+    /// <see cref="FHeroes2.Game.Castle.MageGuild"/>。
+    /// </para>
+    /// <para>
+    /// 四张零权重的表：神圣之词/圣咏对亡灵、死亡波纹/死亡之波对其他五族、四种召唤元素、以及
+    /// 时空门/透视/作祟/守护元素那几张只有地图事件才该出现的法术。
+    /// </para>
+    /// </remarks>
+    /// <param name="race">The race of the castle whose guild rolls the spell.</param>
+    /// <returns>The weight, ten for a spell of the race's own schools, zero for one it should not get.</returns>
+    public int WeightForRace(MapRace race) => Type switch
+    {
+        SpellType.HolyWord or SpellType.HolyShout when race == MapRace.Necromancer => 0,
+        SpellType.DeathRipple or SpellType.DeathWave when race != MapRace.Necromancer => 0,
+        SpellType.SummonEElement or SpellType.SummonAElement or SpellType.SummonFElement or SpellType.SummonWElement => 0,
+        SpellType.TownPortal or SpellType.Visions or SpellType.Haunt => 0,
+        SpellType.SetEGuardian or SpellType.SetAGuardian or SpellType.SetFGuardian or SpellType.SetWGuardian => 0,
+        _ => 10,
+    };
+
+    /// <summary>
+    /// The spells that may be put into a mage guild of that level,
+    /// <c>getAllSpellIdsSuitableForSpellBook()</c> (<c>spell.cpp:562-580</c>).
+    /// </summary>
+    /// <remarks>
+    /// 过滤的是「能进法术书的」：<see cref="SpellType.Random"/> 一族与 <see cref="SpellType.Petrify"/> 不算，
+    /// 它们是占位符与美杜莎的凝视；<see cref="SpellType.ViewMines"/> 也不在表里，参考把它留给了地图。
+    /// </remarks>
+    /// <param name="level">Spell level to keep, or a negative number for all five.</param>
+    /// <param name="exclude">Spells to leave out, the <c>excludeSpells</c> set of the reference.</param>
+    /// <returns>The ids, in table order.</returns>
+    public static IReadOnlyList<SpellType> SuitableForSpellBook(int level = -1, IReadOnlySet<SpellType>? exclude = null)
+    {
+        List<SpellType> result = [];
+
+        for (SpellType spell = SpellType.Fireball; spell < SpellType.Count; spell++)
+        {
+            if (spell is SpellType.Random or SpellType.Random1 or SpellType.Random2 or SpellType.Random3
+                or SpellType.Random4 or SpellType.Random5 or SpellType.Petrify or SpellType.ViewMines)
+            {
+                continue;
+            }
+
+            if (level > 0 && new Spell(spell).Level() != level)
+            {
+                continue;
+            }
+
+            if (exclude is not null && exclude.Contains(spell))
+            {
+                continue;
+            }
+
+            result.Add(spell);
+        }
+
+        return result;
     }
 }

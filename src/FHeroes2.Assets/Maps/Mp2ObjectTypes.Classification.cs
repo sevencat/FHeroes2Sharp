@@ -61,7 +61,7 @@ public static partial class Mp2ObjectTypes
             return false;
         }
 
-        return CanBeActionObject((Mp2ObjectType)((ushort)type & ~(ushort)Mp2ObjectType.ActionObjectType));
+        return CanBeActionObject(NonActionType(type));
     }
 
     /// <summary>

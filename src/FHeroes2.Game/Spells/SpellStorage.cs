@@ -41,6 +41,9 @@ public sealed class SpellStorage : IEnumerable<Spell>
     /// <param name="index">Position, from zero.</param>
     public Spell this[int index] => _spells[index];
 
+    /// <summary>Empties the storage, <c>SpellStorage::clear()</c> (<c>spell_storage.h:30</c>).</summary>
+    public void Clear() => _spells.Clear();
+
     /// <summary>
     /// Adds a spell, <c>SpellStorage::Append( const Spell &amp; )</c> (<c>spell_storage.cpp:47-58</c>).
     /// </summary>

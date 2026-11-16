@@ -61,7 +61,7 @@ public sealed partial class Tile
     /// <returns>The daily-income style bag; empty for objects that hold nothing.</returns>
     public Funds GetFundsFromTile(World world)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.Barrel:
             case Mp2ObjectType.Campfire:
@@ -109,7 +109,7 @@ public sealed partial class Tile
     /// <returns>The artifact, <see cref="ArtifactType.Unknown"/> when the tile holds none.</returns>
     public ArtifactType GetArtifactFromTile(World world)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.DaemonCave:
             case Mp2ObjectType.Graveyard:
@@ -147,7 +147,7 @@ public sealed partial class Tile
     /// <returns>The condition the artifact asks for.</returns>
     public ArtifactCaptureCondition GetArtifactCaptureCondition(World world)
     {
-        if (GetMainObjectType(world, false) != Mp2ObjectType.Artifact)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Artifact)
         {
             Debug.Assert(false, "The tile does not hold an artifact with a capture condition.");
 
@@ -176,7 +176,7 @@ public sealed partial class Tile
     /// <returns>The payment, empty for a free tree or for a tile that is not a tree.</returns>
     public Funds GetTreeOfKnowledgeRequirement(World world)
     {
-        if (GetMainObjectType(world, false) != Mp2ObjectType.TreeOfKnowledge)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.TreeOfKnowledge)
         {
             Debug.Assert(false, "The tile does not hold a tree of knowledge.");
 
@@ -198,7 +198,7 @@ public sealed partial class Tile
     /// <returns>The spell, or <see cref="SpellType.None"/> when the tile does not teach one.</returns>
     public Spell GetSpellFromTile(World world)
     {
-        Mp2ObjectType objectType = GetMainObjectType(world, false);
+        Mp2ObjectType objectType = GetNonActionObjectType(world);
 
         if (objectType is not (Mp2ObjectType.ShrineFirstCircle or Mp2ObjectType.ShrineSecondCircle
             or Mp2ObjectType.ShrineThirdCircle or Mp2ObjectType.Pyramid))
@@ -223,7 +223,7 @@ public sealed partial class Tile
     /// <returns>The skill at the basic level, or an unset pair for a tile that is not a hut.</returns>
     public SecondarySkillLevel GetSecondarySkillFromWitchsHut(World world)
     {
-        if (GetMainObjectType(world, false) != Mp2ObjectType.WitchsHut)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.WitchsHut)
         {
             Debug.Assert(false, "The tile does not hold a witch's hut.");
 
@@ -246,7 +246,7 @@ public sealed partial class Tile
     /// <returns>The color index of the object.</returns>
     public int GetBarrierColorFromTile(World world)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.Barrier:
             case Mp2ObjectType.TravellerTent:
@@ -266,7 +266,7 @@ public sealed partial class Tile
     /// <param name="barrierColor">Color index to store.</param>
     public void SetBarrierColorOnTile(World world, int barrierColor)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.Barrier:
             case Mp2ObjectType.TravellerTent:
@@ -292,7 +292,7 @@ public sealed partial class Tile
     /// <returns><see langword="true"/> when the object still has something to give.</returns>
     public bool DoesTileContainValuableItems(World world)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.Artifact:
             case Mp2ObjectType.Barrel:

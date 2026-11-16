@@ -29,6 +29,15 @@ public static class GameStatic
     public const uint HeroesRestoreSpellPointsPerDay = 1;
 
     /// <summary>
+    /// How much defense a unit loses while it stands in a moat, <c>GameStatic::GetBattleMoatReduceDefense()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>game_static.cpp:273-276</c>，常数 3。用在两处：护城河的说明文字
+    /// （<see cref="Castle.Castle.GetDescriptionBuilding"/>），以及战斗里对护城河内单位减防——战斗系统还没搬。
+    /// </remarks>
+    public const int BattleMoatReduceDefense = 3;
+
+    /// <summary>
     /// How much luck an object grants once visited, <c>GameStatic::getObjectLuckEffect()</c>.
     /// </summary>
     /// <remarks>
@@ -125,4 +134,16 @@ public static class GameStatic
             _ => false,
         };
     }
+
+    /// <summary>
+    /// The share of the weakest stack a whirlpool drowns, in percent,
+    /// <c>GameStatic::GetLostOnWhirlpoolPercent()</c> (<c>game_static.cpp:107</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考有两层转手：<c>Game::GetWhirlpoolPercent()</c>（<c>game.cpp:446</c>）只是把这里转给
+    /// <c>Heroes::ActionToWhirlpools</c> 用，真正的常数是这里的 50。用法不是「砍掉一半数量」而是「砍掉一半
+    /// <b>血量</b>」，再按单兵血量折回数量（<see cref="Army.Troop.GetCountFromHitPoints"/>）——这正是为什么
+    /// 一只 20 点血的兵受了 10 点伤之后还是「一只」而不是半只。
+    /// </remarks>
+    public const uint LostOnWhirlpoolPercent = 50;
 }

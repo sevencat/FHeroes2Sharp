@@ -113,6 +113,45 @@ public sealed class Troop
     /// <returns>Hit points of one creature times the count.</returns>
     public uint GetHitPoints() => (uint)(GetBattleStats().HitPoints * (long)_count);
 
+    /// <summary>
+    /// How many creatures a pool of hit points is made of, <c>Monster::GetCountFromHitPoints()</c>
+    /// (<c>monster.cpp:840</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考 <c>monster.cpp:840-856</c>：<c>quotient + ( remainder > 0 ? 1 : 0 )</c>，也就是<b>向上取整</b>。
+    /// 这一位小数很重要——受伤的兵是「还剩半只」还是「整只」，直接决定「扣掉一半血量」之后还剩几只
+    /// （<c>Heroes::ActionToWhirlpools</c> 就是这么算的）。
+    /// </para>
+    /// <para>
+    /// 参考把它挂在 <c>Monster</c> 上；端口挂在 <see cref="Troop"/> 上，因为 <see cref="MonsterType"/> 是纯枚举、
+    /// 没有方法可挂，而这里查的又正是 <see cref="Troop"/> 用的那张表。
+    /// </para>
+    /// <para>
+    /// <c>hitPoints</c> 为 0 时返回 0（参考第一句就早退）。参考不防「查不到血量的生物」，端口返回 0：除零没有
+    /// 意义，而无效生物的兵本来就不该存在。
+    /// </para>
+    /// </remarks>
+    /// <param name="monster">The creature the hit points are made of.</param>
+    /// <param name="hitPoints">A pool of hit points, the unit of <see cref="GetHitPoints"/>.</param>
+    /// <returns>The number of creatures.</returns>
+    public static uint GetCountFromHitPoints(MonsterType monster, uint hitPoints)
+    {
+        if (hitPoints == 0)
+        {
+            return 0;
+        }
+
+        uint single = (uint)MonsterStatistics.GetBattleStats(monster).HitPoints;
+
+        if (single == 0)
+        {
+            return 0;
+        }
+
+        return (hitPoints / single) + ((hitPoints % single) > 0 ? 1u : 0u);
+    }
+
     /// <summary>Lowest damage of the whole stack, <c>Troop::GetDamageMin()</c>.</summary>
     /// <returns>Damage of one creature times the count.</returns>
     public uint GetDamageMin() => (uint)(GetBattleStats().DamageMin * (long)_count);

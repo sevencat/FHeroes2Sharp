@@ -3,6 +3,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
@@ -44,13 +45,15 @@ namespace FHeroes2.Game.Castle;
 /// </description></item>
 /// </list>
 /// <para>
-/// Not here yet, roughly in the order they are worth doing: the weekly growth (<c>ActionNewWeek</c>) and its well
-/// bonuses, which need the world's week type; taxes, which need a kingdom; hiring heroes (<c>AllowBuyHero</c>,
-/// <c>getAvailableArmy</c>); the mage guild's spells and the captain, which <see cref="LoadFromMP2"/> notes as
-/// missing; boats (<c>AllowBuyBoat</c>, <c>BuyBoat</c>) and the AI's visit value and power modifier.
+/// The rest of the object came in with it: the mage guild's spells and the captain
+/// (<see cref="Castle.Training.cs"/>), the AI's numbers — <see cref="GetAvailableArmy"/>,
+/// <see cref="GetVisitValue"/>, <see cref="GetGarrisonStrength"/> — and the three modificators that raise an army's
+/// morale, luck and spell power. What is still missing needs a system rather than a batch: the weekly growth and its
+/// well bonuses (the world's week type), taxes (a kingdom), boats (the sea), the battle hooks and the town screen.
+/// <see cref="Castle.Description.cs"/> lists those by name.
 /// </para>
 /// </remarks>
-public sealed class Castle
+public sealed partial class Castle
 {
     /// <summary>
     /// The number of creature dwellings a town can have, <c>Castle::maxNumOfDwellings</c> (<c>castle.h:129</c>).
@@ -66,6 +69,12 @@ public sealed class Castle
     private readonly uint[] _dwelling = new uint[MaxNumOfDwellings];
 
     private readonly ArmyTroops _army;
+
+    /// <summary>The town's captain, <c>_captain</c> (<c>castle.h:167</c>).</summary>
+    private readonly Captain _captain;
+
+    /// <summary>The spells a hero learns here, <c>_mageGuild</c> (<c>castle.h:166</c>).</summary>
+    private readonly MageGuild _mageGuild = new();
 
     /// <summary>The buildings the town owns, <c>_constructedBuildings</c>, as a bitmask.</summary>
     private BuildingType _constructedBuildings;
@@ -96,6 +105,7 @@ public sealed class Castle
         Race = race;
         Version = version;
         _army = new ArmyTroops(race);
+        _captain = new Captain(this);
         CanBuildToday = true;
     }
 
@@ -133,6 +143,21 @@ public sealed class Castle
 
     /// <summary>The garrison, <c>_army</c>.</summary>
     public ArmyTroops Army => _army;
+
+    /// <summary>The town's captain, <c>_captain</c>.</summary>
+    /// <remarks>
+    /// Always there; <see cref="Castle.Captain.IsValid"/> says whether the captain's quarters have been built, which
+    /// is the reference's <c>_captain.isValid()</c>. The reference reads <c>_captain</c> directly because the
+    /// captain's own methods answer for an unbuilt one; so does this property.
+    /// </remarks>
+    public Captain Captain => _captain;
+
+    /// <summary>The town's spell storage, <c>_mageGuild</c>.</summary>
+    /// <remarks>
+    /// Empty until <see cref="InitializeMageGuild"/> has rolled it, which <see cref="PostLoad"/> does once the
+    /// race is final.
+    /// </remarks>
+    public MageGuild MageGuild => _mageGuild;
 
     /// <summary>The buildings the town owns, <c>_constructedBuildings</c>.</summary>
     public BuildingType ConstructedBuildings => _constructedBuildings;
@@ -781,10 +806,14 @@ public sealed class Castle
     /// </para>
     /// <para>
     /// What the building does when it appears: the castle removes the tent, a dwelling fills its stock with one
-    /// week's growth of the creature it now houses, and everything else only raises a bit. The reference also
-    /// repaints the map, clears the fog for the owner and trains the visiting hero and the captain in the mage
-    /// guild; those three need the world, the fog and the hero book, so they are left to their own batches. The
-    /// captain's quarters and the mage guild levels are where the omissions are.
+    /// week's growth of the creature it now houses, a mage guild level (and the wizard's library) teaches whoever is
+    /// in the town, and the captain's quarters put a captain behind the walls. Everything else only raises a bit. The
+    /// reference also repaints the map and clears the fog for the owner; those two need the castle placement and the
+    /// fog, so they are left to their own batches.
+    /// </para>
+    /// <para>
+    /// The visiting hero is a parameter for the reason <see cref="TrainGuestHeroAndCaptainInMageGuild"/> gives: the
+    /// reference asks the map who stands on the town's tile, and the port's <c>World</c> cannot answer yet.
     /// </para>
     /// <para>
     /// The building permit is spent whatever was built, which is why it is cleared at the end rather than by the
@@ -793,8 +822,9 @@ public sealed class Castle
     /// </remarks>
     /// <param name="buildingType">The building to buy.</param>
     /// <param name="treasury">The owner's resources, reduced by the price on success.</param>
+    /// <param name="guestHero">The hero in the town, or <see langword="null"/> for none.</param>
     /// <returns><see langword="false"/> when the building was not for sale.</returns>
-    public bool BuyBuilding(BuildingType buildingType, ref Funds treasury)
+    public bool BuyBuilding(BuildingType buildingType, ref Funds treasury, Hero? guestHero = null)
     {
         if (CheckBuyBuilding(buildingType, treasury) != BuildingStatus.AllowBuild)
         {
@@ -837,9 +867,31 @@ public sealed class Castle
             _dwelling[5] = GetGrowth(BuildingType.DwellingMonster6);
             break;
 
+        case BuildingType.MageGuild1:
+        case BuildingType.MageGuild2:
+        case BuildingType.MageGuild3:
+        case BuildingType.MageGuild4:
+        case BuildingType.MageGuild5:
+            TrainGuestHeroAndCaptainInMageGuild(guestHero);
+            break;
+
+        case BuildingType.Captain:
+            _captain.LoadDefaults(this);
+            _captain.SetSpellPoints((uint)_captain.GetMaxSpellPoints());
+            TrainHeroInMageGuild(_captain);
+            break;
+
+        case BuildingType.Spec:
+            // The wizard's library is his special building: it adds a spell slot to every guild level.
+            if (HasLibraryCapability)
+            {
+                TrainGuestHeroAndCaptainInMageGuild(guestHero);
+            }
+
+            break;
+
         default:
-            // The mage guild levels, the captain's quarters and the library train the visiting hero; the map
-            // repaint belongs to the castle's sprite in Maps.
+            // Nothing else does anything beyond raising its bit; the map repaint and the fog belong to Maps.
             break;
         }
 
@@ -1470,16 +1522,20 @@ public sealed class Castle
     /// <item>The town may build today.</item>
     /// </list>
     /// <para>
-    /// <b>Two steps are missing</b>, both because the systems are: the captain's defaults and spell points, which
-    /// need <c>HeroBase</c>'s captain; and <c>_trainGuestHeroAndCaptainInMageGuild()</c>, which needs the mage
-    /// guild's spell storage. They are called out here rather than silently skipped, because a loaded town with a
-    /// captain would otherwise come out with the building bit and no captain behind it.
+    /// The captain's defaults (<c>castle.cpp:499-503</c>) and the guild's teaching (<c>castle.cpp:505</c>) sit between
+    /// the garrison's colour and the neutral reinforcements, as in the reference. The training has no guest hero to
+    /// teach: a town is loaded before the heroes are placed on the map, which is also why the captain only learns his
+    /// initial spell here — the guest catches up when he enters the town.
     /// </para>
     /// </remarks>
     /// <param name="dayCount">Days elapsed on the map, which is what the neutral reinforcements scale with.</param>
     /// <param name="generator">Generator for those reinforcements; the thread generator when absent.</param>
     private void PostLoad(uint dayCount, Pcg32? generator)
     {
+        // The guild's spells are rolled in LoadFromMP2 (_mageGuild.initialize(), castle.cpp:392), before the block's
+        // metadata and before _postLoad() — the first thing that consumes the map's random sequence here.
+        InitializeMageGuild(generator);
+
         _constructedBuildings &= Race switch
         {
             MapRace.Knight => ~BuildingType.DwellingUpgrade7,
@@ -1503,6 +1559,17 @@ public sealed class Castle
         FillShelf(5, BuildingType.DwellingUpgrade7, BuildingType.DwellingUpgrade6, BuildingType.DwellingMonster6);
 
         _army.Color = Color;
+
+        if (IsBuild(BuildingType.Captain))
+        {
+            // fix captain (castle.cpp:499-503). LoadDefaults() already refills the spell points in the port, the
+            // second call is the reference's and keeps the two implementations the same shape.
+            _captain.LoadDefaults(this);
+            _captain.SetSpellPoints((uint)_captain.GetMaxSpellPoints());
+        }
+
+        // A town is loaded before the heroes are placed, so nobody is home yet: the guest is the caller's to teach.
+        TrainGuestHeroAndCaptainInMageGuild();
 
         if (Color == PlayerColor.None && !HasCustomArmy)
         {

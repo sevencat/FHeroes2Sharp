@@ -2,7 +2,9 @@ using System.Diagnostics;
 
 using FHeroes2.Assets.Maps;
 
+using FHeroes2.Core.Random;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
@@ -30,8 +32,12 @@ namespace FHeroes2.Game.Heroes;
 /// <para>
 /// 一个 <see cref="HeroActions"/> 是「这位英雄今天」的一组动作，用完即弃；它不持有状态。
 /// </para>
+/// <para>
+/// 这些 <c>ActionTo*</c> 的分发者——参考那张 <c>switch</c>——在 <c>HeroActions.Action.cs</c> 里，
+/// 入口是 <see cref="Action"/>，结果模型是 <see cref="HeroActionResult"/>（ADR-133）。
+/// </para>
 /// </remarks>
-public sealed class HeroActions
+public sealed partial class HeroActions
 {
     private readonly Hero _hero;
     private readonly Kingdoms _kingdoms;
@@ -261,7 +267,7 @@ public sealed class HeroActions
         }
 
         tile.ResetObjectMetadata();
-        Kingdom.SetVisited(tileIndex, tile.GetMainObjectType(world, false));
+        Kingdom.SetVisited(tileIndex, tile.GetNonActionObjectType(world));
 
         return ArtifactPickupOutcome.Picked;
     }
@@ -302,7 +308,7 @@ public sealed class HeroActions
         ArgumentNullException.ThrowIfNull(world);
 
         Tile tile = world.GetTile(tileIndex);
-        Mp2ObjectType objectType = tile.GetMainObjectType(world, false);
+        Mp2ObjectType objectType = tile.GetNonActionObjectType(world);
         ArtifactType artifact = tile.GetArtifactFromTile(world);
         uint gold = (uint)tile.GetFundsFromTile(world).Gold;
         bool artifactIsValid = ArtifactTypes.IsValid(artifact);
@@ -405,7 +411,7 @@ public sealed class HeroActions
 
         Tile tile = world.GetTile(tileIndex);
 
-        if (!IsPickupResource(tile.GetMainObjectType(world, false)))
+        if (!IsPickupResource(tile.GetNonActionObjectType(world)))
         {
             Debug.Assert(false, "The tile does not hold a resource, a campfire or a barrel.");
 
@@ -451,7 +457,7 @@ public sealed class HeroActions
         ArgumentNullException.ThrowIfNull(world);
 
         Tile tile = world.GetTile(tileIndex);
-        Mp2ObjectType objectType = tile.GetMainObjectType(world, false);
+        Mp2ObjectType objectType = tile.GetNonActionObjectType(world);
         ObjectPickupReward reward = default;
 
         if (tile.DoesTileContainValuableItems(world))
@@ -509,7 +515,7 @@ public sealed class HeroActions
         ArgumentNullException.ThrowIfNull(world);
 
         Tile tile = world.GetTile(tileIndex);
-        Mp2ObjectType objectType = tile.GetMainObjectType(world, false);
+        Mp2ObjectType objectType = tile.GetNonActionObjectType(world);
         ObjectPickupReward reward = default;
 
         if (tile.DoesTileContainValuableItems(world))
@@ -600,7 +606,7 @@ public sealed class HeroActions
 
         if (_hero.BagArtifacts.IsFull)
         {
-            Funds funds = new Funds(Resource.Gold, ArtifactGold.InsteadOf(tile.GetMainObjectType(world, false)));
+            Funds funds = new Funds(Resource.Gold, ArtifactGold.InsteadOf(tile.GetNonActionObjectType(world)));
 
             if (funds.Gold > 0)
             {
@@ -739,7 +745,7 @@ public sealed class HeroActions
         ArgumentNullException.ThrowIfNull(world);
 
         Tile tile = world.GetTile(tileIndex);
-        Mp2ObjectType objectType = tile.GetMainObjectType(world, false);
+        Mp2ObjectType objectType = tile.GetNonActionObjectType(world);
 
         if (_hero.IsVisited(tileIndex, objectType))
         {
@@ -824,7 +830,7 @@ public sealed class HeroActions
         }
 
         // The kingdom learns about the trip even when nothing was learned: the reference sets the flag outside every branch.
-        Kingdom.SetVisited(tileIndex, tile.GetMainObjectType(world, false));
+        Kingdom.SetVisited(tileIndex, tile.GetNonActionObjectType(world));
 
         return outcome;
     }
@@ -872,7 +878,7 @@ public sealed class HeroActions
             outcome = WitchsHutOutcome.Learned;
         }
 
-        Kingdom.SetVisited(tileIndex, tile.GetMainObjectType(world, false));
+        Kingdom.SetVisited(tileIndex, tile.GetNonActionObjectType(world));
 
         return outcome;
     }
@@ -1029,7 +1035,8 @@ public sealed class HeroActions
     /// 参考结尾还有一句 <c>hero.setVisitedForAllies( dst_index )</c>：把这一格登记进<b>所有盟友</b>的王国名册，
     /// 让同一方的其他英雄与 AI 知道这格已经空了。端口没有 <c>Players</c> 的盟友表，先只登记自己所属的王国——
     /// 在单方场景里两者等价，多方盟友的差别等 <c>Players</c> 落地再补。登记用的是瓦片上的基础对象值
-    /// （参考的 <c>tile.getMainObjectType( false )</c>），不是调用方传进来的值。
+    /// （参考的 <c>tile.getMainObjectType( false )</c> 再摘掉动作位），不是调用方传进来的值——名册讲的是非动作值，
+    /// 见 <see cref="Tile.GetNonActionObjectType"/>（ADR-133）。
     /// </para>
     /// <para>
     /// 无论拿没拿到（包括「这周已经空了」），元数据都会被清、名册都会登记——参考的第二句写在 <c>if</c> 外面。
@@ -1059,7 +1066,7 @@ public sealed class HeroActions
         }
 
         tile.ResetObjectMetadata();
-        Kingdom.SetVisited(tileIndex, tile.GetMainObjectType(world, false));
+        Kingdom.SetVisited(tileIndex, tile.GetNonActionObjectType(world));
 
         return funds;
     }
@@ -1317,11 +1324,176 @@ public sealed class HeroActions
         return MagellansMapsOutcome.Bought;
     }
 
+    /// <summary>
+    /// Walking into the stone liths, <c>ActionToTeleports()</c> (<c>heroes_action.cpp:1940</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes_action.cpp:1940-1979</c>，除了音效与镜头，全部工作是三步：找出口、<see cref="Hero.Scout"/>
+    /// 出口那一格、<see cref="Hero.MoveToDest"/> 把英雄挪过去，最后清空路线。出口由
+    /// <see cref="World.NextTeleport"/> 挑——同一张精灵、同样的水陆，一对（或更多）立石里随一个。找不到时它把
+    /// <b>入口本身</b>还回来，那就是「这对立石只剩一头」，参考打一句警告就收场，端口返回
+    /// <see cref="TeleportOutcome.NoDestination"/>。
+    /// </para>
+    /// <para>
+    /// <b>先 Scout 再落脚</b>：顺序不能反。参考踩上去的第一件事是让出口周围亮相，然后英雄才挪过去；反过来的话
+    /// 那一帧的雾会按<b>旧</b>位置算。端口照抄这个顺序（<see cref="Hero.Scout"/> 的瓦片号本来就是调用方给的，
+    /// 见 ADR-130）。
+    /// </para>
+    /// <para>
+    /// <b>路线必须清掉</b>：传送是瞬间位移，脚下那条通往别处的路线已经没有意义，留着会让下一次走动把英雄从新位置
+    /// 沿旧路线拉回去。参考在 <c>Move2Dest</c> 之后紧接着 <c>ResetPath()</c>，端口同样。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">The tile the liths stand on, the entrance.</param>
+    /// <param name="world">The world holding the liths and the fog.</param>
+    /// <returns>Whether the hero moved; see <see cref="TeleportOutcome"/>.</returns>
+    public TeleportOutcome ActionToTeleports(int tileIndex, World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        int destination = world.NextTeleport(tileIndex);
+
+        if (destination == tileIndex)
+        {
+            return TeleportOutcome.NoDestination;
+        }
+
+        MoveThroughTeleport(world, destination);
+
+        return TeleportOutcome.Moved;
+    }
+
+    /// <summary>
+    /// Being swallowed by a whirlpool, <c>ActionToWhirlpools()</c> (<c>heroes_action.cpp:1981</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes_action.cpp:1981-2020</c>。位移与立石完全一样（找出口 → <see cref="Hero.Scout"/> →
+    /// <see cref="Hero.MoveToDest"/> → 清路线，见 <see cref="ActionToTeleports"/>），多出来的是<b>沉兵</b>：
+    /// <c>WhirlpoolTroopLoseEffect()</c>（<c>heroes_action.cpp:300</c>，端口 <see cref="LoseTroopsToWhirlpool"/>）。
+    /// </para>
+    /// <para>
+    /// 沉兵的规则：最弱的那一叠兵，三分之一的概率被吞掉<b>一半血量</b>。注意是血量不是数量——剩余血量要按单兵血量
+    /// <b>向上取整</b>折回「几只」（<see cref="Troop.GetCountFromHitPoints"/>，<c>monster.cpp:840</c>），所以一只
+    /// 20 点血的兵受 10 点伤之后仍然是「一只」。两条豁免：军队只有一叠、且那叠只有一只时什么都不损失（漩涡不该
+    /// 吞掉玩家唯一的兵）；投骰没中时也什么都不损失，但<b>照样传送</b>。
+    /// </para>
+    /// <para>
+    /// <b>随机数怎么进</b>：参考用全局的 <c>Rand::Get( 1, 3 )</c>。端口有同样的 <see cref="Rand.Get(int, int)"/>，
+    /// 但全局伪随机在测试里没法钉住，所以这里多收一个可选的 <see cref="Pcg32"/>，缺省用线程里那一份——测试传一个
+    /// 固定种子就能确定地走到「命中」那一支。与 <see cref="Army.Army.Reset"/> 收 <c>generator</c>、
+    /// <see cref="ActionToTreasureChest"/> 收 <c>keepGold</c> 是同一套做法：把「由谁决定」留一个口子。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">The tile the whirlpool is on, the entrance.</param>
+    /// <param name="world">The world holding the whirlpool and the fog.</param>
+    /// <param name="generator">Generator for the one-in-three roll; the thread generator when absent.</param>
+    /// <returns>Whether the hero moved; see <see cref="TeleportOutcome"/>.</returns>
+    public TeleportOutcome ActionToWhirlpools(int tileIndex, World world, Pcg32? generator = null)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        int destination = world.NextWhirlpool(tileIndex);
+
+        if (destination == tileIndex)
+        {
+            return TeleportOutcome.NoDestination;
+        }
+
+        MoveThroughTeleport(world, destination);
+        LoseTroopsToWhirlpool(generator);
+
+        return TeleportOutcome.Moved;
+    }
+
+    /// <summary>
+    /// The three state changes both teleport objects make, in the order of the reference: uncover the
+    /// destination, put the hero on it, drop the route he was walking.
+    /// </summary>
+    /// <param name="world">The world the hero stands on.</param>
+    /// <param name="destination">The tile he comes out on.</param>
+    private void MoveThroughTeleport(World world, int destination)
+    {
+        _hero.Scout(world, destination);
+        _hero.MoveToDest(destination, world);
+        _hero.Path.Reset();
+    }
+
+    /// <summary>
+    /// Drowning the share of the weakest stack that a whirlpool takes, <c>WhirlpoolTroopLoseEffect()</c>
+    /// (<c>heroes_action.cpp:300</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>heroes_action.cpp:300-340</c>。顺序与四个早退都在这里：没有兵、只有一叠独苗、投骰没中、
+    /// 那一叠只剩一只（此时整叠消失而不是「剩零只」）。真正的减法作用在<b>血量</b>上，再把血量折回数量，
+    /// 见 <see cref="Troop.GetCountFromHitPoints"/>。
+    /// </remarks>
+    /// <param name="generator">Generator for the one-in-three roll; the thread generator when absent.</param>
+    private void LoseTroopsToWhirlpool(Pcg32? generator)
+    {
+        Troop? weakest = _hero.Army.GetWeakestTroop();
+
+        if (weakest is null || weakest.Count == 0)
+        {
+            return;
+        }
+
+        if (_hero.Army.OccupiedSlotCount == 1 && weakest.Count == 1)
+        {
+            return;
+        }
+
+        if ((generator is null ? Rand.Get(1, 3) : Rand.GetWithGen(1, 3, generator)) != 1)
+        {
+            return;
+        }
+
+        if (weakest.Count == 1)
+        {
+            weakest.Reset();
+
+            return;
+        }
+
+        uint hitPoints = weakest.GetHitPoints();
+
+        weakest.Count = Troop.GetCountFromHitPoints(
+            weakest.Monster,
+            hitPoints - ((hitPoints * GameStatic.LostOnWhirlpoolPercent) / 100));
+    }
+
     /// <summary>Whether <paramref name="objectType"/> goes through <see cref="ActionToGoodLuckObject"/>.</summary>
     /// <param name="objectType">The object type.</param>
     /// <returns><see langword="true"/> for the fountain, the faerie ring, the idol and the mermaid.</returns>
     public static bool IsGoodLuckObject(Mp2ObjectType objectType) =>
         objectType is Mp2ObjectType.Fountain or Mp2ObjectType.FaerieRing or Mp2ObjectType.Idol or Mp2ObjectType.Mermaid;
+}
+
+/// <summary>
+/// What a teleport object did with the hero, <see cref="HeroActions.ActionToTeleports"/> and
+/// <see cref="HeroActions.ActionToWhirlpools"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// 参考没有返回值：对象没有另一头时它打一句警告、放个音效然后 <c>return</c>，成功时也只是继续往下走。端口折成两态，
+/// 调用方靠它决定「要不要把镜头挪到新位置」。
+/// </para>
+/// <para>
+/// <b>去哪儿不用返回</b>：落点就是 <see cref="Hero.MapIndex"/>，多返回一个瓦片号只会让两个真相并存。沉兵同理，
+/// 军队状态自己会说。
+/// </para>
+/// </remarks>
+public enum TeleportOutcome
+{
+    /// <summary>
+    /// The object has no other end — the liths stands alone, the whirlpool is the only one on the map — so the
+    /// hero stayed where he was. The reference warns and returns as well.
+    /// </summary>
+    NoDestination = 0,
+
+    /// <summary>The hero stands on the other end now, fog uncovered, route cleared.</summary>
+    Moved,
 }
 
 /// <summary>

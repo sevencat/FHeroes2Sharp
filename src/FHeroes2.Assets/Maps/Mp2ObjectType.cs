@@ -358,6 +358,30 @@ public static partial class Mp2ObjectTypes
     }
 
     /// <summary>
+    /// The non-action twin of <paramref name="type"/>, <c>type &amp; ~OBJ_ACTION_OBJECT_TYPE</c>: the value the
+    /// port's classifications and visit books speak.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 瓦片存的是文件里的动作值——风车的 <see cref="Mp2ObjectType.ActionWindmill"/>，不是
+    /// <see cref="Mp2ObjectType.Windmill"/>。参考不需要这个函数，因为它的 <c>switch</c> 直接比动作值；端口的名册
+    /// （<c>Hero.VisitedObjects</c>）、分类谓词与 30 个 <c>ActionTo*</c> 的入参讲的是 <b>非动作值</b>
+    /// （ADR-133），所以类型从瓦片走进这些地方之前要折一次，而这是唯一的一个折点。
+    /// </para>
+    /// <para>
+    /// 它是 <see cref="BaseActionType"/> 的逆运算：后者给「有动作孪生」的类型补上那一位，前者从任何带位的值上
+    /// 摘掉那一位。不带位的值原样返回——包括 Resurrection 那一批看着像动作值的
+    /// <see cref="Mp2ObjectType.Barrel"/>（260），它的位是 0，摘不到东西。
+    /// </para>
+    /// </remarks>
+    /// <param name="type">Object type to strip.</param>
+    /// <returns>The non-action value, or <paramref name="type"/> when it carries no action bit.</returns>
+    public static Mp2ObjectType NonActionType(Mp2ObjectType type) =>
+        IsActionObject(type)
+            ? (Mp2ObjectType)((ushort)type & ~(ushort)Mp2ObjectType.ActionObjectType)
+            : type;
+
+    /// <summary>
     /// <c>isObjectCanBeAction</c> of the reference (<c>mp2.cpp:38</c>): <see langword="false"/> for the
     /// objects that have no action counterpart. The list is the reference's — the decorations
     /// <c>MP2::OBJ_COAST</c> through <c>MP2::OBJ_FROZEN_LAKE</c> — and must not be "simplified" to

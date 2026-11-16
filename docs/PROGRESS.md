@@ -4607,3 +4607,135 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 传送门与漩涡（移动，需要 `FogHeroMovementHandler` 真正被走路调用）、`ActionToSphinx`（答题 + 战斗）、
 `ActionToOracle`（盗贼公会界面）。两处欠账不变：`LoadFromMP2` 按经验补等级、付费取宝的图标索引映射
 （`getResourceTypeFromIconIndex`）。
+
+## 传送门与漩涡：第三种位移，以及漩涡吞掉的半叠兵 ✅（2026-11-16）
+
+英雄此前只有「走过去」一种位移，`MoveToDest` 是为传送留的挂点却没人用。这一轮把 `heroes_action.cpp` 的两个
+传送对象接上：**立石**（`ActionToTeleports`）与**漩涡**（`ActionToWhirlpools`），后者顺手把沉兵一起搬了。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `HeroActions.ActionToTeleports`（新） | `heroes_action.cpp:1940-1979` | 找出口 → `Scout` 出口 → `MoveToDest` → 清路线；返回 `TeleportOutcome` |
+| `HeroActions.ActionToWhirlpools`（新） | `heroes_action.cpp:1981-2020` | 同上，外加沉兵；收可选 `Pcg32` 让测试钉住骰子 |
+| `HeroActions.MoveThroughTeleport`（新，私有） | 同上两段 | 两个对象共用的三步位移，顺序照参考 |
+| `HeroActions.LoseTroopsToWhirlpool`（新，私有） | `WhirlpoolTroopLoseEffect`，`heroes_action.cpp:300-340` | 最弱一叠：三分之一概率丢一半**血量**；四个早退 |
+| `Troop.GetCountFromHitPoints`（新，静态） | `Monster::GetCountFromHitPoints`，`monster.cpp:840` | 血量 → 只数，**向上取整** |
+| `GameStatic.LostOnWhirlpoolPercent`（新） | `GameStatic::GetLostOnWhirlpoolPercent`，`game_static.cpp:107` | 50 |
+| `TeleportOutcome`（新枚举） | 无（参考返回 void） | `NoDestination` / `Moved` |
+
+要点：
+
+* **三步的顺序不能动**：`Scout( 出口 )` → `MoveToDest` → `ResetPath()`。先 Scout 是因为雾要按**新**位置算，
+  先挪人的话那一帧算出来的是旧位置的雾；`ResetPath` 紧跟 `Move2Dest`，留着旧路线会让下一次走动把英雄沿旧路线
+  拉回传送门（`heroes_action.cpp:1972`）。
+* **「无处可去」是正常态**：`World.NextTeleport` 在一对只剩一头时把入口本身还回来，参考打一句警告就收场。端口
+  折成 `TeleportOutcome.NoDestination` 而不是异常——地图编辑器允许孤立立石，孤立的漩涡同理。
+* **沉兵按血量不按数量**：50% 作用在整叠兵的**血量**上，再把剩余血量按单兵血量向上取整折回只数。所以「10 个
+  农民」（每只 1 点血）是 10 → 5，而「3 个剑士」受伤后可能只剩 2 只——这一位小数就是
+  `Troop.GetCountFromHitPoints` 存在的理由。
+* **两条豁免、四个早退**，顺序照抄参考：没兵 → 只有一叠且只有一只（漩涡不吞玩家最后一个兵）→ 骰子没中
+  （只传送不沉兵）→ 那叠只剩一只（整叠消失，不是「剩零只」）。
+* **随机数怎么进**：参考用 `Rand::Get( 1, 3 )`。端口有同名 API，但全局伪随机在测试里钉不住，所以公开动作多收一个
+  可选 `Pcg32`、缺省用线程里那份；测试传固定种子就能确定地走「命中」或「没中」（`Army::Reset` 的 `generator`
+  是同一套做法）。
+* **落点不返回**：参考返回 void，端口也不多事——落点就是 `hero.MapIndex`，沉了几只去问军队。多返一个瓦片号只会
+  让两个真相并存。
+* **测试里踩到的坑记一笔**：`Tile.SetHero` 之后，瓦片是经 `World.GetHero( id )` 找「站在上面的是谁」的。测试若
+  自己 `new Hero( 1, … )`，id 会和世界预建的英雄撞车，瓦片就去看一个没落位的陌生人：底下的立石查不到、出口
+  列表为空，**表现与「孤立立石」一模一样**（第一版测试 8 条里 6 条因此失败）。测试改用 `world.GetHero( 3 )`，
+  这条也写进了测试的注释，免得下次再花一轮排查。
+
+用例：新增 `HeroTeleportTests` 8 条（立石送人到另一头并清掉路线、落点开雾而入口不开、孤立立石不动人、漩涡沉掉
+最弱一叠的一半、血量折只数向上取整、独苗被豁免、骰子没中照样传送、孤立漩涡不吞兵）。`FHeroes2.Game.Tests` →
+**1540**，全解决方案 → **2227** 条全绿，0 警告 0 错误。覆盖率合计仍 **34/63/152**（`heroes_action.cpp`、
+`monster.cpp`、`game_static.cpp` 早已在「部分」里）。
+
+**下一步**：`Heroes::Action` 那张 switch（`heroes_action.cpp:3747-4018`）是唯一的大缺口——30 个 `ActionTo*`
+已经能干活，却**没有分发者**：谁踩到对象、按对象类型调哪一支还是空的。难点不在 switch 本身，而在「结果怎么
+办」：大多数动作改完状态还要弹消息/开界面，而端口连消息层都没有，所以分发者得先定「返回值给谁」。
+再往后是带守卫的金字塔/沉船/龙穴与矿井（战斗）、住所/巢穴/流浪营地（军队与城堡招募）、
+`ActionToPoorMoraleObject`（战斗）、`ActionToSphinx`（答题 + 战斗）、`ActionToOracle`（盗贼公会界面）。
+两处欠账不变：`LoadFromMP2` 按经验补等级、付费取宝的图标索引映射（`getResourceTypeFromIconIndex`）。
+
+## 动作分发者：「结果给谁」的答案，以及被顺手堵掉的三个洞 ✅（2026-11-16）
+
+30 支 `ActionTo*` 早就能干活，缺的是它们共同的入口 `Heroes::Action()`（`heroes_action.cpp:3747-4018`）。
+这一轮把那张 300 行的 switch 搬完，也顺手回答了上一轮留下的设计问题——**结果给谁**。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `HeroActions.Action`（新） | `Heroes::Action`，`heroes_action.cpp:3747` | 取瓦片主对象 → 折成非动作值 → 30 支 `case` → 结果 |
+| `HeroActionKind`（新枚举） | 无 | 哪一支跑了；`None` / `Unsupported` 两个哨兵 |
+| `HeroActionResult`（新 struct） | 无（参考返回 void） | `ObjectType` + `Kind` + `Changed` + `Payload`，`TryGetPayload<T>()` 取回那一支自己的结果 |
+| `Mp2ObjectTypes.NonActionType`（新） | `MP2::getNonActionObjectType` | 去掉动作位；分发器进门就折一次 |
+| `Tile.GetNonActionObjectType`（新） | 同上 | 瓦片级的同一次折叠，供谓词与日收入共用 |
+| `HeroActions` 各谓词、`TileMetadata.GetDailyIncomeObjectResources`（改） | `MP2::isActionObject` 一族 | 全部改比非动作值 |
+
+要点：
+
+* **「结果给谁」折成 `HeroActionResult`**。参考没有返回值，它靠对话框直接说给玩家；端口没有消息层，于是结果
+  交回调用方：`Kind` 说是哪一支干的活（调用方据此选消息），`Changed` 说世界有没有被改动（要不要重绘、要不要刷
+  面板），`Payload` 装那一支自己的返回值。`Changed` 与「要不要提示玩家」是两件事——第二次踩法力泉什么都没改，
+  但调用方照样该说「晚点再来」。
+* **非动作值是进门处唯一的交点**。瓦片存的是带动作位的值（`ActionWindmill`），端口的名册、分类谓词与 30 支动作
+  的入参讲的都是不带位的值（`Windmill`）。分发器在 `switch` 之前折一次，`case` 标签就能与参考的 `OBJ_*` 一一对上。
+* **一格三洞**：`IsInGameActionObject` 原本自己剥位、`TileMetadata` 的日收入 switch 比的是带位值、几支谓词混用两套
+  词汇——三处都在这一轮统一到 `NonActionType`，否则分发器能进、助手查不到，风车这类对象会「看得见、摸不着」。
+* **两步走的对象不硬做**：竞技场要先问玩家选哪项主技能（参考在函数里弹对话框），分发器只报到
+  `HeroActionKind.Arena`、什么都不改，问完由调用方调 `ActionToArena`；马格勒的航海图与有主的神器本来就在返回值里
+  带「还没问」，照样分发。宝箱那条「钱还是经验」的岔路用动作默认值：拿钱。
+* **不会静默通过**：怪物、城堡、另一个英雄、船、金字塔、沉船、龙穴、矿井、招募所、事件、神谕、狮身人面像这些
+  要战斗/城堡界面/文本的对象一律回 `HeroActionKind.Unsupported`——「参考会做事，端口还不会」明说，调用方可以提示
+  或者干脆不放他走过去。踩空地才是 `None`。
+
+用例：新增 `HeroActionDispatchTests` 7 条（非动作值折叠、有对象的格子才置 ActionResult.Action 模式、`Unsupported`
+与 `None` 的区别、两步走的两支不改状态、日收入按非动作值查表、风车的元数据直接写 `tile.Metadata[0]/[1]`）。
+`FHeroes2.Game.Tests` → **1547**，全解决方案 → **2234** 条全绿，0 警告 0 错误。
+
+## castle 目录：建筑表、法师塔、队长，以及城堡的 AI 数值 ✅（2026-11-16）
+
+`castle` 目录里**不画界面**的部分这一轮全部落地：`captain.cpp`、`mageguild.cpp`、`castle_building_info.cpp`
+三份搬完，`castle.cpp` 补上 AI 与训练相关的方法。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `CastleBuildingInfo`（新） | `castle_building_info.cpp:806-1438` | 面积、名字、描述、前置条件文字、图标序号、绘制优先级 |
+| `CastleBuildingInfo.Tables`（新，脚本生成） | 同文件 32-805 | 六族三张大表 + 绘制顺序；**手不算，脚本翻** |
+| `MageGuild`（新） | `mageguild.cpp` | 布局 `[3,3,2,2,1]`、图书馆各层 +1、必有伤害/取消法术、冒险法术每层一个 |
+| `Captain`（新） | `captain.cpp` | 主技能按族、无法术书但有法术点、只能学 1–2 级 |
+| `ISpellBookOwner`（新） | `HeroBase` 的那一半 | 英雄与队长共用，智慧术规则在实现里 |
+| `Hero.CanLearnSpell` / `AppendSpellToBook`（新） | `HeroBase::CanLearnSpell` 等 | 智慧术门槛 1–2 级免费 / 3 级基础 / 4 级高级 / 5 级专家 |
+| `Castle.Modifiers.cs`（新） | `castle.cpp:2003-2063` | 力量（亡灵神殿 +2）、士气（酒馆 +1、斗兽场 +2）、幸运（彩虹 +2） |
+| `Castle.Values.cs`（新） | `castle.cpp:643-729/976-1002/2065-2123` | `GetAvailableArmy`、`GetArmyRecruitmentValue`、`GetVisitValue`、`GetGarrisonStrength`、`AllowBuyHero` |
+| `Castle.Training.cs`（新） | `castle.cpp:597-611` | `TrainHeroInMageGuild`、`TrainGuestHeroAndCaptainInMageGuild`、`InitializeMageGuild` |
+| `Castle.Description.cs`（新） | `castle.cpp:976-1023/2527-2570` | 描述占位符替换、`RecruitHero`，以及缺口清单（塔、船、战斗、城镇界面、ICN） |
+| `Castle.cs`（改） | — | 挂上 `_mageGuild`/`_captain`、`partial`、购买时的训练、`PostLoad` 的两步 |
+
+要点：
+
+* **三张大表由脚本从参考 `.cpp` 翻**，六族 × （面积、名字、描述）+ 绘制顺序共 21 个方法，手抄必错；脚本先把
+  `BUILD_*` 注释映射成 `BuildingType` 成员、再按 `case` 分组输出。名字/描述抽查（Knight 的 `Spec`="Fortifications"、
+  `Well2`="Farm"、Wizard 的 `Spec`="Library"）与参考一致。
+* **法师塔的免费槽数含图书馆槽**——这是这一轮**抓到并修掉的 bug**：参考的 `freeSlots` 初值是
+  `getMaxSpellsCount( level, hasLibrary )`（`mageguild.cpp:91`），端口第一版按 `[3,3,2,2,1]` 初始化，图书馆镇永远
+  少一格（1 级只出 3 个法术而不是 4 个）。修法是把 `+1` 计入初值，并把「已放几格」单独计数（参考往 vector 里
+  `push_back`，端口是定长数组，原来的下标公式在有图书馆时会算成 -1）。
+* **`ISpellBookOwner` 是参考 `HeroBase` 的一半**：法师塔只关心「有没有书、能不能学、学进去」，所以参数类型收窄到
+  这个接口，英雄与队长共用一套训练代码，智慧术规则留在各自的实现里。
+* **队长只能学 1–2 级**，且**没有法术书**但有法术点：`HasSpellBook` 恒真在这条路线上是刻意的——参考的队长不是
+  「买了书」，而是「本来就该学」。
+* **亡灵神殿要判版本**：`Shrine` 是 Price of Loyalty 才加的，绘制顺序里它紧跟在 `Spec` 之后；SuccessionWars 的图不插。
+* **`GetVisitValue` 与参考的一处刻意不同**：参考 `Troops futureArmy( heroArmy )` 复制的是**指针**，随后
+  `Troop::Upgrade()` 会真的把英雄自己的兵升级掉——评估一次访问顺手白升一队兵。端口按值复制（`Assign`），数字一样，
+  副作用没了。这条写进了方法的注释。
+
+用例：新增 `CastleInfoTests` 19 条（共有名 vs 族名、占位符、面积按族且 `Nothing` 为空、多精灵建筑、图标序号、前置
+条件文字、亡灵神殿的版本门槛、士气/幸运/力量三种加成与 `appendModifierToString` 的符号、法师塔各级槽数与图书馆、
+队长的四项主技能与「只学 1–2 级」、无塔不教人、可招募军队不动守军、空城访问价值为 0、城墙与护城河把守军放大）。
+`FHeroes2.Game.Tests` → **1566**，全解决方案 → **2253** 条全绿，0 警告 0 错误。
+
+**遗留**：`castle` 目录里**画界面与画城镇**的七个文件没搬——`buildinginfo.cpp`、`castle_building.cpp`、
+`castle_dialog.cpp`、`castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp`
+（合计约 4700 行，全是窗口、按钮、ICN 贴图与本地化文本），它们要的城堡界面在端口的 UI 层还不存在；`castle.cpp`
+内部也留了五处明确标注的缺口：塔的守城强度、四条船的接口、`ActionPreBattle`/`ActionAfterBattle`、
+`GetICNBuilding`/`GetICNBoat`、`DrawImageCastle`。这些都不是空函数凑数，每个都写了「为什么现在做不了」。

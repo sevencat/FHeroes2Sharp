@@ -292,6 +292,27 @@ public sealed partial class Tile
     public Mp2ObjectType GetMainObjectType(World world, bool ignoreObjectUnderHero = true) =>
         ignoreObjectUnderHero ? _mainObjectType : GetMainObjectTypeUnderHero(world);
 
+    /// <summary>
+    /// The object type with the action bit removed: the value the port compares against
+    /// (<see cref="Mp2ObjectTypes.NonActionType"/>, ADR-133).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 瓦片存的是文件里的动作值——风车是 <see cref="Mp2ObjectType.ActionWindmill"/>——而端口里所有「比对象类型」
+    /// 的地方都用不带位的那一套：<see cref="GetFundsFromTile"/> 这类按对象取数据的助手、访问名册、
+    /// <see cref="FHeroes2.Game.Heroes.HeroActions"/> 的分类谓词。凡是要判断「这是什么对象」而不是「它带不带动作
+    /// 位」，就从这里读。
+    /// </para>
+    /// <para>
+    /// 要动作位的继续用 <see cref="GetMainObjectType(World, bool)"/>：<see cref="FixMP2MapTileObjectType"/> 的
+    /// 修补、通行性里的 <c>IsActionObject</c>、以及动作分发器进门时的那一判，比的都是带位的那一个。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to.</param>
+    /// <returns>The object type without the action bit, seen through a hero standing on the tile.</returns>
+    public Mp2ObjectType GetNonActionObjectType(World world) =>
+        Mp2ObjectTypes.NonActionType(GetMainObjectType(world, false));
+
     /// <summary>The part that represents the object of the tile, <c>_mainObjectPart</c>.</summary>
     public ObjectPart MainObjectPart => _mainObjectPart;
 
@@ -1636,7 +1657,7 @@ public sealed partial class Tile
     /// <returns>The daily income, empty for objects that pay nothing.</returns>
     public Funds GetDailyIncomeObjectResources(World world)
     {
-        switch (GetMainObjectType(world, false))
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.AlchemistLab:
             case Mp2ObjectType.Mine:

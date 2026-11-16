@@ -52,14 +52,23 @@ public sealed partial class Hero
     /// <summary>
     /// Whether this hero has visited that tile for the object standing on it, <c>isVisited( tile )</c>.
     /// </summary>
-    /// <remarks>参考：<c>heroes.cpp</c> 的 <c>isVisited( const Maps::Tile & )</c>，比较的是瓦片缓存的主对象类型。</remarks>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes.cpp</c> 的 <c>isVisited( const Maps::Tile & )</c>，比较的是瓦片缓存的主对象类型。
+    /// </para>
+    /// <para>
+    /// 瓦片那份带着动作位（<see cref="Mp2ObjectType.ActionGazebo"/>），名册里记的是折过的值
+    /// （<see cref="Mp2ObjectType.Gazebo"/>，ADR-133），所以比较前先摘掉那一位；不摘的话「第二次来」永远
+    /// 查不出来，因为 <see cref="SetVisited"/> 存的和这里查的差 128。
+    /// </para>
+    /// </remarks>
     /// <param name="tile">The tile.</param>
     /// <returns><see langword="true"/> when the tile's main object is in the hero's visit list.</returns>
     public bool IsVisited(Tile tile)
     {
         ArgumentNullException.ThrowIfNull(tile);
 
-        return IsVisited(tile.Index, tile.MainObjectType);
+        return IsVisited(tile.Index, Mp2ObjectTypes.NonActionType(tile.MainObjectType));
     }
 
     /// <summary>

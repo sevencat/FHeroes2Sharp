@@ -28,7 +28,7 @@ namespace FHeroes2.Game.Heroes;
 /// the book is there, and what they are worth — is here.
 /// </para>
 /// </remarks>
-public sealed partial class Hero
+public sealed partial class Hero : ISpellBookOwner
 {
     private readonly SpellStorage _spellBook = new();
 
@@ -109,6 +109,49 @@ public sealed partial class Hero
     public bool HasSpell(Spell spell, bool skipBag = false)
         => HasSpellBook
         && (_spellBook.IsPresent(spell) || (!skipBag && _bagArtifacts.ContainSpell(spell.Type)));
+
+    /// <summary>
+    /// Whether the hero may learn the spell, <c>HeroBase::CanLearnSpell()</c> (<c>heroes_base.cpp:604-611</c>).
+    /// </summary>
+    /// <remarks>
+    /// Wisdom gates the levels: the first two are free, the third needs basic, the fourth advanced and the fifth
+    /// expert. The book is <b>not</b> checked here — <see cref="AppendSpellToBook"/> does that — because a map or
+    /// an event may hand out a spell to a hero who has none yet.
+    /// </remarks>
+    /// <param name="spell">The spell.</param>
+    /// <returns>Whether wisdom is high enough for its level.</returns>
+    public bool CanLearnSpell(Spell spell)
+    {
+        SkillLevel wisdom = GetLevelSkill(SecondarySkill.Wisdom);
+
+        return (4 < spell.Level() && wisdom == SkillLevel.Expert)
+            || (4 == spell.Level() && wisdom >= SkillLevel.Advanced)
+            || (3 == spell.Level() && wisdom >= SkillLevel.Basic)
+            || 3 > spell.Level();
+    }
+
+    /// <summary>
+    /// Writes a spell into the book, <c>HeroBase::AppendSpellsToBook()</c> (<c>heroes_base.cpp:590-602</c>).
+    /// </summary>
+    /// <remarks>
+    /// Three refusals in the reference: no valid spell, no wisdom for its level, no book to write into. The
+    /// duplicate case is <see cref="SpellStorage.Append(Spell)"/>'s.
+    /// </remarks>
+    /// <param name="spell">The spell.</param>
+    /// <param name="ignoreWisdom">Whether to skip <see cref="CanLearnSpell"/>, the <c>force</c> flag of the reference.</param>
+    /// <returns>Whether the book changed.</returns>
+    public bool AppendSpellToBook(Spell spell, bool ignoreWisdom = false)
+    {
+        if (!HasSpellBook || SpellTypes.IsValid(spell.Type) == false || (!ignoreWisdom && !CanLearnSpell(spell)))
+        {
+            return false;
+        }
+
+        int before = _spellBook.Count;
+        _spellBook.Append(spell);
+
+        return _spellBook.Count != before;
+    }
 
     /// <summary>
     /// What the hero's spells are worth in a strategic fight, <c>HeroBase::GetMagicStrategicValue()</c>

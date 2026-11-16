@@ -285,6 +285,17 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
 **27/61/161**。测试 17 条，重点是 `CheckBuyBuilding` 的**判定顺序**（已建 → 禁用位 → 三个特例 → 法师
 公会逐级 → 今天能否建 → 帐篷/城堡规则 → 种族特有升级 → 前置位 → 资源）与六族 × 两版本整表扫。
 
+2026-11-16：castle 目录的整套逻辑（ADR-134）：`CastleBuildingInfo`（`castle_building_info.cpp:806-1438`：
+面积/名字/描述/前置文字/图标序号/绘制优先级，六族三张大表与绘制顺序由 PowerShell 脚本从参考 `.cpp` 生成，
+`CastleBuildingInfo.Tables.cs`）、`MageGuild`（`mageguild.cpp`）、`Captain`（`captain.cpp`）、`ISpellBookOwner`
+（参考 `HeroBase` 的那一半，英雄与队长共用）、`Hero.CanLearnSpell`/`AppendSpellToBook`；`Castle` 补
+`GetMoraleModificator`/`GetLuckModificator`/`GetPowerModificator`、`GetAvailableArmy`/
+`GetArmyRecruitmentValue`/`GetVisitValue`/`GetGarrisonStrength`、`AllowBuyHero`/`RecruitHero`、
+`TrainHeroInMageGuild`/`TrainGuestHeroAndCaptainInMageGuild`/`InitializeMageGuild`、`GetDescriptionBuilding`，
+并把 `_mageGuild`/`_captain` 挂进 `PostLoad` 与 `BuyBuilding`。顺手修掉法师塔的一个真 bug：免费槽数没算图书馆那格
+（`mageguild.cpp:91` 的 `getMaxSpellsCount( level, hasLibrary )`），图书馆镇 1 级少一个法术。`castle` 行
+0/4/7 → **3/5/3**（合计 +3 完成 / +1 部分 / −4 未转）。测试 19 条（`CastleInfoTests`）。剩七个界面/绘制文件，见下。
+
 2026-11-16：城堡招募与升级（ADR-108）：`Castle.GetRecruitLimit`/`RecruitMonster`（`castle.cpp:1025-1106`）、
 `DwellingMonsters.GetDwelling`（`Monster::GetDwelling`，`monster.cpp:691`）与 `Troop.GetDwelling`、
 `Army.UpgradeTroops`（`army.cpp:528-560`）。货架与款项的钳制按参考的不对称照抄（只钳货架，价与入队用调用方
@@ -430,6 +441,11 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 `World.Fog`，`ClearFog( observers )` + 聚焦城堡占位（`ScoutStart`）；`World.ClearFog( PlayerColor )` 末尾补
 `UpdateDirections`（修「零揭开时一格雾都不画」）；删除 `MapFog.CreateForMap`。冒险地图像素基线与
 `tests/baselines/adventure-map.png` 逐字节一致。合计仍 **34/63/152**。测试 133 条。
+
+2026-11-16（十）：传送门与漩涡（ADR-132）：`HeroActions.ActionToTeleports`、`ActionToWhirlpools`（找出口 →
+`Scout` → `MoveToDest` → 清路线）、`MoveThroughTeleport`、`LoseTroopsToWhirlpool`（`heroes_action.cpp:300`）、
+`Troop.GetCountFromHitPoints`（`monster.cpp:840`）、`GameStatic.LostOnWhirlpoolPercent`、`TeleportOutcome`。
+合计仍 **34/63/152**。测试 141 条。
 
 ### `engine`（26）
 
@@ -579,24 +595,25 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
   ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
 * `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）、`audio`（1）：**全部未转**
-* `castle`（11）：◐ `castle.h` 的 `BuildingType` 位掩码已转（`Game.Castle.BuildingType`，33 项含三个组合
-  掩码，ADR-106），`AllCastles` 这个城表也已转（`Game.Castle.AllCastles`：按地图宽度建表、17 格足迹登记、
-  `Add`/`Get`/`Remove`，ADR-110）；◐ `castle_building_info.cpp` 的前置表 `GetRequirement` 与升级表
-  `GetUpgradeForBuilding` 已转（ADR-106），名字/描述（译文）与图标矩形表（要 AGG）未转；
-  ◐ `buildinginfo.cpp` 的 86 行造价表 `GetCost` 与 `isDwelling` 已转（ADR-106），`BuildingInfo` 那个
-  界面构件（要 `Castle`）未转；◐ `castle.cpp`→`Game.Castle.Castle` 的**无世界骨架**已转（ADR-107）：
-  构造 + `_postLoad()` 的无图那半、`isBuild`/`isCastle`/`isBuildingDisabled`/三个种族 `Spec` 谓词、
-  `GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、`GetActualDwelling`/`GetUpgradeBuilding`/
-  `GetMonstersInDwelling`/`IsExactBuildingBuilt`、`CheckBuyBuilding`/`AllowBuyBuilding`/
-  `GetAllBuildingStatus`、`BuyBuilding`、`ActionNewDay`、`AddBuildings`、`SetDefaultBuildings`、
-  `ChangeColor`、招募的 `GetRecruitLimit`/`RecruitMonster`（ADR-107/108）、70 字节块的
-  `LoadFromMP2` + `_postLoad()`（`PostLoad`/`JoinRandomArmy`，ADR-109）与默认城名表
-  （`DefaultNames` 72 个名字 + `SetName` 的洗牌取空名，ADR-110）、周产 `ActionNewWeek` 与城表的
-  `AllCastles.NewWeek`/`NewDay`（ADR-115）；未转 `AllowBuyHero`/
-  `getAvailableArmy`、`ActionNewMonth`（月度事件与招募池重置）、税收、法师公会法术与船长、船的
-  `AllowBuyBoat`/`BuyBoat`、`GetPowerModificator` 与 AI 访问价值；
-  ❌ `castle_heroes`、`castle_masons_guild`、`castle_recruit`（对话框）、`castle_ui`、`castle_switch`、
-  `castle_building_info` 的其余部分
+* `castle`（11）：✔ `castle_building_info.cpp`→`CastleBuildingInfo`（面积、名字、描述、前置条件文字、
+  图标序号、绘制优先级，六族三张大表由脚本从参考 `.cpp` 生成，ADR-134）、✔ `captain.cpp`→`Captain`
+  （主技能、法术点、只学 1–2 级，ADR-134）、✔ `mageguild.cpp`→`MageGuild`（布局 `[3,3,2,2,1]`、图书馆
+  各层 +1、必有伤害/取消法术、冒险法术每层一个，ADR-134）；◐ `castle.h` 的 `BuildingType` 位掩码已转
+  （`Game.Castle.BuildingType`，33 项含三个组合掩码，ADR-106），`AllCastles` 这个城表也已转
+  （ADR-110）；◐ `castle.cpp`→`Game.Castle.Castle` 已转：构造 + `_postLoad()`、`isBuild`/`isCastle`/
+  `isBuildingDisabled`/三个种族 `Spec` 谓词、`GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、
+  `GetActualDwelling`/`GetUpgradeBuilding`/`GetMonstersInDwelling`/`IsExactBuildingBuilt`、
+  `CheckBuyBuilding`/`AllowBuyBuilding`/`GetAllBuildingStatus`、`BuyBuilding`（含购买后的训练）、
+  `ActionNewDay`/`ActionNewWeek`、`AddBuildings`、`SetDefaultBuildings`、`ChangeColor`、招募的
+  `GetRecruitLimit`/`RecruitMonster`、70 字节块的 `LoadFromMP2` + `_postLoad()`、默认城名表、周产，
+  以及这一轮的 `GetMoraleModificator`/`GetLuckModificator`/`GetPowerModificator`、`GetAvailableArmy`/
+  `GetArmyRecruitmentValue`/`GetVisitValue`/`GetGarrisonStrength`、`AllowBuyHero`/`RecruitHero`、
+  `TrainHeroInMageGuild`/`TrainGuestHeroAndCaptainInMageGuild`、`GetDescriptionBuilding`（ADR-134）；
+  五处缺口都写明理由：塔的守城强度、四条船的接口、`ActionPreBattle`/`ActionAfterBattle`、
+  `GetICNBuilding`/`GetICNBoat`、`DrawImageCastle`；`ActionNewMonth` 与税收仍未转；
+  ❌ 七个界面与绘制文件：`buildinginfo.cpp`、`castle_building.cpp`、`castle_dialog.cpp`、
+  `castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp`（合计约 4700 行，
+  要城堡界面、ICN 贴图与本地化文本，端口 UI 层还没有城堡屏）
 * `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
   `AllTroopsAreTheSame`/`AllTroopsAreUndead`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
   ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
