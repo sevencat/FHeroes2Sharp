@@ -66,8 +66,8 @@
 口径同原则 3：**已转** = 有对应实现、注释里能指回参考文件名与函数名；**部分** = 主体可用，括号里写明缺口；
 **未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
-快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg` 与 `castle` 两行于
-2026-11-17（ADR-134、ADR-135）单独重算过。
+快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system` 与 `audio`
+四行于 2026-11-17（ADR-134、ADR-135、ADR-139、ADR-140）单独重算过。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
@@ -75,7 +75,7 @@
 | `agg` | 6 | 6 | 0 | 0 |
 | `ai` | 9 | 0 | 0 | 9 |
 | `army` | 4 | 0 | 2 | 2 |
-| `audio` | 1 | 0 | 0 | 1 |
+| `audio` | 1 | 1 | 0 | 0 |
 | `battle` | 18 | 0 | 0 | 18 |
 | `campaign` | 3 | 0 | 0 | 3 |
 | `castle` | 11 | 3 | 5 | 3 |
@@ -92,7 +92,7 @@
 | `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **37** | **61** | **151** |
+| **合计** | **249** | **38** | **61** | **150** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -448,6 +448,13 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 `Troop.GetCountFromHitPoints`（`monster.cpp:840`）、`GameStatic.LostOnWhirlpoolPercent`、`TeleportOutcome`。
 合计仍 **34/63/152**。测试 141 条。
 
+2026-11-17：`audio` 目录（ADR-140）：`audio_manager.cpp` 整个落地到 `Game/Audio/`——`AudioManager`（WAV 头包装、
+两级缓存、音乐三级回退、`PlayCurrentMusic`/`StopSounds`/`ResetAudio`）、`AudioTaskQueue`（`AsyncSoundManager` 的
+三种优先级与「取出即出队」，工作线程换成每帧一次的 `Update()`）、`AudioLoopEffects.Plan`（角度优先、距离破平、
+并列取后者，3D 开关翻转时全清）、`MusicIdentity`、`IAudioDevice`/`IAudioSource`、`MusicRestorer`。`audio` 行
+0/0/1 → **1/0/0**，合计 **37/61/151** → **38/61/150**。测试 37 条（`AudioLoopEffectsTests` 10、
+`AudioTaskQueueTests` 8、`MusicIdentityTests` 3、`AudioManagerTests` 16）。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
@@ -613,7 +620,13 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
   都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
   ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
-* `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）、`audio`（1）：**全部未转**
+* `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）：**全部未转**
+* `audio`（1）：✅ `audio_manager.cpp`→`Audio.AudioManager`（WAV 头包装与两级缓存、音乐的三级回退、
+  `PlayCurrentMusic` 重放、`StopSounds`/`ResetAudio`，ADR-140）；`AsyncSoundManager` 的工作线程换成每帧一次的
+  `Update()`（`AudioTaskQueue`：音乐 → 音效 FIFO → 循环音效，取出即出队），循环音效的配对与复用落在
+  `AudioLoopEffects.Plan`（角度优先、距离破平、并列取后者，3D 开关翻转时全清），设备与归档读取抽成
+  `IAudioDevice`/`IAudioSource`，`MusicRestorer` 是作用域重放；真正对着 SDL3_mixer 的实现仍在
+  `App/Audio/AudioPlayer.cs`，未接到这一层
 * `castle`（11）：✔ `castle_building_info.cpp`→`CastleBuildingInfo`（面积、名字、描述、前置条件文字、
   图标序号、绘制优先级，六族三张大表由脚本从参考 `.cpp` 生成，ADR-134）、✔ `captain.cpp`→`Captain`
   （主技能、法术点、只学 1–2 级，ADR-134）、✔ `mageguild.cpp`→`MageGuild`（布局 `[3,3,2,2,1]`、图书馆
@@ -750,8 +763,9 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
    ——那需要 `Game::NewDay` 那一层的会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往
    `kingdom/*`/`castle/*` 里走。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
-5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
-   `audio_manager.cpp`（音乐播放，现在只有元数据）。
+5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）；
+   `audio_manager.cpp` 的数据层已转（ADR-140），剩下的是把 `AudioPlayer` 换成 `IAudioDevice`/`IAudioSource`
+   的 SDL3_mixer 实现。
 
 ## 依赖方向（单向，不允许反向引用）
 

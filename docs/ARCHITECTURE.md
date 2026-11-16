@@ -98,7 +98,7 @@ Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF
 | `BattlePlanner` / `Planner` / `Result` | — | 未移植：M7，要等 `army` 与 `castle` 落定（PLAN「还差的主干」第 4 条） |
 | `AGG::` 命名空间 | `Assets.AssetBundle`（实例，组合根持有） | 已有；打开归档、读条目 |
 | `Assets::getImage( ICN, frame )` | `Game.Assets.Current.GetImage( "CELLWIN.ICN", 2 )` | 已建；解码结果按 (文件, 帧) 缓存，换 `Current` 时清空 |
-| `AudioManager::` | `App.Audio.AudioPlayer`（实例） | 已有 |
+| `AudioManager::` | `Game.Audio.AudioManager`（实例，注入 `IAudioDevice`/`IAudioSource`） | 已有（ADR-140）；`App.Audio.AudioPlayer` 仍是独立的 SDL3_mixer 实现，未换成它 |
 | `RNG::` | `Core.Random.Pcg32`（实例） | 已有 |
 | `logMutex` / `logFile` | `Core.Diagnostics.GameLog`（静态，自带锁） | 已有；唯一可变静态是 `MinimumLevel`，收进门面前先别再加别的 |
 

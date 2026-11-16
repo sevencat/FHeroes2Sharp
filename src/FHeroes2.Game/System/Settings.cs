@@ -425,6 +425,15 @@ public sealed class Settings
     /// <summary>Whether the Price of Loyalty content is available, <c>isPriceOfLoyaltySupported()</c>.</summary>
     public bool IsPriceOfLoyaltySupported => gameOptions.HasModes((uint)GameOptions.PriceOfLoyalty);
 
+    /// <summary>Whether sound effects are positioned in three dimensions, <c>is3DAudioEnabled()</c>.</summary>
+    public bool Is3DAudioEnabled => gameOptions.HasModes((uint)GameOptions.Audio3D);
+
+    /// <summary>
+    /// Whether the music comes from the MIDI files of the archives rather than from the music folder,
+    /// <c>isMusicTypeMidi()</c> (<c>settings.h:249</c>).
+    /// </summary>
+    public bool IsMusicTypeMidi => MusicType is MusicSource.MidiOriginal or MusicSource.MidiExpansion;
+
     /// <summary>Whether rendering is synchronised with the display, <c>isVSyncEnabled()</c>.</summary>
     public bool IsVSyncEnabled => gameOptions.HasModes((uint)GameOptions.RenderVSync);
 
@@ -650,6 +659,10 @@ public sealed class Settings
     /// <param name="enable">True to show them.</param>
     public void SetBattleShowHitPointsBar(bool enable) =>
         SetGameOption(GameOptions.BattleShowHitPointsBar, enable);
+
+    /// <summary>Switches the three dimensional sound effects, <c>set3DAudio()</c>.</summary>
+    /// <param name="enable">True to position sound effects in the world.</param>
+    public void Set3DAudio(bool enable) => SetGameOption(GameOptions.Audio3D, enable);
 
     /// <summary>Switches auto resolved battles, <c>setBattleAutoResolve()</c>.</summary>
     /// <param name="enable">True to resolve battles automatically.</param>

@@ -5090,3 +5090,63 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 **遗留**：`settings.cpp` 的配置文件读写（`Read/Save`、`tinyconfig` 的 INI 解析）、`dir.cpp` 的文件搜索、
 `system.cpp` 的 `GetString` 错误码文案、`audio` 的开闭与 `Settings` 的联动都还没搬——它们需要文件系统与
 音频层，不属于「状态」。
+
+## ADR-140：`audio` 目录——把线程换成 `Update()`、把混音器换成接口，以及循环音效的三步计划 ✅
+
+**背景**：`src/fheroes2/audio/` 只有一个 `audio_manager.{h,cpp}`（119 + 961 行），但它同时装着四件事：
+声音从哪来（AGG 里的裸采样包一个 WAV 头、音乐来自音乐文件夹或归档里的 XMI）、任务怎么排队
+（`AsyncSoundManager` 的线程与三种优先级）、循环音效怎么复用通道（`playLoopSoundsImpl` 的配对算法），
+以及直接对着 SDL_mixer 说话（`Mixer::`/`Music::` 两套全局函数）。这四件事在参考里被线程和全局状态缝在一起，
+没法单独验证。
+
+**决定**：
+
+1. **一个文件拆成九个类型**：`AudioManager`（门面，唯一知道「声音从哪来」的地方）、`AudioTaskQueue` +
+   `AudioTask`/`AudioTaskType`/`MusicRequest`/`LoopSoundRequest`（`AsyncSoundManager` 的簿记）、
+   `AudioLoopEffects` + `AudioLoopPlan`（循环音效的规则）、`IAudioDevice`/`IAudioSource`（两处外部世界）、
+   `MusicIdentity`（64 位曲目身份）、`MusicRestorer`（参考的作用域对象）。
+2. **工作线程换成显式的 `AudioManager.Update()`**：参考起一个线程、用条件变量唤醒来避免「起 MIDI 卡住地图」。
+   端口把同样的决策做成每帧排空一次的队列，宿主在主循环里调一次。参考的线程最终也只是独占队列，
+   语义等价；换来的是整套逻辑可在单测里被驱动，且不用给每种请求加锁。
+3. **任务优先级与「取出即出队」照抄**：`TryTakeNext` 先音乐、再音效（FIFO）、最后循环音效，取出时立即从
+   队列里摘掉并把 `Running` 置成该类型。`RemoveMusicTask`/`RemoveSoundTasks`/`RemoveAllSoundTasks`/
+   `RemoveAllTasks` 无条件清 `Running`——参考的 `_taskToExecute` 就是被这么清的，否则一条已经取出但还没执行的
+   任务会把刚下的取消令撤回去（本次移植时这三处早退是错的，已按 `audio_manager.cpp:150-250` 删掉）。
+4. **设备与来源注入**：`IAudioDevice` 覆盖 `Mixer::Play/Stop/setPosition/isPlaying` 与 `Music::Play/Stop/
+   isPlaying`，通道只是一个不透明的 `int`（参考用 SDL 的通道号）；`IAudioSource` 给出音乐文件夹、音效裸数据与
+   已经转好的 MIDI（XMI→MIDI 的转换留在 Assets 侧，管理器不该知道 XMI 怎么变 MID）。参考里这些都是进程全局，
+   端口把它们变成构造参数，于是 fake 设备就能测完整流程。
+5. **两种缓存都缓存失败**：`GetWAV()`/`GetMID()` 读不到时把 `null` 也记下来。归档在磁盘上，一次读不到不会因为
+   再读而变成能读，缓存失败状态反而避免每帧重试。MIDI 另加 `ignoreExpansion = track >= MidiOriginalKnight`：
+   原版曲目不在扩展归档里，扩展档必须在读它们时让开（`LoadMID` 的同一条规则）。
+6. **`MusicIdentity.Get` 对哨兵抛异常**：参考在高 32 位放 `MusicSource`、低 32 位放 `MusicTrack`，用
+   `assert` 挡住哨兵。端口改成 `ArgumentOutOfRangeException`——一个能和真实曲目撞号的身份比没有身份更糟。
+7. **循环音效拆成「算计划」+「动设备」**：参考在算法中间直接调混音器，端口让 `AudioLoopEffects.Plan` 返回
+   `ChannelsToMove`/`ChannelsToStop`/`EffectsToStart`，调用方按「先移动、再停、后起」执行，新起的通道用
+   `Register` 回报。顺序不能换：被复用的通道若先被停掉，后面那次移动就落在死通道上。这一拆也让「复用规则」
+   可以脱离声卡断言。
+8. **3D 开关翻转时全部重来**：`Plan` 发现 `is3DAudioEnabled` 与记录不同，先把所有还在响的通道列进
+   `ChannelsToStop` 并清表，再照常配对。位置从「无」变「有」时旧通道的位置信息是脏的。
+9. **配对规则按参考的「只跳过严格更差」**：角度优先、距离破平；参考比较时用 `<`，所以角度与距离都相等的
+   候选**后找到者胜**（不是先找到者）。测试最初按「先到先得」写，落地后改成
+   `ATieGoesToThePairThatWasFoundLast`，`<remarks>` 一并写明。
+10. **音乐的三级回退顺序**：设备里已加载的曲目（参考的音乐数据库）→ 音乐文件夹（只在 `External` 模式）→
+    XMI 归档（`MidiExpansion` 先试扩展档，找不到再落回原版）。文件夹里没有某支曲子不等于没有这支曲子，
+    所以 `External` 找不到时继续往下走而不是直接返回。
+11. **「已经在响就别重起」与 `PlayCurrentMusic`**：同一曲目且设备确实在放时直接返回（否则每次进界面都会把
+    曲子从头切一次）。`PlayCurrentMusic` 先清掉当前曲目再以 `ResumeAndPlayInfinite` 重放，曲目是哨兵时只清不放。
+    `PlayMusic`/`PlayMusicAsync` 都会记住 `LastRequestedMusicTrack`，即便这次请求的是哨兵——「先停音乐再要回来」
+    的那一屏不该拿回上一支曲子。
+12. **`MusicRestorer` 用 `IDisposable` 替代参考的栈上对象**：构造时记下 `LastRequestedMusicTrack`，`Dispose` 时发
+    `PlayMusicAsync(track, ResumeAndPlayInfinite)`。C# 的 `using` 与参考的花括号作用域一一对应。
+
+**后果**：新增 `Game/Audio/` 下十个文件（`AudioManager` 423 行、`AudioLoopEffects` 314 行，其余更小）。测试
+`AudioLoopEffectsTests`（10 条）、`AudioTaskQueueTests`（8 条）、`MusicIdentityTests`（3 条）、
+`AudioManagerTests`（16 条，fake 设备 + fake 来源）共 37 条；Game 测试 1844 → **1881**，全解决方案 **2602**
+条全绿（Core 193、UI 145、Assets 383、Game 1881），`-warnaserror` 0 警告。覆盖率：`audio` 行 `0/0/1` →
+**`1/0/0`**，合计 **37/61/151** → **38/61/150**。
+
+**遗留**：真正对着 SDL3_mixer 的实现没有搬进这一层——`src/FHeroes2.App/Audio/AudioPlayer.cs` 仍是独立的一套
+（直接放外部音乐文件、单曲循环、音效名走 `GameSound.GetArchiveName`）。要把它换成 `AudioManager` 需要一个
+`IAudioDevice` + `IAudioSource` 的 SDL3_mixer 实现，属于 App 组合根的活，等界面的音乐切换点（`MusicRestorer`
+的调用方）一起做。`audio_manager.cpp` 里 `Music::Xmi2Mid` 的转换本身也在 Assets 侧，本层只消费结果。

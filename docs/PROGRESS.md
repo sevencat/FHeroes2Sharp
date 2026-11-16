@@ -4919,3 +4919,45 @@ Assets 379 → **383**，全解决方案 **2565** 条全绿（Core 193、UI 145�
 覆盖率：`system` 行 `0/2/1` → **`3/0/0`**，合计 **34/63/152** → **37/61/151**。
 
 **遗留**：`settings.cpp` 的配置读写与音频开闭联动、`dir.cpp` 的文件搜索、`system.cpp` 的错误码文案。
+
+### 追加：`audio` 目录 ✅（2026-11-17）
+
+`src/fheroes2/audio/audio_manager.{h,cpp}`（119 + 961 行）整个落地到 `src/FHeroes2.Game/Audio/`（ADR-140）：
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Audio/AudioManager.cs` | `audio_manager.cpp` 的门面 | 缓存、`PlaySound(Async)`、`PlayMusic(Async)`、`PlayCurrentMusic`、`PlayLoopSoundsAsync`、`StopSounds`、`ResetAudio`、`Update` |
+| `Audio/AudioTaskQueue.cs` | `AsyncSoundManager` | 三种优先级、`Push*`/`Remove*`、`TryTakeNext`、`Running`（`_taskToExecute`） |
+| `Audio/AudioTask.cs` | 同上 | `AudioTask`/`AudioTaskType`/`MusicRequest`/`LoopSoundRequest` |
+| `Audio/AudioLoopEffects.cs` | `playLoopSoundsImpl`、`findPairOfClosestSoundEffects` | `Plan` 出三步计划、`Register`、`Clear`、`GetChannels` |
+| `Audio/AudioLoopEffectInfo.cs` | `ChannelAudioLoopEffectInfo` | 角度 + 距离的等值记录 |
+| `Audio/MusicIdentity.cs` | `getMusicUID` | 高 32 位来源、低 32 位曲目；哨兵抛异常 |
+| `Audio/MusicPlaybackMode.cs` | `Music::PlaybackMode` | `Resume`/`ResumeAndPlayInfinite`/`PlayFromBeginning` |
+| `Audio/IAudioDevice.cs` | `Mixer::` + `Music::` | 通道不透明，`Play`/`SetPosition`/`Stop*`/`IsSoundPlaying`/`PlayMusic*` |
+| `Audio/IAudioSource.cs` | `getDataFromAggFile` + `LoadMID` | 音乐目录、音效裸数据、转好的 MIDI、扩展档是否存在 |
+| `Audio/MusicRestorer.cs` | 播放器作用域对象 | `IDisposable`，`Dispose` 时重放 `LastRequestedMusicTrack` |
+
+要点：
+
+* **线程换成 `Update()`**：参考的工作线程换成宿主每帧调一次的排空循环，语义等价且可测；`AudioManager.Update`
+  里音乐先于音效、音效 FIFO、循环音效最后。
+* **取出即出队，`remove*` 无条件清 `Running`**：否则「取出后、执行前」到达的取消会被撤销。移植时三处早退是错的，
+  已按参考删掉。
+* **循环音效拆成计划**：`Plan` 返回「移动 / 停止 / 新起」三张表，调用方按此顺序动设备，新通道用 `Register` 回报；
+  被复用的通道不能被提前停掉。3D 开关翻转时清空全部通道重发。
+* **并列时后找到者胜**：参考只跳过严格更差的候选；测试名同步为 `ATieGoesToThePairThatWasFoundLast`。
+* **音乐三级回退**：设备已加载 → 音乐文件夹（仅 `External`）→ XMI 归档（`MidiExpansion` 先试扩展档）；
+  已在响不重起；`PlayCurrentMusic` 清当前曲目再以无限循环重放；哨兵只记 `LastRequestedMusicTrack` 不播。
+* **两种缓存都缓存失败**（磁盘上的归档不会自愈），MIDI 另按 `track >= MidiOriginalKnight` 让扩展档让开。
+
+用例：`AudioLoopEffectsTests` 10 条（未移动保留原通道、移动复用最近通道、并列取后者、3D 翻转全停、超出通道、
+停止与清空、3D 关闭清表）、`AudioTaskQueueTests` 8 条（三种优先级顺序、音乐与循环音效的替换、FIFO 音效、
+四组取消）、`MusicIdentityTests` 3 条（两个来源不撞号、高低位、哨兵抛异常）、`AudioManagerTests` 16 条
+（WAV 头包装与缓存、未知音效忽略、无声卡吞掉一切、音乐目录优先、归档回退、读不到不播、已在播放不重启、
+设备库优先、`StopSounds`/`ResetAudio`、哨兵只记不播、`MusicRestorer`、队列顺序、读不到的音效跳过）。
+Game 测试 1844 → **1881**，全解决方案 **2602** 条全绿（Core 193、UI 145、Assets 383、Game 1881），
+0 警告 0 错误。覆盖率：`audio` 行 `0/0/1` → **`1/0/0`**，合计 **37/61/151** → **38/61/150**。
+
+**遗留**：`App/Audio/AudioPlayer.cs` 还是自己的一套 SDL3_mixer 实现（只放外部音乐文件、单曲循环），
+换成 `AudioManager` 需要 `IAudioDevice`/`IAudioSource` 的 SDL3_mixer 版本，属于 App 组合根，等界面音乐切换点
+（`MusicRestorer` 的调用方）一起接。
