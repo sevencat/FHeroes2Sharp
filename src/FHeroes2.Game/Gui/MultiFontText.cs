@@ -331,7 +331,7 @@ public sealed class MultiFontText : TextBase
     {
         get
         {
-            System.Text.StringBuilder output = new();
+            global::System.Text.StringBuilder output = new();
 
             foreach (Text singleText in _texts)
             {

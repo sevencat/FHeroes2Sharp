@@ -246,7 +246,8 @@ public sealed class AllCastles : IReadOnlyList<Castle>
     public IEnumerator<Castle> GetEnumerator() => _castles.GetEnumerator();
 
     /// <inheritdoc/>
-    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() =>
+        GetEnumerator();
 
     /// <summary>Turns a tile index into the coordinates the footprint table is keyed by.</summary>
     /// <param name="tileIndex">The tile index.</param>

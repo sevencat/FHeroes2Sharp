@@ -4874,3 +4874,48 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 `GetIndexSprite1`（id 本身，`ICN::SECSKILL`）与 `GetIndexSprite2`（id − 1，`EDITOR` 用，非法值 `0xFF`）。
 `SecondarySkillsTests` 增 6 条，Game 测试 1793 → **1799**，全解决方案 **2516** 条全绿。
 `skill.cpp` 只剩描述文案与 `FindSkillsForLevelUp` 之外的杂项。
+
+### 追加：`system` 目录 ✅
+
+`src/fheroes2/system/` 八个文件全部落地到 `src/FHeroes2.Game/System/`（ADR-139）：
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `System/EngineVersion.cs` | `system/version.h` | `1.1.18`、`Major/Minor/Intermediate/Build`、`Version` |
+| `System/SaveFileFormat.cs` | `system/save_format_version.h` | 当前 10034、最低可读 10010，逐版本常量 |
+| `System/BitModes.cs` | `system/bitmodes.{h,cpp}` | `SetModes`/`ResetModes`/`HasModes`/`HasAllModes` |
+| `System/PlayerControl.cs` | `system/players.h` 的控制枚举 | `[Flags]`：`None`/`Human`/`Ai`，`Human|Ai` 合法 |
+| `System/AiPersonality.cs` | `ai/ai_personality.{h,cpp}` | 三档性格、`Random()`、`GetString()` |
+| `System/PlayerFocus.cs` | `system/players.h` 的 `Focus` | 英雄/城堡两类型化引用 + `FocusKind` |
+| `System/Player.cs` | `system/players.{h,cpp}` | 名字、个性、控制者、自动接管、`Handicap`、`SetPlay` |
+| `System/Players.cs` | `system/players.{h,cpp}` | 两种 `Init`、`SetStartGame` 四遍、颜色过滤、按色静态表 |
+| `System/Settings.cs` | `system/settings.{h,cpp}` | 单例、`GameOptions`/`EditorOptions` 全部位值、各 setter、两个循环 |
+
+要点：
+
+* **`BitModes` 继承、`PlayerControl` 降成属性**：参考的 `Player` 双继承在 C# 里做不到，`Human|Ai` 这种
+  「开局前可人可机」的组合仍保留在位标志里。
+* **`Players` 两种形态都留**：实例列表（`Settings.Players`，按色枚举升序决定回合顺序）+ 六格静态表
+  （`Players.Get(color)`）。`Get(None)` 回 `null`，不复刻参考的「撞上蓝槽」。
+* **`Focus` 不再是 `void*`**：`Hero?`/`Castle?` 两个字段 + `FocusKind` 二次校验，陈旧引用读不回来。
+* **AI 自动接管两段式**：开立即生效，关只写计划位，`CommitAiAutoControlMode()` 在 AI 回合结束时落地；
+  `Control` 本身不动。
+* **`Settings` 单例 + `internal Reset()`**：测试要干净的默认值；参考没有重新加载入口，注释写明这是端口补充。
+* **三个易错点已修正**：`IsEvilInterfaceEnabled` 本次补写（`Good`/`Evil` 直答，`Dynamic` 看当前玩家种族，
+  AI 回合按倒序找最后一个人类）；`SwitchToNextInterfaceType()` 原本写成 `Evil→Good→Dynamic`，与参考
+  `settings.cpp:1057` 相反，现为 `Dynamic→Good→Evil`；`EnablePriceOfLoyaltySupport(false)` 顺带把
+  `MidiExpansion` 退回 `MidiOriginal`。
+* **不搬**：配置文件读写（`tinyconfig`）、`dir.cpp` 的文件搜索、`system.cpp` 的错误码文案、翻译层。
+
+另：新命名空间 `FHeroes2.Game.System` 会遮蔽 BCL 的 `System`，`AllCastles`、`MultiFontText` 与测试里的
+`MonsterAnimInfoTests` 都改成了 `global::System.*`。
+
+用例：`SystemSettingsTests` 17 条（首跑默认值、三组钳制、价格扩展与音乐联动、各类开关、游戏类型位、
+两个循环、动态界面的四支）、`SystemPlayersTests` 14 条（两种 `Init`、人类独占与共享槽、空文件头不清表、
+强弱过滤、实际颜色、随机种族不重复、开局清相机、人类颜色缓存的失效时机、单向友谊、清表、`ToString`）、
+`PlayerTests` 6 条、`PlayerFocusTests` 3 条、`SystemMiscTests` 5 条；`MapRace` 的五个辅助另在 Assets 侧
+补 `MapRaceTests` 4 条（六种族表与随机落点、三支邪恶、四支魔法、九个名字）。Game 测试 1799 → **1844**，
+Assets 379 → **383**，全解决方案 **2565** 条全绿（Core 193、UI 145、Assets 383、Game 1844），0 警告 0 错误。
+覆盖率：`system` 行 `0/2/1` → **`3/0/0`**，合计 **34/63/152** → **37/61/151**。
+
+**遗留**：`settings.cpp` 的配置读写与音频开闭联动、`dir.cpp` 的文件搜索、`system.cpp` 的错误码文案。

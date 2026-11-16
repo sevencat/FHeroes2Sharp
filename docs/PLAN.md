@@ -90,9 +90,9 @@
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 1 | 2 | 1 |
 | `spell` | 4 | 1 | 1 | 2 |
-| `system` | 3 | 0 | 2 | 1 |
+| `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **34** | **63** | **152** |
+| **合计** | **249** | **37** | **61** | **151** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -716,8 +716,12 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `getArtifactValue`/`getTotalArtifactMultipliedPercent` 未转；◐ `artifact_info.cpp`→`ArtifactTable`/
   `ArtifactBonuses`（105 行数值表、`getArtifactData`、六个 `isBonus*`/`isCurse*` 谓词，ADR-101），
   `ArtifactData::getDescription`/`getArtifactDescription` 两支文案未转；❌ `artifact_ultimate`
-* `system`（3）：◐ `players.cpp`→`PlayerColor`/`HumanPlayers`、`settings.cpp`（只有语言与分辨率种子）；
-  ❌ `bitmodes`
+* `system`（3）：✅ `players.cpp`→`System.Player`/`Players`（两种建表、`SetStartGame` 的四遍、控制者过滤、
+  按色静态表、`Focus` 的两类型化引用，ADR-139）；✅ `settings.cpp`→`System.Settings`（单例、`GameOptions`/
+  `EditorOptions` 全部位值、各 setter 的钳制、`IsEvilInterfaceEnabled` 的三种模式、两个 `SwitchToNext*`，
+  ADR-139）；✅ `bitmodes`→`System.BitModes`（ADR-139）。两个版本头 `version.h`/`save_format_version.h`
+  顺带落地（`EngineVersion`/`SaveFileFormat`），`ai_personality` 一并搬进 `System`；
+  配置文件读写（`tinyconfig`）、`dir.cpp` 的文件搜索与翻译层按 ADR-139 不移植
 
 ### 还差的主干（按依赖顺序）
 

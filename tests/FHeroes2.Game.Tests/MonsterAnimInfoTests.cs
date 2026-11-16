@@ -360,14 +360,14 @@ public class MonsterAnimInfoTests
     }
 
     private static void WriteInt16(byte[] record, int offset, short value) =>
-        System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(offset), value);
+        global::System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(offset), value);
 
     private static void WriteInt32(byte[] record, int offset, int value) =>
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(offset), value);
+        global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(offset), value);
 
     private static void WriteUInt32(byte[] record, int offset, uint value) =>
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), value);
+        global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(record.AsSpan(offset), value);
 
     private static void WriteSingle(byte[] record, int offset, float value) =>
-        System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(record.AsSpan(offset), value);
+        global::System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(record.AsSpan(offset), value);
 }

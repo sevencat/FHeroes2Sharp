@@ -5027,3 +5027,66 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 （五块起点 + 两个越界代价、九对方向、五对无箭头），Game 测试 1772 → 1793，全解决方案 2510 条全绿。
 
 **遗留**：`Route::Path::String()`（调试串）、`heroes_move` 的行走音效与淡入淡出仍未搬。
+
+## ADR-139：`system` 目录——位标志、六个玩家槽、一个单例，以及不搬的那半目录 ✅
+
+**背景**：`src/fheroes2/system/` 只有八个文件，但它们是全局状态的源头：`bitmodes`（三个位操作的基类）、
+`players`（六个玩家槽、控制者、`Focus` 相机）、`settings`（进程唯一的一份设置，约 900 行）、两个版本头
+（`version.h`/`save_format_version.h`）与 `ai/ai_personality`。同一目录里还有 `settings.cpp` 的配置读写
+（走 `tinyconfig`）与 `dir.cpp` 式的文件搜索，两者都不属于「游戏状态」。
+
+**决定**：
+
+1. **`BitModes` 原样搬**：`SetModes`/`ResetModes`/`HasModes`/`HasAllModes` 与一个 `uint Modes`。参考的
+   `Player` 同时继承 `BitModes` 与 `PlayerControl`（一个只有四个值的枚举），C# 不能多继承，所以端口只继承
+   `BitModes`，把 `PlayerControl` 降成属性 + `IsAi()`/`IsHuman()` 扩展方法。`[Flags]` 保留了 `Human|Ai`
+   这种合法组合（开局前「可人可机」的槽）。
+2. **`Players` 同时保留两种形态**：参考的实例列表（`std::vector<Player*>`，`Settings::Players` 持有）与
+   按颜色的静态查表（`Color::GetIndex(color)` 的六格数组）都搬。实例列表决定回合顺序（按色枚举升序，而不是
+   文件头里的书写顺序）；静态表让 `Players::Get(color)` 保持参考的 O(1)。`Settings::Get()` 里的
+   `Players` 就是那张实例列表——参考的持有关系原样照抄。
+3. **`Get(None)` 回 `null`，不复刻 `Color::GetIndex(NONE) == 0`**：参考里查 `Color::NONE` 会撞上索引 0
+   （蓝色槽），全靠调用方自己先判空。端口把「没有颜色就没有玩家」写成显式契约，`GetInPlayOpponents(None)`
+   也因此回空表。
+4. **`Focus` 从 `std::pair<int32_t, void*>` 换成两个类型化引用**：参考用 `void*` + kind 标记，读的时候
+   必须自己按 kind 强转。端口存 `Hero?`/`Castle?` 两个字段，`Kind` 与字段一起改，`GetHeroes()`/`GetCastle()`
+   只在 kind 匹配时给引用——陈旧引用读不回来。`Reset()` 两边都清。
+5. **AI 自动接管是两段式**：`SetAiAutoControlMode(true)` 立即生效（`EffectiveControl` 变 `Ai`），关掉只写
+   「计划」位，等 AI 回合结束由 `CommitAiAutoControlMode()` 落地。这是参考 `Player::setAIAutoControlMode` /
+   `commitAIAutoControlMode` 的原样：不能在 AI 还在搬的时候把控制权抢回去。`Control` 本身永远不动，所以
+   「一手人类一手电脑」的槽信息不会丢。
+6. **`SetStartGame` 的四遍照抄顺序**：`SetPlay(true)` → `Focus.Reset()` → 拿掉已被占的种族 → 解析
+   `Random` 种族 → 把 `Human|Ai` 收敛成 `Ai`。顺序有意义：先清相机再发种族，最后才定控制者，于是
+   `GetColors(Human)` 在开局后只会看到真正的单人类。
+7. **`Settings` 保持单例，但补一个 `internal static Reset()`**：参考就是 `Settings::Get()` 的懒汉单例，
+   没有「重新加载」入口（配置来自文件，只读一次）。测试需要一份干净的首跑默认值，于是加了一个只对
+   `InternalsVisibleTo` 的测试工程可见的 `Reset()`，注释写明它不是参考的一部分。
+8. **不搬配置读写、文件搜索与翻译**：`tinyconfig`、`dir.cpp` 的 `SearchFile`/语言探测、以及所有 `_()`
+   文案都不在本次范围（ADR-017/137 已有同类决议）。于是 `Settings` 只提供内存里的 setter，`GameLanguage`
+   是一个字符串，名字类文本（`PersonalityString`）返回英文原文。
+9. **数值 setter 一律钳制**：音量 0..10、AI 速度 0..10、英雄与战斗速度 1..10、滚动速度
+   `None..VeryFast`。参考在 UI 层钳，端口在 setter 里钳——调用方有两个（UI 与测试），钳在唯一入口更稳。
+10. **`EnablePriceOfLoyaltySupport(false)` 顺手退回原版音乐**：参考在同一处把 `MidiExpansion` 改成
+    `MidiOriginal`；其余音乐来源（`External`/`MidiOriginal`）不动。这是一条容易漏的联动，单测专门钉住。
+11. **`IsEvilInterfaceEnabled` 的三种模式与 AI 回合**：`Good`/`Evil` 直接回答；`Dynamic` 看当前玩家的种族，
+    当前是电脑时按**倒序**找最后一个人类玩家——屏幕不能因为电脑接管了一回合就翻成邪恶界面。
+    本次移植时该属性曾漏写，`SwitchToNextInterfaceType()` 的循环方向也写反（写成
+    `Evil→Good→Dynamic`），一并按 `settings.cpp:1014-1045`/`1057-1070` 修正：现在循环是
+    `Dynamic → Good → Evil → Dynamic`。
+12. **`version.h`/`save_format_version.h` 顺带落地**：`EngineVersion`（1.1.18）与 `SaveFileFormat`
+    （当前 10034、最低可读 10010）都是常量，没有依赖，留给存档章节直接用。
+
+**后果**：新增 `Game/System/` 下 `EngineVersion`、`SaveFileFormat`、`BitModes`、`PlayerControl`、
+`AiPersonality`、`PlayerFocus`、`Player`、`Players`、`Settings` 九个文件。测试新增
+`SystemSettingsTests`（17 条）、`SystemPlayersTests`（14 条），加上 `PlayerTests`（6 条）、
+`PlayerFocusTests`（3 条）、`SystemMiscTests`（5 条），共 45 条；`MapRaces` 的五个辅助（`Basic`/`Random`/
+`IsEvil`/`IsMagical`/`Name`，`Settings` 的依赖）另在 Assets 侧补 `MapRaceTests` 4 条。Game 测试 1844 条、
+全解决方案 2565 条全绿，`-warnaserror` 0 警告。覆盖率：`system` 行 `0/2/1` → **`3/0/0`**。
+
+另需注意：新命名空间 `FHeroes2.Game.System` 会遮蔽 BCL 的 `System`，同程序集里凡是用
+`System.Collections.IEnumerator` / `System.Text.StringBuilder` 的位置都得写 `global::`（本次修了
+`AllCastles`、`MultiFontText` 与测试里的 `MonsterAnimInfoTests`）。
+
+**遗留**：`settings.cpp` 的配置文件读写（`Read/Save`、`tinyconfig` 的 INI 解析）、`dir.cpp` 的文件搜索、
+`system.cpp` 的 `GetString` 错误码文案、`audio` 的开闭与 `Settings` 的联动都还没搬——它们需要文件系统与
+音频层，不属于「状态」。

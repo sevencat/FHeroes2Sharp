@@ -72,4 +72,72 @@ public static class MapRaces
 
         return null;
     }
+
+    /// <summary>
+    /// The six races a player can actually be, in the order <c>Race::Rand()</c> picks them
+    /// (<c>race.cpp:90-108</c>).
+    /// </summary>
+    public static IReadOnlyList<MapRace> Basic { get; } =
+    [
+        MapRace.Knight,
+        MapRace.Barbarian,
+        MapRace.Sorceress,
+        MapRace.Warlock,
+        MapRace.Wizard,
+        MapRace.Necromancer,
+    ];
+
+    /// <summary>
+    /// A random race out of the six, <c>Race::Rand()</c> (<c>race.cpp:90-108</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference rolls <c>Rand::Get( 1, 6 )</c> and maps the six answers onto the six races, so the draw is
+    /// uniform and <see cref="MapRace.Random"/>/<see cref="MapRace.Multiple"/> are never its result.
+    /// </remarks>
+    /// <returns>One of <see cref="Basic"/>.</returns>
+    public static MapRace Random() => Basic[Core.Random.Rand.Get(1, 6) - 1];
+
+    /// <summary>
+    /// Whether a race is one of the three the game paints as evil, <c>Race::isEvilRace()</c>
+    /// (<c>race.cpp:129-148</c>).
+    /// </summary>
+    /// <remarks>
+    /// Barbarians, warlocks and necromancers get the evil interface; the rest do not. The reference asserts on
+    /// an unknown value and answers false, which is what the port does without the assertion (ADR-139).
+    /// </remarks>
+    /// <param name="race">The race.</param>
+    /// <returns>True for the three evil races.</returns>
+    public static bool IsEvil(MapRace race) =>
+        race is MapRace.Barbarian or MapRace.Warlock or MapRace.Necromancer;
+
+    /// <summary>
+    /// Whether a race is one of the four spell-casting ones, <c>Race::isMagicalRace()</c>
+    /// (<c>race.cpp:110-127</c>).
+    /// </summary>
+    /// <param name="race">The race.</param>
+    /// <returns>True for sorceress, warlock, wizard and necromancer.</returns>
+    public static bool IsMagical(MapRace race) =>
+        race is MapRace.Sorceress or MapRace.Warlock or MapRace.Wizard or MapRace.Necromancer;
+
+    /// <summary>
+    /// The printable name of a race, <c>Race::String()</c> (<c>race.cpp:30-58</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference wraps the words in <c>_()</c>; the port has no translation layer and returns the English
+    /// text (ADR-137), including the <c>"Neutral"</c> of one that is not set.
+    /// </remarks>
+    /// <param name="race">The race.</param>
+    /// <returns>The name of the race.</returns>
+    public static string Name(MapRace race) => race switch
+    {
+        MapRace.Knight => "Knight",
+        MapRace.Barbarian => "Barbarian",
+        MapRace.Sorceress => "Sorceress",
+        MapRace.Warlock => "Warlock",
+        MapRace.Wizard => "Wizard",
+        MapRace.Necromancer => "Necromancer",
+        MapRace.Multiple => "Multi",
+        MapRace.Random => "Random",
+        _ => "Neutral"
+    };
 }
