@@ -66,12 +66,13 @@
 口径同原则 3：**已转** = 有对应实现、注释里能指回参考文件名与函数名；**部分** = 主体可用，括号里写明缺口；
 **未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
-快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system` 与 `audio`
-四行于 2026-11-17（ADR-134、ADR-135、ADR-139、ADR-140）单独重算过。
+快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`
+与 `h2d` 五行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、ADR-139、ADR-140、
+ADR-141）单独重算过。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
-| `engine` | 26 | 7 | 7 | 12 |
+| `engine` | 26 | 8 | 7 | 11 |
 | `agg` | 6 | 6 | 0 | 0 |
 | `ai` | 9 | 0 | 0 | 9 |
 | `army` | 4 | 0 | 2 | 2 |
@@ -83,7 +84,7 @@
 | `editor` | 18 | 1 | 4 | 13 |
 | `game` | 28 | 2 | 4 | 22 |
 | `gui` | 33 | 8 | 10 | 15 |
-| `h2d` | 1 | 0 | 0 | 1 |
+| `h2d` | 1 | 1 | 0 | 0 |
 | `heroes` | 12 | 2 | 4 | 6 |
 | `kingdom` | 14 | 6 | 6 | 2 |
 | `maps` | 17 | 5 | 7 | 5 |
@@ -92,7 +93,7 @@
 | `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **38** | **61** | **150** |
+| **合计** | **249** | **40** | **61** | **148** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -455,9 +456,16 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 0/0/1 → **1/0/0**，合计 **37/61/151** → **38/61/150**。测试 37 条（`AudioLoopEffectsTests` 10、
 `AudioTaskQueueTests` 8、`MusicIdentityTests` 3、`AudioManagerTests` 16）。
 
+2026-11-17：`h2d` 目录（ADR-141）：`h2d.cpp`→`Game.H2D.H2DResources`（68 个文件名的样本表与开档校验、
+`Current` 门面、`TryReadCurrentImage`），底层 `engine/h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
+（记录表、zlib 体、17 字节图像头与单层标志，写回按名字序重排）。`h2d` 行 0/0/1 → **1/0/0**，`engine` 行
+7/7/12 → **8/7/11**，合计 **38/61/150** → **40/61/148**。测试 37 条（`H2DArchiveTests` 19、
+`H2DImageCodecTests` 10、`H2DResourcesTests` 8）；`AssetProbe h2d` 可用真实 `resurrection.h2d` 对拍。
+
 ### `engine`（26）
 
-* ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
+* ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
+  （ADR-141）；`image_palette.cpp`→`Palette`；
   `image_tool.cpp`→`IcnSpriteDecoder`+`PngWriter`/`PngReader`+`BmpWriter`+`MonoCursorFile`+TIL 负载读取；
   `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32` + `Rand` 门面（门面在
   ADR-070；`combineSeedWithValueHash` 在 ADR-113）；`timing.cpp`→`FrameTimer`
@@ -466,9 +474,8 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
   `translations.cpp`（只 `MOFile`→`MoCatalog`，`Translation::` 其余未）；`tools.cpp`（`Trim`/`GetString`
   这类零散助力，用 BCL 替代）；`zzlib.cpp`（AGG 解压走 `ZLibStream`）
-* ❌ `audio_xmi2mid.cpp`、`core.cpp`、`dir.cpp`、`h2d_file.cpp`、`image_color_conversion.cpp`、
-  `math_tools.cpp`、`render_processor.cpp`、`serialize.cpp`、`smk_decoder.cpp`、`system.cpp`、
-  `thread.cpp`、`tinyconfig.cpp`
+* ❌ `audio_xmi2mid.cpp`、`core.cpp`、`dir.cpp`、`image_color_conversion.cpp`、`math_tools.cpp`、
+  `render_processor.cpp`、`serialize.cpp`、`smk_decoder.cpp`、`system.cpp`、`thread.cpp`、`tinyconfig.cpp`
 
 ### `agg`（6）
 
@@ -620,7 +627,10 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
   都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
   ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
-* `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）：**全部未转**
+* `ai`（9）、`battle`（18）、`campaign`（3）：**全部未转**
+* `h2d`（1）：✅ `h2d.cpp`→`Game.H2D.H2DResources`（68 个文件名的样本表、开档三处失败、`Current` 门面，
+  ADR-141）；读取本身在 `Assets.H2D`（`H2DArchive`/`H2DWriter`/`H2DImageCodec`，即 `engine/h2d_file.cpp`）。
+  `Settings::findFile` 的文件搜索没搬，路径由组合根给出（`GetDefaultPath`）
 * `audio`（1）：✅ `audio_manager.cpp`→`Audio.AudioManager`（WAV 头包装与两级缓存、音乐的三级回退、
   `PlayCurrentMusic` 重放、`StopSounds`/`ResetAudio`，ADR-140）；`AsyncSoundManager` 的工作线程换成每帧一次的
   `Update()`（`AudioTaskQueue`：音乐 → 音效 FIFO → 循环音效，取出即出队），循环音效的配对与复用落在
@@ -763,9 +773,10 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
    ——那需要 `Game::NewDay` 那一层的会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往
    `kingdom/*`/`castle/*` 里走。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
-5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）；
-   `audio_manager.cpp` 的数据层已转（ADR-140），剩下的是把 `AudioPlayer` 换成 `IAudioDevice`/`IAudioSource`
-   的 SDL3_mixer 实现。
+5. 旁支：`engine/serialize.cpp`（存档，M8）、`smk_decoder.cpp`（过场动画）；
+   `h2d_file.cpp` 与 `h2d.cpp` 已转（ADR-141，`AssetProbe h2d` 可对拍真实档），
+   `audio_manager.cpp` 的数据层也已转（ADR-140），剩下的是把 `AudioPlayer` 换成
+   `IAudioDevice`/`IAudioSource` 的 SDL3_mixer 实现。
 
 ## 依赖方向（单向，不允许反向引用）
 

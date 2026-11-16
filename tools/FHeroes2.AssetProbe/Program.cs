@@ -1,6 +1,7 @@
 using FHeroes2.Assets;
 using FHeroes2.Assets.Agg;
 using FHeroes2.Assets.Cursor;
+using FHeroes2.Assets.H2D;
 using FHeroes2.Assets.Icn;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Assets.Til;
@@ -27,6 +28,7 @@ namespace FHeroes2.AssetProbe;
 ///   FHeroes2.AssetProbe window  &lt;output-dir&gt; [--palette &lt;NAME&gt;]
 ///   FHeroes2.AssetProbe maps    [--data &lt;dir&gt;]
 ///   FHeroes2.AssetProbe map     &lt;file.mp2&gt; [--limit &lt;n&gt;]
+///   FHeroes2.AssetProbe h2d     &lt;file.h2d&gt; [--limit &lt;n&gt;]
 ///   FHeroes2.AssetProbe compare &lt;left&gt; &lt;right&gt; [--diff &lt;dir&gt;] [--ignore x,y,w,h]...
 /// </code>
 /// </summary>
@@ -61,6 +63,7 @@ internal static class Program
                 "window" => ExportWindow(arguments),
                 "maps" => ListMaps(arguments),
                 "map" => InspectMap(arguments),
+                "h2d" => InspectH2D(arguments),
                 "compare" => Compare(arguments),
                 _ => Unknown(arguments.Command),
             };
@@ -735,6 +738,74 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// Dumps an H2D archive: the record table, which bodies decompress, and the size every image claims.
+    /// It is the quickest way to tell whether the records and the zlib bodies are read at the right offsets.
+    /// </summary>
+    private static int InspectH2D(ProbeArguments arguments)
+    {
+        if (arguments.Positional.Count != 1)
+        {
+            throw new ArgumentException("h2d expects exactly one argument: <file.h2d>.");
+        }
+
+        string file = arguments.Positional[0];
+        using H2DArchive archive = H2DArchive.Open(file);
+
+        int limit = arguments.Limit ?? 10;
+
+        Console.WriteLine($"# {archive.Path}: {archive.Count} entries");
+
+        int unreadable = 0;
+        int images = 0;
+        int singleLayer = 0;
+        long compressedBytes = 0;
+        long inflatedBytes = 0;
+        int printed = 0;
+
+        foreach ((string name, H2DEntry entry) in archive.Entries)
+        {
+            compressedBytes += entry.Size;
+
+            byte[]? data = archive.TryRead(name);
+            if (data is null)
+            {
+                ++unreadable;
+                Console.WriteLine($"  {name,-58} {entry.Size,8} bytes  unreadable");
+                continue;
+            }
+
+            inflatedBytes += data.Length;
+
+            if (H2DImageCodec.TryDecode(data, out Sprite? image))
+            {
+                ++images;
+                if (!image.HasTransformLayer)
+                {
+                    ++singleLayer;
+                }
+
+                if (printed++ < limit)
+                {
+                    Console.WriteLine(
+                        $"  {name,-58} {entry.Size,8} -> {data.Length,8}  {image.Width}x{image.Height} " +
+                        $"at {image.OffsetX},{image.OffsetY}{(image.HasTransformLayer ? string.Empty : " single layer")}" +
+                        (entry.Info.Length == 0 ? string.Empty : $"  '{entry.Info}'"));
+                }
+            }
+            else if (printed++ < limit)
+            {
+                Console.WriteLine($"  {name,-58} {entry.Size,8} -> {data.Length,8}  data");
+            }
+        }
+
+        Console.WriteLine(
+            $"# {images} sprites ({singleLayer} without a transform layer), {unreadable} unreadable, " +
+            $"{compressedBytes} compressed -> {inflatedBytes} bytes");
+
+        return 0;
+    }
+
     private static int Unknown(string command)
     {
         Console.Error.WriteLine($"error: unknown command '{command}'.");
@@ -780,6 +851,7 @@ internal static class Program
         Console.WriteLine("  window  <dir> [--palette <NAME>]                     Renders the standard dialog windows.");
         Console.WriteLine("  maps    [--data <dir>]                               Lists the playable map files.");
         Console.WriteLine("  map     <file.mp2> [--limit <n>]                     Dumps the tile level content of one map.");
+        Console.WriteLine("  h2d     <file.h2d> [--limit <n>]                     Dumps the records and sprites of an H2D archive.");
         Console.WriteLine("  compare <left> <right> [--diff <dir>] [--ignore x,y,w,h]  Diffs PNG files or folders.");
         Console.WriteLine("                      --ignore skips an area (repeatable), for screenshots whose status");
         Console.WriteLine("                      bar shows a live FPS counter.");

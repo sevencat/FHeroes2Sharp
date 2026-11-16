@@ -4961,3 +4961,41 @@ Game 测试 1844 → **1881**，全解决方案 **2602** 条全绿（Core 193、
 **遗留**：`App/Audio/AudioPlayer.cs` 还是自己的一套 SDL3_mixer 实现（只放外部音乐文件、单曲循环），
 换成 `AudioManager` 需要 `IAudioDevice`/`IAudioSource` 的 SDL3_mixer 版本，属于 App 组合根，等界面音乐切换点
 （`MusicRestorer` 的调用方）一起接。
+
+### 追加：`h2d` 目录 ✅（2026-11-17）
+
+`src/fheroes2/h2d/h2d.cpp`（151 行）与它依赖的 `src/engine/h2d_file.cpp`（236 行）一起落地（ADR-141）：
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Assets/H2D/H2DArchive.cs` | `H2DReader` | 魔数带版本（3）、`uint32` 长度前缀字符串、每条体 zlib 解压、坏记录跳过、重名取首条 |
+| `Assets/H2D/H2DWriter.cs` | `H2DWriter` | `Add`/`Add(H2DArchive)`/`Remove`、按名字序重排、`SmallestSize` 压缩、`Serialize`/`Write` |
+| `Assets/H2D/H2DImageCodec.cs` | `readImageFromH2D`、`writeImageToH2D` | 17 字节头（w、h、x、y、单层）+ 像素 + 可选透明层，长度精确校验 |
+| `Game/H2D/H2DResources.cs` | `H2DInitializer`、`h2d::readImage` | 68 条样本名单、三条开档失败路径、`GetDefaultPath`、`Current` 与 `TryReadCurrentImage` |
+
+要点：
+
+* **分两层**：容器是纯格式，进 `Assets`（与 `IcnSpriteFile` 同级，`Sprite` 在 `Core`）；「这版游戏需要哪些
+  h2d 内容」是策略，留在 `Game`。
+* **zlib 只用一个入口**：`zzlib.cpp` 在 H2D 上表现为标准 zlib 流，直接用 `ZLibStream`；压缩级照
+  `zipData( …, true )` 取 `CompressionLevel.SmallestSize`，重写的档与参考逐字节一致。
+* **坏记录跳过、坏头部报错**：空名 / 零长 / 越界记录跳过（同参考），重名取首条；但头部读不下去时抛
+  `BinaryFormatException`，不学参考「读出一串 0 继续」。
+* **图像体长度精确相等**，非正尺寸拒绝；单层图不分配透明层。
+* **样本表用 `FrozenSet` + 序数比较**（等价 `std::set<std::string>`），三条失败消息照抄参考。
+* **`Settings::findFile` 没搬**：`GetDefaultPath(dataDir)` 给 `files/data/resurrection.h2d`，`Current` 由组合根赋值，
+  没装档时 `TryReadCurrentImage` 返回 false。
+* **工具对拍**：`AssetProbe h2d <file.h2d>` 打记录表与每张图尺寸；用
+  `F:\game\fh2\files\data\resurrection.h2d` 实测 68 条记录 / 68 张图全部解出，名字集合与参考源码的样本表
+  完全一致。
+
+用例：`H2DArchiveTests` 19 条（记录序、解压、缺名、非 zlib 体、坏魔数/坏版本/过短/空档/放不下的 count、
+越界记录跳过、重名取首、写回往返、空名空体重拒、同名替换、删除、空档不写盘、体的名字序、复制整档、压缩生效）、
+`H2DImageCodecTests` 10 条（像素与透明层、单层、截断/超长、非正尺寸、空体、写回往返、单层标志、空图拒绝、缺条目）、
+`H2DResourcesTests` 8 条（样本 68 条、名单匹配、多一条/少一条、缺档、未装档时不取图、装了档走 `Current`、
+`GetDefaultPath`）。Assets 383 → **412**、Game 1881 → **1889**，全解决方案 2602 → **2639** 全绿，
+0 警告 0 错误。覆盖率：`h2d` 行 `0/0/1` → **`1/0/0`**，`engine` 行 `7/7/12` → **`8/7/11`**，
+合计 **38/61/150** → **40/61/148**。
+
+**遗留**：读原版存档时用 h2d 兜底图的那条链路还没接（等 `serialize.cpp` 的批次）；`AssetProbe h2d`
+只解容器与 sprite，不解 `.GAM`/`.SAV`。

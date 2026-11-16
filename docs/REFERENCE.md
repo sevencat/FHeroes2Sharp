@@ -27,6 +27,8 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | PNG 导出 / 读回（用于回归比对） | `FHeroes2.Core.Imaging.PngWriter` + `PngReader` + `PngImage` | 导出 8 bit RGBA（`transform==1` → alpha 0）；读回支持 0/2/3/4/6 色彩类型、1/2/4/8/16 bit、五种行滤波、`tRNS` |
 | `src/engine/image_tool.cpp`（`Save`） | `FHeroes2.Core.Imaging.BmpWriter` | 8 bit 索引 BMP，布局同 `SDL_SaveBMP`；`EncodeSprite` 对应 `Save(image, path, background)` |
 | `src/engine/image_tool.cpp`（`decodeBMPFile`） | `FHeroes2.Assets.Cursor.MonoCursorFile` | 单色光标 `*.BMP` 条目（非 Windows 位图），1 = 白、2 = 黑、其他 = 透明 |
+| `src/engine/h2d_file.h/.cpp`（`H2DReader`、`H2DWriter`、`readImageFromH2D`、`writeImageToH2D`） | `FHeroes2.Assets.H2D.H2DArchive` + `H2DWriter` + `H2DImageCodec` | 魔数里带版本（3）、`uint32` 长度前缀字符串、每条体是 zlib（`zzlib.cpp` 的 `unzipData`/`zipData`，用 `ZLibStream`）；空名 / 零长 / 越界的记录跳过而不是整档失败，重名取第一条（`try_emplace`）。图像体 17 字节头（w、h、x、y、单层标志）+ 像素 + 可选透明层，长度必须精确匹配；单层 sprite 不分配透明层。写回按名字序重排，压缩级同 `zipData( …, true )`（`SmallestSize`），所以重写的档与参考逐字节一致 |
+| `src/fheroes2/h2d/h2d.cpp`（`H2DInitializer`、`h2d::readImage`） | `FHeroes2.Game.H2D.H2DResources` | 68 个文件名的样本表在 `SampleFileNames`（`FrozenSet`，序数比较等于 `std::set<std::string>`）；开档三处失败：缺档 `FileNotFoundException`、读不动 `BinaryFormatException`、名单不符 `InvalidOperationException`（消息照参考）。`Settings::findFile` 的文件搜索没搬，`GetDefaultPath(dataDir)` 给 `files/data/resurrection.h2d`；`Current` 只由组合根赋值，`TryReadCurrentImage` 在没装档时返回 false（同参考全局 reader 未初始化） |
 | `src/fheroes2/gui/cursor.*` | `FHeroes2.Core.Imaging.CursorTheme` + `CursorLayout` | 主题枚举、图集选择（`SetThemes`）、热点偏移（`SetOffset`）、距离主题换算 |
 | `src/engine/screen.h` | `PresentationViewport` + `SdlPresenter` | 整数倍 + 黑边 |
 | `DEBUG_LOG` / `ERROR_LOG` | `FHeroes2.Core.Diagnostics.GameLog` | 级别 + 环境变量 |
@@ -66,7 +68,6 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | C++ | 计划 C# | 里程碑 | 备注 |
 | --- | --- | --- | --- |
 | `src/engine/image_tool.cpp`（图像缩放余量） | `ImageOps.Resize`（最近邻，颜色层与透明度层各一份，`engine/image.cpp:3087`） | 未排期 | 单层与双层两条路径已搬；「输出带透明度、输入不带」那条按 `transformTable` 反查的分支未搬（无全量 `transformTable` 数据） |
-| `src/engine/h2d_file.h` | `Assets/H2D/H2DArchive` | 未排期（M3 遗留） | 场景列表走 MP2 已够用；H2D 只在读原版存档与战役时才是必需的 |
 | `src/engine/audio/*`（`audio_xmi2mid`、`mus`、`xmi`）、`82M` 解码 | `Assets/Audio/*` | M7 | 音乐/音效播放已有 `AudioPlayer`，现在只能播 AGG 里现成的音轨；转换与 82M 是战斗与过场才要 |
 | `src/fheroes2/gui/ui_font.cpp`（各代码页的 `generateCP1250GoodButtonFont` … 补充字形）与 `SubpixelResize` | `Game.Gui.ButtonFont`、`Core.Imaging.ImageOps` | 未排期 | 只有非英文资材的按钮字形需要；`SubpixelResize` 目前没有调用者 |
 | `src/fheroes2/gui/ui_language.*` 的语言切换部分 | `Assets.Localization.*` | 未排期 | `getResourceLanguage` 已搬；运行时换资材语言还没入口（`--lang` / `F2` 只换 `.mo`） |

@@ -5150,3 +5150,48 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 （直接放外部音乐文件、单曲循环、音效名走 `GameSound.GetArchiveName`）。要把它换成 `AudioManager` 需要一个
 `IAudioDevice` + `IAudioSource` 的 SDL3_mixer 实现，属于 App 组合根的活，等界面的音乐切换点（`MusicRestorer`
 的调用方）一起做。`audio_manager.cpp` 里 `Music::Xmi2Mid` 的转换本身也在 Assets 侧，本层只消费结果。
+
+## ADR-141：`h2d` 目录——把格式读取放进 Assets、把样本表留在 Game，写回与参考逐字节一致 ✅
+
+**背景**：`src/fheroes2/h2d/h2d.cpp` 只有 151 行，真正的格式在 `src/engine/h2d_file.cpp`（236 行）里：一个
+「魔数带版本 + 记录表 + zlib 体」的容器，加一个 17 字节头的 sprite 编码。`h2d.cpp` 只做两件事——开档时把
+`resurrection.h2d` 的内容与一张 68 条的样本名单比对，以及在有人要图时按名字取。这张名单是「游戏认为资源该
+长什么样」的策略，容器则是纯格式，两者不该待在一起；而且不搬 `h2d_file.cpp` 就根本转不了这个目录。
+
+**决定**：
+
+1. **两个文件一起搬，按层落位**：`H2DArchive`/`H2DWriter`/`H2DImageCodec` 进 `FHeroes2.Assets.H2D`（与
+   `IcnSpriteFile`、`Mp2MapFile` 同级，`Sprite` 在 Core，所以 Assets 造得出图）；`h2d.cpp` 的样本表、开档
+   校验与 `Current` 门面进 `FHeroes2.Game.H2D.H2DResources`。于是「这版游戏需要哪些 h2d 内容」改不改只影响
+   Game，「h2d 文件怎么解析」只影响 Assets。
+2. **zlib 只需要一个入口**：`zzlib.cpp` 的 `unzipData`/`zipData` 在 H2D 上表现为标准 zlib 流（RFC 1950），
+   `ZLibStream` 直接对上，和 PNG 的取法一致；压缩级照 `zipData( …, true )` 取 `CompressionLevel.SmallestSize`。
+   `zzlib.cpp` 因此仍记 ◐——AGG 侧不需要解压，它缺的只是「按需分配 + 失败返回空」这套 C 接口。
+3. **坏记录跳过、坏头部报错**：空名、`size == 0`、`offset + size` 越过文件末尾的记录整条跳过，重名取第一条
+   （`std::map::try_emplace` 的行为）；但头部本身读不下去（长度前缀超出剩余字节、`count` 明显放不下）改成抛
+   `BinaryFormatException`——参考会读出一串 0 然后静默 `continue`，那种静默只会让「文件截断」伪装成「档里没这张图」。
+   `minFileSize = 22` 照抄，注释说明它是参考随手定的下限而不是真实最小档。
+4. **图像体长度必须精确相等**：`data.size() == 17 + w*h*(单层 ? 1 : 2)`。非正尺寸直接拒绝——参考按 `size_t`
+   乘出天文数字后同样不匹配，结果一致但没有溢出路径。单层图不分配透明层（参考是先 `disableTransformLayer()`
+   再 `resize`）。
+5. **写回按名字序数序**：记录表在前、体在后，`offset` 从「记录段 + 8」起算，字符串是 `uint32` 长度 + 字节，
+   `put( bool )` 是 1 字节 0/1。`Serialize()` 是参考 `write( path )` 的内存版（测试与 `AssetProbe` 用），
+   `Write( path )` 保留它的 `bool` 语义（内容为空、或写不进磁盘时返回 false，不抛）。
+6. **样本表是 `FrozenSet`，比较用序数**：`std::string::operator<` 按无符号字节比较，68 个名字都是 ASCII，
+   序数比较给出同样的顺序和同样的判断。三条失败路径的消息照参考：找不到档、打不开、名单不符（`FileNotFoundException`
+   / `BinaryFormatException` / `InvalidOperationException`），最后一条还把文件名带回给用户。
+7. **没有 `Settings::findFile` 就显式给路径**：`GetDefaultPath( dataDir )` 拼 `files/data/resurrection.h2d`，
+   `Current` 只由组合根赋值；`TryReadCurrentImage` 在没装档时返回 false，等价于参考里初始器还没跑时的全局 reader。
+8. **对拍放进工具而不是测试**：`AssetProbe h2d <file>` 打记录表、每条体的压缩/解压长度与每张图的尺寸，测试则用
+   自造的档覆盖畸形布局。用 `F:\game\fh2\files\data\resurrection.h2d` 实测：68 条记录、68 张图全部解出、
+   名字集合与参考源码里的样本表完全一致（`Compare-Object` 无差异）。
+
+**后果**：新增 `Assets/H2D/` 三个文件（`H2DArchive` 233 行、`H2DWriter` 150 行、`H2DImageCodec` 139 行）
+与 `Game/H2D/H2DResources`（205 行，含 68 条样本表）；`AssetProbe` 多一条 `h2d` 命令。测试
+`H2DArchiveTests` 19 条、`H2DImageCodecTests` 10 条、`H2DResourcesTests` 8 条，共 37 条：Assets 383 → **412**、
+Game 1881 → **1889**，全解决方案 2602 → **2639** 全绿，`-warnaserror` 0 警告。覆盖率：`h2d` 行 `0/0/1` →
+**`1/0/0`**，`engine` 行 `7/7/12` → **`8/7/11`**（`h2d_file.cpp` 从 ❌ 移入 ✅），合计 **38/61/150** →
+**40/61/148**。
+
+**遗留**：读原版存档时才用到 h2d 的那条链路（`Game::LoadSAV` 里的 h2d 兜底图）还没接，等 `serialize.cpp` 的
+批次；`AssetProbe h2d` 只解容器与 sprite，不解 `.GAM`/`.SAV`。
