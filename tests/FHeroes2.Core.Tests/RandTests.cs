@@ -172,4 +172,21 @@ public sealed class RandTests
         Assert.Same(device, Rand.CurrentThreadRandomDevice);
         Assert.InRange(Rand.Get(1000u), 0u, 1000u);
     }
+
+    [Fact]
+    public void CombineSeedWithValueHash_IsTheReferenceHashCombine()
+    {
+        // rand.h:260-265: seed ^= hash( value ) + 0x9e3779b9 + ( seed << 6 ) + ( seed >> 2 ), truncated to 32 bits.
+        Assert.Equal(0x9e3779b9u, Rand.CombineSeedWithValueHash(0u, 0u));
+
+        // 0x61c88647 + 0x9e3779b9 is exactly 2^32, so the mix of a zero seed with that value wraps to zero.
+        Assert.Equal(0u, Rand.CombineSeedWithValueHash(0u, 0x61c88647u));
+
+        // The same pair always gives the same seed; two different salts give two different seeds.
+        Assert.Equal(Rand.CombineSeedWithValueHash(42u, 367245u), Rand.CombineSeedWithValueHash(42u, 367245u));
+        Assert.NotEqual(Rand.CombineSeedWithValueHash(42u, 367245u), Rand.CombineSeedWithValueHash(42u, 1946256u));
+
+        // The signed and the unsigned spelling of the same salt are the same call, since std::hash<int> is identity.
+        Assert.Equal(Rand.CombineSeedWithValueHash(42u, 367245u), Rand.CombineSeedWithValueHash(42, 367245));
+    }
 }

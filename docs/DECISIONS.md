@@ -3834,9 +3834,515 @@ AGG 与渲染，`Scout()` 要迷雾、`ActionAfterBattle` 要战斗。如果等�
 
 **仍未转**：招募（`RecruitMonster`/`getRecruitLimit`/`getAvailableArmy`/`AllowBuyHero`）、`ActionNewWeek`/
 `ActionNewMonth`（周产与井/水井/周之建筑/月之建筑的加成）、税收与法师公会的法术授予、
-`Castle::LoadFromMP2`（76 字节块）与 `_postLoad()` 的填货尾巴、`GetPowerModificator`/`GetMoraleModificator`/
+`Castle::LoadFromMP2`（70 字节块）与 `_postLoad()` 的填货尾巴、`GetPowerModificator`/`GetMoraleModificator`/
 `GetLuckModificator`/`GetGarrisonStrength`、`HasBoatNearby`/`AllowBuyBoat`/`BuyBoat`、`Scout()`、
 `ActionPreBattle`/`ActionAfterBattle`、`DrawImageCastle`/`GetICNBuilding`、`setName`/`fixFrenchCharactersInName`、
 `getVisitValue`/`getArmyRecruitmentValue`；以及 `castle_heroes`/`castle_recruit`/`castle_masons_guild`/
 `castle_ui`/`castle_switch`/`castle_building_info` 的其余部分与 `BuildingInfo` 界面构件。
 
+## ADR-108：招募照抄参考的钳制不对称；住所反查另立一张表
+
+**背景**：上一批给了货架与建造，这批把货架上的兵卖出去（`Castle::RecruitMonster`/`getRecruitLimit`），并把
+「用钱换升级版」接上（`Troops::UpgradeTroops`）—— 后者从 ADR-107 起就只差一座能问「建没建那个升级住所」的
+城。两处都还不需要世界，所以继续不碰招募对话框与英雄。
+
+**决策**：
+
+1. **`RecruitMonster` 的钳制不对称照抄**：参考把 `count` 钳到货架存量，却用**原始**数量算价钱、
+   `JoinTroop`**原始**数量。要 20 只剩 10 → 付 20 的钱、进 20 个兵、货架归零。这是参考的真实现状（对话框永远
+   先问 `getRecruitLimit()`，所以平时看不见），端口不"顺手修好"：修了以后移植的对话框会与原版行为不同，而
+   这类偏差在界面上极难被发现。测试里写一条 `AskingForMoreThanTheShelfHolds...` 把它钉住，注释说明责任在
+   调用方。
+2. **`getLowestQuotient` 的符号回绕照抄**：钱为负（事件扣成负）时，`uint32_t willRecruit = int32_t` 绕成
+   巨大值，于是「货架有多少就能买多少」。端口写 `unchecked((uint)...)` 显式表达"我知道这里会绕"，而不是加
+   一道参考没有的钳位。
+3. **失败的判定全部在扣钱之前**：无效兵种 → 不是住所兵种 → 钱不够 → 两边都放不下。参考的 `return false`
+   都在 `kingdom.OddFundsResource()` 与 `_dwelling -= count` 之前，端口保持这个顺序，于是"没地方放"既不花钱
+   也不减货 —— 一条测试同时验证三件事。
+4. **守军优先、英雄其次，英雄以参数传入**：参考写 `GetArmy()` 再 `world.GetHero( *this )`；世界里没有英雄
+   系统，所以第三个参数是 `ArmyTroops? heroArmy`。默认 `null` 表示"城里没英雄"，调用方（装载后的地图）传
+   `hero.Army`。这与 ADR-107 把 `Kingdom` 的账本变成参数的思路一致：缺的东西以参数出现，不造假门面。
+5. **住所反查另立一张表**（`DwellingMonsters.GetDwelling`，对应 `Monster::GetDwelling()`）：不要在第一张表
+   （`FromDwelling(race, building)`）里搜。第一张表按种族回答，第二张表按兵种回答；兵种的住所只取决于它自己
+   （弓手永远在第二格），而"第三格"在骑士城是精灵、在术士城是石像鬼。两张表彼此的约束用测试覆盖：六族 ×
+   12 个住所位，反查回来必须落在同一货架。
+6. **`Troop.GetDwelling()` 只做转接**：参考里 `Troop` 继承 `Monster`，`troop.GetDwelling()` 就是
+   `Monster::GetDwelling()`。端口没有继承，加一个一行转接，让 `Castle`/`Army` 的代码读起来与参考同形。
+7. **`UpgradeTroops` 问的是升级后的住所**：`castle.isBuild(troop.GetUpgrade().GetDwelling())` —— 升级住所
+   本身就是"允许升级"这个能力的载体，问当前兵种的住所会让"有二级住所就能把三级升四级"漏进来。
+8. **升级逐堆付费**：每堆单独 `AllowPayment` + 扣款，所以钱只够一堆时，靠前的升、靠后的不动。若改成先算总价
+   再逐堆判断，行为会变成"钱不够就一个都不升"，与参考不同。
+
+**后果**：新增 `tests/FHeroes2.Game.Tests/CastleRecruitTests.cs`（14 条），改动
+`src/FHeroes2.Game/Castle/Castle.cs`（`GetRecruitLimit`/`RecruitMonster`）、
+`src/FHeroes2.Game/Monsters/DwellingMonsters.cs`（`GetDwelling`）、
+`src/FHeroes2.Game/Army/Troop.cs`（`GetDwelling`）、`src/FHeroes2.Game/Army/Army.Troops.cs`
+（`UpgradeTroops`）。`FHeroes2.Game.Tests` 1277 → **1291**，全解决方案 1963 → **1977** 条全绿，0 警告
+0 错误。`castle`/`army`/`monster` 都已是「部分」，行数与合计不变（27/61/161）。
+
+**仍未转**：`AllowBuyHero`、`Castle::getAvailableArmy`/`getRecruitLimit` 的对话框侧用法
+（`castle_recruit.cpp`）、`Castle::ActionNewWeek`/`ActionNewMonth`（周产与井/水井/周之建筑/月之建筑的加成）、
+税收与法师公会法术授予、`Castle::LoadFromMP2` 与 `_postLoad()` 的填货尾巴、`Castle::GetPowerModificator`
+等修正、`Troops::SplitTroopIntoFreeSlots`/`ArrangeForBattle`/`ArrangeForTownDefense`、
+`Troops::GetJoinSolution`、`joinTroops`/`JoinTroop` 的"同族三连"变体，
+`Troops::GetAttackModificator`/`GetDefenseModificator`（要城堡与神器）。
+
+## ADR-109：70 字节块照顺序读；「读」与「修」分成两个函数
+
+**背景**：MP2 的城堡块固定 70 字节，字段没有长度前缀。参考把它拆成 `LoadFromMP2()`（读）与 `_postLoad()`
+（读完再修六步）。上一批的 `Castle` 已经有全部建筑位与住所货架，这批只是给它们一个来自文件的入口。
+
+**决策**：
+
+1. **固定宽度、顺序读、不猜长度**：每个跳过都写死字节数（非自定义建筑跳 5、非自定义守军跳 15、城名 13、
+   尾部 29 字节不读）。格式如此，写死比"读到下一个字段"更安全，也用 `data.Length != 70` 直接拒绝畸形块。
+2. **`LoadFromMP2` 与 `PostLoad` 分开**：读字段是机械的，修六步全是"文件说不清"的判断（随机城的种族是后定的、
+   升级位可能不属于该种族、无主城要自己长兵、无水就没有船坞）。合成一个函数会让每步修复看起来像解析的一部分；
+   分开之后，`PostLoad` 的六步顺序本身就是文档。
+3. **`Race` 允许装载时确定**（`private set`）：参考的构造函数拿位置记录里的种族，随机城的真实种族要等块读到
+   最后才定，端口因此不能让 `Race` 只读。这是本批唯一放松的既有契约，写在这里备案。
+4. **世界缺席处一律加参数**：`GameDifficulty`（默认建筑的掷点）、`MapRace? ownerRace`（随机城有主时用王国
+   种族）、`Pcg32?`（掷点与补兵可复现）、`uint dayCount`（中立城补兵按天数升级）。没有为任何一个造门面 ——
+   与 ADR-107 的结论一致。
+5. **兵种 id 是「枚举值 - 1」**：格式把 0 留给"没有"，读出来 `+ 1`。这条很容易写错（本批测试第一版就写错了），
+   所以常量与 `+ 1` 都写在字段旁边，测试也用「Swordsman 而非 VeteranPikeman」这种能立刻暴露差一的断言。
+6. **`Army.Assign` 是新的一支，不复用 `JoinTroop`**：地图给的是五个独立槽位，同种兵可能是两格；`JoinTroop`
+   会合并、会挑空位，语义相反。Assign 先清空再按位放，跳过无效堆但保留位置。
+7. **`HasCustomArmy` 作为模式位的替身**：参考用 `Modes(CUSTOM_ARMY)`，读它的只有 `_postLoad()` 里"要不要给
+   中立城补兵"一处，所以端口落成一个只读属性，由装载置位。
+8. **`HasSeaAccess` 仍由调用方先说**：块里可能写着船坞，而参考在 `_postLoad()` 里按地图扫水拆掉它。端口的
+   属性默认 `false`，因此文档明确要求"先设水，再装载"，否则船坞必被拆。这条是 ADR-107 那条「世界给答案」
+   的直接后果，写清楚免得后被当成 bug 修。
+9. **两步没转就在代码里点名**：船长的默认值/法术点与 `_trainGuestHeroAndCaptainInMageGuild`。不悄悄跳过：
+   "有船长建筑却没有船长"是最难排查的半截状态。
+
+**后果**：改动 `src/FHeroes2.Game/Castle/Castle.cs`（`Mp2BlockSize`、`HasCustomArmy`、`LoadFromMP2`、
+`PostLoad`、`FillShelf`、`JoinRandomArmy`、`Roll`、`ReadUInt16`，`Race` 改 `private set`）、
+`src/FHeroes2.Game/Army/Army.Troops.cs`（`Assign`），新增
+`tests/FHeroes2.Game.Tests/CastleLoadTests.cs`（19 条，全部手搓 70 字节块，不依赖地图文件）。
+`FHeroes2.Game.Tests` 1291 → **1310**，全解决方案 1977 → **1996** 条全绿，0 警告 0 错误。行数与合计不变
+（27/61/161）。
+
+**仍未转**：`world_loadmap.cpp` 的城堡落格与其 3 字节位置记录、`Castle::saveToMP2`/`Game::Save` 的城堡段、
+默认城名（`setName` + 72 个名字的 `updateCastleNames`）、船长与法师公会的法术、`ActionNewWeek`/
+`ActionNewMonth`、税收、`AllowBuyHero`/`AllowBuyBoat`/`BuyBoat`、`Scout()`、`ActionAfterBattle`、
+`DrawImageCastle`/`GetICNBuilding`。（城堡落格与默认城名已在 ADR-110 补上。）
+
+## ADR-110：城表独立成类；装载顺序「建城 → 读块 → 起名」；随机城的两步重绘照抄参考
+
+**背景**：ADR-109 让 70 字节块有了入口，但块找不到自己的城——参考里城表（`vec_castles`）是 `World` 的成员，
+城堡块按「它站在哪个瓦片上」反查。这批把 `world_loadmap.cpp:296-355`（3 字节位置表建城）、`:596-641`
+（两种城堡块）、`maps.cpp:717-819`（随机城的两次重绘）与 `:92-111`（`updateCastleNames`）接进装载流程。
+
+**决策**：
+
+1. **城表独立成类 `AllCastles`**：参考的 `AllCastles` 就是一个按瓦片索引反查的容器（`vec_castles` 的
+   `Add`/`Get`/`Remove`），并不是 `World` 的方法集合。端口照此独立成类，构造时接收地图宽度，`Add` 一个城
+   就把它的 17 格足迹（正中 + 城堡的 16 格，不含城门下方两行）全部登记。装地图与 `Reset` 时**替换**整个表
+   而不是清空它——表记着地图宽度，清空后的旧宽度会让坐标换算错位。
+2. **装载顺序写死在 `LoadMap` 里**：`Width/Height` → 瓦片 → **`CreateMapCastles` → `ReadInfoBlocks` →
+   `UpdateCastleNames`**。三条都不能挪：块按瓦片找城，所以城必须先存在；默认名要避开地图自己起的名字，
+   所以起名必须等所有块读完。参考也是这个顺序，端口把它写成注释而不是留给读者自己推。
+3. **`HasSeaAccess` 挂到 `World` 上**：参考里它是 `Castle::HasSeaAccess()`，靠全局 `world` 探三个水格。
+   端口的城堡不持有世界（ADR-107 的结论），所以扫描落成 `World.DoesCastleHaveSeaAccess(tileIndex)`，
+   建城时把答案写进 `Castle.HasSeaAccess`，正好满足 ADR-109 要求的「先设水，再装载」。
+4. **重绘分两遍，顺序不能反**：先 `UpdateCastleSprite`（换精灵：`OBJNTWRD` → `OBJNTOWN`/`OBJNTWSH`，顶格
+   再手工重指 `fullTown - 16`），再 `ReplaceRandomCastleObjectId`（改类型）。反过来改类型会让重绘前的
+   「这格是不是随机城」检查落空。第二遍的扫描框 `x ∈ [-2, 3)`、`y ∈ [-3, 2)` 照抄参考，**城门最后无条件
+   设成 `Castle`**——框内的左向阴影不在框里，参考也不管它们。
+5. **`ReplaceObject` 要求精确匹配，所以重绘不会「凭空生效」**：它按 UID + ICN 类型 + 图像索引三者匹配。
+   这只在整座城的 32 个精灵都在地图里时才工作，测试地图因此必须真的铺满 32 格（`WorldCastleLoadTests` 的
+   `PaintRandomTown` 就是这么做的，城门格用布局里的第 13 号索引而不是 0）。这条坑很隐蔽，写在这里备查。
+6. **两个名字表的分工**：`Castle.DefaultNames` 是静态的 72 个名字（`castle.cpp:84-101`），`Castle.SetName`
+   接一个「已占用名集合」，洗牌后取第一个没被占的。已用集合由 `World.UpdateCastleNames` 维护，因为参考用的
+   是全局城表；全部占满时参考 `assert(0)`，端口抛 `InvalidOperationException`。
+7. **畸形地图一律 warn + 跳过，不 assert**：城的位置越界（参考会照建一个越界的城）、块长不是 70、
+   块找不到城、随机格不是随机城——四种都是地图缺陷，参考前两种不管、后两种 `assert`。端口统一
+   `GameLog.Warn` 后跳过，理由是这三种情况都不该让装载整体失败，而未初始化的城更难排查。
+
+**后果**：新增 `src/FHeroes2.Game/Castle/AllCastles.cs`、`src/FHeroes2.Game/World/World.Castles.cs`
+（城表、两个查询、`DoesCastleHaveSeaAccess`、`CreateMapCastles`、`UpdateCastleNames`、`ReadCastleBlock`、
+`ReplaceRandomCastleObjectId`、`UpdateCastleSprite`），改动 `Castle.cs`（`DefaultNames`、`SetName`）、
+`World.cs`（城表生命周期、装载顺序、`ReadInfoBlocks` 的四个城堡分支），新增
+`tests/FHeroes2.Game.Tests/WorldCastleLoadTests.cs`（12 条）。`FHeroes2.Game.Tests` 1310 → **1322**，
+全解决方案 1996 → **2008** 条全绿，0 警告 0 错误。行数与合计不变（27/61/161）。
+
+**仍未转**：`Game::Save` 的城堡段与 `Castle::saveToMP2`、`Kingdom`（资源簿与名册，随机城有主时的种族要问它）、
+`ActionNewWeek`/`ActionNewMonth`、税收、船长与法师公会的法术、`AllowBuyHero`/`AllowBuyBoat`/`BuyBoat`、
+`Scout()`/`ActionAfterBattle`、`DrawImageCastle`/`GetICNBuilding`。
+
+
+## ADR-111：王国只做「账本 + 名册」；七槽容器照抄第七槽；起始资源按文件头算
+
+**背景**：ADR-107 的城堡接口吃 `ref Funds treasury`，ADR-110 又提到随机城有主时要问王国的种族，但 `Kingdom`
+一直没有——账本没有主人，名册没有名字。这批把 `kingdom.cpp` 里不需要别的系统的那一半搬过来：`Init`/`clear`
+（`:103/124`）、两张名册（`:271/284/311/322`）、五个计数（`:344-374`）、`AllowPayment`（`:384`）、收付
+（`:443/449`）与起始资源表（`:865`），以及七槽容器 `Kingdoms`（`:688-802`）。
+
+**决策**：
+
+1. **账本用 `ref Funds Treasury` 而不是 `Funds GetFunds()`**：参考的 `GetFunds()` 返回常量引用，城堡的
+   `BuyBuilding`/`RecruitMonster` 也吃引用。端口既然已经把「钱」做成 `ref Funds` 参数（ADR-107/108），账本
+   就必须交出货真价实的引用，否则下单只会改到副本。属性返回 `ref` 字段，测试里 `ref Funds treasury =
+   ref kingdom.Treasury` 直接改字段也成立。
+2. **`AllowPayment` 照抄「够，或者本来就要 0」**，不换成 `Funds >= funds`：零需求永远付得起，而 `Funds` 的
+   比较运算符对空账本 + 零价格会给出 `false`。这条差异只有零需求时才显现，正是最难靠眼睛发现的那类。
+3. **名册只做名册**：`RemoveCastle`/`RemoveHero` 不判负、不解散英雄、不给城改色，`AddCastle` 也不改色——
+   参考那三件事分别属于 `LossPostActions`（要 `Players`）、英雄解散（要 `Players`）与占领流程的
+   `ChangeColor`（ADR-108 已落）。端口把「出局没有」做成 `IsLoss`/`IsLosingGame` 两个只读属性，由调用方问。
+   加城会把 `LostTownDays` 重置回 `GameOverLostDays + 1`，这是参考里唯一的重置点，照抄。
+4. **`Kingdoms` 保留第七个「垃圾桶」槽**：参考把非法颜色与 `NONE` 都 `switch` 到第七槽，让调用方永远拿到一个
+   合法对象。端口照抄（返回 `Kingdom` 而不是可空引用），因为天量调用点都拿着「可能为 `NONE` 的颜色」来查。
+5. **起始资源按地图文件头算，而不是 `Settings`**：参考 `Kingdoms::Init` 从 `Settings` 取在局颜色与电脑颜色；
+   装载时 `Settings` 还不存在，而 `Mp2FileInfo` 的 `KingdomColors`/`ComputerPlayers`/`Difficulty` 对这三件事
+   说得同样清楚。于是 `World.CreateMapKingdoms` 直接把文件头交给 `Kingdoms.Init`，难度与「是不是电脑」仍是
+   `Kingdom.Init` 的参数（沿用 ADR-107 的「世界缺席处一律加参数」）。`Players::HandicapStatus` 的折扣
+   （`getHandicapDependentIncome`）百分比表在 `players.cpp`，未搬。
+6. **装载顺序：王国先于英雄表，名册最后填**。参考在 `World::Defaults()` 里先 `vec_kingdoms.Init()` 再
+   `vec_heroes.Init()`（英雄初始化要问起点资源），名册则在 `world_loadmap.cpp:1443-1445` 才按颜色分类。端口
+   把两条都写进 `LoadMap` 并注上参考行号；`Reset` 里 `_kingdoms.Clear()` 而不是替换整张表（王国不记地图宽度，
+   与 ADR-110 的城表相反）。
+7. **命名空间撞名的处理照 ADR-110 的先例**：类 `Kingdom` 放在 `FHeroes2.Game.Kingdom` 命名空间里，于是
+   `FHeroes2.Game` 下的代码写 `Kingdom` 会解析到**命名空间**。测试文件用 `using PlayerKingdom =
+   FHeroes2.Game.Kingdom.Kingdom;`，与 `CastleTown` 别名同一手法；`Kingdoms` 没有同名命名空间，不需要别名。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/Kingdom.cs`、`src/FHeroes2.Game/Kingdom/Kingdoms.cs`、
+`src/FHeroes2.Game/World/World.Kingdoms.cs`，改动 `World.cs`（`Reset` 清王国、`LoadMap` 起王国 + 填名册），
+新增 `tests/FHeroes2.Game.Tests/KingdomTests.cs`（22 条）。`FHeroes2.Game.Tests` 1322 → **1344**，
+全解决方案 2008 → **2030** 条全绿，0 警告 0 错误。`kingdom` 行 0/4/10 → **0/5/9**，合计 27/61/161 →
+**27/62/160**。
+
+**仍未转**：`ActionNewDay`/`ActionNewWeek`/`ActionNewMonth`（周产、税收、井水加成）、`Recruits`（要英雄池与随机
+源）、`visit_object` 访问记录（要瓦片与对象类型）、`puzzle_maps`、`GetCountArtifacts`（`Hero` 还没有神器袋）、
+`LossPostActions`/`GetLostTownDays` 的倒计时推进（要 `Players`）、瘟疫与投降英雄（`Players`/`Campaign`）、
+`getHandicapDependentIncome`（`Players::HandicapStatus` 表）。
+## ADR-112：日收入照抄三张表；世界询问改成回调；缺的两项明写成缺
+
+**背景**：ADR-111 的账本只会「收」不会「进」，城堡的购买对话框与 AI 估价都需要「每天进多少」。
+参考把这件事拆成两半：`profit.cpp` 的三张表（一座矿/一座建筑/一件神器值多少）与 `kingdom.cpp` 的
+`Kingdom::GetIncome()`（把它们加总，再叠加电脑难度加成与人类折扣）。
+
+**决策**：
+
+1. **`profit.cpp` 整篇搬，独立成 `ProfitConditions`**：参考里这三个函数是 `ProfitConditions` 的静态方法，
+   与 `Kingdom` 无关；端口照办，因为城堡的「买了这块地能多赚多少」也要用同一张表，而那时手上并没有王国。
+   文件从「未转」直接到「已转」——`profit.cpp` 一共就 122 行三个函数。
+2. **`Cost` 的字段顺序必须照抄，不能「顺手改正」**：`Cost{ gold, wood, mercury, ore, sulfur, crystal, gems }`，
+   水银在矿石之前。把 `FromMine(ORE)` 读成「2 水银」是个看起来很合理的错误，测试逐项钉住七种产出。
+3. **未知类型给零**：参考在 `FromMine` 的 `default` 里 `assert`，端口返回空 `Funds`。地图数据坏掉的代价应是
+   「今天少赚点」，不是整局崩掉；这条与 ADR-095 的「不带异常的地图数据」同调。
+4. **`FromArtifact` 走 `ArtifactTable`，不走「常见的那几件」**：参考遍历奖励与诅咒，只保留八种资源与
+   `GoldPenalty`。于是七只无尽袋子、金鹅、三级金袋和税单都自动正确，新增神器也不用改代码。
+5. **`GetIncome` 的矿井项改成回调参数**：参考直接问全局 `world.CountCapturedMines( resource, GetColor() )`。
+   端口里 `Kingdom` 不认识 `World`（世界反过来认识王国），所以矿井数由调用方以 `Func<int, uint>` 递进来，
+   颜色由调用方的闭包带进去。王国因此仍是一块纯数据，测试里可以直接塞一个「金矿三座」的 lambda。
+6. **缺的能力明写，不装作支持**：参考的五个来源里，神器收入要英雄的神器袋、技能收入要英雄的技能，两者都没
+   挂到 `Hero` 上（`ArtifactBag` 是独立类，ADR-101），电脑难度加成与人类折扣在 `players.cpp`。`IncomeType`
+   的位值照抄参考（含 `All = 0xFF`），但 `Artifacts`/`HeroSkills`/`CampaignBonus` 三条在 XML 文档与
+   `PROGRESS.md` 里都被标成「今天恒为 0」。当前端口与参考**等价**，因为英雄本来就拿不到神器与技能。
+   等它们落地时只补分支，`All` 的语义自动对齐。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ProfitConditions.cs`、`src/FHeroes2.Game/Kingdom/IncomeType.cs`，
+`Kingdom.cs` 增 `GetIncome`；新增 `tests/FHeroes2.Game.Tests/KingdomIncomeTests.cs`（14 条）。
+`FHeroes2.Game.Tests` 1344 → **1358**，全解决方案 2030 → **2044** 条全绿，0 警告 0 错误。
+`profit` 行由「未转」转「已转」：`kingdom` 行 0/5/9 → **1/5/8**，合计 27/62/160 → **28/62/159**。
+
+**仍未转**：`ActionNewDay`（每日入账、事件、井水加成、失城倒计时）、`ActionNewWeek`/`ActionNewMonth`
+（周产与周事件，要 `Week` 与 `Settings`）、`getHandicapDependentIncome` 与 `Difficulty::getResourceIncomeBonusForAI`
+（`players.cpp`/`difficulty.cpp`）、`Recruits`、访问记录、`GetCountArtifacts`、`LossPostActions`。
+## ADR-113：`Week` 照抄两条抽签表；`combineSeedWithValueHash` 落进 Core；`GetName` 等翻译层
+
+**背景**：ADR-112 让王国算得出「一天多少钱」，但「今天是哪一周」还没有类型——`week.cpp` 是 `ActionNewWeek`、
+怪物之周的招募增长和建筑/怪物产出的前置。另一方面 ADR-070 的 `rand.cpp` 一直记着「只差
+`combineSeedWithValueHash`」，那正是 `week.cpp` 抽签依赖的函数。
+
+**决策**：
+
+1. **`WeekName` 的顺序就是抽签的坐标，不能重排**：参考从 `SQUIRREL` 到 `CONDOR` 之间抽周名、从 `ANT` 到
+   `BEETLE` 之间抽月名（`week.cpp:47`、`week.cpp:62`），区间端点就是枚举值。端口因此逐项照抄 34 项顺序，
+   并在注释里点名「重排会让抽签结果整体错位」。新增周名只能追加在 `PLAGUE` 之后。
+2. **`Week` 是 `readonly struct`**：与参考的值类型语义一致，`new Week()` 落到 `Unnamed`/`Unknown`（两者底层
+   都是 0），正好是参考的默认构造。世界将来持有它、在消息里拷贝它，值语义比类更贴合。
+3. **一个种子、六个盐，而不是连续调用 `Get()`**：参考对同一个周种子做六次
+   `combineSeedWithValueHash( seed, salt )`（367245 / 1946256 定周，9536582 / 5544783 定月，886473 / 1130906
+   定怪物）。端口保留这一点，因为它同时保证了「同种子 → 同周」与「周与月的抽取互不污染」——后者在连续抽时
+   做不到（抽不到月名时不会再抽怪物）。
+4. **`combineSeedWithValueHash` 放进 `Rand` 门面**：参考是 `rand.h` 里的模板，C# 写成两个重载
+   （`uint` 与 `int`，后者只是让调用点写 `367245` 而不是 `367245u`）。整型的 `std::hash` 是恒等，
+   表达式在 32 位内环绕，两端实现逐位一致。ADR-070 曾把「靠 `std::hash`，跨库不可复现」记为未转的理由；
+   那说的是 `std::hash` 对**非整型**（字符串）不保证一致，而本函数的全部调用点只传整型与枚举，所以结论更正。
+5. **`Week::GetName()` 不转**：它要翻译层（`_()`）与 `Monster::GetName()`，协议里两者都还没有。`week.cpp`
+   因此记「部分」：抽签、类型、怪物全转，只有那几个字没转。
+6. **暂不接进 `World`**：`World::NewWeek()` 与 `GetWeekType()` 属于 `world.cpp` 的推进链，那一支还要
+   `Settings`、会话种子与招募重置。只落类型与抽签，等 `NewWeek` 整体移植时一起接。另记一个坑：`World` 已有
+   一个 `Week` 属性（uint，面板显示的第几周），接线时要么写全名 `FHeroes2.Game.Kingdom.Week`，要么给属性
+   改名。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/WeekName.cs`、`src/FHeroes2.Game/Kingdom/Week.cs`，
+`Rand` 增 `CombineSeedWithValueHash`；新增 `tests/FHeroes2.Game.Tests/WeekTests.cs`（17 条），
+`tests/FHeroes2.Core.Tests/RandTests.cs` 加 1 条。`FHeroes2.Core.Tests` 192 → **193**，
+`FHeroes2.Game.Tests` 1358 → **1375**，全解决方案 2044 → **2062** 条全绿，0 警告 0 错误。
+`week` 由「未转」转「部分」：`kingdom` 行 1/5/8 → **1/6/7**，合计 28/62/159 → **28/63/158**。
+PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
+
+**仍未转**：`Week::GetName()`（翻译层 + 怪物名）、`World::NewWeek()`/`GetWeekType()`、`Week::RandomWeek` 的
+调用点（`ActionNewWeek` 与 `world.cpp` 的周推进）。
+## ADR-114：周类型按需算不缓存；`MapSeed` 留给会话层；每日入账收参数不收世界
+
+**背景**：ADR-113 立了 `Week` 类型，但 `World` 不知道自己处在哪一周，`Kingdom` 也没人告诉它「今天进多少」。
+参考把这两件事分别放在 `world.cpp`（`GetWeekSeed`/`GetWeekType`/`GetEventsDate`）与 `kingdom.cpp`
+（`ActionNewDayResourceUpdate`），都直接读全局 `world`。
+
+**决策**：
+
+1. **`WeekType` 每次重算，不学参考的函数内静态缓存**：参考把 `( _week, GetWeekSeed() )` 映射到 `Week` 存进
+   static，因为重绘时每个瓦片都会问一次。端口算一次是两次哈希加最多两次 `GetWithSeed`，代价可忽略；而静态
+   缓存要跨 `Reset` 存活，换地图（`_seed`、`_week` 都归零）时会返回上一局的周——这类 bug 在端口里已经有过
+   一次（`_pathfinder`），不值得为省两次哈希再冒一次。
+2. **`MapSeed` 的 setter 是 `internal`，且 `Reset` 归零**：参考在 `Defaults()` 里 `_seed = Rand::Get( max )`
+   （`world.cpp:291`），`Defaults()` 属于「会话层」（`Settings`、玩家、初始英雄），端口还没有。所以种子只能
+   从外部写：装载器、将来的存档、测试。默认 0 的世界仍然完全确定（每台机器同一串周），不会崩，也不会随机。
+3. **`WeekType` 的类型名写全**：`World` 已有 `Week` 属性（uint，面板显示第几周），类内会遮蔽
+   `FHeroes2.Game.Kingdom.Week`。ADR-113 预判过这个坑，这里按预判写全名，并在 XML 文档里说明原因——比给属性
+   改名更小的动作，也保住了 `World.Week` 与参考 `world.h:381` 的对照关系。
+4. **`GetEventsDate` 只过滤，不复制事件**：`EventDate` 是不可变的引用类型，参考返回 `std::vector<EventDate>`
+   的拷贝；端口返回 `List<EventDate>` 引用同一批对象。顺序保持地图顺序，因为事件对话框与 AI 的记账顺序都和它
+   一致。
+5. **`ActionNewDayResourceUpdate` 收参数，不收 `World`**：参考在这个函数里问世界三件事（矿数、第几天、当日
+   事件）。端口把三件事都变成参数：矿数沿用 ADR-112 的 `Func<int, uint>` 回调、天数用 `uint`、事件用
+   `IReadOnlyList<EventDate>`（`EventDate` 在 `FHeroes2.Game` 命名空间，王国本来就能看见），`isAiControlled`
+   替代参考的 `GetControl() == CONTROL_AI`（`Players` 未转）。于是王国仍是纯数据，日循环在调用方只有一行。
+6. **首日不结算与 AI 门照抄，因为它们是规则不是偶然**：`if ( world.CountDay() > 1 )`（`kingdom.cpp:227`）——
+   第 1 天的钱是 `GetStartingResources` 给的；`if ( isAIPlayer && !event.isApplicableForAIPlayers ) continue`
+   （`kingdom.cpp:236`）——地图作者可以写只给人类看的事件。两条都有专门的测试。
+7. **对话框拿实付金额**：先 `Resource.CalculateEventResourceUpdate` 钳制、`AddFundsResource` 入账，再把
+   `fundsUpdate` 交给回调。参考如此，测试也钉住：一件 -1000 的事件在只有 50 金的王国里，对话框报的是 -50。
+
+**后果**：`World.cs` 增 `_seed`/`MapSeed`/`WeekSeed`/`WeekType`/`GetEventsDate`，`Reset()` 清种子；
+`Kingdom.cs` 增 `ActionNewDayResourceUpdate`。新增 `tests/FHeroes2.Game.Tests/KingdomDailyUpdateTests.cs`（8 条），
+`WorldDateTests.cs` 加 4 条，`WorldSphinxAndEventsTests.cs` 加 3 条（并把事件块助手参数化）。
+`FHeroes2.Game.Tests` 1375 → **1390**，全解决方案 2062 → **2077** 条全绿，0 警告 0 错误。覆盖率不动：
+`week` 仍「部分」、`kingdom` 仍「部分」，合计仍 **28/63/158**。
+
+**仍未转**：`World::NewWeek()`/`NewMonth()`（要 `Settings`、怪物刷新、招募池）、`Kingdom::ActionNewDay` 的访问
+记录与胜负判定（要 `Visit` 与 `Players`）、`ActionNewWeek`（要 `Settings` 与 `Recruits`）、`Week::GetName()`
+（翻译层）、`Players`/`Campaign`。
+
+## ADR-115：周产的全部输入走参数；四个生长常量内联成 const；升级住所只吃自己生物的生长
+
+**背景**：ADR-114 让世界数到第二周，但城还不会生兵。参考把周产放在 `castle.cpp` 的 `Castle::ActionNewWeek()`
+（`castle.cpp:838-940`），由 `AllCastles::NewWeek()` 与 `World::NewDay()` 逐层分发；生长常量在
+`game_static.cpp:145-163`，是四个直接返回字面量的函数。
+
+**决策**：
+
+1. **周产的全部输入进签名**：`ActionNewWeek( uint weekCount, in Week week, bool isBeginMonth, uint dayCount,
+   Pcg32? generator )`。参考在这一个方法里问了世界五件事（`CountWeek`/`GetWeekType`/`BeginMonth`/`CountDay`
+   与全局随机源），端口把它们变成五个实参——和 ADR-107（城不认世界）、ADR-109（难度/天数/种族/随机源进参）、
+   ADR-112（矿井数走回调）、ADR-114（事件列表进参）是同一条线。好处是城仍是纯数据，测试不用造世界，
+   `AllCastles.NewWeek` 只需往下透传。
+2. **四个生长常量落成 `public const`**：`game_static.cpp:145-163` 里 `GetCastleGrownWell()` 等四个函数不读不写
+   状态，返回的就是 `2`/`8`/`5`/`100`。端口没有设置层（`Settings` 属会话层），所以先内联成常量，并在 XML
+   文档里写明「将来变成设置项时的落点」；测试直接用它们算期望值，等于把参考的数字钉住。
+3. **生长取「实际住所」，周怪加成取「精确住所」**：两者在参考里是两次不同的判定——
+   `GetGrowth( GetActualDwelling( dwelling ) )` 走升级后的生物（游侠塔按游侠的 8 算），而
+   `_isExactBuildingBuilt( dwelling ) && Monster(...) == week.monster` 只认那一个位。所以箭矢之周不喂游侠塔，
+   但游侠塔的常规生长比箭塔高——两条都单独测了。
+4. **「首周跳过」留在城这一层**：`if ( weekCount < 2 ) return;`（`castle.cpp:840-843`）。看上去更适合放进
+   调用方（世界已有 `IsFirstWeek`），但参考的语义是「房子建好时已经存了一周的兵」，那是城的知识；世界只是
+   恰好知道现在是第几周。
+5. **井的加成按「是否建成」而非「是否被前置拖进来」**：`IsBuild( Well )` 就够了。骑士的第三住所需要井，
+   `DwellingUpgrade2` 又需要第三住所，于是「只建了箭塔升级」的城里其实有井，生长带 +2。这是参考的行为，
+   测试里显式断言井在场，把这条链钉住而不是当噪音屏蔽。
+6. **中立城的随机守军收 `generator`**：`JoinRandomArmy` 在 ADR-109 里已经接过一次随机源，这里继续透传；
+   城堡必收两次，普通城 `Roll( 1, 100 ) <= 40` 才收第二次（`castle.cpp:911-916`）。`null` 表示线程自己的
+   设备，与参考一致——测试用固定种子把「第二次到底有没有发生」钉死。
+7. **`World.NewDay` 的顺序写成代码的次序**：月先、周次之、日最后（`world.cpp:427-459`）。现在只有周与日两段
+   有实现，缺的三段（月的怪物、周命对象、招募池）在注释里按同一顺序列出，将来补的时候位置是确定的。
+
+**后果**：`Castle.cs` 增 `GrownWell`/`GrownWel2`/`GrownWeekOf`/`GrownMonthOf`、两张私有住所表与
+`ActionNewWeek`/`GetDwellingShelf`/`TryFindWeekMonsterDwelling`；`AllCastles.cs` 增 `NewWeek`/`NewDay` 并修掉
+`Add` 在宽度为 0 时的除零；`World.NewDay` 增一段把周交给城表。新增
+`tests/FHeroes2.Game.Tests/CastleWeekGrowthTests.cs`（13 条）。`FHeroes2.Game.Tests` 1390 → **1403**，
+全解决方案 2077 → **2090** 条全绿，0 警告 0 错误。覆盖率不动（`castle.cpp` 与 `world.cpp` 本就在「部分」里），
+合计仍 **28/63/158**。
+
+**仍未转**：`ActionNewMonth`（月度事件、招募池重置）、`ActionNewWeek` 的招募点（要 `Recruits` 与英雄池）、
+`AllowBuyHero`/`getAvailableArmy`、税收、法师公会法术与船长、`GetPowerModificator`、`World::NewWeek()`/
+`NewMonth()`、`Kingdom::ActionNewDay` 的访问记录与胜负判定，以及 `Week::GetName()`（翻译层）。
+
+## ADR-116：区域算法按参考的九步与种子顺序落地；并列按行号兜底；`FindMissingRegions` 写回种子类型
+
+**背景**：`World::PostLoad()` 的末尾要算一次静态分析（`world.cpp:1233`），把地图切成连通的水陆区块并量出水
+面占比与陆地粗糙度。参考在 `world_regions.cpp`，共九步：数障碍 → 取最空的行列作种子线 → 城堡作种子 →
+补种子 → 带一圈 padding 的工作副本 → 每个种子一区 → 每轮各长一格 → 剩余区域自成区 → 写回格子并连邻居。
+区域的结果是 AI「敌人在哪边」的全部依据，也是漩涡与石阵跨区域连接的载体。
+
+**决策**：
+
+1. **区域 id 与三个常量共用一套编号**：`MapRegionNodes` 的 `Blocked = 0`/`Open = 1`/`Border = 2`/
+   `Found = 3`，真实区域从 `Found` 起编号，列表前三位就是这三个常量（各带一个永不生长的节点）。
+   参考是匿名 enum 与 `std::vector<MapRegion>` 的下标混用（`world_regions.h:28-34`），端口照抄，
+   因此 `MapRegionNode.Type` 是 `uint` 而不是枚举——它既能是常量也能是 id。`Border` 参考也不赋值，
+   保留它只为让编号对齐。
+2. **种子顺序必须可复现**：城堡按颜色倒序（`NONE` 为 0，中立城最后）、同色按 tile 索引；空行/列按障碍数
+   升序。参考在计数相同时把次序留给 `std::sort`，端口在计数之后比行号。并列在真实地图上不罕见
+   （整行都是水），不钉死就会有「两台机器切出不同区域」的隐患。
+3. **种子间距用参考的常数**：城堡 17、补充种子 18、每 7 条线取一条（`world_regions.cpp:181-183`）。
+   它们不是可调参数，是算法的一部分；落成方法内 `const`，避免和将来的设置层混淆。
+4. **每轮每区只长一格，且先拍快照**：`RegionExpansion` 用 `nodesEnd = Nodes.Count` 冻结本轮要处理的节点，
+   处理完再整体推进 `LastProcessedNode`。等价于参考的 `while ( _lastProcessedNode < nodesEnd )`
+   （`world_regions.cpp:116-125`）。这样多源扩张是「公平竞争」，不是「大区碾压」。
+5. **工作副本加一圈 padding**：宽高各 +2，`ConvertExtendedIndex` 做真实索引到扩展索引的映射，
+   邻居读取因此不用判边界；padding 的 `Type` 天然是 0（`Blocked`）。代价是所有索引换算都要过一次函数，
+   换来的是 `CheckAdjacentTiles` 里八个方向的全裸读取。
+6. **刻意偏离参考：`FindMissingRegions` 写回种子类型**。参考建好区域后从不写 `currentTile->type`
+   （`world_regions.cpp:136-151`），于是种子格留在 `Open`，区域绕回来时会把它再收一次——湖心那一格在
+   `_nodes` 里出现两遍。端口写回，保证 `Nodes` 就是区域的格子集合；否则将来 AI 拿节点数估算面积、
+   测试拿节点数做断言，都会莫名多一格。这是本批唯一的语义偏离，注释写在方法上。
+7. **邻居集的遍历先快照**：参考在 `std::set` 里边遍历边插入（`world_regions.cpp:390-397`）。C# 的
+   `SortedSet` 会在遍历中修改时抛异常，所以 `foreach (uint adjacent in region.Neighbours.ToArray())`。
+   循环只加反向引用，快照不会漏掉本轮新加的那些——它们本来就要靠对方回填。
+8. **`GetRegion` 越界返回空区域**：参考返回静态 `MapRegion`，因为「没有区域的格子」照样会被问到
+   （山上的城、被封住的漩涡出口）。端口照抄：越界不抛异常，返回一个 `Id == Found`、无节点无邻居的实例。
+9. **`Reset()` 清掉区域与两项统计**：参考的 `Reset` 不碰 `_regions`，端口清。理由与 ADR-114 的周缓存
+   一致——区域是瓦片索引，比瓦片活得久就会在换图后指到上一张图的格子。
+10. **参考 assert 的地方端口返回空答案**：`world_regions.cpp:239-244` 断言地图有可走格、有陆地；
+    端口的世界可以是空的，所以空世界直接返回（`WaterPercentage` 0、`LandRoughness` 1.0），
+    全水地图只跳过粗糙度。区域本身照算：全水地图也有区域，只是没有陆地。
+
+**后果**：新增 `src/FHeroes2.Game/World/MapRegion.cs`（`MapRegionNodes`/`MapRegionNode`/`MapRegion`）与
+`src/FHeroes2.Game/World/World.Regions.cs`（`ComputeStaticAnalysis` 及七个私有助手）；`Tile` 增
+`Region`/`UpdateRegion`；`World.PostLoad` 末尾调用，`World.Reset` 清区域。新增
+`tests/FHeroes2.Game.Tests/WorldRegionsTests.cs`（8 条，含一条读真实 `Alteris.mp2` 的对拍）。
+`FHeroes2.Game.Tests` 1403 → **1411**，全解决方案 2090 → **2098** 条全绿，0 警告 0 错误。
+覆盖率 `world` 目录 `0/4/1` → **`1/4/0`**，合计 **29/63/157**。
+
+**仍未转**：`PostLoad` 只剩漩涡带船的修复（`MapObject` 与船位）；AI（区域的消费者）要 `Players`；
+`World::NewWeek()`/`NewMonth()`（要 `Settings`、怪物刷新、招募池）；`Kingdom::ActionNewDay` 的访问记录与
+胜负判定；`Game::NewDay` 那一层会话循环。
+
+## ADR-117：价目表照字面量搬；市场汇率七张表不合并成公式；非法输入返回 0 而不是断言
+
+**背景**：王国会算日收入（ADR-112）、会数周（ADR-113/115）、会切地块（ADR-116），但商店那一栏的标价还空着。
+参考把「买船、买法术书、招英雄、炼金术士、麦哲伦地图」五个固定价放在 `payment.cpp:29-57`，把市场的换汇比例
+放在 `resource_trading.cpp:25-160`。两篇都是纯查表，没有状态、没有界面。
+
+**决策**：
+
+1. **固定价照 `Cost` 字面量逐字搬**：`Cost` 的字段顺序是 `{ gold, wood, mercury, ore, sulfur, crystal, gems }`
+   （`resource.h:37-46`），港口的 `Cost` 同序，所以 `new Cost { Gold = 1000, Wood = 10 }` 就是参考的
+   `Cost{ 1000, 10, 0, 0, 0, 0, 0 }`。写成对象初始化器而不是位置参数，是为了让「千金银十木」在代码里也一眼可读；
+   位置参数的 `new Cost(1000, 10, 0, 0, 0, 0, 0)` 与「十金千木」只差一个顺序，那是这类 bug 最容易藏的地方。
+2. **`BuyBuilding` 保留参考的参数顺序**：`BuyBuilding( race, building )`，而 `CastleBuildings.GetCost` 是
+   `( building, race )`。看上去别扭，但这一层存在的意义就是「价目表的门面」——把顺序抹平会让调用方按参考写代码时
+   静默出错（种族与建筑都是 32 位范围内的值，编译器不会报警）。注释里写明两个顺序相反。
+3. **七个类别组合，七张表，不合并成公式**：common（木、矿）、rare（水银、硫磺、水晶、宝石）、gold 三类之间有
+   八个有序组合，其中 common→common 与 rare→rare 共用一张表，于是七张。每张 9 列（1–9 个市场）。
+   参考的数值不是指数曲线：1 木 = 25 金（1 个市场）到 124 金（9 个市场），中间是 37/50/62/74/87/100/112，
+   为了几个整数把曲线拟合出来得不偿失，也失去与参考对拍的能力。测试直接钉第 1 列与第 9 列，外加单调性。
+4. **市场数为 0 返回 0，不抛异常**：参考 `assert( 0 )` 后返回 0（`resource_trading.cpp:61-64`）。市场对话框
+   在「还没选」时就会来问价，那是正常状态而不是程序错误，所以港口不 assert、不抛，只返回 0。
+5. **超过九座市场钳到第 9 列**：参考也钳（`resource_trading.cpp:72-74`）。一张图可以放十来座城，
+   `AllCastles` 数出的市场数会超过表宽；钳位是参考语义的一部分，不是防御性代码，所以测试把 10 与 9 钉成相等。
+6. **非法资源位返回 0**：四个 `default` 分支在参考里是 `assert( 0 )`，港口返回 0。资源是位掩码
+   （`Resource.Wood == 0x01` 等），`0x4000` 这种值只会从坏存档或调试代码里来；让它「换不到任何东西」
+   比中止游戏更合适。四张表的 `default` 各测一次，防止有人把它们合并成一个 `default` 时漏掉一支。
+7. **价目表留在 `Kingdom` 命名空间**：`PaymentConditions` 虽然转发城堡的造价表，但它是「王国要付多少钱」的
+   问题，参考也放在 `kingdom/payment.cpp`；`ResourceTrading` 同理。这样 `castle` 不反向依赖 `kingdom`。
+
+**顺带更正**：`docs/PLAN.md` 的主干第 3 条曾写「`PostLoad` 到这一步只剩漩涡带船的修复」。核对 1.1.18 的源码，
+`World::PostLoad()`（`world.cpp:1194-1263`）里没有这一步：带船的漩涡格在装载时被记成船对象，所以参考按**部件**
+而不是按类型找漩涡（`world.cpp:1219-1225`），港口一直就是按部件查的。`PostLoad` 到此整篇落地，
+那句话已改掉。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/PaymentConditions.cs` 与 `src/FHeroes2.Game/Kingdom/ResourceTrading.cs`，
+两篇都没改任何既有文件。新增 `tests/FHeroes2.Game.Tests/PaymentConditionsTests.cs`（5 条）与
+`ResourceTradingTests.cs`（6 条，其中一条是六个种族 × 全部建筑的转发等价性）。
+`FHeroes2.Game.Tests` 1411 → **1422**，全解决方案 2098 → **2109** 条全绿，0 警告 0 错误。
+覆盖率 `kingdom` 目录 `1/6/7` → **`3/6/5`**，合计 **29/63/157** → **31/63/155**。
+
+**仍未转**：`kingdom` 的 `puzzle.cpp`（`Puzzle` 位集与揭示动画）、`speed.cpp`（`_()` 文案）、
+`kingdom_overview.cpp` 与 `view_world.cpp`（界面）、`experience.cpp`（两句文案）；`kingdom.cpp` 里剩下的
+`ActionNewWeek`/`ActionNewMonth`（要 `Recruits` 与 `Settings`）与 `ActionNewDay` 的访问记录、胜负判定；
+`castle` 七篇、`army` 两篇、`battle` 十八篇全部未动。
+
+## ADR-118：`Recruit` 用 `record struct` 且默认值即空槽；替换规则照抄并列时换第一格；`Kingdom.GetRecruits()` 暂不补位
+
+**背景**：酒馆要回答「今天卖哪两位英雄」。参考把这份状态做成 `Recruit`（id + 投降日）与 `Recruits`
+（两个槽位，派生自 `std::pair`），放在 `heroes_recruits.h/.cpp`，由 `Kingdom` 持有，`Kingdom::clear()` 里重置。
+它同时承担三件事：新一周的待聘英雄、战斗后投降/撤退的英雄（fheroes2 的扩展，原版只留最后一位）、
+以及「这位英雄已被某处预留」的 `RECRUIT` 模式位。
+
+**决策**：
+
+1. **`Recruit` 是 `readonly record struct`，`default` 就是空槽**：参考默认构造是 `_id = UNKNOWN`（0）、
+   `_surrenderDay = 0`，C# 结构体默认值与之逐位相同，于是 `Recruit.None => default`，`Recruits.Reset()` 就是
+   两次赋 `default`。这比「空槽用 `null`」更贴近参考（参考的值语义让整块状态可以按值拷贝、按值存档），
+   代价见第 2 条。
+2. **投降日 0 被拒**：因为 0 也是「空槽」的标志，`AppendSurrenderedHero( hero, 0 )` 会让槽位看起来有英雄而
+   实际投降日为空，随后替换规则永远认为它最旧。参考在这里 `assert`，港口抛
+   `ArgumentOutOfRangeException`——这是调用方的编码错误，不是玩家能触发的状态。
+3. **`GetHero1/2` 接收 `AllHeroes` 参数**：参考用全局 `world.GetHeroes()`。端口把英雄表当参数传入，
+   一是避免 `Recruits` 依赖 `World`（`Kingdom` 也不该反向依赖世界），二是让测试可以用一张真的英雄表
+   （`AllHeroes.Init( MapVersion.SuccessionWars )`）而不是桩。`null` 表示槽位空或 id 不是英雄。
+4. **`SetHero1/2` 打 `RECRUIT` 位，清空槽位不撤位**：与参考逐行一致。撤位属于「英雄离开待聘名单」的一方
+   （被雇走、进监狱、被 AI 抢走），不是「这个王国不推荐他了」；两个王国可以同时推荐同一位英雄，
+   谁先雇走谁撤位。把撤位塞进 `SetHero*` 会让另一个王国的名单静默失效。
+5. **替换规则照抄，包括并列**：`appendSurrenderedHero` 换掉投降日更旧的格子，两天相等时替换**第一格**
+   （参考的 `first > second ? second : first` 在等号时为假）。顺序会决定两位投降英雄在名单里的位置，
+   而酒馆界面按槽位画，所以不能用「随便换一个」代替。
+6. **`First`/`Second` 只读、写入口径统一**：参考的 `first`/`second` 是 public 的 `std::pair` 成员，
+   谁都能赋值；端口给 `private set`，外部只能走 `SetHero1/2`、`AppendSurrenderedHero`、`Reset`。
+   参考里也正好只有这三处写入（外加存档加载，未转），所以语义没有损失，只是把「顺手改一下」这条路堵上。
+7. **`Kingdom.GetRecruits()` 暂时只返回**：参考同名函数会按需补位——槽位空着、或者占位英雄已不可招募，
+   就现找一位补上；第一周还要优先考虑战役奖励给的英雄。补位需要 `Settings::isCampaignGameType`、
+   战役存档、`Players::GetPlayerControl` 与 `World::CountWeek`，前四样都没落。端口先只返回已结算的那一对，
+   XML 注释里写明缺口，等这几层落地再补上，而不是在 `Kingdom` 里塞一个「永远返回空名单」的假实现。
+8. **`Kingdom::clear()` 一起清**：参考 `clear` 里 `recruits.Reset()`（`kingdom.cpp:132`）。不清就会在换图后
+   继续推荐上一张图的英雄，而那份 id 在新图里可能是别人的英雄——这类状态越多越容易漏，所以每加一个
+   王国级字段就先问一句「`clear` 要不要清」。
+
+**后果**：新增 `src/FHeroes2.Game/Heroes/Recruits.cs`（`Recruit` + `Recruits`）；`Kingdom` 新增私有
+`_recruits`、`GetRecruits()` 与 `Clear()` 里的重置。新增 `tests/FHeroes2.Game.Tests/RecruitsTests.cs`（7 条）。
+`FHeroes2.Game.Tests` 1422 → **1429**，全解决方案 2109 → **2116** 条全绿，0 警告 0 错误。
+覆盖率 `heroes` 目录 `1/4/7` → **`2/4/6`**，合计 **31/63/155** → **32/63/154**。
+
+**仍未转**：`Recruits` 与 `Recruit` 的存档读写（`serialize.cpp` / `game_io.cpp`）；`Kingdom::GetRecruits()` 的补位；
+`Kingdom::ActionNewWeek()`（要 `Visit` 的一周生命周期清理）与 `ActionNewMonth()`（要 `Recruits` 之外的怪物刷新、
+`Settings`）；`castle` 的酒馆/招募对话框（`castle_recruit.cpp` 等七篇）。
+
+## ADR-119：拼图用 `bool[48]` + 四条区带表；洗牌接受 `Pcg32`；`Reset` 只清格子不重洗
+
+**背景**：石阵（Obelisk）每访问一座就揭开寻宝图的一角。参考把这张图做成 `std::bitset<48>` 派生类，外加四条
+区带索引表（`puzzle.h:33-55`），揭示逻辑在 `Puzzle::Update`（`puzzle.cpp:323`）。`Kingdom` 各持一份，
+`clear()` 里 `puzzle_maps.reset()`。对话框（`ShowMapsDialog`）与存档读写也在同一篇里，但依赖渲染与存档格式。
+
+**决策**：
+
+1. **`bool[48]` 而不是 `BitArray`/`ulong` 位运算**：48 个格子，`Count` 就是一次遍历，一年也只在访问石阵时
+   调几次。位运算会把「同一批格子」这件事藏进下标算术里，而这份代码最需要的是能对着参考的
+   `zone1_order` 一眼看出「24 + 16 + 4 + 4 = 48」。
+2. **四条区带表逐字照抄，顺序即语义**：`zone1` 是外框 24 格、`zone2` 内环 16 格、`zone3`/`zone4` 两个 2×2 块。
+   `Update` 逐区填满才进下一区，所以「半数石阵只揭开轮廓」是算法结果而不是偶然。测试里用「24 格时外框满、
+   两个 2×2 一格未动」把这条顺序钉住——谁若把区带合并或排序，这条会立刻红。
+3. **洗牌接受 `Pcg32` 参数**：参考在构造函数里用全局 `Rand::Shuffle`。端口把生成器做成可选构造参数，
+   一是让存档能复现同一张布局（参考靠存档保存位集而不是布局，但端口将来的存档会更愿意保存种子），
+   二是让测试能固定布局。不传参数时用 `Rand.CurrentThreadRandomDevice`，与参考一致。
+4. **`Update` 只增不减，且差额从「已揭开」算起**：`open * 48 / total` 减去当前 `Count`。丢掉一座石阵不会
+   把图收回去；重复访问同一座也不会多揭一格。两件事都写成了用例——它们是最容易被「顺手修正」成
+   「按当前石阵数重算整张图」的地方，而那样会让玩家在丢城后看见图倒退。
+5. **总数为 0 直接返回**：参考的除法会除零（UB）。没有石阵的地图是合法的，它没有拼图可揭。
+6. **`Reset` 只清位集，不重洗区带**：参考 `Kingdom::clear()` 里就是 `puzzle_maps.reset()`。换图后同样的石阵数
+   会揭开同样的格子。这看着像漏了重洗，其实是参考的行为，用例用「清前清后同一批格子」钉住。
+7. **对话框与存档不进来**：`ShowMapsDialog` 要 `PUZZLE.ICN`、屏幕与对话框栈；`operator<<`/`operator>>` 要
+   存档版本。两者都属于别的层，本批只搬「哪一格是开的」这件事。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/Puzzle.cs`；`Kingdom` 新增 `_puzzleMaps`、`GetPuzzleMaps()` 与
+`Clear()` 里的 `Reset()`。新增 `tests/FHeroes2.Game.Tests/PuzzleTests.cs`（8 条）。
+`FHeroes2.Game.Tests` 1429 → **1437**，全解决方案 2116 → **2124** 条全绿，0 警告 0 错误。
+覆盖率 `kingdom` 目录 `3/6/5` → **`4/6/4`**，合计 **32/63/154** → **33/63/153**。
+
+**仍未转**：`Puzzle::ShowMapsDialog()`（渲染层）与 `Puzzle` 的存档读写（`serialize`/`game_io`）；
+「数已访问的石阵并调 `Update`」在 `heroes_action.cpp` 的石阵分支；`kingdom` 目录剩 `experience`、`speed`
+（`_()` 文案）与 `kingdom_overview`、`view_world`（界面）。

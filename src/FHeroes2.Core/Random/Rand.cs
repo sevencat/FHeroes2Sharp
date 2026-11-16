@@ -181,6 +181,43 @@ public static class Rand
     }
 
     /// <summary>
+    /// Mixes <paramref name="value"/> into <paramref name="seed"/>, so that two independent draws can be made
+    /// from one seed, <c>Rand::combineSeedWithValueHash()</c> (<c>rand.h:260</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference is the classic boost <c>hash_combine</c>: <c>seed ^= hash( value ) + 0x9e3779b9 +
+    /// ( seed &lt;&lt; 6 ) + ( seed &gt;&gt; 2 )</c>. It is a template over the seed and value types and hashes
+    /// with <c>std::hash</c>; here the shift result is truncated to 32 bits anyway, so an integral value hashes
+    /// to itself and the whole thing stays in <see cref="uint"/>.
+    /// </para>
+    /// <para>
+    /// The constant is used as a salt: <c>week.cpp</c> mixes <c>367245</c>, <c>1946256</c>, <c>9536582</c>,
+    /// <c>5544783</c>, <c>886473</c> and <c>1130906</c> into a map's week seed to get unrelated draws from it.
+    /// Two calls with the same pair always give the same seed, which is the whole point.
+    /// </para>
+    /// </remarks>
+    /// <param name="seed">The seed to mix into.</param>
+    /// <param name="value">The value to mix in, usually a salt.</param>
+    /// <returns>The mixed seed; the reference writes it back into <c>seed</c>.</returns>
+    public static uint CombineSeedWithValueHash(uint seed, uint value)
+        => unchecked(seed ^ (value + 0x9e3779b9u + (seed << 6) + (seed >> 2)));
+
+    /// <summary>
+    /// Mixes <paramref name="value"/> into <paramref name="seed"/>, <c>Rand::combineSeedWithValueHash()</c>
+    /// over a signed value.
+    /// </summary>
+    /// <remarks>
+    /// <c>std::hash&lt;int&gt;</c> is the identity, so the signed overload differs from the unsigned one only
+    /// in how a C# caller spells the salt: <c>367245</c> instead of <c>367245u</c>.
+    /// </remarks>
+    /// <param name="seed">The seed to mix into.</param>
+    /// <param name="value">The value to mix in.</param>
+    /// <returns>The mixed seed.</returns>
+    public static uint CombineSeedWithValueHash(uint seed, int value)
+        => CombineSeedWithValueHash(seed, unchecked((uint)value));
+
+    /// <summary>
     /// A weighted pool of values, <c>Rand::Queue</c> (<c>rand.h:224</c>).
     /// </summary>
     /// <remarks>

@@ -1,4 +1,6 @@
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
+using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.Game.Army;
 
@@ -428,6 +430,93 @@ public sealed partial class Army
             {
                 troop.Upgrade();
             }
+        }
+    }
+
+    /// <summary>
+    /// Puts the stacks into the slots position by position, <c>Troops::Assign()</c> (<c>army.cpp:493-501</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike <see cref="JoinTroop(MonsterType, uint, bool)"/> this never merges and never looks for a free slot: the
+    /// first troop becomes the first slot, the second the second, and an invalid troop leaves a gap where it was.
+    /// That is what a map's custom garrison needs — the block names five separate stacks, repeats and all.
+    /// </para>
+    /// <para>
+    /// The army is cleared first, so this replaces the garrison rather than adding to it. The reference's two
+    /// arguments are the ends of a range its callers take from an array; the port takes the array.
+    /// </para>
+    /// </remarks>
+    /// <param name="troops">Up to five stacks, in slot order.</param>
+    public void Assign(IReadOnlyList<Troop> troops)
+    {
+        ArgumentNullException.ThrowIfNull(troops);
+
+        Clean();
+
+        int limit = Math.Min(_slots.Length, troops.Count);
+
+        for (int slot = 0; slot < limit; ++slot)
+        {
+            if (troops[slot] is { IsValid: true } troop)
+            {
+                _slots[slot].Set(troop.Monster, troop.Count);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Upgrades every stack this town allows, paying as it goes, <c>Troops::UpgradeTroops()</c>
+    /// (<c>army.cpp:528-560</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Three questions per stack, in the reference's order: is it upgradable at all, does the town share the
+    /// stack's race, and does the town own the dwelling the upgraded creature lives in (not the dwelling of the
+    /// creature it has now). The last one is the reason a town without the upgraded dwelling cannot upgrade even
+    /// with money: the whole point of the building.
+    /// </para>
+    /// <para>
+    /// Payment is per stack and immediate, so a treasury that runs out halfway through upgrades the first stacks
+    /// and leaves the rest alone — the reference behaves the same way because it checks
+    /// <c>kingdom.AllowPayment()</c> per stack. Prices come from <see cref="Troop.GetTotalUpgradeCost"/>, which is
+    /// the difference between the two creatures' costs doubled, times the count.
+    /// </para>
+    /// </remarks>
+    /// <param name="castle">The town whose race and dwellings decide what may be upgraded.</param>
+    /// <param name="treasury">The owner's resources, reduced by each upgrade that happens.</param>
+    public void UpgradeTroops(CastleTown castle, ref Funds treasury)
+    {
+        ArgumentNullException.ThrowIfNull(castle);
+
+        foreach (Troop troop in _slots)
+        {
+            if (!troop.IsValid || !troop.IsAllowUpgrade)
+            {
+                continue;
+            }
+
+            if (castle.Race != troop.GetRace())
+            {
+                continue;
+            }
+
+            if (!castle.IsBuild(DwellingMonsters.GetDwelling(troop.GetUpgrade())))
+            {
+                continue;
+            }
+
+            Funds payment = troop.GetTotalUpgradeCost();
+
+            if (treasury < payment)
+            {
+                continue;
+            }
+
+            treasury -= payment;
+            treasury.Trim();
+
+            troop.Upgrade();
         }
     }
 

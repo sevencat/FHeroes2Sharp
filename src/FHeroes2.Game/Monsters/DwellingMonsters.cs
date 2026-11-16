@@ -119,4 +119,65 @@ public static class DwellingMonsters
 
         _ => MonsterType.Unknown,
     };
+
+    /// <summary>
+    /// Which dwelling holds a creature, <c>Monster::GetDwelling()</c> (<c>monster.cpp:691-780</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reverse of <see cref="FromDwelling"/>, and deliberately a second table rather than a search through the
+    /// first one: <see cref="FromDwelling"/> answers by race, and a creature's dwelling is a property of the
+    /// creature alone (an Archer is always in a second dwelling, whichever town it is in). The reference keeps the
+    /// two tables separate for the same reason.
+    /// </para>
+    /// <para>
+    /// Only an upgraded dwelling is returned for an upgraded creature, so this is also what decides whether a town
+    /// can upgrade a stack: <see cref="FHeroes2.Game.Castle.Castle.IsBuild"/> of the answer.
+    /// </para>
+    /// <para>
+    /// The last three groups are what makes the sixth dwelling's three names work: the base creature answers
+    /// <c>DwellingMonster6</c>, its first upgrade <c>DwellingUpgrade6</c>, its second <c>DwellingUpgrade7</c> —
+    /// and a town that has no upgrade for a creature answers its base dwelling.
+    /// </para>
+    /// </remarks>
+    /// <param name="monster">The creature.</param>
+    /// <returns>The dwelling bit, or <see cref="BuildingType.Nothing"/> for a neutral, invalid or random monster.</returns>
+    public static BuildingType GetDwelling(MonsterType monster) => monster switch
+    {
+        MonsterType.Peasant or MonsterType.Goblin or MonsterType.Sprite or MonsterType.Centaur
+            or MonsterType.Halfling or MonsterType.Skeleton => BuildingType.DwellingMonster1,
+
+        MonsterType.Archer or MonsterType.Orc or MonsterType.Zombie or MonsterType.Dwarf
+            or MonsterType.Gargoyle or MonsterType.Boar => BuildingType.DwellingMonster2,
+
+        MonsterType.Ranger or MonsterType.OrcChief or MonsterType.BattleDwarf
+            or MonsterType.MutantZombie => BuildingType.DwellingUpgrade2,
+
+        MonsterType.Pikeman or MonsterType.Wolf or MonsterType.Elf or MonsterType.IronGolem
+            or MonsterType.Mummy or MonsterType.Griffin => BuildingType.DwellingMonster3,
+
+        MonsterType.VeteranPikeman or MonsterType.GrandElf or MonsterType.SteelGolem
+            or MonsterType.RoyalMummy => BuildingType.DwellingUpgrade3,
+
+        MonsterType.Swordsman or MonsterType.Ogre or MonsterType.Druid or MonsterType.Minotaur
+            or MonsterType.Roc or MonsterType.Vampire => BuildingType.DwellingMonster4,
+
+        MonsterType.MasterSwordsman or MonsterType.OgreLord or MonsterType.GreaterDruid
+            or MonsterType.MinotaurKing or MonsterType.VampireLord => BuildingType.DwellingUpgrade4,
+
+        MonsterType.Cavalry or MonsterType.Troll or MonsterType.Mage or MonsterType.Lich
+            or MonsterType.Unicorn or MonsterType.Hydra => BuildingType.DwellingMonster5,
+
+        MonsterType.Champion or MonsterType.WarTroll or MonsterType.Archmage
+            or MonsterType.PowerLich => BuildingType.DwellingUpgrade5,
+
+        MonsterType.Paladin or MonsterType.Cyclops or MonsterType.Phoenix or MonsterType.GreenDragon
+            or MonsterType.Giant or MonsterType.BoneDragon => BuildingType.DwellingMonster6,
+
+        MonsterType.Crusader or MonsterType.RedDragon or MonsterType.Titan => BuildingType.DwellingUpgrade6,
+
+        MonsterType.BlackDragon => BuildingType.DwellingUpgrade7,
+
+        _ => BuildingType.Nothing,
+    };
 }

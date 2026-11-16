@@ -51,6 +51,10 @@ public sealed partial class Tile
     // DIRECTION_ALL until the reveal finds out which neighbours are still hidden (maps_tiles.h:427).
     private Direction _fogDirection = Directions.All;
 
+    // No region until World::ComputeStaticAnalysis() cuts the map up (maps_tiles.h:424), which is the same zero
+    // MapRegionNodes::Blocked uses for "belongs to nothing".
+    private uint _region = MapRegionNodes.Blocked;
+
     /// <summary>
     /// Fills the tile from one <c>MP2TileInfo</c>, the <c>Tile::Init</c> of the reference
     /// (<c>maps_tiles.cpp:392</c>). Only the ground and top object are read; add-ons are handled by
@@ -119,6 +123,22 @@ public sealed partial class Tile
     /// Whether the tile is water, <c>isWater()</c>: every terrain image below the first grass image.
     /// </summary>
     public bool IsWater => _terrainImageIndex < MapGrounds.GrassStartImageIndex;
+
+    /// <summary>
+    /// The region the tile belongs to, <c>getRegion()</c> (<c>maps_tiles.cpp:70</c>).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MapRegionNodes.Blocked"/> (zero) means no region: either the tile cannot be walked on or
+    /// <see cref="World.ComputeStaticAnalysis"/> has not run yet. The ids of the real regions start at
+    /// <see cref="MapRegionNodes.Found"/>.
+    /// </remarks>
+    public uint Region => _region;
+
+    /// <summary>
+    /// Sets the region of the tile, <c>updateRegion()</c> (<c>maps_tiles.cpp:75</c>).
+    /// </summary>
+    /// <param name="region">Region id, or one of the <see cref="MapRegionNodes"/> constants.</param>
+    public void UpdateRegion(uint region) => _region = region;
 
     /// <summary>
     /// Id of the hero standing on the tile, <c>_occupantHeroId</c>. Zero

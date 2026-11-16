@@ -108,6 +108,65 @@ public sealed class WorldSphinxAndEventsTests
     }
 
     [Fact]
+    public void OnlyTheEventsOfTheColorAndOfTheDayAreReturned()
+    {
+        World world = new();
+
+        // Two events for the same day: gold for blue, wood for red (world.cpp:875 filters by color and date).
+        world.LoadMap(MapWithWorldBlocks(
+            DailyEventBlock("Blue gets gold.", gold: 100, red: false),
+            DailyEventBlock("Red gets wood.", gold: 0, blue: false)));
+
+        // The clock stands at day 0 and the events fire on day 10.
+        Assert.Empty(world.GetEventsDate(PlayerColor.Blue));
+
+        AdvanceDays(10, world);
+
+        EventDate blue = Assert.Single(world.GetEventsDate(PlayerColor.Blue));
+        Assert.Equal("Blue gets gold.", blue.Message);
+        Assert.Equal(100, blue.Resources.Gold);
+
+        EventDate red = Assert.Single(world.GetEventsDate(PlayerColor.Red));
+        Assert.Equal("Red gets wood.", red.Message);
+        Assert.Equal(7, red.Resources.Wood);
+
+        Assert.Empty(world.GetEventsDate(PlayerColor.Green));
+    }
+
+    [Fact]
+    public void TheEventsOfADayComeBackInMapOrder()
+    {
+        World world = new();
+
+        world.LoadMap(MapWithWorldBlocks(
+            DailyEventBlock("first", gold: 1),
+            DailyEventBlock("second", gold: 2),
+            DailyEventBlock("third", gold: 3)));
+
+        AdvanceDays(10, world);
+
+        Assert.Equal(
+            ["first", "second", "third"],
+            world.GetEventsDate(PlayerColor.Blue).Select(eventDate => eventDate.Message));
+    }
+
+    [Fact]
+    public void ARepeatingEventIsReturnedOnEveryOccurrence()
+    {
+        World world = new();
+        world.LoadMap(MapWithWorldBlocks(DailyEventBlock("Every five days.", repeat: 5)));
+
+        AdvanceDays(10, world);
+        Assert.Single(world.GetEventsDate(PlayerColor.Blue));
+
+        AdvanceDays(1, world);
+        Assert.Empty(world.GetEventsDate(PlayerColor.Blue));
+
+        AdvanceDays(4, world);
+        Assert.Single(world.GetEventsDate(PlayerColor.Blue));
+    }
+
+    [Fact]
     public void ARumorBlockGivesItsText()
     {
         World world = new();
@@ -163,6 +222,29 @@ public sealed class WorldSphinxAndEventsTests
         Mp2Map map = Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex);
 
         return map with { InfoBlocks = [new Mp2InfoBlock(0, block)] };
+    }
+
+    /// <summary>A map without objects that carries several blocks of its own, in the order given.</summary>
+    /// <param name="blocks">Payloads of the blocks.</param>
+    private static Mp2Map MapWithWorldBlocks(params byte[][] blocks)
+    {
+        Mp2Map map = Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex);
+
+        return map with
+        {
+            InfoBlocks = [.. blocks.Select((block, index) => new Mp2InfoBlock(index, block))],
+        };
+    }
+
+    /// <summary>Turns the clock <paramref name="days"/> times, which is the only way the day moves.</summary>
+    /// <param name="days">How many days to pass.</param>
+    /// <param name="world">The world to advance.</param>
+    private static void AdvanceDays(uint days, World world)
+    {
+        for (uint day = 0; day < days; ++day)
+        {
+            world.NewDay();
+        }
     }
 
     /// <summary>Object type of a tile, kept in a method so the helper below reads better.</summary>
@@ -226,7 +308,17 @@ public sealed class WorldSphinxAndEventsTests
     /// </summary>
     /// <param name="message">The message of the event.</param>
     /// <param name="repeat">Repeat period in days; 0 for a single occurrence.</param>
-    private static byte[] DailyEventBlock(string message, ushort repeat = 5)
+    /// <param name="gold">Gold the event grants.</param>
+    /// <param name="firstDay">The day the event fires.</param>
+    /// <param name="blue">Whether the event is for the blue player.</param>
+    /// <param name="red">Whether the event is for the red player.</param>
+    private static byte[] DailyEventBlock(
+        string message,
+        ushort repeat = 5,
+        int gold = 100,
+        ushort firstDay = 10,
+        bool blue = true,
+        bool red = true)
     {
         byte[] text = Encoding.ASCII.GetBytes(message);
         byte[] data = new byte[50 + text.Length];
@@ -234,15 +326,15 @@ public sealed class WorldSphinxAndEventsTests
         data[0] = 0x00;
 
         BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(1), 7);
-        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(25), 100);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(25), gold);
 
         BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(31), 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(33), 10);
+        BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(33), firstDay);
         BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(35), repeat);
 
         data[42] = 0x01;
-        data[43] = 1; // blue
-        data[45] = 1; // red
+        data[43] = blue ? (byte)1 : (byte)0;
+        data[45] = red ? (byte)1 : (byte)0;
 
         text.CopyTo(data, 49);
 

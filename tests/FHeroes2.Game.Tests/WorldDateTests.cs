@@ -1,12 +1,17 @@
 using System.Buffers.Binary;
+using System.Collections.Generic;
+
+using FHeroes2.Core.Random;
+using FHeroes2.Game.Kingdom;
+
 using Xunit;
 
 namespace FHeroes2.Game.Tests;
 
 /// <summary>
-/// Covers the clock of the world: the three counters, the derived display values and the daily event
-/// pruning of <c>World::NewDay()</c> (<c>src/fheroes2/world/world.h:371-424</c>,
-/// <c>world.cpp:425-460</c>, <c>world.cpp:888</c>).
+/// Covers the clock of the world: the three counters, the derived display values, the week drawn from them
+/// and the daily event pruning of <c>World::NewDay()</c> (<c>src/fheroes2/world/world.h:371-424</c>,
+/// <c>world.cpp:410</c>, <c>world.cpp:425-460</c>, <c>world.cpp:888</c>, <c>world.cpp:1263</c>).
 /// </summary>
 public sealed class WorldDateTests
 {
@@ -133,6 +138,82 @@ public sealed class WorldDateTests
         AdvanceDays(100, world);
 
         Assert.Single(world.DailyEvents);
+    }
+
+    [Fact]
+    public void TheWeekSeedIsTheMapSeedSaltedWithTheWeek()
+    {
+        World world = new();
+        world.MapSeed = 12345;
+
+        // world.cpp:1263: the map seed mixed with the week counter, so consecutive weeks do not draw alike.
+        Assert.Equal(12345u, world.MapSeed);
+        Assert.Equal(Rand.CombineSeedWithValueHash(12345u, 0u), world.WeekSeed);
+
+        AdvanceDays(7, world);
+
+        Assert.Equal(1u, world.WeekCount);
+        Assert.Equal(Rand.CombineSeedWithValueHash(12345u, 1u), world.WeekSeed);
+    }
+
+    [Fact]
+    public void TheWeekTypeIsDrawnFromTheWeekSeedAndTheFirstWeekFlag()
+    {
+        World world = new();
+        world.MapSeed = 12345;
+
+        // Week 0 is not the first week of a month, so the draw comes from the week table (week.cpp:35-51).
+        Assert.False(world.IsFirstWeek);
+        Assert.Equal(Week.RandomWeek(isNewMonth: false, Rand.CombineSeedWithValueHash(12345u, 0u)), world.WeekType);
+
+        // One day later the clock stands in week 1, which is the first week of the month: the month table.
+        AdvanceDays(1, world);
+
+        Assert.True(world.IsFirstWeek);
+        Assert.Equal(Week.RandomWeek(isNewMonth: true, Rand.CombineSeedWithValueHash(12345u, 1u)), world.WeekType);
+
+        // Week by week: the type is a function of the date and the map seed, and of nothing else.
+        for (uint week = 2; week <= 9; ++week)
+        {
+            AdvanceDays(7, world);
+
+            Assert.Equal(week, world.WeekCount);
+            Assert.Equal(week % 4 == 1, world.IsFirstWeek);
+            Assert.Equal(
+                Week.RandomWeek(world.IsFirstWeek, Rand.CombineSeedWithValueHash(12345u, week)),
+                world.WeekType);
+        }
+    }
+
+    [Fact]
+    public void TheWeeksOfOneMapAreNotAllTheSameWeek()
+    {
+        // A sanity check on the salt: without it every week of a map would draw from the same seed and, being
+        // nine draws of the same three-outcome table, would repeat a lot more than this.
+        World world = new();
+        world.MapSeed = 12345;
+
+        HashSet<Week> drawn = [];
+
+        for (uint week = 0; week < 9; ++week)
+        {
+            drawn.Add(world.WeekType);
+            AdvanceDays(7, world);
+        }
+
+        Assert.True(drawn.Count >= 4, $"nine weeks of one map gave only {drawn.Count} distinct draws");
+    }
+
+    [Fact]
+    public void AResetForgetsTheMapSeed()
+    {
+        // world.cpp:335: a new map draws a new seed, so the old one must not survive the reset.
+        World world = new();
+        world.MapSeed = 12345;
+
+        world.Reset();
+
+        Assert.Equal(0u, world.MapSeed);
     }
 
     private static World AdvanceDays(uint days)

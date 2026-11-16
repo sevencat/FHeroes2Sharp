@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 
@@ -96,6 +97,17 @@ public sealed class Troop
 
     /// <summary>The level of the monster, <c>Monster::GetMonsterLevel()</c>.</summary>
     public int MonsterLevel => MonsterStatistics.GetGeneralStats(_monster).Level;
+
+    /// <summary>
+    /// The dwelling the stack's monster is recruited from, <c>Monster::GetDwelling()</c>
+    /// (<c>monster.cpp:691</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is the third use of the same table: it says which shelf the stack came from, whether the town has the
+    /// upgraded dwelling that an upgrade needs, and where a recruited stack is taken out of.
+    /// </remarks>
+    /// <returns>The dwelling bit, or <see cref="BuildingType.Nothing"/> for a neutral creature.</returns>
+    public BuildingType GetDwelling() => DwellingMonsters.GetDwelling(_monster);
 
     /// <summary>Hit points of the whole stack, <c>Troop::GetHitPoints()</c> (<c>army_troop.cpp:61</c>).</summary>
     /// <returns>Hit points of one creature times the count.</returns>

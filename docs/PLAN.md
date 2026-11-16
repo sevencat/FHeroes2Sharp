@@ -83,15 +83,15 @@
 | `game` | 28 | 2 | 4 | 22 |
 | `gui` | 33 | 8 | 10 | 15 |
 | `h2d` | 1 | 0 | 0 | 1 |
-| `heroes` | 12 | 1 | 4 | 7 |
-| `kingdom` | 14 | 0 | 4 | 10 |
+| `heroes` | 12 | 2 | 4 | 6 |
+| `kingdom` | 14 | 4 | 6 | 4 |
 | `maps` | 17 | 3 | 7 | 7 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 1 | 2 | 1 |
 | `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 0 | 2 | 1 |
-| `world` | 5 | 0 | 4 | 1 |
-| **合计** | **249** | **27** | **61** | **161** |
+| `world` | 5 | 1 | 4 | 0 |
+| **合计** | **249** | **33** | **63** | **153** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -140,7 +140,7 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
 
 2026-11-16：`Rand` 门面（`src/FHeroes2.Core/Random/Rand.cs`）与 `World.NextTeleport`/`GetTeleportEndPoints`/
 `GetWhirlpoolEndPoints`/`NextWhirlpool`（ADR-070）。`rand.cpp` 的 ✅ 至此名副其实（只差
-`combineSeedWithValueHash`）；覆盖率不变，`world.cpp` 仍是「部分」。
+`combineSeedWithValueHash`，ADR-113 补上）；覆盖率不变，`world.cpp` 仍是「部分」。
 
 2026-11-16：英雄表 `AllHeroes`（`Init`/`Clear`/`GetHeroForHire`/`isAvailableForHire`）、`HeroRaces` 与
 `Hero` 的种族/颜色/肖像/mode 位（ADR-071）。`World` 的 `AddHero` 替身删除，`_heroes` 换成按 id 索引的
@@ -285,12 +285,97 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
 **27/61/161**。测试 17 条，重点是 `CheckBuyBuilding` 的**判定顺序**（已建 → 禁用位 → 三个特例 → 法师
 公会逐级 → 今天能否建 → 帐篷/城堡规则 → 种族特有升级 → 前置位 → 资源）与六族 × 两版本整表扫。
 
+2026-11-16：城堡招募与升级（ADR-108）：`Castle.GetRecruitLimit`/`RecruitMonster`（`castle.cpp:1025-1106`）、
+`DwellingMonsters.GetDwelling`（`Monster::GetDwelling`，`monster.cpp:691`）与 `Troop.GetDwelling`、
+`Army.UpgradeTroops`（`army.cpp:528-560`）。货架与款项的钳制按参考的不对称照抄（只钳货架，价与入队用调用方
+给的数），`getLowestQuotient` 的负数进 `uint` 也照抄。`castle`/`army`/`monster` 行都已是「部分」，行数与
+合计不变（27/61/161）。测试 14 条，含一条「六族 × 12 个住所位：反查回来必在同一货架上」的整表不变量。
+
+2026-11-16：城堡的 70 字节块（ADR-109）：`Castle.LoadFromMP2`（`castle.cpp:102-395`）按顺序读完全部字段，
+`PostLoad`（`castle.cpp:428-535`）做那六步修复，`JoinRandomArmy`（`castle.cpp:2218-2247`）给中立城补守军，
+`Army.Assign`（`army.cpp:493-501`）按位放堆。世界缺席的地方一律变参数：难度、总天数、所属王国的种族、
+随机源；船坞规则要的 `HasSeaAccess` 由调用方先设。法师公会的法术与船长两步仍未转，代码里点名。行数与合计
+不变（27/61/161）。测试 19 条，全部用手搓的 70 字节块，不依赖地图文件。
+
+2026-11-16：王国与七槽容器（ADR-111）：`Game.Kingdom.Kingdom` 落地 `kingdom.cpp` 里「账本 + 名册」这层
+骨架 —— `Treasury`（`ref Funds`，接得上 ADR-107/108 的 `ref Funds` 下单接口）、`AllowPayment`、
+`AddFundsResource`/`OddFundsResource`、`GetStartingResources`（玩家/电脑两张表 × 五档难度）、
+`AddCastle`/`RemoveCastle`/`AddHero`/`RemoveHero`、`IsLoss`/`IsLosingGame`/`HasHeroes`/`CanRecruitHeroes`、
+`LostTownDays` 与五个计数；`Game.Kingdom.Kingdoms` 落地七槽容器（`GetKingdom` 的非法颜色落第七槽、
+`Init`/`Clear`/`AddCastles`/`AddHeroes`/`GetNotLossColors`）。世界装载时按地图文件头的颜色与难度起王国
+（`World.Kingdoms.cs`），瓦片读完后再把英雄与城塞进名册。周产/税收、招募、访问记录、解谜地图、
+`GetCountArtifacts` 与 `LossPostActions` 仍未转，代码里逐条点名。`kingdom` 行 0/4/10 → **0/5/9**，合计
+27/61/161 → **27/62/160**。测试 22 条，含一条真实装载（合成地图 + 70 字节块）验证颜色→王国的接线。
+
+2026-11-16：日收入（ADR-112）：`Game.Kingdom.ProfitConditions` 整篇落地 `profit.cpp` —— 矿井（七种资源的日产）、
+建筑（城堡 1000、帐篷/雕像 250、术士的 `Spec` 500）与神器（`ArtifactBonus` 里八种资源奖励 + 税单的
+`GoldPenalty`）三张表；`Game.Kingdom.Kingdom.GetIncome( countCapturedMines, IncomeType )` 落地
+`kingdom.cpp:564-646` 里能算的两项（矿井与城镇），神器与技能两项要英雄的神器袋与技能（都还没落），电脑难度
+加成与人类折扣要 `players.cpp`，逐条在注释与 `IncomeType` 上点名。`profit` 行由「未转」转「已转」：
+`kingdom` 行 0/5/9 → **1/5/8**，合计 27/62/160 → **28/62/159**。测试 14 条（三张表逐项、未知矿与未知神器的
+空答案、金鹅 10000、税单 -250、七只无尽袋子、回调被问到的七种资源、帐篷/城堡/雕像/术士地牢的累加、
+`IncomeType` 位掩码过滤）。
+
+2026-11-16：周与月（ADR-113）：`Game.Kingdom.Week`/`WeekName` 落地 `week.h` + `week.cpp` —— 34 个周名
+（15 个动物周 / 10 个昆虫月 / 怪物之周 / 瘟疫之月）、`RandomWeek( isNewMonth, weekSeed )` 的两条抽签表
+（周 75/25，月 50/40/10）与十二种月怪；`Rand.CombineSeedWithValueHash`（`rand.h:260`）补进 Core 的 `Rand`
+门面，六个盐值（367245 / 1946256 / 9536582 / 5544783 / 886473 / 1130906）随之可复现。`Week::GetName()`
+未转（要翻译层与 `Monster::GetName()`），`week` 由「未转」转「部分」：`kingdom` 行 1/5/8 → **1/6/7**，合计
+28/62/159 → **28/63/158**。测试 17 条 + Core 1 条（默认值、同种子稳定、11 个种子的快照钉住六个盐、
+两条扫描验证只有怪物周/月带怪物、月怪只在十二种里、四种结果的概率）。
+
+2026-11-16：把周接进世界、日入账（ADR-114）：`World.MapSeed`（`world.h:504`，`Reset` 归零，`Defaults` 的随机
+取值等会话）、`World.WeekSeed`（`world.cpp:1263` 的加盐）与 `World.WeekType`（`world.cpp:410`，按需算不缓存）、
+`World.GetEventsDate( color )`（`world.cpp:875` 的过滤）；`Kingdom.ActionNewDayResourceUpdate( dayCount,
+countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdom.cpp:225-250`（首日不结算、
+收入 + 当日事件、AI 跳过人类专属事件、金额按金库钳制并回报对话框）。覆盖率不动（`week` 仍「部分」、
+`kingdom` 仍「部分」）：合计仍 **28/63/158**；测试 15 条（周种子的加盐与归零、周类型随周计数与「月初」标志
+走两条表、九周不是同一个抽签、`GetEventsDate` 的颜色/日期/重复/顺序、首日不给钱、次日起矿井付钱、事件给钱
+与负事件的钳制、AI 跳过人类专属、对话框看到的是实付金额）。
+
+2026-11-16：城堡的周产（ADR-115）：`Castle.ActionNewWeek( weekCount, week, isBeginMonth, dayCount, generator )`
+落地 `castle.cpp:838-940` —— 首周跳过、六个基础住所按 `GetActualDwelling` 的生长加一周（井 +2、第一住所的
+`Well2` +8）、中立城减半并收随机守军（城堡两次、普通城 40% 才第二次）、怪物周只喂「精确建成」的匹配住所
+（+5）、月初的怪物月按库存再加 100%、瘟疫月的月初把全部库存减半；`GrownWell`/`GrownWel2`/`GrownWeekOf`/
+`GrownMonthOf` 在参考里是 `game_static.cpp` 的函数，端口按「还没有设置层」的理由落成 `const`；
+`AllCastles.NewWeek`/`NewDay` 与 `World.NewDay`（`world.cpp:427-459`：月 → 周 → 日）的接线同批完成，顺手修掉
+`AllCastles.Add` 在宽度为 0 时先算坐标的除零。行数与合计不变（`castle.cpp` 与 `world.cpp` 早就在「部分」里），
+仍 **28/63/158**。测试 13 条。
+
+2026-11-16：世界的区域划分（ADR-116）：`world_regions.cpp` 整篇落地 —— `MapRegion`/`MapRegionNode`/
+`MapRegionNodes` 三个类型（`world_regions.h:28-65`）与 `World.ComputeStaticAnalysis()`（九步：数障碍 →
+挑最空的每七行/列作种子线 → 城堡当种子 → 补种子 → 建带一圈 padding 的工作副本 → 每个种子一个区域 →
+每轮各长一格 → 剩下的自己成区 → 写回瓦片并把邻居连起来，含石阵/漩涡）。同批加 `Tile.Region`/`UpdateRegion`
+（`maps_tiles.cpp:70-78`）、`World.WaterPercentage`/`LandRoughness`/`RegionCount`/`GetRegion`，`PostLoad`
+末尾按 `world.cpp:1233` 调用，`Reset` 顺手清掉这些格子级缓存。`world` 目录 0/4/1 → **1/4/0**，合计
+**28/63/158** → **29/63/157**。测试 8 条（含一条真实地图的不变量测试）。
+
+2026-11-16：王国的价目与市场汇率（ADR-117）：`payment.cpp` 整篇落地成 `PaymentConditions`（船 1000 金 + 10 木、
+法术书 500 金、酒馆英雄 2500 金、炼金术士 750 金、麦哲伦地图 1000 金，建筑造价转发 `CastleBuildings.GetCost`），
+`resource_trading.cpp` 整篇落地成 `ResourceTrading.GetTradeCost`（common/rare/gold 三个类别的七张 9 列汇率表，
+市场数 0 返回 0、超过 9 钳到 9、非法资源位返回 0）。`kingdom` 目录 1/6/7 → **3/6/5**，合计
+**29/63/157** → **31/63/155**。测试 11 条。同时更正一条旧结论：1.1.18 的 `PostLoad` 里没有「漩涡带船的修复」，
+带船的漩涡格被记成船对象、因此按部件查找，端口本来就是这么做的，`PostLoad` 到此已经完整。
+
+2026-11-16：酒馆的那一对英雄（ADR-118）：`heroes_recruits.cpp`+`heroes_recruits.h` 整篇落地成
+`Recruit`（id + 投降日，`default` 就是参考的「UNKNOWN 与 0」）与 `Recruits`（两个槽位、`SetHero1`/`SetHero2`、
+`AppendSurrenderedHero` 的「替换更旧那一格」规则——同一天时替换第一格，这是参考的 `>` 在并列时为假），
+`Kingdom` 新增 `GetRecruits()` 并在 `Clear()` 里重置（`kingdom.cpp:132`）。参考 `GetRecruits()` 还会按需补位，
+那要 `Settings`/战役存档/`Players`，留给后面。`heroes` 目录 1/4/7 → **2/4/6**，合计 **31/63/155** →
+**32/63/154**。测试 7 条。
+
+2026-11-16：石阵的拼图（ADR-119）：`puzzle.h`+`puzzle.cpp` 的位集部分落地成 `Puzzle`（48 格、四条区带在
+创建时洗牌、`Update` 按「外框 → 内环 → 两个 2×2」的顺序翻格、只增不减），洗牌走 `Pcg32` 参数（存档可复现），
+`Kingdom` 新增 `GetPuzzleMaps()` 并在 `Clear()` 里 `Reset()`（`kingdom.cpp:134`，只清格子不重洗）。
+对话框（`ShowMapsDialog`）与存档读写留给渲染层与存档层。`kingdom` 目录 3/6/5 → **4/6/4**，
+合计 **32/63/154** → **33/63/153**。测试 8 条。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
   `image_tool.cpp`→`IcnSpriteDecoder`+`PngWriter`/`PngReader`+`BmpWriter`+`MonoCursorFile`+TIL 负载读取；
   `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32` + `Rand` 门面（门面在
-  ADR-070；`combineSeedWithValueHash` 未转，靠 `std::hash`，跨库不可复现）；`timing.cpp`→`FrameTimer`
+  ADR-070；`combineSeedWithValueHash` 在 ADR-113）；`timing.cpp`→`FrameTimer`
 * ◐ `image.cpp`（`Blit`/`Copy`/`Fill`/`ApplyTransform`/`Resize`/`CreateContour`/`Dithering` 已转，
   `SubpixelResize` 与重采样分支未）；`screen.cpp`（只转了呈现层：`PresentationViewport` + `SdlPresenter`）；
   `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
@@ -410,22 +495,30 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
   对象查询与石阵/漩涡（ADR-069/070）、地图对象与每日事件/传闻容器（ADR-074/075）、
   日期（`_day`/`_week`/`_month`、派生显示值、`DateString`、`NewDay` 的时钟与剪枝，ADR-076）、
   `CountObeliskOnMaps`（ADR-077）与俘获对象（`map_captureobj`、`CaptureObject`/`CountCapturedMines`/
-  `ResetCapturedObjects`，ADR-078）；英雄/城堡/王国这些容器、`GetWeekType`/`NewWeek`/`NewMonth`、
-  区域图、静态分析都未转；
+  `ResetCapturedObjects`，ADR-078）；**城堡表**（`AllCastles`、`getCastle`/`getCastleEntrance`/
+  `isValidCastleEntrance` 与 `DoesCastleHaveSeaAccess`，ADR-110）与**王国表**（`Kingdoms` 七槽 +
+  `CreateMapKingdoms`/`AttachMapRosters`，ADR-111）已转；**周**（`MapSeed`/`WeekSeed`/`WeekType` 与
+  `GetEventsDate`，ADR-114）已接，`NewDay` 里的周推进也把周交给城表（ADR-115）；英雄表这批只差容器语法糖，
+  `NewWeek`/`NewMonth`（周命对象、中立怪刷新、招募池重置）未转，**区域图**已转（`MapRegion`/`MapRegionNode`
+  与 `ComputeStaticAnalysis`，ADR-116，`PostLoad` 末尾调用）；静态分析另外两项统计（`WaterPercentage`/
+  `LandRoughness`）同批落地；
   ◐ `world_loadmap` 搬了瓦片循环、add-on 链、`fixMP2MapTileObjectType`、`MP2::OBJ_HERO` 与
   `MP2::OBJ_JAIL` 的信息块建人（ADR-067/072/073）、`MP2::OBJ_SIGN`/`OBJ_BOTTLE`/`OBJ_EVENT` 的
   对象装载（ADR-074）、`MP2::OBJ_SPHINX` 与无瓦片的每日事件/传闻块（ADR-075）与 `PostLoad` 的
-  可运行子集，城堡表/AI 区域未转（俘获对象的数据结构已落，ADR-078）；`PostLoad` 的石阵/漩涡/法师之眼缓存另在
+  可运行子集；**城堡表落格 + 两种城堡块 + 随机城重绘 + 默认城名**也已接（ADR-110），AI 区域未转
+  （俘获对象的数据结构已落，ADR-078）；`PostLoad` 的石阵/漩涡/法师之眼缓存另在
   `World` 上落地（ADR-069），读取端 `GetTeleportEndPoints`/`GetWhirlpoolEndPoints`/`NextTeleport`/
-  `NextWhirlpool` 已接（ADR-070）；
+  `NextWhirlpool` 已接（ADR-070）；AI 区域地图的「种子」也就位了（`PostLoad` 调 `ComputeStaticAnalysis`）；
   ◐ `world_object_uid` 的计数器改挂在 `World` 上（`LastObjectUid`/`GetNewObjectUid`，ADR-067）；
   ◐ `world_pathfinding` 的**玩家侧**已转：`WorldPathfinder` 抽象基类包住缓存、标签修正式搜索、
   「最后一格」规则、船的对角切角与怪物「只到不穿」（ADR-091），`PlayerWorldPathfinder` 是五元组
   缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
-  都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；❌ `world_regions`
+  都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
+  ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
 * `ai`（9）、`battle`（18）、`campaign`（3）、`h2d`（1）、`audio`（1）：**全部未转**
 * `castle`（11）：◐ `castle.h` 的 `BuildingType` 位掩码已转（`Game.Castle.BuildingType`，33 项含三个组合
-  掩码，ADR-106）；◐ `castle_building_info.cpp` 的前置表 `GetRequirement` 与升级表
+  掩码，ADR-106），`AllCastles` 这个城表也已转（`Game.Castle.AllCastles`：按地图宽度建表、17 格足迹登记、
+  `Add`/`Get`/`Remove`，ADR-110）；◐ `castle_building_info.cpp` 的前置表 `GetRequirement` 与升级表
   `GetUpgradeForBuilding` 已转（ADR-106），名字/描述（译文）与图标矩形表（要 AGG）未转；
   ◐ `buildinginfo.cpp` 的 86 行造价表 `GetCost` 与 `isDwelling` 已转（ADR-106），`BuildingInfo` 那个
   界面构件（要 `Castle`）未转；◐ `castle.cpp`→`Game.Castle.Castle` 的**无世界骨架**已转（ADR-107）：
@@ -433,21 +526,25 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
   `GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、`GetActualDwelling`/`GetUpgradeBuilding`/
   `GetMonstersInDwelling`/`IsExactBuildingBuilt`、`CheckBuyBuilding`/`AllowBuyBuilding`/
   `GetAllBuildingStatus`、`BuyBuilding`、`ActionNewDay`、`AddBuildings`、`SetDefaultBuildings`、
-  `ChangeColor`；未转招募（`RecruitMonster`/`getRecruitLimit`/`getAvailableArmy`）、`ActionNewWeek`/
-  `ActionNewMonth` 的周产井水加成、税收与法师公会法术、`_postLoad()` 的填货尾巴、`GetPowerModificator`
-  与 AI 访问价值；❌ `castle_heroes`、`castle_masons_guild`、`castle_recruit`、`castle_ui`、
-  `castle_switch`、`castle_building_info` 的其余部分
+  `ChangeColor`、招募的 `GetRecruitLimit`/`RecruitMonster`（ADR-107/108）、70 字节块的
+  `LoadFromMP2` + `_postLoad()`（`PostLoad`/`JoinRandomArmy`，ADR-109）与默认城名表
+  （`DefaultNames` 72 个名字 + `SetName` 的洗牌取空名，ADR-110）、周产 `ActionNewWeek` 与城表的
+  `AllCastles.NewWeek`/`NewDay`（ADR-115）；未转 `AllowBuyHero`/
+  `getAvailableArmy`、`ActionNewMonth`（月度事件与招募池重置）、税收、法师公会法术与船长、船的
+  `AllowBuyBoat`/`BuyBoat`、`GetPowerModificator` 与 AI 访问价值；
+  ❌ `castle_heroes`、`castle_masons_guild`、`castle_recruit`（对话框）、`castle_ui`、`castle_switch`、
+  `castle_building_info` 的其余部分
 * `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
   `AllTroopsAreTheSame`/`AllTroopsAreUndead`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
   ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
   `MergeSameMonsterTroops`/`SortStrongest`/`GetWeakestTroop`/`GetStrongestTroop`/`GetCountMonsters`/
   `GetTroopsStrength`/`GetReinforcementValue`/`IsStrongerThan`/`IsMeleeDominantArmy`/
-  `GetStrongestMonster`/`ResetInvalidMonsters`/`UpgradeMonsters`，ADR-103/105；`Army.Transfer.cs` 的两军
+  `GetStrongestMonster`/`ResetInvalidMonsters`/`UpgradeMonsters`/`Assign`，ADR-103/105/109；`Army.Transfer.cs` 的两军
   调兵：`JoinStrongest`/`JoinStrongestFromArmy`/`MoveTroops`/两个 `SwapTroops`/`SaveLastTroop`，
   `IArmyCommander.IsHeroes`，ADR-104）、
   `army_troop.cpp`→`Troop`（数值、血伤造价、种族/亡灵/士气/飞行四条能力查询、`GetStrength*`、
-  `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost*`，ADR-095/099/100/103/105）；
-  `UpgradeTroops`（要 `Castle`）、`SplitTroopIntoFreeSlots` 与三个同族（要拖单堆的界面）、
+  `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost*`/`GetDwelling`，ADR-095/099/100/103/105/108；
+  `UpgradeTroops` 已转，ADR-108）；`SplitTroopIntoFreeSlots` 与三个同族（要拖单堆的界面）、
   `GetJoinSolution`、`ArrangeFor*` 与城堡/神器那两项修正未转；❌ `army_bar.cpp`、`army_ui_helper.cpp`
 * `spell`（4）：✅ `spell_storage.cpp`→`SpellStorage`（去重、书后追加神器上的 `ADD_SPELL`、
   `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、七条特性谓词、
@@ -468,14 +565,31 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
   ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；`heroes_move.cpp` 也记「部分」：
   九帧状态机、转向块、像素偏移、帧循环（`Hero.Movement`，ADR-097），清雾/对象动作/小地图/渲染四个
   缺失子系统走 `IHeroMovementHandler` 接缝（ADR-098）；未转 `GetIndexSprite`（260 行 `ICN::ROUTE`
-  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转
+  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转；
+  ✅ `heroes_recruits.cpp`+`heroes_recruits.h`→`Recruit`/`Recruits`（酒馆那一对、投降日的替换规则，
+  ADR-118），`Kingdom` 有了 `GetRecruits()` 与 `clear` 里的重置，只差参考 `GetRecruits()` 的按需补位
+  （要 `Settings`/战役存档/`Players`）
 * `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`、`luck.cpp`→`Luck`、
-  `morale.cpp`→`Morale`（两把七档尺子与 `Normalize`，ADR-099）；❌ `experience`、
-  `kingdom_overview`、`kingdom`、`payment`、`profit`、`puzzle`、`resource_trading`、
-  `speed`、`view_world`、`week`
+  `morale.cpp`→`Morale`（两把七档尺子与 `Normalize`，ADR-099）；✅ `profit.cpp`→`ProfitConditions`
+  （矿/建筑/神器三张日收入表，ADR-112）；✅ `payment.cpp`→`PaymentConditions`（五个固定价 + 建筑造价转发）、
+  ✅ `resource_trading.cpp`→`ResourceTrading`（七个类别组合的 9 列汇率表，ADR-117）；✅ `puzzle.cpp`+`puzzle.h`→
+  `Puzzle`（48 格位集、四条区带的洗牌与「先外框后中心」的揭示顺序，ADR-119；对话框与存档未转）；◐ `week.cpp`+`week.h`→
+  `Week`/`WeekName`：34 个周名、周/月两条
+  抽签表与十二种月怪（ADR-113），只差 `Week::GetName()`（要翻译层与怪物名）；◐ `kingdom.cpp`+`kingdom.h`：
+  账本（`Treasury` 的 `ref Funds`、`AllowPayment`、`AddFundsResource`/`OddFundsResource`、起始资源表
+  `GetStartingResources`）、日收入 `GetIncome`（矿井与城镇两项已算，神器与技能两项等英雄的神器袋与技能）、
+  两张名册（`AddCastle`/`RemoveCastle`/`AddHero`/`RemoveHero`、`IsLoss`/`IsLosingGame`/`HasHeroes`/
+  `CanRecruitHeroes`、`LostTownDays`、五个计数）与七槽容器 `Kingdoms`（`GetKingdom`/`Init`/`Clear`/
+  `AddCastles`/`AddHeroes`/`GetNotLossColors`）已转（ADR-111/112），世界装载时按文件头的颜色起王国并填名册；
+  **每日入账** `ActionNewDayResourceUpdate`（首日不结算、收入 + 当日事件、AI 跳过人类专属事件、金额按金库
+  钳制）已转（ADR-114）；未转每日/每周/每月推进的其余部分（`ActionNewDay` 的访问记录与胜负、
+  `ActionNewWeek`/`ActionNewMonth`，要 `Settings` 与招募池）、电脑难度加成与人类折扣、招募（`Recruits`）、
+  访问记录、`GetCountArtifacts`、`LossPostActions`；❌ `experience`、`kingdom_overview`、
+  `speed`、`view_world`（`experience`/`speed` 只剩 `_()` 文案，等翻译层）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
-  `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength` 与升级关系（`MonsterUpgrades` 的
-  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）；◐ `monster_info.cpp`：
+  `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
+  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）与住所反查
+  （`DwellingMonsters.GetDwelling`，ADR-108）；◐ `monster_info.cpp`：
   通用数值表、战斗数值表、住所映射（`DwellingMonsters`，ADR-095；住所位本身已搬进 `BuildingType`，
   ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）与两条
   强度（`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）已转，`weaknesses` 与战斗图标/音效未转；
@@ -506,8 +620,16 @@ C++ 的 `MP2::OBJ_ARTIFACT`/`OBJ_MONSTER`/`OBJ_CASTLE`（带 action 位）照名
    计数器已落（ADR-067），英雄占用（`Tile.setHero`/`getHero` + 最小 `Hero`）也已落（ADR-068），
    地图对象查询与石阵/漩涡/法师之眼缓存也已落（ADR-069），装载时按信息块建英雄并落到格子上也已落
    （ADR-072），牢房里的英雄同样已落（ADR-073），告示/瓶子与地面事件的对象装载也已落（ADR-074），
-   狮身人面与无瓦片的每日事件/传闻块同样已落（ADR-075）。信息块的六个分支到这里全部落地。
-   下一步是 `PostLoad` 里剩下的城堡表（`Castle` 骨架已立，ADR-107，只差按信息块建城与落格）与 AI 区域。
+   狮身人面与无瓦片的每日事件/传闻块同样已落（ADR-075）。信息块的六个分支到这里全部落地，
+   城堡表也已在装载流程里落格（ADR-110：`CreateMapCastles` → 读块 → `UpdateCastleNames`），王国（资源簿 + 名册 +
+   七槽容器）也已在装载时按文件头起好并填名册（ADR-111），日收入表与 `GetIncome`（ADR-112）、周/月类型与
+   抽签（ADR-113）、世界的周与当日事件（`WeekType`/`GetEventsDate`）与王国的每日入账（ADR-114）、城的周产
+   （`ActionNewWeek` 与 `World.NewDay` 的「月 → 周 → 日」顺序，ADR-115）、区域图与地形统计
+   （`ComputeStaticAnalysis`，ADR-116）也已落，`PostLoad` 到这里已经完整（1.1.18 的 `PostLoad` 没有别的尾巴：
+   带船的漩涡格被记成船对象、于是按部件查找，端口本来就是这么做的）。
+   市场的价目与汇率也已落（`PaymentConditions`/`ResourceTrading`，ADR-117）。下一步是给每日入账找调用方
+   ——那需要 `Game::NewDay` 那一层的会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往
+   `kingdom/*`/`castle/*` 里走。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
 5. 旁支：`engine/serialize.cpp`（存档，M8）、`h2d_file.cpp`（M3 遗留）、`smk_decoder.cpp`（过场动画）、
    `audio_manager.cpp`（音乐播放，现在只有元数据）。

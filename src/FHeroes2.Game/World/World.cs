@@ -2,6 +2,7 @@ using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Random;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
@@ -86,6 +87,15 @@ public sealed partial class World
 
     /// <summary>Months since the start of the game, <c>_month</c>; zero on a fresh world.</summary>
     private uint _month;
+
+    /// <summary>
+    /// The seed of the map, <c>_seed</c> (<c>world.h:575</c>): drawn once at the start and persisted in saves.
+    /// </summary>
+    /// <remarks>
+    /// The reference draws it in <c>Defaults()</c> (<c>world.cpp:291</c>). The port has no session yet, so it
+    /// stays at zero until a loader or a save writes it; the week draw is deterministic from whatever it holds.
+    /// </remarks>
+    private uint _seed;
 
     /// <summary>Tiles of the stone liths, grouped by sprite index, <c>_allTeleports</c>.</summary>
     private readonly Dictionary<byte, List<int>> _allTeleports = [];
@@ -241,6 +251,32 @@ public sealed partial class World
     }
 
     /// <summary>
+    /// The timed events that fire for <paramref name="color"/> today, <c>World::GetEventsDate()</c>
+    /// (<c>world.cpp:875</c>).
+    /// </summary>
+    /// <remarks>
+    /// A plain filter over <see cref="DailyEvents"/> by <see cref="EventDate.IsAllowed"/>: the color has to be
+    /// one the event names, and today has to be the first occurrence or a repetition of it. The reference
+    /// returns a vector by value; the port returns a list of the same events (they are immutable).
+    /// </remarks>
+    /// <param name="color">Color of the player asking.</param>
+    /// <returns>The events that fire today, in map order.</returns>
+    public List<EventDate> GetEventsDate(PlayerColor color)
+    {
+        var result = new List<EventDate>();
+
+        foreach (EventDate eventDate in _dailyEvents)
+        {
+            if (eventDate.IsAllowed(color, _day))
+            {
+                result.Add(eventDate);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// The day of the current week, one based, <c>World::GetDay()</c> (<c>world.h:371</c>).
     /// </summary>
     /// <remarks>
@@ -315,20 +351,76 @@ public sealed partial class World
     public string DateString() => $"month: {Month}, week: {Week}, day: {Day}";
 
     /// <summary>
+    /// The seed of the map, <c>World::GetMapSeed()</c> (<c>world.h:504</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference draws it once in <c>Defaults()</c> (<c>world.cpp:291</c>, before the heroes are built,
+    /// because a campaign hero levels up while being created), writes it into saves and zeroes it in
+    /// <c>Reset()</c>.
+    /// </para>
+    /// <para>
+    /// The port has neither <c>Defaults()</c> nor a session, so the value is written from the outside: the
+    /// setter is <c>internal</c> for a loader, a future save game and the tests. Everything that draws from
+    /// the map seed (the week, the month of monsters) is a pure function of it, so a world with the default
+    /// seed still behaves consistently — it just plays the same sequence of weeks on every install.
+    /// </para>
+    /// </remarks>
+    public uint MapSeed
+    {
+        get => _seed;
+        internal set => _seed = value;
+    }
+
+    /// <summary>
+    /// The seed of the current week, <c>World::GetWeekSeed()</c> (<c>world.cpp:1263</c>).
+    /// </summary>
+    /// <remarks>
+    /// The map seed salted with the week counter, so every week of a map draws from a different seed while the
+    /// same week of the same map always draws the same. The salt comes from <c>Rand</c>
+    /// (<see cref="Rand.CombineSeedWithValueHash"/>), which is why <c>week.cpp</c> needs it.
+    /// </remarks>
+    public uint WeekSeed => Rand.CombineSeedWithValueHash(_seed, _week);
+
+    /// <summary>
+    /// What the current week is, <c>World::GetWeekType()</c> (<c>world.cpp:410</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The draw is stateless: <see cref="Week.RandomWeek"/> is fed the map seed salted with the week counter,
+    /// plus whether this is the first week of a month (which switches from the week table to the month table).
+    /// </para>
+    /// <para>
+    /// The reference caches the answer in a function-local static keyed by <c>( _week, GetWeekSeed() )</c>
+    /// because callers ask once per tile while redrawing; the port recomputes it, since the draw is two hashes
+    /// and at most two generator calls, and a cache that outlives <see cref="Reset"/> is a landmine.
+    /// </para>
+    /// <para>
+    /// Fully qualified on purpose: <see cref="Week"/> below is the <c>uint</c> display property, which shadows
+    /// the type name inside this class (ADR-113).
+    /// </para>
+    /// </remarks>
+    public FHeroes2.Game.Kingdom.Week WeekType => FHeroes2.Game.Kingdom.Week.RandomWeek(IsFirstWeek, WeekSeed);
+
+    /// <summary>
     /// Advances the clock by one day, <c>World::NewDay()</c> (<c>world.cpp:425</c>).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>What is here</b>: the three counters with the reference's exact nesting, and the removal of the
-    /// daily events that can no longer fire (<c>world.cpp:456-459</c>).
+    /// <b>What is here</b>, in the reference's order (<c>world.cpp:427-459</c>): the three counters with their
+    /// exact nesting, then the week reaching the towns (<see cref="CastleTown.ActionNewWeek"/>) before the day
+    /// does (<see cref="CastleTown.ActionNewDay"/>), then the removal of the daily events that can no longer fire.
     /// </para>
     /// <para>
-    /// <b>What is not here</b>: the per-system ticks of the reference — <c>NewMonth()</c> (the month of
-    /// monsters), <c>NewWeek()</c> (the week-life objects, the neutral monster refresh, the recruit
-    /// reset) and <c>vec_kingdoms/vec_castles/vec_heroes.NewDay()/NewWeek()</c>. Each of them needs a
-    /// system the port does not have (the week type, kingdoms, castles, the monster spawner), so each is
-    /// added here — in this order — together with that system. The nesting of the counters is already
-    /// final, which is the part that is easy to get wrong and expensive to change.
+    /// <b>What is not here</b>: <c>NewMonth()</c> (the month of monsters), <c>NewWeek()</c> (the week-life
+    /// objects, the neutral monster refresh, the recruit reset) and <c>vec_kingdoms/vec_heroes</c>' own ticks.
+    /// Each of them needs a system the port does not have (the monster spawner, the recruit pool, the hero
+    /// pool), so each is added here — in this order — together with that system. The order matters and is the
+    /// part that is expensive to change: the month turns first, then the week, then the day.
+    /// </para>
+    /// <para>
+    /// The week type is <b>not</b> on this list: <see cref="WeekType"/> is derived from the counters
+    /// (<c>world.cpp:410</c>), so there is nothing to tick — the week changes the moment <c>_week</c> does.
     /// </para>
     /// </remarks>
     public void NewDay()
@@ -343,7 +435,14 @@ public sealed partial class World
             {
                 ++_month;
             }
+
+            // world.cpp:443-455: the week reaches the systems before their day does, and the ones that need a
+            // missing system (the month of monsters, the week-life spawner, the kingdoms' recruits) are still
+            // to come — in that order.
+            _castles.NewWeek(_week, WeekType, IsBeginMonth, _day);
         }
+
+        _castles.NewDay();
 
         // The reference removes events that are past their only occurrence after every tick, checking
         // against the day that just ended (world.cpp:459).
@@ -780,11 +879,21 @@ public sealed partial class World
         _rumors.Clear();
         _capturedObjects.Clear();
 
+        // The kingdoms hold no map-dependent state, so clearing them is enough (world.cpp:308).
+        _kingdoms.Clear();
+
+        // The table is replaced rather than cleared: it is built for one map's width, and the next map may have
+        // another one (see World.Castles.cs).
+        _castles = new AllCastles(0);
+
         // The clock is part of the world, not of a session (world.cpp:328-330): a new map starts at
         // day 0 / week 0 / month 0 and only World::NewDay() ever moves it.
         _day = 0;
         _week = 0;
         _month = 0;
+
+        // The seed goes with the counters: Defaults() draws a new one for every map (world.cpp:291, :335).
+        _seed = 0;
 
         // The port clears the three post load caches here as well. The reference leaves them to
         // PostLoad(), but they hold tile indexes, and a cache that outlives its tiles is a landmine.
@@ -795,6 +904,9 @@ public sealed partial class World
         // Same reasoning: the pathfinder caches one node per tile and the map dimensions, so it must not
         // outlive the map it was built for.
         _pathfinder = null;
+
+        // And the regions, which are tile ids in a tile table that is about to be emptied.
+        ClearRegions();
     }
 
     /// <summary>
@@ -864,13 +976,12 @@ public sealed partial class World
     /// fixup).
     /// </para>
     /// <para>
-    /// <b>What is not here</b>: everything the port has no system for yet. The castle table, the
-    /// capturable object table and the information blocks (castles, signs, bottles, events, sphinxes,
-    /// rumors, the obelisk counter) are skipped; the heroes standing on the tiles are not instantiated
-    /// yet, only the hero table they are looked up in (<see cref="AllHeroes.Init"/>); the Price of
-    /// Loyalty metadata is not read; the AI regions of <c>ComputeStaticAnalysis</c> are not computed.
-    /// None of them affects which tiles exist or whether they can be walked on, which is what this
-    /// method is for.
+    /// <b>What is not here</b>: everything the port has no system for yet. The capturable object table is not read
+    /// (a town is registered in it as it is created, but mines and the rest are not); the heroes of the map are
+    /// placed on their tiles but no kingdom owns them (<c>Kingdoms::AddHeroes()</c>), and their ids for the map
+    /// conditions are not reassigned; the obelisk counter and the Price of Loyalty metadata are not read; the AI
+    /// regions of <c>ComputeStaticAnalysis</c> are not computed. None of them affects which tiles exist or whether
+    /// they can be walked on, which is what this method is for.
     /// </para>
     /// </remarks>
     /// <param name="map">A map that was read from a file or created blank.</param>
@@ -892,6 +1003,14 @@ public sealed partial class World
 
         Width = map.Width;
         Height = map.Height;
+
+        // The castle table is built for this map's width, so it is replaced rather than cleared
+        // (world_loadmap.cpp:296-355). An empty world has an empty table of width zero.
+        _castles = new AllCastles(Width);
+
+        // World::Defaults() -> vec_kingdoms.Init() (world.cpp:287): the kingdoms come first, because a kingdom's
+        // starting resources depend on the difficulty and on whether the computer plays it (see World.Kingdoms.cs).
+        CreateMapKingdoms(map.Info);
 
         // World::Defaults() -> vec_heroes.Init(): the hero table depends on the map version, because The
         // Price of Loyalty heroes only exist for maps of the expansions. The reference builds the table
@@ -934,11 +1053,19 @@ public sealed partial class World
             _tiles.Add(tile);
         }
 
+        // The town table of the file: two bytes of position and one of race per town, up to seventy-two of them
+        // (world_loadmap.cpp:296-355). It has to come before the information blocks, because a block finds its town
+        // by the tile it stands on, and after the tiles, because a town's sea access is read off the map.
+        CreateMapCastles(map);
+
         // The information blocks of the map: a hero block describes the army, the artifacts, the experience,
         // the skills and the name of a hero whose position the tile carries, a jail block the hero waiting
-        // inside the prison, a sign block a message and an event block resources, an artifact and a message
-        // (world_loadmap.cpp:466-688).
+        // inside the prison, a sign block a message, an event block resources, an artifact and a message, and a
+        // castle block the town standing on the tile (world_loadmap.cpp:466-688).
         ReadInfoBlocks(map);
+
+        // The towns the map left unnamed get one of the default names (world_loadmap.cpp:692-699).
+        UpdateCastleNames();
 
         foreach (Tile tile in _tiles)
         {
@@ -949,6 +1076,10 @@ public sealed partial class World
             // dropping the editor sprite and putting the hero on the tile (world_loadmap.cpp:1583).
             PlaceMapHero(tile);
         }
+
+        // The rosters of the kingdoms, now that every town and hero carries the color the map gave it
+        // (world_loadmap.cpp:1443-1445).
+        AttachMapRosters();
 
         PostLoad(true, false);
     }
@@ -971,16 +1102,19 @@ public sealed partial class World
     /// (<c>world_loadmap.cpp:528-582</c>).
     /// </para>
     /// <para>
-    /// A block that no object points at is a daily event or a rumor (<c>world_loadmap.cpp:656-684</c>);
-    /// see <see cref="ReadWorldBlock"/>. That is also how a castle block ends up here: the port does not
-    /// read the castle table yet, so nothing points at it.
+    /// A town's block takes a wider path (<c>world_loadmap.cpp:596-641</c>): a built castle is found by its entrance
+    /// tile, a random one by any tile of its footprint, and after the block the random town is repainted. See
+    /// <see cref="ReadCastleBlock"/>.
     /// </para>
     /// <para>
-    /// <b>What is missing</b>: the castle branches (a castle and a random castle, whose blocks fill the
-    /// castle table). <c>Kingdom::AllowRecruitHero()</c> is the limit of heroes a kingdom may own, and the
-    /// port has no kingdom, so a map with more heroes for one color than the limit is loaded as it is
-    /// instead of dropping the surplus. A random race on a neutral hero is not resolved to the race of the
-    /// kingdom either, for the same reason.
+    /// A block that no object points at is a daily event or a rumor (<c>world_loadmap.cpp:656-684</c>);
+    /// see <see cref="ReadWorldBlock"/>.
+    /// </para>
+    /// <para>
+    /// <b>What is missing</b>: <c>Kingdom::AllowRecruitHero()</c> is the limit of heroes a kingdom may own, and the
+    /// port has no kingdom, so a map with more heroes for one color than the limit is loaded as it is instead of
+    /// dropping the surplus. A random race on a neutral hero is not resolved to the race of the kingdom either, for
+    /// the same reason.
     /// </para>
     /// </remarks>
     /// <param name="map">The map being loaded.</param>
@@ -1035,8 +1169,18 @@ public sealed partial class World
                     CreateMapSphinx(block, tileIndex);
                     break;
 
-                default:
-                    // A castle of either kind: its block fills the castle table, which the port has not.
+                case Mp2ObjectType.Castle:
+                case Mp2ObjectType.ActionCastle:
+                    // A town that stands on its entrance: the block fills the town the table already holds.
+                    ReadCastleBlock(map, block, tileIndex, false);
+                    break;
+
+                case Mp2ObjectType.RandomCastle:
+                case Mp2ObjectType.ActionRandomCastle:
+                case Mp2ObjectType.RandomTown:
+                case Mp2ObjectType.ActionRandomTown:
+                    // A random town: the tile says "random" until the block says which town it is.
+                    ReadCastleBlock(map, block, tileIndex, true);
                     break;
             }
         }
@@ -1054,10 +1198,8 @@ public sealed partial class World
     /// the text (<c>world_loadmap.cpp:659-667</c>).
     /// </para>
     /// <para>
-    /// A castle block also lands here, because the port has no castle table to point it at a tile; it is at
-    /// least 70 bytes long and the byte at 42 of a castle is a race or a color, which is not the constant
-    /// <c>1</c> of a daily event — but a block that happens to fit is read as an event, exactly as the
-    /// reference would treat a castle block it could not match to a tile.
+    /// A castle block whose town is not on the map lands here too, and is then read as a daily event or a rumor if
+    /// its bytes happen to fit — exactly what the reference does with a block it could not match to a tile.
     /// </para>
     /// </remarks>
     /// <param name="block">The information block.</param>
@@ -1091,9 +1233,8 @@ public sealed partial class World
     /// </summary>
     /// <remarks>
     /// The reference walks the tiles it collected in <c>vec_object</c> and compares their metadata with the
-    /// id of the block. The port walks the tiles too, and accepts every object the file gives a block to —
-    /// including a castle, whose block is then ignored by the dispatch — so that a castle block is not
-    /// mistaken for a daily event.
+    /// id of the block. The port walks the tiles too, and accepts every object the file gives a block to, so
+    /// that a castle block is not mistaken for a daily event.
     /// </remarks>
     /// <param name="map">The map being loaded.</param>
     /// <param name="block">The information block.</param>
@@ -1389,13 +1530,12 @@ public sealed partial class World
 
     /// <summary>
     /// The part of <c>World::PostLoad()</c> (<c>world.cpp:1194</c>) that the port can run today:
-    /// the passability, the teleport, whirlpool and Eye of Magi caches, the pathfinder reset and the UID
-    /// counter fixup.
+    /// the passability, the teleport, whirlpool and Eye of Magi caches, the pathfinder reset, the static
+    /// analysis of the map and the UID counter fixup.
     /// </summary>
     /// <remarks>
-    /// The reference also resolves the whirlpool tiles that still carry a boat and computes the AI
-    /// regions; those belong to the systems that will consume them, and the world is consistent without
-    /// them.
+    /// The reference also resolves the whirlpool tiles that still carry a boat; that belongs to the
+    /// rendering of a boat whose hero disembarked and will land with it.
     /// </remarks>
     /// <param name="setTilePassabilities">Run <see cref="UpdatePassabilities"/>.</param>
     /// <param name="updateUidCounterToMaximum">
@@ -1442,6 +1582,10 @@ public sealed partial class World
         _allEyeOfMagi.AddRange(GetObjectPositions(Mp2ObjectType.ActionEyeOfMagi));
 
         ResetPathfinder();
+
+        // world.cpp:1233 asks for the static analysis at the very end, after every object and every passability is
+        // final: it reads the tiles, the castles and the teleport caches.
+        ComputeStaticAnalysis();
 
         // Some maps — official campaign maps included — store a UID counter that is lower than the UIDs of
         // their own objects, which would make a new object collide with an existing one.
