@@ -4879,3 +4879,47 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 **遗留**：七个界面/绘制文件（`buildinginfo`、`castle_building`、`castle_dialog`、`castle_mageguild`、
 `castle_tavern`、`castle_town`、`castle_well`）等城堡屏；`ActionNewMonth`（月度事件与招募池重置）与税收；
 `GetGarrisonStrength` 缺塔的强度、`GetVisitValue` 缺 `ArrangeForCastleDefense` 的合军。
+
+## ADR-135：agg 目录收尾——821 字节的 BIN、原版数据的十余处修补，以及三张生成表 ✅
+
+**背景**：`agg` 目录 6 个 `.cpp` 此前只转了 `agg.cpp` 的两个入口，`icn.cpp`/`m82.cpp` 只到「名字表」。
+剩下的是 `bin_info.cpp`（怪物动画的二进制解析 + 原版数据修补）、`mus.cpp`（三支音乐查询）、
+`xmi.cpp`（曲目名与 `FromMUS`），以及 `icn.cpp` 的英雄头像与 `m82.cpp` 的法术音效、瓦片环境音。
+
+**决定**：
+
+1. **二进制解析按写死的字节偏移直读**，用 `BinaryPrimitives` + `ReadOnlySpan<byte>` 切片，不用
+   `BinaryReader` 也不用 `StructLayout`：记录定长 821（`CORRECT_FRM_LENGTH`），字段散在
+   1/3/5/117/118/138/158/162/166/170/174/176/186/187/235/239/243/277 等偏移上，其中有 16 位有符号、
+   float、uint32 混排，`Record` 还要处理对齐与变长尾部，直读反而最贴近参考。
+2. **原版数据的十余处修补照抄，不去「修正」数据**：狼的下方攻击帧 16→2、矮人的死亡动画换成 49…55、
+   石像鬼与食人魔的移动序列重排、剑士补帧、巨人/巨魔/美杜莎/游侠/元素/游牧民的逐帧偏移。这些不是美化，
+   是在补原版 BIN 的错误；少一条战场画面就与原版不一致，因此每条修补都在注释里标了参考行号（`bin_info.cpp:250-490`）。
+3. **越界与坏数据都给确定的答案**：长度不是 821 就整体作废（只留 `moveSpeed = 450` 的默认值）；
+   `IsValid` 要求七支必备动画（移动/站立/死亡/受击/三个方向的攻击）与 `idlePriority.Length == idleAnimationCount`；
+   参考里会 UB 的地方（`frameXOffset[MOVE_ONE][7]`、`animationFrames[MOVE_MAIN].back()`、`binFileName[id]`）
+   端口一律先判长度/范围——这些偏差写进注释，属于「不越狱」的替换，不改变正常数据的结果。
+4. **`std::vector` 的修补换成「换新数组」**：`resize`/`insert`/`erase` 在端口无法原地做，于是
+   `WithLength`/`Appended`/`InsertedAt` 各返回一个新数组赋回去；对外仍是 `int[][]`，调用方只读。
+5. **缓存注入 `AssetBundle`，不用全局归档**：`MonsterAnimInfoCache( AssetBundle )` 对应参考的
+   `Bin_Info::GetMonsterInfo( monsterID )`；失败的记录**不进缓存**（每次重试、每次都报警告），与参考一致。
+6. **三张表全由脚本翻，不手抄**：`GenerateAggEnums.ps1` 扩到 `xmimap`（17 支 + 6 条原版别名，别名说明随注释带出），
+   新增 `GenerateMonsterTables.ps1` 翻 `binFileName`。`MonsterType.MonsterCount` 是**哨兵不是怪物行**——
+   第一版把它当第 74 行，表就多一行、`RANDOM_MONSTER_LEVEL_4` 还被当成「参考漏了」补了一个 `UNKNOWN`；
+   实际参考 72 个初始化器对 72 个怪物是完整的，脚本改成读哨兵的值并严格校验两端数量。
+7. **分层照旧**：文件/枚举查表进 `FHeroes2.Assets`（`M82Catalog`、`XmiCatalog`、`IcnCatalog` 的
+   Captain/Building/Castle/Flag 四个 `getXxxIcnId`）；按游戏类型分支的查询进 `FHeroes2.Game`
+   （`SpellSound`、`TileAmbientSound`、`MusicThemes`、`HeroPortraitIcn`、`MonsterAnimInfoCache`）。
+
+**后果**：新增 `Assets/Audio/M82Catalog.cs`、`Assets/Audio/XmiCatalog.cs`、`Assets/Audio/M82FileNames.cs`、
+`Assets/Audio/XmiFileNames.cs`、`Game/Monsters/MonsterAnimId.cs`、`Game/Monsters/MonsterAnimInfo.cs`、
+`Game/Monsters/MonsterAnimInfoCache.cs`、`Game/Monsters/MonsterBinFileNames.cs`（生成）、
+`Game/Spells/SpellSound.cs`、`Game/Maps/TileAmbientSound.cs`、`Game/AdventureMap/MusicThemes.cs`、
+`Game/Heroes/HeroPortraitIcn.cs`；改 `AssetBundle.TryRead`/`IsPriceOfLoyaltyPresent`、
+`tools/scripts/GenerateAggEnums.ps1`，新增 `tools/scripts/GenerateMonsterTables.ps1`。`agg` 行 1/2/3 → **6/0/0**。
+全解决方案测试 2354 条全绿（Core 193、UI 145、Assets 379、Game 1637），0 警告 0 错误。
+
+**遗留**：`agg` 到「名字与映射」为止，**播放**不在这个目录——`engine/audio.cpp` 与 `audio_xmi2mid.cpp`
+仍是未转项，所以 `m82`/`xmi` 现在只回答「该放哪个文件」。`bin_info` 的消费者还没接上：怪物信息窗
+（`dialog_monsterinfo` 未搬）里 `MINIMON` 的帧号依旧用 `(id - 1) * 9` 硬编码，`MonsterAnimInfoCache`
+已经能给出正确帧序，等那个窗口搬过来时替换。

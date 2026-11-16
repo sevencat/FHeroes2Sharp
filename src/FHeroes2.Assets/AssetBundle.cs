@@ -67,15 +67,45 @@ public sealed class AssetBundle : IDisposable
     }
 
     /// <summary>Reads an asset from the expansion archive first, then from the base archive.</summary>
-    public byte[]? TryRead(string fileName)
+    public byte[]? TryRead(string fileName) => TryRead(fileName, false);
+
+    /// <summary>
+    /// Reads an asset, optionally skipping the expansion archive, the reference's
+    /// <c>AGG::getDataFromAggFile( name, ignoreExpansion )</c>.
+    /// </summary>
+    /// <param name="fileName">Archive entry name, for example <c>FONT.ICN</c>.</param>
+    /// <param name="ignoreExpansion">
+    /// When <see langword="true"/> only the base archive is searched. The reference needs it for the Polish
+    /// assets: the expansion overwrote a glyph, so the one frame is re-read from the base archive.
+    /// </param>
+    /// <returns>The decompressed entry, or <see langword="null"/> when the archives have none.</returns>
+    /// <remarks>
+    /// 参考：<c>src/fheroes2/agg/agg.cpp:40</c>
+    /// <c>std::vector&lt;uint8_t&gt; AGG::getDataFromAggFile( const std::string &amp; key, const bool ignoreExpansion )</c>。
+    /// </remarks>
+    public byte[]? TryRead(string fileName, bool ignoreExpansion)
     {
-        if (_expansionArchive?.TryRead(fileName) is { } fromExpansion)
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+
+        if (!ignoreExpansion && _expansionArchive?.TryRead(fileName) is { } fromExpansion)
         {
             return fromExpansion;
         }
 
         return _baseArchive.TryRead(fileName);
     }
+
+    /// <summary>
+    /// Whether the expansion archive is open, the reference's
+    /// <c>AGG::isPoLResourceFilePresent</c> — the question the game asks where the Price of Loyalty data
+    /// changes what it draws.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>agg.cpp:120</c> <c>bool AGG::isPoLResourceFilePresent()</c>（返回 <c>_priceOfLoyaltyArchive != nullptr</c>）；
+    /// 它的调用方是 <c>Settings::setPriceOfLoyaltySupported()</c>，也就是
+    /// <c>Settings::Get().isPriceOfLoyaltySupported()</c> 的来源。本项目没有 Settings 层，读的是归档本身。
+    /// </remarks>
+    public bool IsPriceOfLoyaltyPresent => _expansionArchive is not null;
 
     /// <summary>
     /// Reads and decodes an ICN file, the format every UI sprite table uses

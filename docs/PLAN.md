@@ -66,18 +66,19 @@
 口径同原则 3：**已转** = 有对应实现、注释里能指回参考文件名与函数名；**部分** = 主体可用，括号里写明缺口；
 **未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
-快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**。
+快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg` 与 `castle` 两行于
+2026-11-17（ADR-134、ADR-135）单独重算过。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
 | `engine` | 26 | 7 | 7 | 12 |
-| `agg` | 6 | 1 | 2 | 3 |
+| `agg` | 6 | 6 | 0 | 0 |
 | `ai` | 9 | 0 | 0 | 9 |
 | `army` | 4 | 0 | 2 | 2 |
 | `audio` | 1 | 0 | 0 | 1 |
 | `battle` | 18 | 0 | 0 | 18 |
 | `campaign` | 3 | 0 | 0 | 3 |
-| `castle` | 11 | 0 | 4 | 7 |
+| `castle` | 11 | 3 | 5 | 3 |
 | `dialog` | 29 | 2 | 3 | 24 |
 | `editor` | 18 | 1 | 4 | 13 |
 | `game` | 28 | 2 | 4 | 22 |
@@ -465,10 +466,18 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 ### `agg`（6）
 
 * ✅ `agg.cpp`→`AssetBundle`（资料片优先/兜底）
-* ◐ `icn.cpp`（`getAnimatedIcnIndex` 与 `ICN::` 名称已转，`CopyICNWithPalette` 与字号派生挪到
-  `FontGlyphTable`；`GetString` 的枚举表未全）；`m82.cpp`（`MusicTrack` 只读元数据，播放未）
-* ❌ `bin_info.cpp`（`MINIMON` 帧号现在用 `(id-1)*9` 硬编码，BIN 表未解析）、`mus.cpp`、
-  `xmi.cpp`（XMI→MIDI 未做，`MusicTrackCatalog` 只读目录）
+* ✅ `icn.cpp`→`IcnType`/`IcnFileNames`/`IcnCatalog`（`GetString`、`getAnimatedIcnIndex`、四族 ICN 的
+  Captain/Building/Castle 与 `getFlagIcnId`）+ `HeroPortraitIcn`（`getHeroPortraitIcnId`）；
+  `CopyICNWithPalette` 与字号派生按端口的路子挪到 `FontGlyphTable`
+* ✅ `bin_info.cpp`→`MonsterAnimInfo`（821 字节记录 + 原版数据十余处修补）+ `MonsterAnimInfoCache`
+  （`GetMonsterInfo` 的缓存）；`MonsterBinFileNames` 由脚本翻
+* ✅ `m82.cpp`→`M82Sound`/`M82FileNames`/`M82Catalog`（`GetString`）+ `SpellSound`（`FromSpell`）+
+  `TileAmbientSound`（`getAdventureMapTileSound`）
+* ✅ `mus.cpp`→`MusicThemes`（`FromGround`/`FromRace`/`GetBattleRandom`）
+* ✅ `xmi.cpp`→`XmiTrack`/`XmiFileNames`/`XmiCatalog`（`GetString` + `FromMUS` 十七支）
+
+> 到 `agg` 边界为止：**播放**不在这个目录（`engine/audio.cpp` 与 `audio_xmi2mid.cpp` 仍是未转项），
+> `bin_info` 的消费者（怪物信息窗的 `MINIMON` 帧号）也还没接上，见 ADR-135 的遗留。
 
 ### `dialog`（29）
 

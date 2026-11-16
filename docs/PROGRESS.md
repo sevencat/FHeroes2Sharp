@@ -4739,3 +4739,45 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 （合计约 4700 行，全是窗口、按钮、ICN 贴图与本地化文本），它们要的城堡界面在端口的 UI 层还不存在；`castle.cpp`
 内部也留了五处明确标注的缺口：塔的守城强度、四条船的接口、`ActionPreBattle`/`ActionAfterBattle`、
 `GetICNBuilding`/`GetICNBoat`、`DrawImageCastle`。这些都不是空函数凑数，每个都写了「为什么现在做不了」。
+
+## agg 目录收尾：怪物动画的 821 字节、法术音效与三支音乐查询 ✅（2026-11-17）
+
+`agg` 目录 6 个 `.cpp` 全部落地。这一轮把剩下的 `bin_info.cpp`（怪物动画）、`mus.cpp`（音乐查询）搬完，
+并补上 `icn.cpp` 的英雄头像、`m82.cpp` 的法术音效与瓦片环境音、`xmi.cpp` 的 `FromMUS`。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MonsterAnimId`（新） | `bin_info.h:34` | 33 支动画的序号，就是 BIN 的列号 |
+| `MonsterAnimInfo`（新） | `bin_info.cpp:88-523` | 821 字节记录：视线点、七列 × 16 帧的 x 偏移、三支速度、待机权重、投射物起点/角度、兵数偏移、33 支帧序 |
+| `MonsterBinFileNames`（新，脚本生成） | `monster_info.cpp:147` | `binFileName` 表，72 条 |
+| `MonsterAnimInfoCache`（新） | `bin_info.cpp:51-73` | 取归档 → 解析 → `IsValid` 才进缓存；坏记录每次重试并报警告 |
+| `SpellSound`（新） | `m82.cpp:105-203` | 法术 → 音效；48 条 `case` 一条对一个法术，其中五对共用同一个音效 |
+| `TileAmbientSound`（新） | `m82.cpp:205-286` | 瓦片环境音：溪流、火山口、篝火、矿、石阵、怪物、瀑布 |
+| `MusicThemes`（新） | `mus.cpp:141-211` | 地形主题、城堡主题、战斗随机（`Rand.Get(1,3)`） |
+| `HeroPortraitIcn`（新） | `icn.cpp:726-882` | 英雄 id 1…71 → `PORT0000…PORT0070`；`DEBUG_HERO` 借 Brax 的 |
+| `M82Catalog` / `XmiCatalog`（新） | `m82.cpp:100`、`xmi.cpp:61-110` | 音效名表、曲目名表（含 6 条原版别名）、`FromMUS` 的十七支 |
+| `M82FileNames` / `XmiFileNames`（新，脚本生成） | `m82.cpp:26`、`xmi.cpp:29` | 两张名表，`GenerateAggEnums.ps1` 扩了 `xmimap` |
+
+要点：
+
+* **一条记录 821 字节，字段全按写死的偏移读**（`bin_info.cpp:88-248`）。16 位有符号、float、uint32 混排，
+  用 `BinaryPrimitives` + `ReadOnlySpan<byte>` 直读最贴近参考；`Record`/`StructLayout` 反而要处理对齐。
+* **原版数据的十余处修补照抄**：狼的下方攻击帧 16→2、矮人死亡动画换成 49…55、石像鬼与食人魔的移动序列重排、
+  剑士补帧、巨人/巨魔/美杜莎/游侠/元素/游牧民的逐帧偏移。参考里会 UB 的三处（`frameXOffset[MOVE_ONE][7]`、
+  `animationFrames[MOVE_MAIN].back()`、`binFileName[id]`）端口先判长度/范围，注释里写明这是替换不是改写。
+* **升级兵种的速度要按速度差折算**：与「前一个兵种」比（元素与火元素比），移动乘 `1 - 0.12 × diff`，
+  射击乘 `1 - 0.08 × diff`；游侠单独用 0.78（它升级后多一次攻击）。
+* **`MonsterCount` 是哨兵不是怪物行**——第一版生成器把它当第 74 行，表多一行，还把 `RANDOM_MONSTER_LEVEL_4`
+  误判成「参考漏了」补了一个 `UNKNOWN`。实际参考 72 个初始化器对 72 个怪物是完整的，脚本改成读哨兵值并严格校验数量。
+* **缓存注入 `AssetBundle`**：`MonsterAnimInfoCache(assets)` 对应参考的全局 `GetMonsterInfo`，失败不进缓存。
+
+用例：新增 `MonsterAnimInfoTests` 20 条（错长度整体作废、450 默认移速、各字段偏移、待机条数上限 5、投射物条数上限 12、
+角度分档、帧数上限 16、x 偏移是有符号字节、`IsValid` 两端、狼/矮人修补、升级速度折算与游侠系数、石像鬼的序列重排、
+真实归档里七个兵种可用、随机怪物返回空记录）、`HeroPortraitIcnTests` 8 条、`MusicThemesTests` 21 条、
+`SpellSoundTests` 22 条、`M82CatalogTests` 7 条、`XmiCatalogTests` 24 条。
+全解决方案 **2354** 条全绿（Core 193、UI 145、Assets 379、Game 1637），0 警告 0 错误。
+覆盖率：`agg` 行 `1/2/3` → **`6/0/0`**，连同上一轮 `castle` 的 `0/4/7` → `3/5/3`，合计 **34/63/152** → **42/62/145**。
+
+**遗留**：`agg` 到这里只到「名字与映射」，**播放**不在这个目录（`engine/audio.cpp`、`audio_xmi2mid.cpp`
+仍未转）；`bin_info` 的消费者还没接上——怪物信息窗（`dialog_monsterinfo`）未搬，`MINIMON` 的帧号依旧是
+`(id - 1) * 9` 的硬编码，`MonsterAnimInfoCache` 已能给出正确帧序，等窗口搬过来时替换。
