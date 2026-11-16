@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game;
@@ -8,10 +9,9 @@ namespace FHeroes2.Game;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The reference also keeps the guardians of the object (<c>Troop guardians</c>) so that a mine is
-/// defended again after it changes hands. The army system is not ported yet, so the structure starts
-/// with the object/color pair; the troop is added together with <c>Troop</c> — see
-/// <c>docs/DECISIONS.md</c>, ADR-078.
+/// The reference keeps the guardians of the object (<c>Troop guardians</c>) so that a mine is defended
+/// again after it changes hands. The port keeps them the same way, in <see cref="Guardians"/>; a fresh
+/// entry has an empty army, which is what <c>Troop()</c> is in the reference.
 /// </para>
 /// </remarks>
 public sealed class CapturedObject
@@ -21,6 +21,12 @@ public sealed class CapturedObject
 
     /// <summary>Owner of the object, the second half of <c>objCol</c>.</summary>
     public PlayerColor Color { get; private set; } = PlayerColor.None;
+
+    /// <summary>
+    /// The army that defends the object, <c>CapturedObject::guardians</c> (<c>world.h:120</c>),
+    /// read and written through <c>GetTroop()</c> (<c>world.h:129</c>).
+    /// </summary>
+    public Troop Guardians { get; set; } = new();
 
     /// <summary>
     /// Sets the object type and the owner, <c>CapturedObject::Set()</c> (<c>world.h:134</c>).
@@ -120,20 +126,32 @@ public sealed class CapturedObjects
     /// (<c>world.cpp:261</c>).
     /// </summary>
     /// <remarks>
-    /// The reference also repaints the ownership flags on the tiles (<c>Tile::setOwnershipFlag</c>);
-    /// that side is the sprite update of the flag object, which is not ported, so only the data changes
-    /// here. The object type of the entry is kept, which is what makes the entry still countable.
+    /// <para>
+    /// The object type of the entry is kept, which is what makes the entry still countable.
+    /// </para>
+    /// <para>
+    /// <b>The reference repaints the ownership flag of each cleared tile here</b>, reaching the tiles
+    /// through the global world. This class has no world, so it answers the tiles it cleared and
+    /// <see cref="World.ResetCapturedObjects"/> does the repaint — same work, in the order the reference
+    /// does it.
+    /// </para>
     /// </remarks>
     /// <param name="color">Color that loses its objects.</param>
-    public void ResetColor(PlayerColor color)
+    /// <returns>Tile indexes whose owner was dropped, in tile order.</returns>
+    public List<int> ResetColor(PlayerColor color)
     {
-        foreach (CapturedObject capturedObject in _objects.Values)
+        List<int> cleared = [];
+
+        foreach ((int index, CapturedObject capturedObject) in _objects)
         {
             if (capturedObject.Color == color)
             {
                 capturedObject.SetColor(PlayerColor.None);
+                cleared.Add(index);
             }
         }
+
+        return cleared;
     }
 
     /// <summary>

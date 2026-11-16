@@ -756,10 +756,11 @@ public sealed partial class World
     /// hero-owned hero object.
     /// </para>
     /// <para>
-    /// Two branches of the reference are missing, both because their systems are: the castle entrance
-    /// changes color (<c>getCastleEntrance</c> + <c>Castle::ChangeColor</c>) and the flag sprite of the
-    /// object is repainted (<c>Tile::setOwnershipFlag</c>, a FLAG32 object part update). The data model
-    /// is complete without them — the color of a captured object is what the game logic reads.
+    /// <b>The flag follows the color</b> (<see cref="Tile.SetOwnershipFlag"/>): the tile of the object —
+    /// or one of its neighbours, for the objects whose sprite covers two tiles — carries a FLAG32 part so
+    /// the player can see who owns it. A castle entrance also repaints the town itself, and both are
+    /// skipped for a color that is not one of the six players: the reference stores such a value in the
+    /// table and then stops.
     /// </para>
     /// </remarks>
     /// <param name="index">Tile index.</param>
@@ -768,7 +769,27 @@ public sealed partial class World
     {
         Debug.Assert(PlayerColors.Count(color) <= 1, "A captured object belongs to exactly one player.");
 
-        _capturedObjects.Set(index, GetTile(index).GetMainObjectType(this, false), color);
+        // The owner can be set not only for the objects of `Mp2ObjectTypes.IsCaptureObject()`:
+        // dwellings are marked with the player's color as well.
+        Mp2ObjectType objectType = GetTile(index).GetMainObjectType(this, false);
+
+        _capturedObjects.Set(index, objectType, color);
+
+        if (color != PlayerColor.None && (PlayerColors.All & color) == 0)
+        {
+            // A color that is not playable is recorded but paints nothing.
+            return;
+        }
+
+        // `Castle` is both the type and its namespace here, so the type is left to inference.
+        var castle = GetCastleEntrance(index);
+
+        if (castle is not null && castle.Color != color)
+        {
+            castle.ChangeColor(color);
+        }
+
+        GetTile(index).SetOwnershipFlag(this, objectType, color);
     }
 
     /// <summary>
@@ -827,8 +848,18 @@ public sealed partial class World
     /// <summary>
     /// Drops every object of a color, <c>World::ResetCapturedObjects()</c> (<c>world.h:451</c>).
     /// </summary>
+    /// <remarks>
+    /// The entries lose their owner in <see cref="CapturedObjects.ResetColor"/> and the tiles lose their
+    /// flag here, which is where the reference does both in one pass over its own table.
+    /// </remarks>
     /// <param name="color">The player that loses the objects.</param>
-    public void ResetCapturedObjects(PlayerColor color) => _capturedObjects.ResetColor(color);
+    public void ResetCapturedObjects(PlayerColor color)
+    {
+        foreach (int index in _capturedObjects.ResetColor(color))
+        {
+            GetTile(index).SetOwnershipFlag(this, _capturedObjects.Get(index).ObjectType, PlayerColor.None);
+        }
+    }
 
     /// <summary>
     /// The other ends of the stone liths at <paramref name="index"/>,

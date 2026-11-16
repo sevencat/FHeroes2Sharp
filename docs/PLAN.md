@@ -86,7 +86,7 @@
 | `h2d` | 1 | 0 | 0 | 1 |
 | `heroes` | 12 | 2 | 4 | 6 |
 | `kingdom` | 14 | 4 | 6 | 4 |
-| `maps` | 17 | 4 | 7 | 6 |
+| `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 1 | 2 | 1 |
 | `spell` | 4 | 1 | 1 | 2 |
@@ -555,11 +555,17 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `getIndexOfMainTile`/`getHero`/`setHero`/`getMainObjectType`/`_getMainObjectTypeUnderHero` 已转，
   对象感知通行 `isSuitableForDisembarkation`/`isSuitableForSummoningBoat`/`isSuitableForUltimateArtifact`/
   `isPassableFrom( direction, fromWater, ignoreFog, heroColor )` 也已转（ADR-083，只差同盟城堡入口），
-  `isCoast`/`updateFogDirection` 部分；迷雾位与 `ClearFog` 已转（ADR-079），只剩船）；
+  `isCoast`/`updateFogDirection` 部分；迷雾位与 `ClearFog` 已转（ADR-079）；
+  对象摘除 `removeObjectPartsByUID`、所有权旗 `setOwnershipFlag`/`updateFlag`、船 `setBoat`/
+  `getBoatDirection`/`resetBoatOwnerColor`、`GetCenter` 与 `String()`（`TileOwnership`/`TileObjectParts`，
+  ADR-136）已转，只剩迷雾位）；
   `maps_tiles_helper.cpp`（`updateTerrainTransitionOnTile`/`getObjectPartByActionType` 已转；
   `getFundsFromTile`/`getArtifactFromTile`/`getBarrierColorFromTile`/`doesTileContainValuableItems`/
   `setResourceOnTile`/`setBarrierColorOnTile`/`resetObjectMetadata` 已转，ADR-080；
-  只剩半径 `ClearFog`、`updateFogDirectionsInArea`（此前误记为已转，实际未搬）与法术/军队几支）；
+  废矿恢复 `restoreAbandonedMine` 与按类型/按 UID 摘除 `removeMainObjectFromTile`/
+  `removeObjectFromTileByType`/`removeObjectFromMapByUID` 已转（`TileRemoval`，ADR-136）；
+  只剩半径 `ClearFog`、`updateFogDirectionsInArea`（此前误记为已转，实际未搬）、法术/军队几支与
+  编辑器的 `setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`）；
   `maps_tiles_helper.h` 的 `ArtifactCaptureCondition` 已转（ADR-080）；
   `maps_tiles_render.cpp`（`drawByObjectIcnType`/`drawFog`/`drawMainObjectTiles` 已转）
 * ◐ `map_object_info.cpp`→`Game/Maps/MapObjectCatalog`：`ObjectInfo` / `ObjectPartInfo` /
@@ -572,8 +578,10 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `Tile::getMainObjectType` 依赖 `Tile` 的缓存字段，随 `world` 一起搬
   ✅ `visit.cpp`+`visit.h`→`IndexObject`/`VisitScope`/`Visit`（三条寿命谓词转发 `Mp2ObjectTypes`，
   ADR-120），`Kingdom` 有了访问名册与旅行者帐篷位图
-* ❌ `position.cpp`、
-  `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
+* ✅ `position.cpp`→`Game/Maps/MapPosition`：`center` 点、`GetIndex`/`SetIndex`（几何由参数带入）、
+  `isPosition`（ADR-136；参考的 `MapBaseObject`/`ActionObject`/`ObjectInfo` 在端口仍是「按瓦片号」的
+  `MapObject`，因为装载时还没有几何）
+* ❌ `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
   `map_random_generator.cpp`、`map_random_generator_helper.cpp`、`map_random_generator_info.cpp`
 
 ### 其余目录

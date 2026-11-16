@@ -4923,3 +4923,47 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 仍是未转项，所以 `m82`/`xmi` 现在只回答「该放哪个文件」。`bin_info` 的消费者还没接上：怪物信息窗
 （`dialog_monsterinfo` 未搬）里 `MINIMON` 的帧号依旧用 `(id - 1) * 9` 硬编码，`MonsterAnimInfoCache`
 已经能给出正确帧序，等那个窗口搬过来时替换。
+
+## ADR-136：`maps` 的收尾三批——动作位与分类谓词的边界、中性城堡为什么不能删旗、以及 `MapPosition` 为什么不改继承 ✅
+
+**背景**：`maps` 目录只剩 `position.cpp` 与 `maps_tiles.cpp` / `maps_tiles_helper.cpp` 的尾巴。尾巴分两组：
+一组是**摘除**（`removeObjectPartsByUID`、`removeMainObjectFromTile`、`removeObjectFromTileByType`、
+`removeObjectFromMapByUID`、`restoreAbandonedMine`），另一组是**所有权旗与船**（`setOwnershipFlag`/`updateFlag`/
+`setBoat`/`getBoatDirection`）。两组都碰同一件事：对象不是一个部件、一个瓦片，而是一个 UID 铺在若干瓦片上。
+
+**决定**：
+
+1. **`removeObjectPartsByUID` 的尾巴照抄，不简化**：删部件只是第一句，后面必须重算对象类型、
+   本瓦片与**八个邻居**的通行（邻居可能被高物体的影子挡过），并把「英雄脚下藏着的类型」重新挂回英雄。
+   少任何一句话地图都是「看着对、走不对」。参考里那句「顺手清元数据」的 TODO 参考自己也没做，端口保留同一个缺口。
+2. **按类型摘除先查精灵、再按 UID 扩散**：`removeObjectFromTileByType` 比的是 `getObjectTypeByIcn()` 而不是瓦片的
+   对象类型（主部件 → 顶层倒序 → 地面倒序，倒序是因为画得最晚的那片要让路），拿到 UID 后交给
+   `removeObjectFromMapByUID` 做泛洪——只有真的摘掉部件的瓦片才向八邻扩散，代价跟着对象的大小而不是地图的大小。
+3. **`isCaptureObject` 只认带位值：错的用例，不是错的代码**：参考的 `OBJ_MINE` 本身就是带动作位的值（端口
+   `ActionMine`），`getMainObjectType(false)` 给回来的也正是它。原先的用例拿 `Mp2ObjectType.Mine` 造瓦片，
+   谓词当然说「不是占领对象」——修的是用例（真实地图上矿井存的就是 `ActionMine`），代码保持「分类谓词比带位值、
+   其余 switch 先剥位」这条分工。
+4. **中性城堡的旗不能删**：参考把 `PlayerColor::NONE` 换成自己的 `UNUSED` 再画，于是两扇旗门留下中性精灵
+   （`12`/`13`）而不是消失。端口没有 `UNUSED`，也不该为一句断言往 `PlayerColor` 里加一个 MP2 里不存在的值，
+   因此把「画旗」与「按颜色收旗」拆成两个方法：`UpdateFlag`（参考的 `updateFlag`，`None` 即收旗）与私有的
+   `UpdateFlagSprite`（只画，中性城堡那一支用它）。
+5. **`CapturedObjects::ResetColor` 改成回答「清了哪些瓦片」**：参考在同一个循环里顺手重画旗子（靠全局 `world`），
+   端口的数据类没有 world。于是它返回被清掉的瓦片号、由 `World.ResetCapturedObjects` 重画——工作与顺序不变，
+   只是把「谁有权拿 world」这件事摆明。
+6. **`MapPosition` 单独落地，不动 `MapObject` 的继承**：参考的 `MapBaseObject`/`ActionObject`/`ObjectInfo` 都继承它，
+   但端口的地图对象是在**读图时按瓦片号**放置的，那一刻世界几何还不存在。`MapPosition` 因此提供 `center` 与
+   `GetIndex`/`SetIndex(MapGeometry)`，由编辑器与存档格式使用；`MapObject` 继续持有 `TileIndex`（各文件里已写明）。
+7. **调试 dump 用端口的枚举名**：`getObjectLayerName`/`getObjectPartInfo`/`String()` 是参考的调试输出，
+   它打印自己的字符串表（`MP2::StringObject`、`Ground::String`、`Direction::String`）与英雄/城堡的 `String()`。
+   端口打印数值 + 枚举名，并在注释里写明这是替换；英雄与城堡那两段留给它们的 `String()` 搬过来时补。
+
+**后果**：新增 `Game/Maps/MapPosition.cs`、`TileOwnership.cs`、`TileObjectParts.cs`、`TileRemoval.cs`；
+改 `Tile.cs`（文件概览注释）、`TileMetadata.cs`（补 `GetResourceOnTile`/`GetResourceCountOnTile`）、
+`World.cs`（`CaptureObject` 接上旗子与城堡入口改色、`ResetCapturedObjects`）、`CapturedObject.cs`
+（`ResetColor` 返回清单）、`TileMetadata.Mutators.cs`（遗留清单更新）。测试新增 `TileOwnershipTests` 28 条、
+`TileRemovalTests` 8 条，全解决方案 2446 条全绿，0 警告。
+覆盖率：`maps` 行 `4/7/6` → **`5/7/5`**，合计 **42/62/145** → **43/62/144**。
+
+**遗留**：`maps_tiles_helper.cpp` 还差半径 `ClearFog`、`updateFogDirectionsInArea`、法术/军队几支与编辑器的
+`setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`（要 `Artifact::Rand` 与
+编辑器 `ObjectInfo`）；`Tile` 的迷雾位与存档运算符仍未搬；`maps` 目录里 `map_random_generator*` 三支未开。

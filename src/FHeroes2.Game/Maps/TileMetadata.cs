@@ -42,6 +42,24 @@ public sealed partial class Tile
     }
 
     /// <summary>
+    /// The resource a mine or a resource pile holds, <c>Maps::getResourceOnTile()</c>
+    /// (<c>maps_tiles_helper.cpp:719</c>).
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of <see cref="SetResourceOnTile"/>: lane 0 is the resource type, stored as the
+    /// <see cref="Resource"/> flag set of the reference.
+    /// </remarks>
+    /// <returns>The resource type of lane 0.</returns>
+    public int GetResourceOnTile() => (int)_metadata[0];
+
+    /// <summary>
+    /// How much of <see cref="GetResourceOnTile"/> the tile holds, <c>Maps::getResourceCountOnTile()</c>
+    /// (<c>maps_tiles_helper.cpp:725</c>).
+    /// </summary>
+    /// <returns>The amount stored in lane 1.</returns>
+    public uint GetResourceCountOnTile() => _metadata[1];
+
+    /// <summary>
     /// What picking up the tile would give, <c>Maps::getFundsFromTile()</c>
     /// (<c>maps_tiles_helper.cpp:725</c>).
     /// </summary>

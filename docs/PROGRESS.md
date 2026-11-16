@@ -4781,3 +4781,44 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 **遗留**：`agg` 到这里只到「名字与映射」，**播放**不在这个目录（`engine/audio.cpp`、`audio_xmi2mid.cpp`
 仍未转）；`bin_info` 的消费者还没接上——怪物信息窗（`dialog_monsterinfo`）未搬，`MINIMON` 的帧号依旧是
 `(id - 1) * 9` 的硬编码，`MonsterAnimInfoCache` 已能给出正确帧序，等窗口搬过来时替换。
+
+## maps 收尾：摘除一只对象要动八个邻居、中性城堡的旗，以及 `MapPosition` ✅（2026-11-17）
+
+`maps` 目录这一轮把 `position.cpp` 转完，并补上 `maps_tiles.cpp` / `maps_tiles_helper.cpp` 的尾巴：摘除、
+所有权旗、船与废矿恢复。前几轮的 `TileMetadata.Mutators` 56 条用例在这里也全部通过（其中「被占对象回答守军」
+一条的用例本身写错了，见要点）。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `MapPosition`（新） | `position.h:33-74`、`position.cpp:29-37` | `center`、`GetIndex`、`SetIndex`、`isPosition`，几何由参数带入 |
+| `TileOwnership`（新） | `maps_tiles.cpp:484-581`、`:1185-1303` | `setBoat`/`getBoatDirection`/`resetBoatOwnerColor`、`setOwnershipFlag`/`updateFlag` |
+| `TileObjectParts`（新） | `maps_tiles.cpp:300-317`、`:354-390`、`:462-465`、`:885-1010`、`:1450-1509` | `GetCenter`、`removeObjectPartsByUID`、`getObjectLayerName`/`getObjectPartInfo`/`String` |
+| `TileRemoval`（新） | `maps_tiles_helper.cpp:1858-2061` | `restoreAbandonedMine`、`removeMainObjectFromTile`、`removeObjectFromTileByType`、`removeObjectFromMapByUID` |
+| `World.CaptureObject` | `world.cpp:815` | 接上旗子重画与城堡入口改色（原先是两条 TODO） |
+| `CapturedObjects.ResetColor` | `world.cpp:261` | 返回被清掉的瓦片号，由 `World.ResetCapturedObjects` 重画旗子 |
+
+要点：
+
+* **摘除不是「删部件」而是「删完再修」**：`removeObjectPartsByUID` 之后要重算对象类型、本瓦片与八个邻居的
+  通行（邻居可能被高物体的影子挡过），再把英雄脚下藏着的类型挂回英雄。少一步就是「看着对、走不对」。
+* **按类型摘除先查精灵**：`removeObjectFromTileByType` 比的是 `getObjectTypeByIcn()`（主部件 → 顶层倒序 →
+  地面倒序，画得最晚的那片先让路），拿到 UID 再交给 `removeObjectFromMapByUID` 泛洪——只有真的摘掉部件的
+  瓦片才向八邻扩散。
+* **`isCaptureObject` 只认带位值**：参考的 `OBJ_MINE` 就是端口的 `ActionMine`。原先「被占对象回答守军」
+  用例拿 `Mine` 造瓦片，谓词当然说不是占领对象——修的是用例，代码保持「分类谓词比带位值、其余 switch 先剥位」。
+* **中性城堡不能删旗**：参考用 `UNUSED` 颜色顶替 `NONE` 再画，两扇旗门留 `12`/`13`。端口没有 `UNUSED`，
+  也不该为一个断言往 `PlayerColor` 里塞 MP2 没有的值，于是把「画旗」拆成私有的 `UpdateFlagSprite`。
+* **`MapPosition` 不改 `MapObject` 的继承**：端口的地图对象在读图时按瓦片号放置，那一刻几何还不存在，
+  `MapObject` 继续持 `TileIndex`；`MapPosition` 给编辑器与存档格式用。
+* **`SetBoat` 把旧主部件压到地面层最前**：渲染顺序，参考明确要求 `emplace_front`；四个左向船身是翻转精灵，
+  索引带 `128` 位，`GetBoatDirection` 原样读回。
+
+用例：新增 `TileOwnershipTests` 28 条（矿井/灯塔/炼金实验室/锯木厂/城堡五种旗位、改色不重叠、收旗、
+船的方向往返与船主、按 UID 摘除跨瓦片与不越界、`MapPosition` 往返与越界、调试串）、`TileRemovalTests` 8 条
+（主对象摘除、按类型查顶层、跨瓦片 UID、废矿的左右半与矿工覆盖图换图、金币/宝石写元数据）。
+全解决方案 **2446** 条全绿（Core 193、UI 145、Assets 379、Game 1729），0 警告 0 错误。覆盖率：`maps` 行 `4/7/6` → **`5/7/5`**，合计
+**42/62/145** → **43/62/144**。
+
+**遗留**：`maps_tiles_helper.cpp` 还差半径 `ClearFog`、`updateFogDirectionsInArea`、法术/军队几支与编辑器的
+`setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`；`Tile` 的迷雾位与存档
+运算符未搬；`map_random_generator*` 三支未开。

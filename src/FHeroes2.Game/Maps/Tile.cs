@@ -13,11 +13,12 @@ namespace FHeroes2.Game.Maps;
 /// <para>
 /// <b>This is not the whole class.</b> The object parts (main, ground, top), the object type cache, the
 /// metadata, the terrain image and flags, the road bit, the passability mask, the type repairs of the
-/// loader and the hero occupancy are here. Everything that needs the fog, the region map or the ground
-/// transition tables is deliberately absent and will be added with the system it belongs to (see
-/// <c>docs/DECISIONS.md</c>, ADR-063 / ADR-066 / ADR-067 / ADR-068): boats, fog,
-/// <c>removeObjectPartsByUID</c> (its tail touches the neighbours), the ownership flags, <c>String()</c>
-/// and the savegame operators.
+/// loader and the hero occupancy are here, and the rest is spread over the partial files:
+/// <c>TilePassability</c>, <c>TileMetadata</c> / <c>TileMetadata.Mutators</c>, <c>TileObjectTraits</c>,
+/// <c>TileOwnership</c> (flags and boats), <c>TileObjectParts</c> (removal, dump) and
+/// <c>TileRemoval</c> (objects off the map, abandoned mines). Everything that needs the fog or the
+/// region map is deliberately absent and will be added with the system it belongs to (see
+/// <c>docs/DECISIONS.md</c>, ADR-063 / ADR-066 / ADR-067 / ADR-068): fog and the savegame operators.
 /// </para>
 /// <para>
 /// The class is not a struct like the reference: <c>Tile</c> owns three containers, and the
@@ -315,6 +316,16 @@ public sealed partial class Tile
 
     /// <summary>The part that represents the object of the tile, <c>_mainObjectPart</c>.</summary>
     public ObjectPart MainObjectPart => _mainObjectPart;
+
+    /// <summary>
+    /// Replaces the main part, the writable half of <c>getMainObjectPart()</c> (<c>maps_tiles.h:146</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference hands out a mutable reference; the port returns a copy from <see cref="MainObjectPart"/>
+    /// and writes it back here instead, so the layer and the index flags stay consistent.
+    /// </remarks>
+    /// <param name="part">The part to store.</param>
+    public void SetMainObjectPart(ObjectPart part) => _mainObjectPart = part;
 
     /// <summary>Clears the main part, <c>resetMainObjectPart()</c>.</summary>
     public void ResetMainObjectPart() => _mainObjectPart = new ObjectPart();
@@ -831,8 +842,7 @@ public sealed partial class Tile
     /// </para>
     /// <para>
     /// Top level parts are not consulted: what stands above a tile never decides whether a hero can walk
-    /// on it. The neighbouring tiles are not consulted either, that is
-    /// <c>updatePassability()</c>, which needs the whole map and is not ported yet.
+    /// on it. The neighbouring tiles are not consulted either, that is <see cref="UpdatePassability"/>.
     /// </para>
     /// </remarks>
     /// <returns>The passable directions of this tile on its own.</returns>
