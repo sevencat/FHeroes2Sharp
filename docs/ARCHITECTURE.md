@@ -101,6 +101,7 @@ Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF
 | `AudioManager::` | `Game.Audio.AudioManager`（实例，注入 `IAudioDevice`/`IAudioSource`） | 已有（ADR-140）；`App.Audio.AudioPlayer` 仍是独立的 SDL3_mixer 实现，未换成它 |
 | `RNG::` | `Core.Random.Pcg32`（实例） | 已有 |
 | `logMutex` / `logFile` | `Core.Diagnostics.GameLog`（静态，自带锁） | 已有；唯一可变静态是 `MinimumLevel`，收进门面前先别再加别的 |
+| `Artifact::artifactGlobalStatus[]` | `Game.Artifacts.ArtifactRandom`（静态位图） | 已有（ADR-142）；每个 id 两位（已发/禁用），`Reset()` 全清；进程级状态，所以碰它的测试放进 `DisableParallelization` 集合 |
 
 门面不是万能的：已经有实例传参的地方（`AudioPlayer`、`Pcg32`、两个场景）不要为了「统一」再套一层
 门面——它们没有 832 处调用点要照顾，多一层只是多一个全局。`AssetBundle` 与 `Assets` 是两个东西：

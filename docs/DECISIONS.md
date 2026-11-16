@@ -5195,3 +5195,61 @@ Game 1881 → **1889**，全解决方案 2602 → **2639** 全绿，`-warnaserro
 
 **遗留**：读原版存档时才用到 h2d 的那条链路（`Game::LoadSAV` 里的 h2d 兜底图）还没接，等 `serialize.cpp` 的
 批次；`AssetProbe h2d` 只解容器与 sprite，不解 `.GAM`/`.SAV`。
+
+## ADR-142：`resource` 收尾——档位/定价/随机/交换四件套，档位为什么与地图版本绑定 ✅
+
+**背景**：`resource` 四个文件里，`resource.cpp` 早已转完，`artifact_ultimate.cpp` 一直没动，`artifact.cpp`
+（1438 行）只搬了 `BagArtifacts` 的 14 格容器与两种求和，`artifact_info.cpp` 只差两支文案。上一轮（ADR-101）
+明确留了这几支：`Artifact::Level`/`LoyaltyLevel`/`isUltimate`、`getArtifactValue`、
+`getTotalArtifactMultipliedPercent`、`Rand`/`ResetArtifactStats`/`ExcludeArtifactFromRandom`、
+`getArtifactFromMapSpriteIndex`、`exchangeArtifacts`、`assembleArtifactSetIfPossible`、
+`sortFromWorstToBest`，以及 `UltimateArtifact`。它们互相咬合——定价要档位、交换要定价、地图装载要随机与精灵
+索引——所以一起做。
+
+**决定**：
+
+1. **`Artifact` 类不单独造**：端口已经有 `ArtifactType`（105 项 id）与 `ArtifactTable`（数值表），再加一个只
+   包一个 id 的引用类型，只会让每个调用点多一层拆包。参考里 `Artifact` 自己的成员按语义拆成四个静态类：
+   档位进 `ArtifactLevels`，价格进 `ArtifactValues`，随机进 `ArtifactRandom`，地图精灵索引进
+   `ArtifactMapSprites`。
+2. **档位只由「地图版本 + id」决定**：参考读 `Settings::Get().getCurrentMapInfo().version`，端口把版本当参数
+   传，与 `Castle` 的建筑表同一个理由——没有设置单例也能调用。于是 `Level( artifact, version )`、
+   `Next( level, version )`、`FromMapIndex( index, version, hasExpansion )` 三个入口都显式带版本。
+3. **`.mp2` 上资料片宝物只有 `Loyalty` 位**：参考对 `SuccessionWars` 直接返回 `ART_LOYALTY`，不叠
+   `LoyaltyLevel()`。这不是表没写完——随机只认 `Treasure`/`Minor`/`Major`/`Ultimate` 四种位，不带档位的宝物
+   自然抽不到，等于「旧格式地图不该出现资料片宝物」。端口照抄，注释里点明这是机制。
+4. **随机与禁用共用一张位图，且是进程级静态**：参考一个 `uint8_t` 数组、`ART_RNDDISABLED` 与 `ART_RNDUSED`
+   两位；`ResetArtifactStats()` 整表清零（连禁用一起），`ExcludeArtifactFromRandom()` 只置禁用位。端口保留
+   进程级静态（还没有「地图」对象能拥有它），`Reset()` 全清——因此测试必须串行：`ArtifactRandomCollection`
+   （`DisableParallelization = true`）加每个用例 `IDisposable` 前后各 `Reset()` 一次。
+5. **`getTotalMultipliedPercent` 返回列表而不是和**：乘法加成不累加（两个「+50% 寒冷伤害」不是「+100%」，参考
+   逐件乘进法术），所以返回 `IReadOnlyList<int>`。非乘算类型上调是编程错误，参考 `assert` 后给空表；端口只给
+   空表、不 assert——xUnit 把 `Debug.Assert` 当失败抛出，留着它就等于「这条契约不可测」，而空表本身正是要钉
+   的行为。
+6. **卷轴不带具体法术，交换里按「空卷轴」处理**：参考的 `Artifact` 有一条 `ext` 存法术 id，端口没有，因此
+   `getSpellId()` 恒为 `SpellType.None`。两个后果都照参考对空卷轴的行为走：卷轴永远不会被判为「法术已在书
+   里」，两张卷轴彼此不可区分。等卷轴界面落地时再补 `ext`。
+7. **交换拆成独立的 `ArtifactExchange`**：这方法要读英雄的副技能与法术书，`ArtifactBag` 不该认识 `Hero`。
+   流程与顺序照参考：池化（魔法书不动）→ 纯诅咒宝物先还给 giver → 死灵法师保留死灵系宝物 → 已知法术的卷轴
+   让与 → 唯一宝物（`isUltimate` 与套装件）的重复件让与 → 按价值升序发牌，taker 从尾部取到
+   `MaxCapacity - 1`（给法术书留一格）→ 剩下的按 giver 的空位回吐 → 双方各跑一次 `AssembleArtifactSets()`。
+8. **排序给出确定语义**：参考的 `sortFromWorstToBest` 比较器在任一侧是魔法书时一律返回「不小于」，不是严格
+   弱序（书与一切等价，空位按价值排到最前），`std::sort` 的结果未定义。端口定义成：书占第一格、其余按
+   `ArtifactValues.Value` 升序、空位在尾部——这正是参考想要的可见效果，也保证 `Push` 仍从第一个空位填。
+9. **套装装配是 `while` 不是 `if`**：参考每装成一套就重新检查整张表，所以重复的三件套能装两次、套装件也能再
+   进另一套。先删零件再 `Push` 成品，袋满也放得进去；`Push` 仍失败只 `Debug.Assert`（参考不看返回值）。
+10. **`UltimateArtifact` 用组合而不是继承**：参考 `UltimateArtifact : Artifact`，端口没有 `Artifact` 类型，
+    于是它是独立类（`Artifact` 值 + 瓦片索引 + `IsFound` + `Offset`）。`Set` 收到无效 id 时改抽随机终极，偏移
+    取 `Rand(0,4)-2`/`Rand(0,2)-1`（不让宝物永远落在拼图正中），`Reset()` 回到 `-1` 与零偏移。
+
+**后果**：新增 `Game/Artifacts/` 七个文件（`ArtifactLevel`、`ArtifactValue`、`ArtifactRandom`、
+`ArtifactMapSprites`、`ArtifactSets`、`ArtifactExchange`、`UltimateArtifact`），`ArtifactBag` 追加十个成员。
+测试 106 条：`ArtifactLevelTests` 35、`ArtifactValueTests` 24、`ArtifactRandomTests` 10（串行集合）、
+`ArtifactMapSpritesTests` 19、`UltimateArtifactTests` 6、`ArtifactExchangeTests` 7、`ArtifactBagTests` 追加 5。
+Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserror` 0 警告。覆盖率：`resource` 行 1/2/1 →
+**2/2/0**，合计 **40/61/148** → **41/61/147**。
+
+**遗留**：`artifact.cpp` 仍记 ◐——`Artifact::GetName`/`getDiscoveryDescription` 的文案、`String()` 与
+`getTotalArtifactEffectValue( bonus, description )` 的 `description` 重载（都是文字），以及 `ArtifactsBar`
+（1104-1381 行，装备栏的点击/拖放界面）。`artifact_info.cpp` 的两支描述文案同理；`SetSpell` 的 `ext` 字段随
+卷轴界面一起补。序列化（`operator<<`/`>>`）与 `GetPuzzleMapSurface` 按惯例留在 serialize/UI 批次。

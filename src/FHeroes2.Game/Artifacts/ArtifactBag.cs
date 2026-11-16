@@ -7,7 +7,7 @@ namespace FHeroes2.Game.Artifacts;
 
 /// <summary>
 /// The fourteen artifact slots of a hero, <c>BagArtifacts</c> (<c>artifact.h:298-348</c>,
-/// <c>artifact.cpp:517-889</c>).
+/// <c>artifact.cpp:517-1438</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,10 +17,10 @@ namespace FHeroes2.Game.Artifacts;
 /// gone before this code was written, and re-introducing them would change which artifacts a hero can carry.
 /// </para>
 /// <para>
-/// The <c>description</c> overloads of the getters (which build "Ultimate Sword +12" strings) are not ported:
-/// the port does not render text yet. Neither is <c>getArtifactValue()</c>, the double an AI uses to price a
-/// bag, nor <c>getTotalArtifactMultipliedPercent()</c>, which needs the percentage resolution the battle
-/// engine will bring.
+/// The <c>description</c> overloads of the getters — which build "Ultimate Sword +12" strings — and
+/// <c>String()</c> are not ported: the port does not render text yet. Everything else of the reference's bag is
+/// here, including the pricing and set assembly the AI uses, and the exchange that a hero meet runs is next door in
+/// <see cref="ArtifactExchange"/>.
 /// </para>
 /// </remarks>
 public sealed class ArtifactBag
@@ -292,5 +292,330 @@ public sealed class ArtifactBag
 
             return total;
         }
+    }
+
+    /// <summary>
+    /// The values of one multiplied bonus over the bag, <c>getTotalArtifactMultipliedPercent( bonus )</c>
+    /// (<c>artifact.cpp:743-769</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The multiplied bonuses do not add up — two "+50% to cold damage" artifacts do not make "+100%" in the
+    /// reference, each one is applied to the spell on its own — so this returns the list of percentages rather than
+    /// a sum, and the caller multiplies spell by spell. Duplicate ids are counted once, the same way the effect
+    /// getters above count them.
+    /// </para>
+    /// <para>
+    /// Asking for a bonus type that is not multiplied is a programming error: the reference asserts and answers an
+    /// empty list. The port answers the empty list without the assert, so a test can pin the contract instead of the
+    /// assert.
+    /// </para>
+    /// </remarks>
+    /// <param name="bonus">The multiplied bonus to collect.</param>
+    /// <returns>The percentages, in slot order, one per distinct artifact id.</returns>
+    public IReadOnlyList<int> GetTotalMultipliedPercent(ArtifactBonusType bonus)
+    {
+        if (!ArtifactBonuses.IsMultiplied(bonus))
+        {
+            return [];
+        }
+
+        var values = new List<int>(MaxCapacity);
+        var usedIds = new HashSet<int>();
+
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (!usedIds.Add((int)artifact))
+            {
+                continue;
+            }
+
+            if (ArtifactTable.Get(artifact).TryGetBonus(bonus, out ArtifactBonus row))
+            {
+                values.Add(row.Value);
+            }
+        }
+
+        return values;
+    }
+
+    /// <summary>
+    /// The values of one multiplied curse over the bag, <c>getTotalArtifactMultipliedPercent( curse )</c>
+    /// (<c>artifact.cpp:771-797</c>).
+    /// </summary>
+    /// <remarks>
+    /// The curse twin of the bonus overload: a list of percentages, one per distinct id, empty when the type is not
+    /// multiplied. The reference asserts on the wrong type; the port only answers the empty list.
+    /// </remarks>
+    /// <param name="curse">The multiplied curse to collect.</param>
+    /// <returns>The percentages, in slot order, one per distinct artifact id.</returns>
+    public IReadOnlyList<int> GetTotalMultipliedPercent(ArtifactCurseType curse)
+    {
+        if (!ArtifactBonuses.IsCurseMultiplied(curse))
+        {
+            return [];
+        }
+
+        var values = new List<int>(MaxCapacity);
+        var usedIds = new HashSet<int>();
+
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (!usedIds.Add((int)artifact))
+            {
+                continue;
+            }
+
+            if (ArtifactTable.Get(artifact).TryGetCurse(curse, out ArtifactCurse row))
+            {
+                values.Add(row.Value);
+            }
+        }
+
+        return values;
+    }
+
+    /// <summary>
+    /// Whether any artifact in the bag has the bonus, <c>isArtifactBonusPresent()</c>
+    /// (<c>artifact.cpp:539-549</c>).
+    /// </summary>
+    /// <param name="bonus">The bonus to look for.</param>
+    /// <returns>Whether some artifact grants it.</returns>
+    public bool IsBonusPresent(ArtifactBonusType bonus)
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTable.Get(artifact).TryGetBonus(bonus, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether any artifact in the bag has the curse, <c>isArtifactCursePresent()</c>
+    /// (<c>artifact.cpp:551-561</c>).
+    /// </summary>
+    /// <param name="curse">The curse to look for.</param>
+    /// <returns>Whether some artifact has it.</returns>
+    public bool IsCursePresent(ArtifactCurseType curse)
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTable.Get(artifact).TryGetCurse(curse, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The first artifact with the bonus, <c>getFirstArtifactWithBonus()</c> (<c>artifact.cpp:799-810</c>).
+    /// </summary>
+    /// <remarks>
+    /// "First" is slot order, which is why the bag is a vector in the reference: the caller shows the name of the
+    /// artifact it got and slot order is what the player sees.
+    /// </remarks>
+    /// <param name="bonus">The bonus to look for.</param>
+    /// <returns>
+    /// The artifact, or <see cref="ArtifactType.Unknown"/> when no artifact grants the bonus.
+    /// </returns>
+    public ArtifactType GetFirstArtifactWithBonus(ArtifactBonusType bonus)
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTable.Get(artifact).TryGetBonus(bonus, out _))
+            {
+                return artifact;
+            }
+        }
+
+        return ArtifactType.Unknown;
+    }
+
+    /// <summary>
+    /// The first artifact with the curse, <c>getFirstArtifactWithCurse()</c> (<c>artifact.cpp:812-823</c>).
+    /// </summary>
+    /// <param name="curse">The curse to look for.</param>
+    /// <returns>
+    /// The artifact, or <see cref="ArtifactType.Unknown"/> when no artifact has the curse.
+    /// </returns>
+    public ArtifactType GetFirstArtifactWithCurse(ArtifactCurseType curse)
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTable.Get(artifact).TryGetCurse(curse, out _))
+            {
+                return artifact;
+            }
+        }
+
+        return ArtifactType.Unknown;
+    }
+
+    /// <summary>
+    /// Whether the bag holds an ultimate artifact, <c>ContainUltimateArtifact()</c>
+    /// (<c>artifact.cpp:1040-1043</c>).
+    /// </summary>
+    /// <remarks>
+    /// The map's puzzle hides an ultimate, and the AI uses this to decide whether digging is still worth anything.
+    /// </remarks>
+    /// <returns>Whether some slot holds one of the eight ultimates.</returns>
+    public bool ContainsUltimateArtifact()
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactLevels.IsUltimate(artifact))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The price of the bag, <c>getArtifactValue()</c> (<c>artifact.cpp:880-889</c>).
+    /// </summary>
+    /// <remarks>
+    /// The sum of <see cref="ArtifactValues.Value(ArtifactType)"/> over the artifacts, which is the number the AI
+    /// compares two heroes (or a hero and an offer) by. Empty slots add nothing.
+    /// </remarks>
+    /// <returns>The sum, zero for an empty bag.</returns>
+    public double GetArtifactValue()
+    {
+        double result = 0;
+
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTypes.IsValid(artifact))
+            {
+                result += ArtifactValues.Value(artifact);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Turns complete sets into their assembled artifact, <c>assembleArtifactSetIfPossible()</c>
+    /// (<c>artifact.cpp:1383-1412</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The bag is checked again after every assembly, because a set's parts can include another set: the reference's
+    /// <c>while ( foundAllArtifacts )</c> is what lets three copies of the Anduran pieces assemble twice.
+    /// </para>
+    /// <para>
+    /// The parts are removed before the assembled artifact is pushed, so a bag that was full has room for it. If the
+    /// push still fails the parts are gone — the reference ignores the return value of
+    /// <c>PushArtifact()</c> and so does the port; nothing in the game can reach that state, since the parts always
+    /// free three slots for one.
+    /// </para>
+    /// </remarks>
+    /// <returns>The sets that were assembled, in table order; empty when nothing matched.</returns>
+    public IReadOnlyList<ArtifactSet> AssembleArtifactSets()
+    {
+        var assembled = new List<ArtifactSet>();
+
+        foreach (ArtifactSet set in ArtifactSets.All)
+        {
+            while (IsSetPresent(set))
+            {
+                foreach (ArtifactType part in set.Parts)
+                {
+                    Remove(part);
+                }
+
+                assembled.Add(set);
+
+                if (!Push(set.Assembled))
+                {
+                    Debug.Assert(false, "The assembled artifact did not fit into the bag it came from.");
+                }
+            }
+        }
+
+        return assembled;
+    }
+
+    /// <summary>
+    /// Sorts the artifacts from the least valuable to the most, <c>sortFromWorstToBest()</c>
+    /// (<c>artifact.cpp:1414-1429</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference sorts its whole vector with a comparator that answers "not less" whenever either side is the
+    /// magic book. That comparator is not a strict weak ordering — it says the book is equivalent to everything, and
+    /// empty slots sort to the front by value — so <c>std::sort</c> has an undefined result. The port defines it:
+    /// the magic book keeps the first slot it was pushed into, the other artifacts are ordered by
+    /// <see cref="ArtifactValues.Value(ArtifactType)"/>, and the empty slots stay at the end.
+    /// </para>
+    /// <para>
+    /// That is the observable intent of the reference — the book at the top left, the rest from worst to best, holes
+    /// after the artifacts — and it keeps <see cref="Push"/> filling from the first hole.
+    /// </para>
+    /// </remarks>
+    public void SortFromWorstToBest()
+    {
+        var artifacts = new List<ArtifactType>(MaxCapacity - 1);
+        bool hasBook = false;
+
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (!ArtifactTypes.IsValid(artifact))
+            {
+                continue;
+            }
+
+            if (artifact == ArtifactType.MagicBook)
+            {
+                hasBook = true;
+            }
+            else
+            {
+                artifacts.Add(artifact);
+            }
+        }
+
+        artifacts.Sort(static (left, right) =>
+            ArtifactValues.Value(left).CompareTo(ArtifactValues.Value(right)));
+
+        int index = 0;
+
+        if (hasBook)
+        {
+            _slots[index++] = ArtifactType.MagicBook;
+        }
+
+        foreach (ArtifactType artifact in artifacts)
+        {
+            _slots[index++] = artifact;
+        }
+
+        while (index < MaxCapacity)
+        {
+            _slots[index++] = ArtifactType.Unknown;
+        }
+    }
+
+    /// <summary>Whether every part of the set is in the bag.</summary>
+    /// <param name="set">The set to test.</param>
+    /// <returns>Whether all of its parts are present.</returns>
+    private bool IsSetPresent(ArtifactSet set)
+    {
+        foreach (ArtifactType part in set.Parts)
+        {
+            if (!IsPresent(part))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

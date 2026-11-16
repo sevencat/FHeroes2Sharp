@@ -161,4 +161,92 @@ public class ArtifactBagTests
         bag.Push(ArtifactType.BattleGarb);
         Assert.True(bag.ContainSpell(SpellType.TownPortal));
     }
+
+    [Fact]
+    public void TheThreeAnduranPiecesBecomeTheBattleGarb()
+    {
+        var bag = new ArtifactBag();
+        bag.Push(ArtifactType.HelmetAnduran);
+        bag.Push(ArtifactType.SwordAnduran);
+        bag.Push(ArtifactType.BreastplateAnduran);
+
+        IReadOnlyList<ArtifactSet> assembled = bag.AssembleArtifactSets();
+
+        Assert.Single(assembled);
+        Assert.Equal(ArtifactType.BattleGarb, assembled[0].Assembled);
+        Assert.Equal(3, assembled[0].Parts.Count);
+        Assert.True(bag.IsPresent(ArtifactType.BattleGarb));
+        Assert.False(bag.IsPresent(ArtifactType.HelmetAnduran));
+        Assert.Equal(1, bag.CountArtifacts());
+    }
+
+    [Fact]
+    public void TwoCompleteSetsAssembleTwice()
+    {
+        // The reference re-checks the bag after every assembly, which is the only way a duplicate set can be made.
+        var bag = new ArtifactBag();
+        for (int copy = 0; copy < 2; ++copy)
+        {
+            bag.Push(ArtifactType.HelmetAnduran);
+            bag.Push(ArtifactType.SwordAnduran);
+            bag.Push(ArtifactType.BreastplateAnduran);
+        }
+
+        Assert.Equal(2, bag.AssembleArtifactSets().Count);
+        Assert.Equal(2, bag.Count(ArtifactType.BattleGarb));
+        Assert.Equal(2, bag.CountArtifacts());
+    }
+
+    [Fact]
+    public void AnIncompleteSetIsLeftAlone()
+    {
+        var bag = new ArtifactBag();
+        bag.Push(ArtifactType.HelmetAnduran);
+        bag.Push(ArtifactType.SwordAnduran);
+
+        Assert.Empty(bag.AssembleArtifactSets());
+        Assert.Equal(2, bag.CountArtifacts());
+        Assert.False(bag.IsPresent(ArtifactType.BattleGarb));
+    }
+
+    [Fact]
+    public void SortingPutsTheBookFirstTheArtifactsByValueAndTheHolesLast()
+    {
+        var bag = new ArtifactBag();
+        bag.Push(ArtifactType.UltimateSword);
+        bag.Push(ArtifactType.MagicBook);
+        bag.Push(ArtifactType.GoldenBow);
+        bag.Push(ArtifactType.TaxLien);
+
+        bag.SortFromWorstToBest();
+
+        Assert.Equal(ArtifactType.MagicBook, bag.Slots[0]);
+        Assert.Equal(4, bag.CountArtifacts());
+
+        // The cursed artifact is worth less than nothing, so it goes right after the book.
+        Assert.Equal(ArtifactType.TaxLien, bag.Slots[1]);
+
+        for (int i = 1; i < 3; ++i)
+        {
+            Assert.True(
+                ArtifactValues.Value(bag.Slots[i]) <= ArtifactValues.Value(bag.Slots[i + 1]),
+                $"{bag.Slots[i]} is worth more than {bag.Slots[i + 1]}.");
+        }
+
+        for (int i = 4; i < ArtifactBag.MaxCapacity; ++i)
+        {
+            Assert.Equal(ArtifactType.Unknown, bag.Slots[i]);
+        }
+    }
+
+    [Fact]
+    public void SortingABlankBagKeepsItBlank()
+    {
+        var bag = new ArtifactBag();
+
+        bag.SortFromWorstToBest();
+
+        Assert.Equal(0, bag.CountArtifacts());
+        Assert.False(bag.IsFull);
+    }
 }

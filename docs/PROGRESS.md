@@ -4999,3 +4999,51 @@ Game 测试 1844 → **1881**，全解决方案 **2602** 条全绿（Core 193、
 
 **遗留**：读原版存档时用 h2d 兜底图的那条链路还没接（等 `serialize.cpp` 的批次）；`AssetProbe h2d`
 只解容器与 sprite，不解 `.GAM`/`.SAV`。
+
+### 追加：`resource` 的宝物四件套（2026-11-17）
+
+`src/fheroes2/resource/` 剩下的三块一起落地（ADR-142）：`artifact.cpp` 的档位/定价/随机/交换、`artifact_info.cpp`
+缺的两支以外都已齐、以及整份 `artifact_ultimate.cpp`。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Artifacts/ArtifactLevel.cs` | `Artifact::Level`、`LoyaltyLevel`、`isUltimate`、`isPriceOfLoyaltyArtifact` | `[Flags] ArtifactLevel`（`Treasure`/`Minor`/`Major`/`Ultimate`/`NoRandom`/`Loyalty` 与 `AllNormal`）、105 行的三档表、8 个终极（含 Golden Goose）、17 个资料片宝物的 `LoyaltyLevel` |
+| `Game/Artifacts/ArtifactValue.cs` | `Artifact::getArtifactValue` | 每种加成的权重（金 /800、海移动 /500、陆移动 /200、百分比 /50、投降折扣 /10，旗帜类各 1 分，诅咒为负） |
+| `Game/Artifacts/ArtifactRandom.cs` | `Artifact::Rand`、`ResetArtifactStats`、`ExcludeArtifactFromRandom` | 一张 `byte[]` 上两位（禁用/已发），先抽未发、空了再抽已发，禁用的两遍都不碰 |
+| `Game/Artifacts/ArtifactMapSprites.cs` | `Artifact::getArtifactFromMapSpriteIndex` | 旧格式精灵索引反查（每宝物两个索引）、五个随机对象、207 只在 Resurrection 里是法术书 |
+| `Game/Artifacts/ArtifactSets.cs` | `artifactSets` | Anduran 三件 → BattleGarb |
+| `Game/Artifacts/ArtifactExchange.cs` | `BagArtifacts::exchangeArtifacts` | 池化、三条让与规则、按价值发牌到 `MaxCapacity - 1`、回吐、双向装配 |
+| `Game/Artifacts/UltimateArtifact.cs` | `artifact_ultimate.cpp` | `Set`（无效 id 改抽终极）、±2/±1 偏移、`IsAt`/`MarkAsFound`/`Reset` |
+
+`ArtifactBag` 追加：`GetTotalMultipliedPercent` 两个重载（返回列表）、`IsBonusPresent`/`IsCursePresent`、
+`GetFirstArtifactWithBonus`/`Curse`、`ContainsUltimateArtifact`、`GetArtifactValue`、
+`AssembleArtifactSets`、`SortFromWorstToBest`。
+
+要点：
+
+* **档位与地图版本绑定**：`.mp2` 上资料片宝物只有 `Loyalty` 位，随机抽不到——这是旧格式地图不该出现资料片
+  宝物的机制，不是表没写完。版本当参数传，不读设置单例。
+* **随机状态是进程级静态**：参考就是一张全局数组，`ResetArtifactStats()` 连禁用位一起清。测试因此放进
+  `ArtifactRandomCollection`（`DisableParallelization = true`），每个用例前后各 `Reset()`。
+* **乘法百分比不求和**：`getTotalMultipliedPercent` 返回 `IReadOnlyList<int>`，调用方逐件乘进法术；非乘算类型
+  只给空表（参考是 `assert` + 空表，端口去掉 assert 以便测试钉住契约）。
+* **交换拆到 `ArtifactExchange`**：它要读副技能与法术书，`ArtifactBag` 不该依赖 `Hero`。顺序照参考：纯诅咒
+  先还、死灵法师留死灵宝物、已知法术的卷轴让与、唯一宝物去重、taker 取价值最高的一批并留一格给法术书、剩余
+  回吐、双方装配。卷轴在端口里不带具体法术，按空卷轴处理。
+* **排序给确定语义**：参考比较器不是严格弱序（魔法书与一切等价），端口定义成「书在首格、其余按价值升序、空位
+  在尾」。
+* **装配是 `while`**：重复的三件套能装两次；先删零件再 `Push`，袋满也放得进。
+
+用例 106 条：`ArtifactLevelTests` 35（八终极、三档、`.mp2` 的资料片位、每宝物恰好一个档位位、资料片 17 个
+且为尾部连续块）、`ArtifactValueTests` 24（各权重、诅咒为负、BattleGarb = 22、袋总和、乘法列表、存在性与
+首个命中、终极判定）、`ArtifactRandomTests` 10（各档位、终极八选一、同档先发完再重复、排除项不可达、整档
+禁用给 `Unknown`、`Reset` 清两位、`.mp2` 不抽资料片、`Loyalty` 档只抽资料片）、`ArtifactMapSpritesTests` 19
+（两索引、资料片块需支持、法术书 207、五个随机对象、未用索引 `Unknown`、172 走算术落在 `Unused86`）、
+`UltimateArtifactTests` 6、`ArtifactExchangeTests` 7（纯诅咒归还、死灵法师保留、法术书不动、只取最优 13 件、
+Anduran 装配、空 giver、双满袋不丢件）、`ArtifactBagTests` 追加 5（装配、装两次、不完整不动、排序、空袋）。
+Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 错误。覆盖率：`resource` 行 1/2/1 →
+**2/2/0**，合计 **40/61/148** → **41/61/147**。
+
+**遗留**：`artifact.cpp` 仍记 ◐——`Artifact::GetName`/描述文案、`String()` 与 `description` 重载（文字），
+`ArtifactsBar`（装备栏界面）；`artifact_info.cpp` 的两支描述文案同理；`SetSpell` 的 `ext` 随卷轴界面补。
+序列化与 `GetPuzzleMapSurface` 留在 serialize/UI 批次。

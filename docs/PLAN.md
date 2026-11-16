@@ -66,9 +66,9 @@
 口径同原则 3：**已转** = 有对应实现、注释里能指回参考文件名与函数名；**部分** = 主体可用，括号里写明缺口；
 **未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
-快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`
-与 `h2d` 五行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、ADR-139、ADR-140、
-ADR-141）单独重算过。
+快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`、
+`h2d` 与 `resource` 六行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、ADR-139、
+ADR-140、ADR-141、ADR-142）单独重算过。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
@@ -89,11 +89,11 @@ ADR-141）单独重算过。
 | `kingdom` | 14 | 6 | 6 | 2 |
 | `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
-| `resource` | 4 | 1 | 2 | 1 |
+| `resource` | 4 | 2 | 2 | 0 |
 | `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **40** | **61** | **148** |
+| **合计** | **249** | **41** | **61** | **147** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -462,6 +462,20 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 7/7/12 → **8/7/11**，合计 **38/61/150** → **40/61/148**。测试 37 条（`H2DArchiveTests` 19、
 `H2DImageCodecTests` 10、`H2DResourcesTests` 8）；`AssetProbe h2d` 可用真实 `resurrection.h2d` 对拍。
 
+2026-11-17：`resource` 目录收尾（ADR-142）：`artifact.cpp` 剩下的半边全部落地——`ArtifactLevels`（`Level`/
+`LoyaltyLevel`/`IsUltimate`/`IsPriceOfLoyalty`，105 行的档位表与 `.mp2` 上资料片宝物只有 `Loyalty` 位）、
+`ArtifactValues.Value`（`getArtifactValue` 的权重表）、`ArtifactRandom`（`Rand` 的两遍抽取 + `ART_RNDDISABLED`/
+`ART_RNDUSED` 一张位图，`Reset`/`Exclude`）、`ArtifactMapSprites.FromMapIndex`（旧格式的精灵索引反查、
+五个随机对象、207 只在 Resurrection 里是法术书）、`ArtifactSets`+`ArtifactBag.AssembleArtifactSets`（Anduran
+三件 → BattleGarb）、`ArtifactBag.SortFromWorstToBest`、`GetTotalMultipliedPercent` 两个重载、
+`GetArtifactValue`/`ContainsUltimateArtifact`/`GetFirstArtifactWith*`/`IsBonusPresent`/`IsCursePresent`，以及
+`ArtifactExchange`（`exchangeArtifacts` 的池化、三条让与规则、按价值发牌与回吐）；`artifact_ultimate.cpp` →
+`UltimateArtifact`（`Set`/`IsAt`/`MarkAsFound`/`Reset` 与 ±2/±1 的偏移）。`resource` 行 1/2/1 → **2/2/0**，
+合计 **40/61/148** → **41/61/147**。测试 106 条（`ArtifactLevelTests` 35、`ArtifactValueTests` 24、
+`ArtifactRandomTests` 10、`ArtifactMapSpritesTests` 19、`UltimateArtifactTests` 6、`ArtifactExchangeTests` 7、
+`ArtifactBagTests` 追加 5）；Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿。`artifact.cpp` 仍记 ◐：`Artifact` 类的名字/描述文案、`String()` 与 `description` 重载、`ArtifactsBar`
+（UI）没转。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -732,13 +746,19 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）与两条
   强度（`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）已转，`weaknesses` 与战斗图标/音效未转；
   `RandomMonster`/`GetRandomMonster`/`GetDwellingFromMonster` 等随机与住所反查未转；❌ `monster_anim`
-* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.cpp`→`ArtifactBag`
-  （平铺 14 格、魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、`getTotalArtifactEffectValue`
-  的两种求和，ADR-101）与 `artifact.h` 的 id 枚举（`Game.Resources.ArtifactType`，105 项含
-  `ArtifactCount`，`ArtifactTypes.IsValid`），`Artifact` 类自己的名字/描述/精灵索引与
-  `getArtifactValue`/`getTotalArtifactMultipliedPercent` 未转；◐ `artifact_info.cpp`→`ArtifactTable`/
-  `ArtifactBonuses`（105 行数值表、`getArtifactData`、六个 `isBonus*`/`isCurse*` 谓词，ADR-101），
-  `ArtifactData::getDescription`/`getArtifactDescription` 两支文案未转；❌ `artifact_ultimate`
+* `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.cpp`→`ArtifactBag`（平铺 14 格、
+  魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、两种求和、`getTotalArtifactMultipliedPercent` 两个重载、
+  `getArtifactValue`、`GetFirstArtifactWith*` 与两个 `isArtifact*Present`、`assembleArtifactSetIfPossible`、
+  `sortFromWorstToBest`，ADR-101/ADR-142）、`ArtifactLevels`（`Level`/`LoyaltyLevel`/`isUltimate`/
+  `isPriceOfLoyaltyArtifact`）、`ArtifactValues`（`getArtifactValue`）、`ArtifactRandom`（`Rand`+`ResetArtifactStats`+
+  `ExcludeArtifactFromRandom`）、`ArtifactMapSprites`（`getArtifactFromMapSpriteIndex`）、`ArtifactSets`、
+  `ArtifactExchange`（`exchangeArtifacts`）与 `artifact.h` 的 id 枚举（`Game.Resources.ArtifactType`，105 项含
+  `ArtifactCount`，`ArtifactTypes.IsValid`）；`Artifact` 类的名字/描述文案、`String()`/`description` 重载与
+  `ArtifactsBar`（UI）未转；◐ `artifact_info.cpp`→`ArtifactTable`/`ArtifactBonuses`（105 行数值表、
+  `getArtifactData`、六个 `isBonus*`/`isCurse*` 谓词，ADR-101），`ArtifactData::getDescription`/
+  `getArtifactDescription` 两支文案未转；✅ `artifact_ultimate.cpp`→`UltimateArtifact`（`Set` 的无效 id 改抽终极、
+  ±2/±1 偏移、`IsAt`/`MarkAsFound`/`Reset`，ADR-142），`GetPuzzleMapSurface`（拼图界面）与序列化按惯例留在
+  UI/serialize 批次
 * `system`（3）：✅ `players.cpp`→`System.Player`/`Players`（两种建表、`SetStartGame` 的四遍、控制者过滤、
   按色静态表、`Focus` 的两类型化引用，ADR-139）；✅ `settings.cpp`→`System.Settings`（单例、`GameOptions`/
   `EditorOptions` 全部位值、各 setter 的钳制、`IsEvilInterfaceEnabled` 的三种模式、两个 `SwitchToNext*`，
