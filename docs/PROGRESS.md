@@ -4822,3 +4822,40 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 **遗留**：`maps_tiles_helper.cpp` 还差半径 `ClearFog`、`updateFogDirectionsInArea`、法术/军队几支与编辑器的
 `setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`；`Tile` 的迷雾位与存档
 运算符未搬；`map_random_generator*` 三支未开。
+
+## maps / heroes / kingdom 三目录推进之一：速度尺子、经验文案与瓦片上的军队 ✅（2026-11-17）
+
+三个目录一起收尾的第一批。`kingdom` 这一批把它剩下的两个纯逻辑文件清零，`maps` 补上瓦片军队三支，
+`heroes` 的剩余文件都是动画/战斗/对话框，留给下一批。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Kingdom/Speed.cs`（新） | `kingdom/speed.cpp:29-124` | 十档尺子、`getSlowerSpeed`/`getFasterSpeed`、慢/急两法的 `extraValue` 分支 |
+| `Kingdom/Experience.cs`（新） | `kingdom/experience.cpp:26-34` | `getExperienceName`/`getExperienceDescription` 两条文案 |
+| `Monsters/MonsterStatistics.GetRandomCount` | `monster.cpp:165-220` | `GetRNDSize`：七级表 + 十六种特例，`Rand.Get(result/2, result)` |
+| `Maps/TileTroops.cs`（新） | `maps_tiles_helper.cpp:763`、`:1697`、`:1727` | `GetTroop`、`UpdateMonsters`、`SetMonster`、`MonsterSpriteIndex` |
+
+要点：
+
+* **`GetSlowerSpeed`/`GetFasterSpeed` 是公开方法**：参考里是匿名辅助，但测试只能通过它们验证十档表，
+  而且 `extraValue == 0` 的分支就是它们——私有会让这条规则无法钉住。
+* **slow/haste 的 `extraValue` 本来就是 0**：`Spell::ExtraValue()` 读的是伤害法术那一列，两法在表里没有值，
+  于是实际都退/进一格。测试照这个事实断言，不假装法术带值。
+* **`experience` 的两条英文原文照搬**：参考交给 `_()`，端口无翻译层，返回原文即「未加载翻译时的参考行为」。
+* **`GetRNDSize` 的特例是十六个数不出来的数字**（农民 80、盗贼 40、幽灵/美杜莎 20、骑兵 18……），
+  逐条 `switch`；其余按等级查 `{0,50,30,25,25,12,8}`，再取半到全的随机。
+* **军队三支的加入条件照抄优先级**：幽灵与元素生物永远 `SKIP`；写了数量的、以及本周正是自己那一族的
+  一律 `MONEY`；其余 `Rand(1,10) < 3` 才 `FREE`。
+* **新精灵取新 UID，老 UID 只在主部件已是 `MONS32` 时保留**；旧精灵压到地面层而不是扔掉。新世界第一枚
+  UID 是 1，测试钉这个事实。
+
+用例：`KingdomSpeedTests` 19 条（十档表两个方向、两法与 `extraValue` 的关系、两条文案）、`TileTroopsTests`
+24 条（游荡堆叠与被占对象的守军、7 只必涨 1、6 只涨 0 或 1、上限与零堆叠、非怪物不涨、精灵与 UID 的两种
+情形、旧精灵下沉、零数量=摇一次、四种加入条件、六种怪物数量的区间、精灵索引 = id − 1）。
+全解决方案 **2489** 条全绿（Core 193、UI 145、Assets 379、Game 1772），0 警告 0 错误。
+覆盖率：`kingdom` 行 `4/6/4` → **`6/6/2`**，合计 **43/62/144** → **45/62/142**。
+
+**遗留**：`maps` 差编辑器四项与 `map_random_generator*` 三支；`heroes` 差 `heroes_dialog`/
+`heroes_indicator`/`heroes_meeting`/`heroes_spell`、`heroes_move` 的 `GetIndexSprite`/音效/淡入淡出、
+`heroes.cpp` 的剩余动画；`kingdom` 差 `kingdom_overview`/`view_world`（渲染）、`ActionNewMonth`（`Settings`）、
+`week.cpp` 的 `GetName()`（翻译层）。

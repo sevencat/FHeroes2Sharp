@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Random;
 using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
 
@@ -151,6 +152,60 @@ public static class MonsterStatistics
 
         return attackDefense * GetMonsterBaseStrength(monster);
     }
+
+    /// <summary>
+    /// The number of creatures a wandering stack of this kind starts with, <c>Monster::GetRNDSize()</c>
+    /// (<c>monster.cpp:165-220</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Without an outlier most creatures roll half to the whole <b>stack size of their level</b> — a level one
+    /// monster rolls 25 to 50, a level seven one 4 to 8 — and the reference keeps that table as
+    /// <c>{ 0, 50, 30, 25, 25, 12, 8 }</c> indexed by level.
+    /// </para>
+    /// <para>
+    /// The outliers are the creatures whose hit points make the general rule look wrong: peasants come in
+    /// crowds of 80, rogues 40, pikemen and wolves 30, ghosts and medusae 20, minotaurs 16, cavalry 18,
+    /// paladins and phoenixes 12. They are copied one by one, because the numbers do not follow a formula.
+    /// </para>
+    /// <para>
+    /// The roll is inclusive on both ends (<c>Rand::Get( result / 2, result )</c>), and a table entry of one or
+    /// less turns into a single creature rather than a zero-count stack.
+    /// </para>
+    /// </remarks>
+    /// <param name="monster">The creature.</param>
+    /// <returns>The number of creatures, zero for an invalid monster.</returns>
+    public static uint GetRandomCount(MonsterType monster)
+    {
+        if (!IsValid(monster))
+        {
+            return 0;
+        }
+
+        uint result = monster switch
+        {
+            MonsterType.Peasant => 80,
+            MonsterType.Rogue => 40,
+            MonsterType.Pikeman or MonsterType.VeteranPikeman or MonsterType.Wolf or MonsterType.Elf
+                or MonsterType.GrandElf => 30,
+            MonsterType.Gargoyle => 25,
+            MonsterType.Ghost or MonsterType.Medusa => 20,
+            MonsterType.Minotaur or MonsterType.MinotaurKing or MonsterType.Roc or MonsterType.Vampire
+                or MonsterType.VampireLord or MonsterType.Unicorn => 16,
+            MonsterType.Cavalry or MonsterType.Champion => 18,
+            MonsterType.Paladin or MonsterType.Crusader or MonsterType.Cyclops or MonsterType.Phoenix => 12,
+
+            // The general table, indexed by level; level zero never happens for a valid monster.
+            _ => DefaultArmySizePerLevel[GetGeneralStats(monster).Level]
+        };
+
+        return result > 1 ? (uint)Rand.Get((int)(result / 2), (int)result) : 1;
+    }
+
+    /// <summary>
+    /// The stack size of a creature of each level, <c>defaultArmySizePerLevel</c> (<c>monster.cpp:170</c>).
+    /// </summary>
+    private static readonly uint[] DefaultArmySizePerLevel = [0, 50, 30, 25, 25, 12, 8];
 
     /// <summary>
     /// The base strength of one creature — its stats and abilities with no bonuses —,

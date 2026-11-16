@@ -85,7 +85,7 @@
 | `gui` | 33 | 8 | 10 | 15 |
 | `h2d` | 1 | 0 | 0 | 1 |
 | `heroes` | 12 | 2 | 4 | 6 |
-| `kingdom` | 14 | 4 | 6 | 4 |
+| `kingdom` | 14 | 6 | 6 | 2 |
 | `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 1 | 2 | 1 |
@@ -564,8 +564,10 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `setResourceOnTile`/`setBarrierColorOnTile`/`resetObjectMetadata` 已转，ADR-080；
   废矿恢复 `restoreAbandonedMine` 与按类型/按 UID 摘除 `removeMainObjectFromTile`/
   `removeObjectFromTileByType`/`removeObjectFromMapByUID` 已转（`TileRemoval`，ADR-136）；
-  只剩半径 `ClearFog`、`updateFogDirectionsInArea`（此前误记为已转，实际未搬）、法术/军队几支与
-  编辑器的 `setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`）；
+  军队三支 `getTroopFromTile`/`updateMonstersOnTile`/`setMonsterOnTile` 已转（`Tile.GetTroop`/
+  `UpdateMonsters`/`SetMonster`，ADR-137）；半径 `ClearFog` 与 `updateFogDirectionsInArea` 由
+  `World.Fog`/`MapFog` 承担（ADR-131）；只剩编辑器的 `setInitialObjectInfo`/`updateObjectInfoTile`/
+  `updateRandomXxx`/`placeObjectOnTile`）；
   `maps_tiles_helper.h` 的 `ArtifactCaptureCondition` 已转（ADR-080）；
   `maps_tiles_render.cpp`（`drawByObjectIcnType`/`drawFog`/`drawMainObjectTiles` 已转）
 * ◐ `map_object_info.cpp`→`Game/Maps/MapObjectCatalog`：`ObjectInfo` / `ObjectPartInfo` /
@@ -693,12 +695,14 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `CountVisitedObjects`、`Visit` 的三条寿命、旅行者帐篷位图、`KingdomModes`、失城倒计时、调试赠礼，
   ADR-120）也已转，石阵分支 `ActionObelisk` 顺带落地（ADR-121）；未转 `ActionNewMonth`（要 `Settings`）、
   电脑难度加成与人类折扣、招募补位（`GetRecruits()` 的刷新）、`GetCountArtifacts`、`LossPostActions`
-  （端口改成可选回调，见 ADR-120）；❌ `experience`、`kingdom_overview`、
-  `speed`、`view_world`（`experience`/`speed` 只剩 `_()` 文案，等翻译层）
+  （端口改成可选回调，见 ADR-120）；✅ `speed.cpp`→`Speed`（十档尺子、慢/急两步与两法 spell 的
+  `extraValue` 分支，ADR-137）、✅ `experience.cpp`→`Experience`（两条文案；参考走 `_()`，端口返回原文，
+  ADR-137）；❌ `kingdom_overview`、`view_world`（两者都是渲染 + 对话框）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
   `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
-  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）与住所反查
-  （`DwellingMonsters.GetDwelling`，ADR-108）；◐ `monster_info.cpp`：
+  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）  与住所反查
+  （`DwellingMonsters.GetDwelling`，ADR-108）、随机堆叠数量 `Monster::GetRNDSize`→
+  `MonsterStatistics.GetRandomCount`（七级表 + 十六种特例，ADR-137）；◐ `monster_info.cpp`：
   通用数值表、战斗数值表、住所映射（`DwellingMonsters`，ADR-095；住所位本身已搬进 `BuildingType`，
   ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）与两条
   强度（`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）已转，`weaknesses` 与战斗图标/音效未转；

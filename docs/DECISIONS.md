@@ -4967,3 +4967,40 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 **遗留**：`maps_tiles_helper.cpp` 还差半径 `ClearFog`、`updateFogDirectionsInArea`、法术/军队几支与编辑器的
 `setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`（要 `Artifact::Rand` 与
 编辑器 `ObjectInfo`）；`Tile` 的迷雾位与存档运算符仍未搬；`maps` 目录里 `map_random_generator*` 三支未开。
+
+## ADR-137：三个目录同步推进的第一刀——`speed`/`experience` 的文案、`GetRNDSize` 的特例表、以及军队三支为什么拆成 `Tile` 的方法 ✅
+
+**背景**：`maps`/`heroes`/`kingdom` 三个目录一起收尾。`maps` 的尾巴只剩军队三支与编辑器的四项；
+`kingdom` 的十四个文件里只有 `speed`/`experience` 是纯逻辑（其余是渲染与对话框）；`heroes` 的剩余文件
+都是动画、战斗与对话框。
+
+**决定**：
+
+1. **`experience.cpp` 照搬两条英文原文**：参考把它们交给 `_()`（翻译表）。端口没有翻译层，返回原文
+   就是「没有加载翻译时的参考行为」，比「因为要翻译所以不搬」更接近完成——名字与描述本来就是 UI 的输入。
+   `speed.cpp` 的 `Speed::String()` 是另一回事：它是十档尺子的**名字**，随 UI 一起搬。
+2. **`GetSlowerSpeed`/`GetFasterSpeed` 提升为公开方法**：参考里是 `speed.cpp` 的匿名辅助函数，但
+   `getSlowSpeedFromSpell` 的 `extraValue == 0` 分支直接调用它们，测试也只能通过它们验证十档表；
+   私有会让「法术没写 extraValue 时退一格」这条规则无法被单测钉住。
+3. **slow/haste 的 `extraValue` 本来就是 0**：参考的 `ExtraValue()` 读的是**伤害法术**那一列，
+   Slow/Haste 在表里没有值，所以两条分支实际都走「退/进一格」。端口照这个事实写，测试也照这个事实断言。
+4. **`Monster::GetRNDSize` 放 `MonsterStatistics.GetRandomCount`**：它读的是等级与十六种特例
+   （农民 80、盗贼 40、幽灵/美杜莎 20、骑兵 18、圣武士/凤凰 12……），属于数值表而不是实体；
+   特例逐条 `switch`，其余按等级查 `{0,50,30,25,25,12,8}`。
+5. **军队三支成为 `Tile` 的实例方法**（`GetTroop`/`UpdateMonsters`/`SetMonster`）：参考收
+   `const Tile &`，端口所有瓦片辅助都是实例方法；`getTroopFromTile` 的「被占对象回答守军」正好对上
+   `CapturedObject.Guardians`。
+6. **`setMonsterOnTile` 的三种加入条件照抄优先级**：幽灵与元素生物永远 `SKIP`；地图写了数量的、
+   以及本周正是自己那一族的堆叠一律 `MONEY`；其余 `Rand(1,10) < 3` 才是 `FREE`。
+7. **新精灵的 UID 由世界发**：主部件已经是 `MONS32` 时保留 UID，否则把旧精灵压到地面层再取
+   `GetNewObjectUid()`。新世界计数器从零开始，第一枚 UID 是 1——测试钉这个事实，不写「大于零」。
+
+**后果**：新增 `Game/Kingdom/Speed.cs`、`Game/Kingdom/Experience.cs`、`Game/Maps/TileTroops.cs`；
+`MonsterStatistics` 增 `GetRandomCount` 与等级表。测试新增 `KingdomSpeedTests` 19 条、
+`TileTroopsTests` 24 条，全解决方案 2489 条全绿，0 警告。覆盖率：`kingdom` 行 `4/6/4` → **`6/6/2`**；
+`maps` 行仍 `5/7/5`（helper 仍差编辑器的四项）。
+
+**遗留**：`maps` 差编辑器四项与 `map_random_generator*` 三支；`heroes` 差 `heroes_dialog`/
+`heroes_indicator`/`heroes_meeting`/`heroes_spell` 与 `heroes_move` 的 `GetIndexSprite` 精灵表、
+行走音效、淡入淡出；`kingdom` 差 `kingdom_overview`/`view_world` 与 `kingdom.cpp` 的 `ActionNewMonth`、
+`week.cpp` 的 `GetName()`。
