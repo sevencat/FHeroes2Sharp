@@ -20,13 +20,21 @@ namespace FHeroes2.Game.Army;
 /// <c>Army::GetColor()</c> returns for an army without a commander.
 /// </para>
 /// <para>
-/// Not ported, in one list, because they are all blocked on the same missing tables: the castle and artifact
-/// terms of <c>GetMoraleModificator()</c>/<c>GetLuckModificator()</c> (<c>inCastle()</c>, the artifact bag —
-/// the army has no way to ask a hero yet), the battle helpers (<c>GetCurrentUnit</c>, <c>GetWeakestTroop</c>
-/// is strength based), <c>UpgradeTroops</c> (castle dwellings), the join-by-condition helpers used by
-/// wandering monsters (<c>GetJoinSolution</c>, <c>GetMonsterJoinCondition</c>), the troop shuffling between
-/// armies (<c>MoveTroops</c>, <c>SwapTroops</c>, <c>JoinStrongestFromArmy</c>), <c>TroopSizeString</c> and
-/// <c>String</c> (translated text).
+/// Every rule of <c>army.cpp</c> is ported. What is missing is not a rule but a dependency, kept in one list so
+/// the boundary is visible: the castle and artifact terms of <c>GetMoraleModificator()</c>/<c>GetLuckModificator()</c>
+/// (<c>inCastle()</c>, the artifact bag — the army has no way to ask a hero yet), the battle helper
+/// <c>GetCurrentUnit</c>, the text of <c>TroopSizeString</c>/<c>String</c> (plural monster names plus the
+/// translation layer), the three drawing functions and all of <c>army_bar.cpp</c>/<c>army_ui_helper.cpp</c> (UI),
+/// the stream operators (no save format yet) and <c>Army::GetControl</c> (no player object to ask). The
+/// <c>Troops::Insert</c>/<c>PushBack</c>/<c>PopBack</c> trio needs no port: it mutates the reference's vector of
+/// slots, while here the five slots are fixed and the open-ended containers are plain
+/// <see cref="List{T}"/> objects.
+/// </para>
+/// <para>
+/// The rest is split by subject rather than by file: <c>Army.Troops.cs</c> (the slot set),
+/// <c>Army.Transfer.cs</c> (moving troops between armies), <c>Army.Split.cs</c> (spreading a stack over the free
+/// slots), <c>Army.JoinSolution.cs</c> (whether neutral monsters join), <c>Army.Arrangement.cs</c> (the guardians
+/// of a map object and the shape of a battle army) and <c>Army.Size.cs</c> (the nine size brackets).
 /// </para>
 /// <para>
 /// The commander back-pointer of the reference is a nullable <see cref="IArmyCommander"/> here: the port has no
@@ -269,6 +277,36 @@ public sealed partial class Army : IEnumerable<Troop>
         }
 
         return hasValidTroop;
+    }
+
+    /// <summary>
+    /// Whether no two valid slots hold the same monster, <c>Troops::areAllTroopsUnique()</c>
+    /// (<c>army.cpp:384</c>).
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when every valid stack is a different monster. An empty army counts as unique,
+    /// like the same-monster query above — the reference has nothing to insert into its set and returns
+    /// <see langword="true"/>. Only the AI planner asks this, right before it decides that a full army of five
+    /// different stacks has no duplicate worth merging.
+    /// </returns>
+    public bool AreAllTroopsUnique()
+    {
+        HashSet<MonsterType> seen = [];
+
+        foreach (Troop troop in _slots)
+        {
+            if (!troop.IsValid)
+            {
+                continue;
+            }
+
+            if (!seen.Add(troop.Monster))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

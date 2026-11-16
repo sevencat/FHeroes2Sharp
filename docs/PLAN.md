@@ -67,8 +67,8 @@
 **未转** = 没有对应实现。范围是 `src/engine`（26 个）与 `src/fheroes2`（223 个）的 **249** 个 `.cpp`；
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
 快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`、
-`h2d` 与 `resource` 六行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、ADR-139、
-ADR-140、ADR-141、ADR-142）单独重算过。
+`h2d`、`resource` 与 `army` 七行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、
+ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
@@ -476,6 +476,13 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 `ArtifactBagTests` 追加 5）；Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿。`artifact.cpp` 仍记 ◐：`Artifact` 类的名字/描述文案、`String()` 与 `description` 重载、`ArtifactsBar`
 （UI）没转。
 
+2026-11-17：`army` 收尾（ADR-144）：军队形状那批规则全落 —— `Army.Size.cs` 的九档档位与两条文案
+（`SizeRangeString`/`SizeString`）、`Army.Split.cs` 的分兵/合并七件套、`Army.JoinSolution.cs` 的
+`GetJoinSolution`（免费/外交/逃跑/不加入）、`Army.Arrangement.cs` 的 `SetFromTile` 九种固定守卫与三个
+`ArrangeFor*`，外加 `Army.AreAllTroopsUnique`。**行数与合计不变**（`army` 仍 0/2/2，合计 41/63/145）：
+`army.cpp` 剩的是文案/绘制/序列化/`GetControl`（与 `spell.cpp` 记 ◐ 同一口径），`army_bar.cpp` 与
+`army_ui_helper.cpp` 整份是界面。测试 86 条新增，Game 2022 → **2108**，全解决方案 2772 → **2858** 全绿。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -671,7 +678,7 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp`（合计约 4700 行，
   要城堡界面、ICN 贴图与本地化文本，端口 UI 层还没有城堡屏）
 * `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
-  `AllTroopsAreTheSame`/`AllTroopsAreUndead`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
+  `AllTroopsAreTheSame`/`AllTroopsAreUndead`/`AreAllTroopsUnique`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
   ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
   `MergeSameMonsterTroops`/`SortStrongest`/`GetWeakestTroop`/`GetStrongestTroop`/`GetCountMonsters`/
   `GetTroopsStrength`/`GetReinforcementValue`/`IsStrongerThan`/`IsMeleeDominantArmy`/
@@ -680,8 +687,11 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `IArmyCommander.IsHeroes`，ADR-104）、
   `army_troop.cpp`→`Troop`（数值、血伤造价、种族/亡灵/士气/飞行四条能力查询、`GetStrength*`、
   `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost*`/`GetDwelling`，ADR-095/099/100/103/105/108；
-  `UpgradeTroops` 已转，ADR-108）；`SplitTroopIntoFreeSlots` 与三个同族（要拖单堆的界面）、
-  `GetJoinSolution`、`ArrangeFor*` 与城堡/神器那两项修正未转；❌ `army_bar.cpp`、`army_ui_helper.cpp`
+  `UpgradeTroops` 已转，ADR-108）；`Army.Size.cs`/`Army.Split.cs`/`Army.JoinSolution.cs`/
+  `Army.Arrangement.cs` 补齐最后一批规则：九档兵力档位与两条文案表、分兵与合并七件套、
+  `GetJoinSolution` 的四种判定、`SetFromTile` 的九种固定守卫与三个 `ArrangeFor*`，ADR-144。
+  仍缺：`TroopSizeString`/`String` 的文案、三个绘制函数、士气/幸运修正里的城堡与神器两项、
+  `GetCurrentUnit`、`GetControl`、流序列化；❌ `army_bar.cpp`、`army_ui_helper.cpp`
 * `spell`（4）：✅ `spell_storage.cpp`→`SpellStorage`（去重、书后追加神器上的 `ADD_SPELL`、
   `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、全部特性/指向/
   元素/守卫谓词、`GetStrategicValue`、`SpellPoints(bag)` 的四类神器减耗、`SuitableForSpellBook`/

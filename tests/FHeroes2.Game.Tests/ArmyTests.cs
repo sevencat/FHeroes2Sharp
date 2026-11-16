@@ -372,4 +372,32 @@ public sealed class ArmyTests
     {
         Assert.Equal(expected, DwellingMonsters.FromDwelling(race, dwelling));
     }
+
+    [Fact]
+    public void AnArmyOfDifferentMonstersIsUnique()
+    {
+        var army = new ArmyStack();
+        army.JoinTroop(MonsterType.Peasant, 1);
+        army.JoinTroop(MonsterType.Archer, 1);
+        army.JoinTroop(MonsterType.GreenDragon, 1);
+
+        Assert.True(army.AreAllTroopsUnique());
+    }
+
+    [Fact]
+    public void ATwiceHeldMonsterMakesTheArmyNotUnique()
+    {
+        var army = new ArmyStack();
+        army.GetTroop(0).Set(MonsterType.Peasant, 2);
+        army.GetTroop(4).Set(MonsterType.Peasant, 3);
+
+        Assert.False(army.AreAllTroopsUnique());
+    }
+
+    [Fact]
+    public void AnEmptyArmyIsUnique()
+    {
+        // The reference walks the valid slots, inserts their ids into a set, and finds no clash.
+        Assert.True(new ArmyStack().AreAllTroopsUnique());
+    }
 }

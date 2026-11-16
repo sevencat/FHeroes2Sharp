@@ -5083,3 +5083,38 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 �
 **遗留**：`spell.cpp` 仍记 ◐——73 个法术名与描述文案（参考走 `_()`，端口无翻译层）、序列化运算符；`spell_info.cpp`
 仍记 ◐——`getSpellDescription` 的文案拼装（要英雄名、最近城名）；`spell_book.cpp` 仍记 ◐——`SpellBook::Open` 的
 绘制与输入循环，与 `ArtifactsBar` 同批。
+
+### 追加：`army` 收尾（2026-11-17）
+
+`src/fheroes2/army/` 剩下的规则一起落地（ADR-144）：地图对象的固定守卫、换防/漩涡/战场三种摆法、
+分兵与合并那批容器助手，以及中立怪的加入判定。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Army/Army.Size.cs`（新） | `army.cpp:120-251` | `ArmySize` 九档（Few 1-4 … Legion 1000+）、`GetArmySize`（十个 `if` 的升序阈值）、`SizeRangeString`（`1-4`…`1000+`）、`SizeString`（`Few`…`Legion`） |
+| `Game/Army/Army.Split.cs`（新） | `army.cpp:1010-1040`、`900-1010` | `AddNewTroopsToFreeSlots`（余数靠左）、`SplitTroopIntoFreeSlots`（只按空槽数夹、不动另一支军队）、`MergeWeakestTroopsIfNeeded`（满员时合并最弱的重复兵种）、`SplitStackOfWeakestUnitsIntoFreeSlots`（每空槽搬一个）、`AssignToFirstFreeSlot`、`JoinAllTroopsOfType` |
+| `Game/Army/Army.JoinSolution.cs`（新） | `army.cpp:1641-1731` | `GetJoinSolution` 返回 `NeutralMonsterJoiningCondition(Reason, MonsterCount)`：空栈断言、强度比、`canJoin` 四条、免费/外交（按血量折算 + 王国付得起整队）/逃跑 |
+| `Game/Army/Army.Arrangement.cs`（新） | `army.cpp:1040-1192`、`1783-1975` | `SetFromTile` 九种固定守卫 + 两个 fallback；`ArrangeForCastleDefense`（AI 降序塞入 + 满员合并、人类同槽位搬运）；`ArrangeForWhirlpool`（优化后最弱扣一个）；两支 `ArrangeForBattle`（居中定阵 / 地图怪 3-5 格 + 中格升级） |
+| `Game/Army/Army.cs`（追加） | `army.cpp:384` | `AreAllTroopsUnique()`：满军无可合并时 AI 规划器的前提 |
+
+要点：
+
+* **`SetFromTile` 逐格写死**：九支固定守卫的槽位顺序是设计（中格是唯一会升级的格），所以不抽表；照抄两处
+  怪癖——恶魔洞穴只有四格、龙之城三绿一红一黑；战役翻倍未转（没有战役状态）。
+* **两个 fallback 的 `allowUpgrade` 不对称**：捕获对象记录的守军不升级，地图上的怪物可升级。
+* **阵型由种子决定**：地图怪按 `Pcg32( MapSeed + tileIndex )` 抽 3..5 格，中格升级走第二路
+  `MapSeed + tileIndex + monster` 的 50%；同一个 tile 每次进战场都一样。
+* **放开参考的两条「满军」断言**：入口的 `size() == 5 && garrison.size() == 5` 与 AI 分支出口的
+  `size() == 5` 在真实调用点 `Castle::ActionPreBattle` 会误伤（城堡没建满住所），端口只保留
+  「守军还剩兵 ⟹ 我方满格」这条更弱的不变量。
+* **`isControlAi` 由调用方传入**：端口没有玩家对象；`GetControl` 因此未转。
+* **`Troops::Insert`/`PushBack`/`PopBack` 不移植**：它们改参考的 vector，端口五槽定长、开放式容器是 `List`。
+
+用例 86 条新增：`ArmySizeTests` 38、`ArmySplitTests` 12、`ArmyArrangementTests` 24、`ArmyJoinSolutionTests` 9、
+`ArmyTests` 追加 3。Game 2022 → **2108**，全解决方案 2772 → **2858** 全绿，0 警告 0 错误。覆盖率：
+`army` 行不变（0/2/2），合计不变（41/63/145）。
+
+**遗留**：`army.cpp` 仍记 ◐——`TroopSizeString`/`String` 的文案（要复数兵种名与翻译层）、三个绘制函数、
+`GetLuckModificator`/`GetMoraleModificator` 的城堡与神器两项、`GetCurrentUnit`（战斗侧）、`GetControl`、
+`operator<<`/`>>`（无存档格式）；`army_troop.cpp` 仍记 ◐——`GetName` 与四个数值字符串、`ArmyTroop` 的
+攻防加值（战斗侧）与序列化；`army_bar.cpp`、`army_ui_helper.cpp` 整份是界面绘制，与 `castle_dialog` 等同批。

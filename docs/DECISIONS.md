@@ -5306,3 +5306,55 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 **遗留**：`spell.cpp` 仍记 ◐——73 个法术名与描述文案（参考走 `_()`，端口没有翻译层）、`operator<<`/`>>`；
 `spell_info.cpp` 仍记 ◐——`getSpellDescription` 的文案拼装；`spell_book.cpp` 仍记 ◐——`SpellBook::Open` 的绘制与
 输入循环（同一批的 `ArtifactsBar` 也在等 UI 批次）。
+
+## ADR-144：`army` 收尾——八种固定守卫、四个 `Arrange*`，以及被放开的两条「满军」断言 ✅
+
+**背景**：`army/` 四个 `.cpp` 里 `army.cpp` 与 `army_troop.cpp` 早已记「部分」，缺的正是「军队形状」这一层：
+地图对象的固定守卫（`setFromTile`）、城堡换防与漩涡的摆法（`ArrangeForCastleDefense`/`ArrangeForWhirlpool`）、
+战场阵型（两支 `ArrangeForBattle`）、分兵/合并那批容器助手（`SplitTroopIntoFreeSlots` 一族）与中立怪的
+加入判定（`GetJoinSolution`）。这一批全部落在 `FHeroes2.Game/Army/` 的六个分部文件里。
+
+**决定**：
+
+1. **`SetFromTile` 逐格照抄，不抽表**：金字塔、墓地、沉船、废弃船、神器守卫、亡者之城、巨魔桥、龙之城、
+   恶魔洞穴九支的槽位是设计而不是数据（中间那格是 `ArrangeForBattle` 唯一会升级的格），所以写成显式
+   `Set` 调用并逐格断言。两处照抄参考的怪癖：恶魔洞穴只填四格、末格留空；龙之城是「三绿一红一黑」而不是
+   三绿二红。战役翻倍（`isCampaignGameType`）没有对应物，未转。
+2. **两个 fallback 的 `allowUpgrade` 不对称**：捕获对象记录的守军走 `world.GetCapturedObject(...).Guardians`
+   且 `allowUpgrade: false`（记录里没有可升级的信息），地图上的怪物走 `tile.GetTroop( world )` 且
+   `allowUpgrade: true`。`Artifact` 分支用元组 `switch` 显式列出「50 强盗 / 1 神怪 / 1 圣骑士 / 1 独眼 /
+   1 凤凰 / 1 绿龙 / 1 泰坦 / 1 骨龙」，无守卫条件时返回 `( Unknown, 0 )` 并不布置。
+3. **两支 `ArrangeForBattle` 分工**：`( monster, count, stacksCount )` 管固定阵型——`stacks` 一路递减到
+   `count/stacks > 0`，居中 `( 5 - stacksCount ) / 2`，余数给最左几格；`( monster, count, tileIndex,
+   allowUpgrade, world )` 管地图上的怪物——弓兵固定五格，其余由 `Pcg32( MapSeed + tileIndex )` 抽 3..5 格，
+   只有最中间那格可能升级，升级走第二路随机 `MapSeed + tileIndex + monster` 的 50%。种子挑法沿用 ADR-057 的
+   「同一个 tile 每次进战场都一样」。
+4. **`ArrangeForCastleDefense` 收 `bool isControlAi`**：参考问 `isControlAI()`，端口没有玩家对象，问谁由调用方
+   说。AI 路线按强度降序 `JoinTroop`、满了先 `MergeSameMonsterOnce` 再试一次；人类路线只把守军搬到**同一个
+   槽号**的空位上，绝不打乱玩家的排布。
+5. **放开参考的两条「满军」断言，换成更弱的一条**：参考在入口断言 `size() == 5 && garrison.size() == 5`、在
+   AI 分支出口断言 `size() == 5`。但真实调用点 `Castle::ActionPreBattle` 会把一个可能只有两三格的守军交进来
+   （城堡没建满住所就会断言失败），所以端口不要求入口满军；出口改成「守军里还剩兵 ⟹ 我方五格全满」——
+   这正是参考那条断言想表达的意思（只有满军才可能塞不进去）。
+6. **`GetJoinSolution` 返回 record，王国可空**：`NeutralMonsterJoiningCondition( Reason, MonsterCount )`；
+   参考的 `hero.GetKingdom()` 换成可空参数 `Kingdom.Kingdom?`（命名空间与类型同名，只能写全名）。顺序照抄：
+   先查 `troop.isValid()`（空栈是调用方的 bug，断言后返回 `None`），再算强度比，`canJoin` 四条（比 > 2、能收下、
+   没有禁join 神器诅咒、tile 不是 skip），免费 → `Free`；否则外交 → `ForMoney`（按血量折算、且王国付得起
+   **整队**的钱）；最后 `比 > 5 且不是人类` → `RunAway`。
+7. **`Troops::Insert`/`PushBack`/`PopBack` 不移植**：它们改的是参考的 `std::vector<Troop*>`；端口五槽定长，
+   开放式容器一律是 `List<Troop>`，`Insert` 就是 `List.AddRange`。`areAllTroopsUnique()` 仍补上（AI 规划器
+   判断满军无可合并时用）。
+
+**后果**：新增 `Army.Size.cs`、`Army.Split.cs`、`Army.JoinSolution.cs`、`Army.Arrangement.cs` 四个分部文件；
+`Army.cs` 追加 `AreAllTroopsUnique`。测试 86 条新增：`ArmySizeTests` 38（九档边界、`SizeRangeString`、
+`SizeString`）、`ArmySplitTests` 12（分兵余数靠左、请求被夹到空槽数、不动另一支军队、满员合并最弱重复、
+最弱兵种每空槽搬一个、单兵不拆、`AssignToFirstFreeSlot`、`JoinAllTroopsOfType`）、`ArmyArrangementTests` 24
+（九种固定守卫的逐格断言、两支 `ArrangeForBattle` 的居中/余数/弓兵五格/同 tile 同结果/只有中格升级、
+漩涡三态、换防的 AI/人类/满军三态）、`ArmyJoinSolutionTests` 9（免费、幽灵不加入、满军无处放、AI 逃跑、
+人类不逃、外交付款与两种付不起），`ArmyTests` 追加 3（唯一性三态）。Game 2022 → **2108**，全解决方案
+2772 → **2858** 全绿，`-warnaserror` 0 警告。覆盖率：**`army` 行不变（0/2/2），合计不变（41/63/145）**。
+
+**遗留**：`army.cpp` 仍记 ◐——`TroopSizeString`/`String` 的文案（要复数兵种名与翻译层）、三个绘制函数、
+`GetLuckModificator`/`GetMoraleModificator` 的城堡与神器两项、`GetCurrentUnit`（战斗侧）、`GetControl`
+（没有玩家对象）、`operator<<`/`>>`（无存档格式）；`army_troop.cpp` 仍记 ◐——`GetName`/四个数值字符串、
+`ArmyTroop` 的攻防加值（战斗侧）与序列化；`army_bar.cpp`、`army_ui_helper.cpp` 仍记未转——整份是界面绘制。
