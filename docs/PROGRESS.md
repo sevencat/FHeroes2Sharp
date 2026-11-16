@@ -4859,3 +4859,11 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 `heroes_indicator`/`heroes_meeting`/`heroes_spell`、`heroes_move` 的 `GetIndexSprite`/音效/淡入淡出、
 `heroes.cpp` 的剩余动画；`kingdom` 差 `kingdom_overview`/`view_world`（渲染）、`ActionNewMonth`（`Settings`）、
 `week.cpp` 的 `GetName()`（翻译层）。
+
+### 追加：路线预览的箭头表 ✅
+
+`route.cpp:53-319` 的 `GetIndexSprite` 落地为 `HeroPath.GetIndexSprite`：五个代价块（1/25/49/73/97/121）
+加一张八乘八的偏移表，`-1` 表示「回头的方向不画」。参考的八层嵌套 `switch` 与它是同一份数据，表的形状
+让「每行恰好缺一格」这件事看得见；`Direction` 是位标志，因此另有一个 `DirectionIndex()` 把八个方向折成
+0..7。`HeroPathTests` 增 21 条（五块起点 + 两个越界代价、九对方向、五对无箭头），Game 测试
+1772 → **1793**，全解决方案 **2510** 条全绿。`Route::Path::String()`、行走音效与淡入淡出仍未搬。

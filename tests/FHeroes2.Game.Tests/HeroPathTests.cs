@@ -274,6 +274,46 @@ public sealed class HeroPathTests
         Assert.Equal(-1, path.DestinationIndex);
     }
 
+    [Theory]
+    [InlineData(100, 25)]
+    [InlineData(125, 49)]
+    [InlineData(150, 73)]
+    [InlineData(175, 97)]
+    [InlineData(200, 121)]
+    [InlineData(99, 1)]
+    [InlineData(300, 1)]
+    public void TheArrowOfAStepPicksTheBlockOfItsCost(int cost, int blockStart)
+    {
+        // A straight arrow inside each block: the "from" and the "to" are both the top direction.
+        Assert.Equal(blockStart + 8, HeroPath.GetIndexSprite(Direction.Top, Direction.Top, cost));
+    }
+
+    [Theory]
+    [InlineData(Direction.Top, Direction.TopRight, 17)]
+    [InlineData(Direction.Top, Direction.BottomLeft, 5)]
+    [InlineData(Direction.TopRight, Direction.Top, 0)]
+    [InlineData(Direction.Right, Direction.BottomLeft, 21)]
+    [InlineData(Direction.BottomRight, Direction.Left, 22)]
+    [InlineData(Direction.Bottom, Direction.TopLeft, 16)]
+    [InlineData(Direction.BottomLeft, Direction.BottomLeft, 13)]
+    [InlineData(Direction.Left, Direction.Left, 14)]
+    [InlineData(Direction.TopLeft, Direction.TopLeft, 15)]
+    public void TheArrowFollowsThePairOfDirections(Direction from, Direction to, int offset)
+    {
+        Assert.Equal(1 + offset, HeroPath.GetIndexSprite(from, to, 100) - 24);
+    }
+
+    [Theory]
+    [InlineData(Direction.Top, Direction.Bottom)]
+    [InlineData(Direction.TopRight, Direction.BottomLeft)]
+    [InlineData(Direction.Bottom, Direction.Top)]
+    [InlineData(Direction.Unknown, Direction.Top)]
+    [InlineData(Direction.Top, Direction.Unknown)]
+    public void AnArrowBackAtThePreviousStepIsNotDrawn(Direction from, Direction to)
+    {
+        Assert.Equal(0, HeroPath.GetIndexSprite(from, to, 100));
+    }
+
     private static RouteStep Step(int index, int from, Direction direction, uint penalty) =>
         new(index, from, direction, penalty);
 }

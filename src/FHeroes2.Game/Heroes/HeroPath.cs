@@ -196,6 +196,90 @@ public sealed class HeroPath
     }
 
     /// <summary>
+    /// The sprite of one arrow of the route preview, <c>Route::Path::GetIndexSprite()</c>
+    /// (<c>route.cpp:53-319</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>ICN::ROUTE</c> holds six blocks of twenty-four arrows, one block per size: the hero has 100, 125,
+    /// 150, 175 or 200 movement points and the preview shows how far he can still go. The block starts at
+    /// 1, 25, 49, 73, 97 and 121; anything else — a shorter day, a modified game — uses the smallest block.
+    /// </para>
+    /// <para>
+    /// Inside a block the arrow is picked by the pair (where the step comes from, where it goes): seven of the
+    /// eight neighbours are drawn, the one pointing straight back at the previous step is not — that is the
+    /// <c>index = 0</c> of the reference, and the caller then draws nothing. The eight rows below are the
+    /// reference's nested switches, one row per "from", with <c>-1</c> for the missing arrow.
+    /// </para>
+    /// <para>
+    /// The table is not symmetric: an arrow leaving a tile to the north-east and one arriving from it are
+    /// different sprites, and the reference stores both.
+    /// </para>
+    /// </remarks>
+    /// <param name="from">The direction the step comes from.</param>
+    /// <param name="to">The direction the step goes to.</param>
+    /// <param name="cost">The cost of the step, which picks the block.</param>
+    /// <returns>The sprite index inside <c>ICN::ROUTE</c>, or zero when there is no such arrow.</returns>
+    public static int GetIndexSprite(Direction from, Direction to, int cost)
+    {
+        int baseIndex = cost switch
+        {
+            200 => 121,
+            175 => 97,
+            150 => 73,
+            125 => 49,
+            100 => 25,
+            _ => 1
+        };
+
+        int row = DirectionIndex(from);
+        int column = DirectionIndex(to);
+
+        if (row < 0 || column < 0)
+        {
+            return 0;
+        }
+
+        int offset = ArrowOffsets[row, column];
+
+        return offset < 0 ? 0 : baseIndex + offset;
+    }
+
+    /// <summary>
+    /// The arrow offsets of <c>route.cpp:80-316</c>, rows and columns in <see cref="DirectionIndex"/> order.
+    /// </summary>
+    private static readonly sbyte[,] ArrowOffsets =
+    {
+        //                     TL   T   TR   R   BR   B   BL   L
+        /* TopLeft */        { 15, 16, 17, 18, -1,  4,  5,  6 },
+        /* Top */            {  7,  8, 17, 18, 19, -1,  5,  6 },
+        /* TopRight */       {  7,  0,  9, 18, 19, 20, -1,  6 },
+        /* Right */          {  7,  0,  1, 10, 19, 20, 21, -1 },
+        /* BottomRight */    { -1,  0,  1,  2, 11, 20, 21, 22 },
+        /* Bottom */         { 16, -1,  1,  2,  3, 12, 21, 22 },
+        /* BottomLeft */     { 23, 16, -1,  2,  3,  4, 13, 22 },
+        /* Left */           { 23, 16, 17, -1,  3,  4,  5, 14 },
+    };
+
+    /// <summary>
+    /// The position of a direction in <see cref="ArrowOffsets"/>, clockwise from the top left.
+    /// </summary>
+    /// <param name="direction">One of the eight neighbouring directions.</param>
+    /// <returns>The index, or <c>-1</c> for anything else.</returns>
+    private static int DirectionIndex(Direction direction) => direction switch
+    {
+        Direction.TopLeft => 0,
+        Direction.Top => 1,
+        Direction.TopRight => 2,
+        Direction.Right => 3,
+        Direction.BottomRight => 4,
+        Direction.Bottom => 5,
+        Direction.BottomLeft => 6,
+        Direction.Left => 7,
+        _ => -1
+    };
+
+    /// <summary>
     /// The cost of the whole route, <c>Route::calculatePathPenalty()</c>.
     /// </summary>
     /// <returns>Movement points the route costs.</returns>

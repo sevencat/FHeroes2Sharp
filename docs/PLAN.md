@@ -665,8 +665,9 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `PopFront`/`Show`/`Hide`/`IsValidForMovement`/`IsValidForTeleportation`/`GetAllowedSteps`，
   ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；`heroes_move.cpp` 也记「部分」：
   九帧状态机、转向块、像素偏移、帧循环（`Hero.Movement`，ADR-097），清雾/对象动作/小地图/渲染四个
-  缺失子系统走 `IHeroMovementHandler` 接缝（ADR-098）；未转 `GetIndexSprite`（260 行 `ICN::ROUTE`
-  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转；`heroes_action.cpp` 搬了
+  缺失子系统走 `IHeroMovementHandler` 接缝（ADR-098）；`route.cpp` 的 `GetIndexSprite`（`ICN::ROUTE`
+  六块二十四枚箭头，`HeroPath.GetIndexSprite`，ADR-138）已转，只剩 `Route::Path::String()`、行走音效与
+  淡入淡出；法术书、AI 动作仍未转；`heroes_action.cpp` 搬了
   石阵那一支（王国侧的登记 + 拼图重算，`Kingdom.ActionObelisk`，ADR-121）与魔法井、泉眼、运气/士气建筑、
   黑猫、风车/水车/小屋/魔法花园、马厩、旅行者帐篷、竞技场、屏障、免费取宝、凉亭、知识树、神殿、女巫小屋、
   宝箱、仙那度、散落资源/营火/桶、骷髅、货车、浮木、沉船幸存者、监牢、塞伦、告示牌、观察塔、麦哲伦地图

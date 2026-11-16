@@ -5004,3 +5004,26 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 `heroes_indicator`/`heroes_meeting`/`heroes_spell` 与 `heroes_move` 的 `GetIndexSprite` 精灵表、
 行走音效、淡入淡出；`kingdom` 差 `kingdom_overview`/`view_world` 与 `kingdom.cpp` 的 `ActionNewMonth`、
 `week.cpp` 的 `GetName()`。
+
+## ADR-138：路线预览的箭头为什么是表而不是 260 行嵌套 `switch` ✅
+
+**背景**：`route.cpp:53-319` 的 `Route::Path::GetIndexSprite()` 用八层嵌套 `switch`（8 个 `from` × 7 个
+`to`）选出 `ICN::ROUTE` 里的箭头。它在 `heroes_move.cpp` 之后一直记作「等渲染侧」，其实没有任何渲染
+依赖——输入两个方向与一个代价，输出一个整数。
+
+**决定**：
+
+1. **八乘八的偏移表 + 行/列索引**：每格是 `sbyte`，`-1` 表示「没有这支箭头」（参考里 `index = 0`）。
+   八层嵌套 `switch` 与一张表是同一份数据，表能一眼看出「每行都有七个值、缺的那个正是回头的方向」，
+   也便于逐格对照参考——这正是移植时最容易抄错的地方。
+2. **块起点照抄五个代价**：100/125/150/175/200 对应 1/25/49/73/97/121，其余一律 1。参考的 `switch`
+   没有 `default` 分支只是因为它先把 `index` 初始化为 1，端口写成 `_ => 1` 把同一件事写明。
+3. **表不对称**：`Top→BottomLeft` 是 5，`BottomLeft→Top` 是 16——箭头的尾和头形状不同，参考两侧都存，
+   端口两侧都抄，测试也各钉一条。
+4. **`Direction` 是位标志，表用位置索引**：`Direction.TopLeft = 1`、`Top = 2`……不能直接当下标，
+   于是有一个 `DirectionIndex()` 把八个方向折成 0..7（顺时针从左上开始），未知方向回 `-1`。
+
+**后果**：`HeroPath` 增 `GetIndexSprite`、`ArrowOffsets`、`DirectionIndex`；`HeroPathTests` 增 21 条
+（五块起点 + 两个越界代价、九对方向、五对无箭头），Game 测试 1772 → 1793，全解决方案 2510 条全绿。
+
+**遗留**：`Route::Path::String()`（调试串）、`heroes_move` 的行走音效与淡入淡出仍未搬。
