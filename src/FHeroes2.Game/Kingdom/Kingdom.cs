@@ -2,6 +2,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
@@ -44,12 +45,23 @@ public sealed class Kingdom
 
     private readonly List<CastleTown> _castles = [];
     private readonly List<Hero> _heroes = [];
+
+    /// <summary>The objects any hero of the kingdom has already visited, newest first, <c>visit_object</c>.</summary>
+    private readonly List<IndexObject> _visitedObjects = [];
+
+    /// <summary>The monsters a Crystal Ball has shown this kingdom, <c>_monstersUnderVision</c>.</summary>
+    private readonly HashSet<int> _monstersUnderVision = [];
+
     private readonly Recruits _recruits = new();
     private readonly Puzzle _puzzleMaps = new();
 
     private Funds _funds;
     private PlayerColor _color = PlayerColor.None;
     private int _lostTownDays = GameOverLostDays + 1;
+    private int _visitedTentsColors;
+    private KingdomModes _modes;
+    private bool _isAiControlled;
+    private bool _isOutOfGame;
 
     /// <summary>
     /// The color of the kingdom, <c>_color</c>; <see cref="PlayerColor.None"/> before <see cref="Init"/>.
@@ -76,6 +88,50 @@ public sealed class Kingdom
     /// </summary>
     /// <remarks>参考：<c>kingdom.h:156</c> GetLostTownDays；只在 <see cref="AddCastle"/> 与 <see cref="Clear"/> 里重置。</remarks>
     public int LostTownDays => _lostTownDays;
+
+    /// <summary>
+    /// Whether the kingdom belongs to a player that is still in the game, <c>isPlay()</c> (<c>kingdom.h:113</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>kingdom.h:113</c> isPlay——问 <c>Players::Get( color )->isPlay()</c>。端口还没有 <c>Players</c>，
+    /// 用「颜色不是 <see cref="PlayerColor.None"/>」代替：<see cref="Init"/> 给的颜色为真，<see cref="Clear"/> 之后为假。
+    /// 等 <c>Players</c> 落地时，这里换成真正的询问即可，调用方（<see cref="ActionNewDay"/> 与
+    /// <see cref="ActionNewWeek"/>）不用改。
+    /// </para>
+    /// <para>
+    /// 这条判断之所以挡在访问记录清理<b>之后</b>，是因为参考即使对已经出局的王国也要清掉那些记录（见
+    /// <c>kingdom.cpp:198</c> 的注释）：存档里的访问表不能因为玩家出局就越积越多。
+    /// </para>
+    /// </remarks>
+    public bool IsPlay => _color != PlayerColor.None && !_isOutOfGame;
+
+    /// <summary>
+    /// Whether a human plays this kingdom, <c>isControlHuman()</c> (<c>kingdom.h:107</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:107</c>→<c>Players::GetPlayerControl( color )</c>。端口在 <see cref="Init"/> 收到
+    /// 「是不是电脑」并记下来（同一个参数也决定初始资源，ADR-111），此后由它回答。
+    /// </remarks>
+    public bool IsControlHuman => !_isAiControlled;
+
+    /// <summary>
+    /// The kingdom's modes, <c>BitModes</c> of <c>kingdom.h:60</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:60</c> 继承 <c>BitModes</c>，取值见 <c>kingdom.h:63-69</c>（<c>IDENTIFYHERO = 0x0002</c>、
+    /// <c>KINGDOM_OVERVIEW_CASTLE_SELECTION = 0x0008</c>）。<see cref="ActionNewDay"/> 每天清掉「已鉴定」这一位。
+    /// </remarks>
+    public KingdomModes Modes => _modes;
+
+    /// <summary>
+    /// The objects any hero of the kingdom has visited, newest first, <c>visit_object</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h</c> 的 <c>std::list&lt;IndexObject&gt; visit_object</c>。列表按「最新在前」维护，
+    /// 所以按类型问「访问过没有」可以只走到第一次命中。
+    /// </remarks>
+    public IReadOnlyList<IndexObject> VisitedObjects => _visitedObjects;
 
     /// <summary>
     /// The towns of the kingdom, <c>castles</c>, in the order they joined.
@@ -118,6 +174,27 @@ public sealed class Kingdom
     /// </remarks>
     public bool CanRecruitHeroes =>
         _castles.Exists(castle => castle.IsCastle || !castle.IsBuildingDisabled(BuildingType.Castle));
+
+    /// <summary>
+    /// Whether the kingdom may take one more hero, <c>AllowRecruitHero()</c> (<c>kingdom.cpp:499</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>kingdom.cpp:499-502</c>——<c>heroes.size() &lt; GetMaxHeroes()</c>，再按需检查酒馆价
+    /// <c>PaymentConditions::RecruitHero()</c> 付不付得起。
+    /// </para>
+    /// <para>
+    /// <b>与 <see cref="CanRecruitHeroes"/> 不是一回事</b>：那个问「有没有城能出兵」，这个问「名额还够不够、
+    /// 钱够不够」。名字像，判据完全不同，别互相替换。
+    /// </para>
+    /// <para>
+    /// 监牢（<see cref="HeroActions.ActionToJail"/>）走的是<b>不查钱</b>的那一支：囚犯不要钱，只要名额。
+    /// </para>
+    /// </remarks>
+    /// <param name="checkPayment">Whether the tavern price must also be affordable.</param>
+    /// <returns><see langword="true"/> when one more hero may join the kingdom.</returns>
+    public bool AllowRecruitHero(bool checkPayment = false) =>
+        _heroes.Count < MaxHeroes && (!checkPayment || AllowPayment(PaymentConditions.RecruitHero()));
 
     /// <summary>
     /// The two heroes the kingdom's tavern offers, <c>GetRecruits()</c> (<c>kingdom.cpp:317</c>).
@@ -203,6 +280,7 @@ public sealed class Kingdom
         Clear();
 
         _color = color;
+        _isAiControlled = isAiControlled;
 
         if ((color & PlayerColors.All) == 0)
         {
@@ -230,14 +308,25 @@ public sealed class Kingdom
         _funds = default;
         _lostTownDays = GameOverLostDays + 1;
 
+        // kingdom.cpp:126/129：模式位与旅行者帐篷的记录也归零。
+        _modes = KingdomModes.None;
+        _visitedTentsColors = 0;
+
         _castles.Clear();
         _heroes.Clear();
 
-        // 参考 kingdom.cpp:132：酒馆的那一对也要清，否则换一张图还会推荐上一张图的英雄。
+        // kingdom.cpp:134：访问记录是「这张图上的格子」，换图之后必须清空。
+        _visitedObjects.Clear();
+        _monstersUnderVision.Clear();
+
+        // 参考 kingdom.cpp:136：酒馆的那一对也要清，否则换一张图还会推荐上一张图的英雄。
         _recruits.Reset();
 
-        // 参考 kingdom.cpp:134：谜题只清格子，四条区带的顺序不重洗。
+        // 参考 kingdom.cpp:138：谜题只清格子，四条区带的顺序不重洗。
         _puzzleMaps.Reset();
+
+        _isAiControlled = false;
+        _isOutOfGame = false;
     }
 
     /// <summary>
@@ -465,6 +554,12 @@ public sealed class Kingdom
         if (!_heroes.Contains(hero))
         {
             _heroes.Add(hero);
+
+            // 参考里颜色是 <c>world.LoadMapMP2</c> 之后由 <c>Players</c> 逐个设上的（<c>heroes.cpp</c> 的
+            // <c>SetColor</c>）；端口还没有 <c>Players</c>，而「名册里的英雄」与「服务于这个颜色的英雄」在
+            // 端口里必须一致——<see cref="Heroes.HeroActions"/> 正是靠颜色找王国（ADR-122）。于是这里替
+            // Players 把那一半做掉：进谁的名册就服谁的颜色。
+            hero.SetColor(_color);
         }
     }
 
@@ -522,4 +617,271 @@ public sealed class Kingdom
     /// <param name="building">The building, or an OR of buildings.</param>
     /// <returns>The count.</returns>
     public int CountBuildings(BuildingType building) => _castles.FindAll(castle => castle.IsBuild(building)).Count;
+
+    /// <summary>
+    /// Remembers that <paramref name="index"/> was visited, <c>Kingdom::SetVisited()</c> (<c>kingdom.cpp:666</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>kingdom.cpp:666</c>。三件事必须一起看：<c>OBJ_NONE</c> 不记（没有对象的格子不算拜访）；同一个
+    /// 「格子 + 对象类型」已经在表里时先删掉；插入在表头。三者合起来保证「最新在前」且不重复。
+    /// </para>
+    /// <para>
+    /// 为什么按「格子 + 类型」而不是只按格子去重：同一个格子在清掉一个对象之后可能被摆上另一个（编辑器与
+    /// 事件都会这么做），只按格子去重会把「新对象还没被访问」误判成旧对象的记录。
+    /// </para>
+    /// </remarks>
+    /// <param name="index">Tile index on the map.</param>
+    /// <param name="objectType">The object found there; <see cref="Mp2ObjectType.None"/> is ignored.</param>
+    public void SetVisited(int index, Mp2ObjectType objectType)
+    {
+        if (objectType == Mp2ObjectType.None)
+        {
+            return;
+        }
+
+        var visit = new IndexObject(index, objectType);
+
+        _visitedObjects.RemoveAll(entry => entry == visit);
+        _visitedObjects.Insert(0, visit);
+    }
+
+    /// <summary>
+    /// Whether this exact tile has been visited for this object, <c>isVisited( index, type )</c>.
+    /// </summary>
+    /// <remarks>参考：<c>kingdom.h:262</c>。</remarks>
+    /// <param name="index">Tile index on the map.</param>
+    /// <param name="objectType">The object type.</param>
+    /// <returns><see langword="true"/> when the pair is in the visit list.</returns>
+    public bool IsVisited(int index, Mp2ObjectType objectType) =>
+        _visitedObjects.Exists(entry => entry.Index == index && entry.Object == objectType);
+
+    /// <summary>
+    /// Whether any object of <paramref name="objectType"/> has been visited, <c>isVisited( type )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:267</c>。两种问法都是「有没有」：一次性的建筑（+1 攻击力之类）只要访问过一座就够了。
+    /// </remarks>
+    /// <param name="objectType">The object type.</param>
+    /// <returns><see langword="true"/> when an object of that type is in the visit list.</returns>
+    public bool IsVisited(Mp2ObjectType objectType) =>
+        _visitedObjects.Exists(entry => entry.Object == objectType);
+
+    /// <summary>
+    /// Whether <paramref name="tile"/> has been visited for the object it holds, <c>isVisited( tile )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:272</c>。它问的是瓦片上缓存的主对象类型（<c>Tile::MainObjectType</c>），不是把英雄
+    /// 拨开之后看到的那一个——访问记录记的本来就是「英雄当时踩到的东西」。
+    /// </remarks>
+    /// <param name="tile">The tile.</param>
+    /// <returns><see langword="true"/> when the tile's main object is in the visit list.</returns>
+    public bool IsVisited(Tile tile)
+    {
+        ArgumentNullException.ThrowIfNull(tile);
+
+        return IsVisited(tile.Index, tile.MainObjectType);
+    }
+
+    /// <summary>
+    /// How many objects of <paramref name="objectType"/> have been visited, <c>CountVisitedObjects()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.cpp:681</c>。石阵用它数：「已访问几座」就是拼图该揭开多少（<c>heroes_action.cpp</c> 的
+    /// 石阵分支，ADR-121）。
+    /// </remarks>
+    /// <param name="objectType">The object type.</param>
+    /// <returns>The number of distinct tiles of that type in the visit list.</returns>
+    public int CountVisitedObjects(Mp2ObjectType objectType) =>
+        _visitedObjects.FindAll(entry => entry.Object == objectType).Count;
+
+    /// <summary>
+    /// Remembers that the traveller's tent of one color has been entered, <c>markTravellerTentVisited()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:224-231</c>。记录是一张按颜色位的位图，<b>不</b>跟着访问记录走：帐篷是永久解锁，
+    /// 一周/一天的生命周期与它无关。
+    /// </remarks>
+    /// <param name="barrierColor">The colour constant of the tent, <see cref="PlayerColor"/>.</param>
+    public void MarkTravellerTentVisited(int barrierColor) => _visitedTentsColors |= 1 << barrierColor;
+
+    /// <summary>
+    /// Whether the traveller's tent of one color has been entered, <c>isTravellerTentVisited()</c>.
+    /// </summary>
+    /// <remarks>参考：<c>kingdom.h:229-232</c>。</remarks>
+    /// <param name="barrierColor">The colour constant of the tent, <see cref="PlayerColor"/>.</param>
+    /// <returns><see langword="true"/> when the tent has been entered.</returns>
+    public bool IsTravellerTentVisited(int barrierColor) => (_visitedTentsColors & (1 << barrierColor)) != 0;
+
+    /// <summary>
+    /// Sets bits in the kingdom's modes, <c>SetModes()</c> of <c>BitModes</c>.
+    /// </summary>
+    /// <param name="modes">The bits to set.</param>
+    public void SetModes(KingdomModes modes) => _modes |= modes;
+
+    /// <summary>
+    /// Clears bits in the kingdom's modes, <c>ResetModes()</c> of <c>BitModes</c>.
+    /// </summary>
+    /// <param name="modes">The bits to clear.</param>
+    public void ResetModes(KingdomModes modes) => _modes &= ~modes;
+
+    /// <summary>
+    /// Remembers that a Crystal Ball showed the kingdom a monster stack, <c>addMonsterUnderVisionSpell()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>kingdom.h:243-246</c>。和访问记录一样每天清空：它是「本回合看得见」而不是永久情报。
+    /// </remarks>
+    /// <param name="monsterIndex">Tile index of the monster stack.</param>
+    public void AddMonsterUnderVision(int monsterIndex) => _monstersUnderVision.Add(monsterIndex);
+
+    /// <summary>
+    /// Whether a Crystal Ball is currently showing that monster stack, <c>isMonsterUnderVisionSpell()</c>.
+    /// </summary>
+    /// <remarks>参考：<c>kingdom.h:248-251</c>。</remarks>
+    /// <param name="monsterIndex">Tile index of the monster stack.</param>
+    /// <returns><see langword="true"/> when the stack is under the vision spell.</returns>
+    public bool IsMonsterUnderVisionSpell(int monsterIndex) => _monstersUnderVision.Contains(monsterIndex);
+
+    /// <summary>
+    /// An obelisk has been reached, <c>heroes_action.cpp</c>'s <c>OBJ_OBELISK</c> branch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes_action.cpp:2924-2946</c>。这一支只做三件事：全局登记「这座石阵看过了」、按「已看过的石阵数 /
+    /// 地图上的石阵总数」重算拼图、然后（界面侧）放音效并打开寻宝图。
+    /// </para>
+    /// <para>
+    /// 端口把它放在王国上，因为前两件事都是王国状态；第三件是对话框，留给界面层。<b>返回值就是给界面层的</b>：
+    /// <see langword="true"/> 表示这次揭开了一角，可以放音效、打开寻宝图；<see langword="false"/> 表示「你已经来过
+    /// 这座石阵了」，参考在那一支里只弹一句提示。
+    /// </para>
+    /// <para>
+    /// 为什么要**全局**登记：同一位石阵换个英雄来看不该再揭一次，所以它进的是王国名册（<c>Visit::GLOBAL</c>），
+    /// 而不是英雄自己的记录。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">The tile the obelisk stands on.</param>
+    /// <param name="totalObelisks">How many obelisks the map carries, <c>world.CountObeliskOnMaps()</c>.</param>
+    /// <returns><see langword="true"/> when this visit uncovered part of the puzzle.</returns>
+    public bool ActionObelisk(int tileIndex, uint totalObelisks)
+    {
+        if (IsVisited(tileIndex, Mp2ObjectType.Obelisk))
+        {
+            return false;
+        }
+
+        SetVisited(tileIndex, Mp2ObjectType.Obelisk);
+        _puzzleMaps.Update((uint)CountVisitedObjects(Mp2ObjectType.Obelisk), totalObelisks);
+
+        return true;
+    }
+
+    /// <summary>
+    /// The kingdom's part of a new day, <c>Kingdom::ActionNewDay()</c> (<c>kingdom.cpp:197</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>kingdom.cpp:197</c>。顺序照抄：先清一天寿命的访问记录（<b>出局了也要清</b>，见参考自己的注释），
+    /// 再问「还在不在局中」；失城倒计时只在第一天之后、没有城、且还剩天数时递减；出局或倒计时归零才跑
+    /// <c>LossPostActions</c> 并结束；否则清「已鉴定」位与水晶球看到的怪。
+    /// </para>
+    /// <para>
+    /// <c>LossPostActions</c>（<c>kingdom.cpp:156</c>）要 <c>Players</c>：它把英雄和城改色、从名册里删掉、
+    /// 再看看要不要弹「你输了」。端口把它做成可选回调，传 <see langword="null"/> 时就什么都不做——仍然是
+    /// 「出局了，别再往下走」这一半语义。等 <c>Players</c> 落地，调用方会把真正的流程接进来。
+    /// </para>
+    /// <para>
+    /// 日期来自 <c>world.CountDay()</c>，端口的 <see cref="Kingdom"/> 不认识世界，于是提到参数上——与
+    /// <see cref="ActionNewDayResourceUpdate"/> 一个路子。
+    /// </para>
+    /// </remarks>
+    /// <param name="dayCount">Days since the start of the game, <c>world.CountDay()</c>.</param>
+    /// <param name="lossPostActions">
+    /// What the reference's <c>LossPostActions()</c> does, if the caller has a player layer to do it with.
+    /// </param>
+    public void ActionNewDay(uint dayCount, Action? lossPostActions = null)
+    {
+        _visitedObjects.RemoveAll(Visit.IsDayLife);
+
+        // 参考在 world.NewDay 里分开调 kingdoms.NewDay() 与 vec_heroes.ActionNewDay()；端口没有全局英雄名册，
+        // 王国的名册就是「在局中的英雄」的全部，于是在这里替世界把英雄的一天也走掉。英雄的 tick 不看 IsPlay：
+        // 参考的 vec_heroes 只装活着的英雄，与王国是否已经出局无关。
+        foreach (Hero hero in _heroes)
+        {
+            hero.ActionNewDay(dayCount);
+        }
+
+        if (!IsPlay)
+        {
+            return;
+        }
+
+        // kingdom.cpp:206-210：失城倒计时。第一天不算（那天的城还没结算），已经有城就不递减。
+        bool countdownRanOut = false;
+
+        if (dayCount > 1 && _castles.Count == 0 && _lostTownDays > 0)
+        {
+            --_lostTownDays;
+            countdownRanOut = _lostTownDays == 0;
+        }
+
+        // kingdom.cpp:213-217：出局，或者倒计时归零。参考里 LossPostActions 会把玩家标成「不再参战」，
+        // 所以第二天进来时 isPlay() 已经是假；端口没有那一步，于是只在「刚刚归零」这一天交出去一次。
+        if (IsLoss || countdownRanOut)
+        {
+            // 参考的 LossPostActions 里第一件事就是把玩家的 isPlay 置假（Players::SetPlay(false)），
+            // 于是「已经出局」的王国第二天不会再走到这里。端口在这里把那个状态记下来，回调只是它的补充。
+            _isOutOfGame = true;
+            lossPostActions?.Invoke();
+            return;
+        }
+
+        // kingdom.cpp:221-224：「已鉴定」与水晶球看到的怪都只活一天。
+        ResetModes(KingdomModes.IdentifyHero);
+        _monstersUnderVision.Clear();
+    }
+
+    /// <summary>
+    /// The kingdom's part of a new week, <c>Kingdom::ActionNewWeek()</c> (<c>kingdom.cpp:266</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>kingdom.cpp:266</c>。一周寿命的访问记录（风车、水车、各处怪物巢穴……）先清，同样<b>出局了也要清</b>；
+    /// 然后跳过第一周；调试模式给人类玩家一份礼物；最后重排酒馆的那一对英雄。
+    /// </para>
+    /// <para>
+    /// 那份礼物在参考里由编译期的 <c>IS_DEVEL()</c> 控制，端口把它提成 <paramref name="isDebugMode"/>——生产构建里
+    /// 这段代码根本不存在，所以它不该是「运行时开关」，而是「调用方是否在调一个调试入口」。
+    /// </para>
+    /// <para>
+    /// 重排那一对（<c>GetRecruits()</c>）目前只返回已结算的槽位，补位规则还没有（ADR-118）；调用它不会错，
+    /// 只是暂时没有效果。
+    /// </para>
+    /// </remarks>
+    /// <param name="weekCount">Weeks since the start of the game, <c>world.CountWeek()</c>.</param>
+    /// <param name="isDebugMode">Whether the reference's <c>IS_DEVEL()</c> build is in effect.</param>
+    public void ActionNewWeek(uint weekCount, bool isDebugMode = false)
+    {
+        _visitedObjects.RemoveAll(Visit.IsWeekLife);
+
+        foreach (Hero hero in _heroes)
+        {
+            hero.ActionNewWeek();
+        }
+
+        if (!IsPlay)
+        {
+            return;
+        }
+
+        if (weekCount > 1 && isDebugMode && IsControlHuman)
+        {
+            // kingdom.cpp:277-282: { wood 20, mercury 20, ore 10, sulfur 10, crystal 10, gems 10, gold 5000 }.
+            AddFundsResource(new Funds(20, 20, 10, 10, 10, 10, 5000));
+            GameLog.Info($"debug gift granted to {_color}: 5000 gold, 20 wood, 20 mercury, 10 of each other resource.");
+        }
+
+        // kingdom.cpp:285：重排酒馆的那一对（补位规则未搬，ADR-118）。
+        GetRecruits();
+    }
 }

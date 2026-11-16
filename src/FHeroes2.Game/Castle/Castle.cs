@@ -1,6 +1,7 @@
 using System.Numerics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
@@ -1700,5 +1701,27 @@ public sealed class Castle
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Uncovers the fog around the town for its owner, <c>Castle::Scout()</c> (<c>castle.cpp:2213-2216</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只有一行：<c>Maps::ClearFog( GetIndex(), getFogDiscoveryDistance( CASTLE ), GetColor() )</c>，
+    /// 半径 <see cref="MapFog.CastleRevealDistance"/>（5 格），比英雄的 4 格多一圈。
+    /// </para>
+    /// <para>
+    /// 没有主人的城堡（<see cref="PlayerColor.None"/>）揭不出任何东西——<see cref="World.ClearFog(int, int, PlayerColor)"/>
+    /// 对 <see cref="PlayerColor.None"/> 直接返回 0。占领一座城之后调一次，视野就跟着城走。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world holding the fog.</param>
+    /// <returns>Number of tiles the town uncovered.</returns>
+    public int Scout(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        return world.ClearFog(TileIndex, MapFog.CastleRevealDistance, Color);
     }
 }

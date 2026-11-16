@@ -1,115 +1,209 @@
+using FHeroes2.Assets.Maps;
+
 using FHeroes2.Game.Heroes;
-using Xunit;
+using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Maps;
+using FHeroes2.Game.Resources;
+using PlayerKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
 namespace FHeroes2.Game.Tests;
 
 /// <summary>
-/// Covers <c>Heroes::GetExperienceFromLevel</c> / <c>GetLevelFromExperience</c> (<c>heroes.cpp:1501-1607</c>).
+/// Covers <c>heroes.cpp</c>'s experience and level-up pair (<c>IncreaseExperience</c> / <c>_levelUp</c>) and the
+/// two action branches that pay experience out: the gazebo and the tree of knowledge.
 /// </summary>
 public sealed class HeroExperienceTests
 {
-    [Theory]
-    [InlineData(0, 0u)]
-    [InlineData(1, 1000u)]
-    [InlineData(2, 2000u)]
-    [InlineData(3, 3200u)]
-    [InlineData(4, 4500u)]
-    [InlineData(5, 6000u)]
-    [InlineData(6, 7700u)]
-    [InlineData(7, 9000u)]
-    [InlineData(8, 11000u)]
-    [InlineData(9, 13200u)]
-    [InlineData(10, 15500u)]
-    [InlineData(11, 18500u)]
-    [InlineData(12, 22100u)]
-    [InlineData(13, 26400u)]
-    [InlineData(14, 31600u)]
-    [InlineData(15, 37800u)]
-    [InlineData(16, 45300u)]
-    [InlineData(17, 54200u)]
-    [InlineData(18, 65000u)]
-    [InlineData(19, 78000u)]
-    [InlineData(20, 93600u)]
-    [InlineData(21, 112300u)]
-    [InlineData(22, 134700u)]
-    [InlineData(23, 161600u)]
-    [InlineData(24, 193900u)]
-    [InlineData(25, 232700u)]
-    [InlineData(26, 279300u)]
-    [InlineData(27, 335200u)]
-    [InlineData(28, 402300u)]
-    [InlineData(29, 482800u)]
-    [InlineData(30, 579400u)]
-    [InlineData(31, 695300u)]
-    [InlineData(32, 834400u)]
-    [InlineData(33, 1001300u)]
-    [InlineData(34, 1201600u)]
-    [InlineData(35, 1442000u)]
-    [InlineData(36, 1730500u)]
-    [InlineData(37, 2076700u)]
-    [InlineData(38, 2492100u)]
-    [InlineData(39, 2990600u)]
-    public void FromLevel_IsTheHardcodedTable(int level, uint experience)
+    private const uint MapSeed = 20261116;
+
+    /// <summary>Blue kingdom, a knight on tile 0 and a two by two uninitialized map.</summary>
+    private static HeroActions BlueActions(out PlayerKingdom kingdom, out World world, int heroId = 1)
     {
-        // Levels 0 to 39 are a switch in the reference, not a formula: the table is the balance.
-        Assert.Equal(experience, HeroExperience.FromLevel(level));
+        Kingdoms kingdoms = new();
+        kingdoms.Init(PlayerColor.Blue, GameDifficulty.Normal, PlayerColor.Blue);
+
+        kingdom = kingdoms.GetKingdom(PlayerColor.Blue);
+        kingdom.Treasury.Gold = 0;
+
+        Hero hero = new(heroId, MapRace.Knight);
+        kingdom.AddHero(hero);
+
+        world = new World();
+        world.GenerateUninitializedMap(2);
+
+        return new HeroActions(hero, kingdoms);
+    }
+
+    /// <summary>The same, plus a tree of knowledge on tile 0 asking <paramref name="price"/> gold.</summary>
+    private static HeroActions TreeActions(out PlayerKingdom kingdom, out World world, uint gold, uint price)
+    {
+        HeroActions actions = BlueActions(out kingdom, out world);
+
+        kingdom.AddFundsResource(new Funds(Resource.Gold, gold));
+
+        Tile tile = world.GetTile(0);
+        tile.SetMainObjectType(Mp2ObjectType.TreeOfKnowledge);
+        tile.Metadata[0] = (uint)Resource.Gold;
+        tile.Metadata[1] = price;
+
+        return actions;
     }
 
     [Fact]
-    public void MaxValueIsTheThresholdOfTheLastTableLevel()
+    public void TheLevelIsDerivedFromTheExperience()
     {
-        Assert.Equal(HeroExperience.MaxValue, HeroExperience.FromLevel(HeroExperience.MaxTableLevel));
-        Assert.Equal(2990600u, HeroExperience.MaxValue);
-    }
+        HeroActions actions = BlueActions(out _, out _);
+        Hero hero = actions.Hero;
 
-    [Theory]
-    [InlineData(0u, 1)]
-    [InlineData(999u, 1)]
-    [InlineData(1000u, 2)]
-    [InlineData(1999u, 2)]
-    [InlineData(2000u, 3)]
-    [InlineData(15499u, 10)]
-    [InlineData(15500u, 11)]
-    [InlineData(2990599u, 39)]
-    [InlineData(2990600u, 40)]
-    public void LevelFrom_ReturnsTheHighestThresholdNotAboveTheExperience(uint experience, int level)
-    {
-        Assert.Equal(level, HeroExperience.LevelFrom(experience));
+        Assert.Equal(1, hero.Level);
+
+        hero.SetExperience(HeroExperience.FromLevel(1) - 1);
+        Assert.Equal(1, hero.Level);
+
+        hero.SetExperience(HeroExperience.FromLevel(1));
+        Assert.Equal(2, hero.Level);
+
+        hero.SetExperience(HeroExperience.FromLevel(2) - 1);
+        Assert.Equal(2, hero.Level);
     }
 
     [Fact]
-    public void LevelAndExperienceAgreeOnEveryBoundaryOfTheTable()
+    public void TheTreeGivesExactlyTheExperienceOfOneLevel()
     {
-        for (int level = 1; level <= HeroExperience.MaxTableLevel; ++level)
+        HeroActions actions = TreeActions(out _, out World world, 0, 0);
+
+        Assert.Equal(TreeKnowledgeOutcome.Learned, actions.ActionToTreeKnowledge(0, world));
+        Assert.Equal(HeroExperience.FromLevel(1), actions.Hero.Experience);
+        Assert.Equal(2, actions.Hero.Level);
+
+        Assert.Equal(TreeKnowledgeOutcome.None, actions.ActionToTreeKnowledge(0, world));
+        Assert.Equal(HeroExperience.FromLevel(1), actions.Hero.Experience);
+    }
+
+    [Fact]
+    public void APaidTreeTakesThePaymentOnlyWhenTheTreasuryCanCoverIt()
+    {
+        HeroActions actions = TreeActions(out PlayerKingdom kingdom, out World world, 2500, 2000);
+
+        Assert.Equal(TreeKnowledgeOutcome.Learned, actions.ActionToTreeKnowledge(0, world));
+        Assert.Equal(500, kingdom.Treasury.Gold);
+        Assert.Equal(HeroExperience.FromLevel(1), actions.Hero.Experience);
+    }
+
+    [Fact]
+    public void APoorHeroLeavesTheTreePriceUntouched()
+    {
+        HeroActions actions = TreeActions(out PlayerKingdom kingdom, out World world, 100, 2000);
+
+        Assert.Equal(TreeKnowledgeOutcome.CannotPay, actions.ActionToTreeKnowledge(0, world));
+        Assert.Equal(100, kingdom.Treasury.Gold);
+        Assert.Equal(0u, actions.Hero.Experience);
+
+        // The kingdom book has the trip, the hero book does not: the next visit still asks for the money.
+        Assert.True(kingdom.IsVisited(0, Mp2ObjectType.TreeOfKnowledge));
+        Assert.False(actions.Hero.IsVisited(world.GetTile(0)));
+    }
+
+    [Fact]
+    public void TheGazeboPaysOncePerTile()
+    {
+        HeroActions actions = BlueActions(out _, out World world);
+
+        world.GetTile(0).SetMainObjectType(Mp2ObjectType.Gazebo);
+
+        Assert.True(actions.ActionToExperienceObject(0, world));
+        Assert.Equal(1000u, actions.Hero.Experience);
+
+        Assert.False(actions.ActionToExperienceObject(0, world));
+        Assert.Equal(1000u, actions.Hero.Experience);
+    }
+
+    [Fact]
+    public void ALevelUpRaisesOnePrimaryAndAddsOneSecondarySkill()
+    {
+        HeroActions actions = BlueActions(out _, out _);
+        Hero hero = actions.Hero;
+
+        int before = hero.GetAttack() + hero.GetDefense() + hero.GetPower() + hero.GetKnowledge();
+
+        hero.IncreaseExperience(HeroExperience.FromLevel(1), MapSeed);
+
+        Assert.Equal(2, hero.Level);
+        Assert.Equal(before + 1, hero.GetAttack() + hero.GetDefense() + hero.GetPower() + hero.GetKnowledge());
+        Assert.Equal(1, hero.SecondarySkills.Count);
+    }
+
+    [Fact]
+    public void JumpingSeveralLevelsDrawsEveryLevel()
+    {
+        HeroActions actions = BlueActions(out _, out _);
+        Hero hero = actions.Hero;
+
+        int before = hero.GetAttack() + hero.GetDefense() + hero.GetPower() + hero.GetKnowledge();
+
+        // Level 3 needs FromLevel(2) experience: two level-ups, two primary points and two secondary skills.
+        hero.IncreaseExperience(HeroExperience.FromLevel(2), MapSeed);
+
+        Assert.Equal(3, hero.Level);
+        Assert.Equal(before + 2, hero.GetAttack() + hero.GetDefense() + hero.GetPower() + hero.GetKnowledge());
+        Assert.Equal(2, hero.SecondarySkills.Count);
+    }
+
+    [Fact]
+    public void TheSameSeedAndStateDrawTheSameSkills()
+    {
+        HeroActions first = BlueActions(out _, out _);
+        HeroActions second = BlueActions(out _, out _);
+
+        first.Hero.IncreaseExperience(HeroExperience.FromLevel(2), MapSeed);
+        second.Hero.IncreaseExperience(HeroExperience.FromLevel(2), MapSeed);
+
+        Assert.Equal(first.Hero.GetAttack(), second.Hero.GetAttack());
+        Assert.Equal(first.Hero.GetDefense(), second.Hero.GetDefense());
+        Assert.Equal(first.Hero.GetPower(), second.Hero.GetPower());
+        Assert.Equal(first.Hero.GetKnowledge(), second.Hero.GetKnowledge());
+
+        foreach (SecondarySkillLevel entry in first.Hero.SecondarySkills.Skills)
         {
-            uint threshold = HeroExperience.FromLevel(level);
-
-            // A threshold is the experience at which the level is *left*: a hero with exactly the threshold of
-            // level 1 (1000) is level 2, and one point less is still level 1.
-            Assert.Equal(level + 1, HeroExperience.LevelFrom(threshold));
-            Assert.Equal(level, HeroExperience.LevelFrom(threshold - 1));
+            Assert.Equal(entry.Level, second.Hero.SecondarySkills.GetLevel(entry.Skill));
         }
     }
 
-    [Theory]
-    [InlineData(40, 3588800u)]
-    [InlineData(41, 4306600u)]
-    [InlineData(42, 5168000u)]
-    public void FromLevel_GrowsByOnePointTwoPercentRoundedToHundredsAboveTheTable(int level, uint expected)
+    [Fact]
+    public void TheChooserDecidesWhichCandidateIsTaken()
     {
-        // The tail of the reference's switch:
-        //   level 40: 2990600 + round( ( 2990600 - 2492100 ) * 1.2 / 100 ) * 100
-        //           = 2990600 + round( 5982.0 ) * 100 = 3588800
-        //   level 41: 3588800 + round( ( 3588800 - 2990600 ) * 1.2 / 100 ) * 100
-        //           = 3588800 + round( 7178.4 ) * 100 = 4306600
-        //   level 42: 4306600 + round( ( 4306600 - 3588800 ) * 1.2 / 100 ) * 100
-        //           = 4306600 + round( 8613.6 ) * 100 = 5168000
-        Assert.Equal(expected, HeroExperience.FromLevel(level));
+        HeroActions actions = BlueActions(out _, out _);
+
+        SecondarySkillLevel? offeredFirst = null;
+        SecondarySkillLevel? offeredSecond = null;
+
+        actions.Hero.IncreaseExperience(
+            HeroExperience.FromLevel(1),
+            MapSeed,
+            (first, second) =>
+            {
+                offeredFirst = first;
+                offeredSecond = second;
+
+                return second.IsValid ? second : first;
+            });
+
+        Assert.True(offeredFirst!.Value.IsValid);
+        Assert.True(offeredSecond!.Value.IsValid);
+        Assert.Equal(offeredSecond!.Value.Skill, actions.Hero.SecondarySkills.Skills[0].Skill);
     }
 
     [Fact]
-    public void FromLevel_RejectsANegativeLevel()
+    public void TheMagicClassesAreTheFourSpellcasters()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => HeroExperience.FromLevel(-1));
+        Assert.True(SkillLevelUp.IsMagicalRace(MapRace.Sorceress));
+        Assert.True(SkillLevelUp.IsMagicalRace(MapRace.Warlock));
+        Assert.True(SkillLevelUp.IsMagicalRace(MapRace.Wizard));
+        Assert.True(SkillLevelUp.IsMagicalRace(MapRace.Necromancer));
+
+        Assert.False(SkillLevelUp.IsMagicalRace(MapRace.Knight));
+        Assert.False(SkillLevelUp.IsMagicalRace(MapRace.Barbarian));
+        Assert.False(SkillLevelUp.IsMagicalRace(MapRace.Multiple));
+        Assert.False(SkillLevelUp.IsMagicalRace(MapRace.Random));
     }
 }

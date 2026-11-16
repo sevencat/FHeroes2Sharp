@@ -6,6 +6,7 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 
 namespace FHeroes2.App.Scenes;
@@ -26,6 +27,11 @@ namespace FHeroes2.App.Scenes;
 /// The reference composition (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the
 /// interface) is what those will plug into.
 /// </para>
+/// <para>
+/// The fog is <b>not</b> the scene's own: the scene loads the map into <see cref="World.Current"/> and
+/// shows <see cref="World.Fog"/>, so the table the renderer walks is the one the game rules change
+/// (ADR-131).
+/// </para>
 /// </summary>
 public sealed class AdventureMapScene : IScene
 {
@@ -41,6 +47,7 @@ public sealed class AdventureMapScene : IScene
 
     private readonly ScreenBuffer _frame;
     private readonly GameFonts? _fonts;
+    private readonly World _world;
     private readonly AdventureMapView _view;
     private readonly Minimap _minimap;
     private readonly MapScrollController _mouse;
@@ -61,6 +68,7 @@ public sealed class AdventureMapScene : IScene
     private AdventureMapScene(
         ScreenBuffer frame,
         GameFonts? fonts,
+        World world,
         AdventureMapView view,
         Minimap minimap,
         MapFrame mapFrame,
@@ -69,6 +77,7 @@ public sealed class AdventureMapScene : IScene
     {
         _frame = frame;
         _fonts = fonts;
+        _world = world;
         _view = view;
         _minimap = minimap;
         _mouse = new MapScrollController(view);
@@ -96,6 +105,9 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>Scrolling view of the terrain.</summary>
     public AdventureMapView View => _view;
+
+    /// <summary>The world the map was loaded into, the fog of war included.</summary>
+    public World World => _world;
 
     /// <summary>The minimap panel in the top right corner.</summary>
     public Minimap Minimap => _minimap;
@@ -154,11 +166,18 @@ public sealed class AdventureMapScene : IScene
                                    + ((castle.Y - middleY) * (castle.Y - middleY)))
                 .FirstOrDefault();
 
-            // The fog of war is drawn for the colors the map declares as human, like Players::FriendColors()
-            // in the reference: a tile is fogged only when every one of them has not discovered it yet.
-            // A scenario with no human player at all (a map only meant for the editor) stays fog free.
+            // The world owns the map state, the fog of war included (ADR-131): the scene loads the map into
+            // World.Current the way a started scenario does, and every rule that opens the fog writes into
+            // the same table the renderer walks.
+            World world = World.Current;
+            world.LoadMap(map);
+
+            // The fog is drawn for the colors the map declares as human, like Players::FriendColors() in the
+            // reference: a tile is fogged only when every one of them has not discovered it yet. A scenario
+            // with no human player at all (a map only meant for the editor) stays fog free.
             PlayerColor observers = map.Info.HumanPlayers;
-            MapFog? fog = CreateFog(map, observers, focus);
+            int scouted = ScoutStart(world, observers, focus);
+            MapFog? fog = observers == PlayerColor.None ? null : world.Fog;
             FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
 
             // Both sets share one decoder cache, so keeping them apart is only about what they map.
@@ -183,6 +202,7 @@ public sealed class AdventureMapScene : IScene
             AdventureMapScene scene = new(
                 frame,
                 fonts,
+                world,
                 view,
                 minimap,
                 mapFrame,
@@ -193,7 +213,7 @@ public sealed class AdventureMapScene : IScene
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
                 $"{scene.View.MapPixelSize.Width}x{scene.View.MapPixelSize.Height} pixels, " +
                 $"{map.Castles.Count} castles, {map.Addons.Count} add-ons, " +
-                $"{scene.View.Fog?.CountFogged() ?? 0} tiles under the fog).");
+                $"{scouted} tiles scouted, {scene.View.Fog?.CountFogged() ?? 0} under the fog).");
 
             return scene;
         }
@@ -209,33 +229,44 @@ public sealed class AdventureMapScene : IScene
     public void Update(double elapsedSeconds) => _mouse.Update(elapsedSeconds);
 
     /// <summary>
-    /// The fog of war at the start of a scenario, <see langword="null"/> when the map has no human
-    /// player and is therefore drawn without fog at all.
+    /// The scouting a scenario runs once its map is read, <c>World::ClearFog( colors )</c>
+    /// (<c>world.cpp:838</c>) followed by the stand-in for the town the view starts on.
     /// </summary>
     /// <remarks>
-    /// The reference scouts around the heroes and the castles of the human colors
-    /// (<c>AllHeroes::Scout</c> and <c>AllCastles::Scout</c>). An MP2 castle carries no owner — the
-    /// castle table of the format is only <c>x</c>, <c>y</c> and the castle type, and
-    /// <c>world_loadmap.cpp</c> creates every one of them with <c>PlayerColor::NONE</c> — so the
-    /// kingdom is not modelled yet and <paramref name="focus"/> stands in for it: the tile the view
-    /// starts on is scouted with the castle radius, exactly what owning that castle would give.
+    /// <para>
+    /// The reference scouting is <c>AllHeroes::Scout</c> plus <c>AllCastles::Scout</c> of the human
+    /// colors, both inside <c>World::ClearFog( colors )</c>; that is exactly the call below, on the world
+    /// the scene just loaded.
+    /// </para>
+    /// <para>
+    /// An MP2 castle carries no owner — the castle table of the format is only <c>x</c>, <c>y</c> and the
+    /// castle type, and <c>world_loadmap.cpp</c> creates every one of them with <c>PlayerColor::NONE</c> —
+    /// so the castle half of <c>ClearFog</c> finds nothing to do and <paramref name="focus"/> stands in
+    /// for the kingdom the port does not model yet: the tile the view starts on is scouted with the castle
+    /// radius, exactly what owning that castle would give. Once the map carries owners this extra reveal is
+    /// what to delete.
+    /// </para>
     /// </remarks>
-    private static MapFog? CreateFog(Mp2Map map, PlayerColor observers, Mp2CastlePosition? focus)
+    /// <param name="world">The world the map was just loaded into.</param>
+    /// <param name="observers">The colors the fog is drawn for.</param>
+    /// <param name="focus">The town the view is centred on, if the map has one.</param>
+    /// <returns>Number of tiles that lost the fog.</returns>
+    private static int ScoutStart(World world, PlayerColor observers, Mp2CastlePosition? focus)
     {
         if (observers == PlayerColor.None)
         {
-            return null;
+            return 0;
         }
 
-        MapFog fog = MapFog.CreateForMap(map, observers);
+        int revealed = world.ClearFog(observers);
 
         if (focus is not null)
         {
-            fog.Reveal(focus.X, focus.Y, MapFog.CastleRevealDistance, observers);
-            fog.UpdateDirections(observers);
+            revealed += world.ClearFog(
+                (focus.Y * world.Width) + focus.X, MapFog.CastleRevealDistance, observers);
         }
 
-        return fog;
+        return revealed;
     }
 
     /// <summary>

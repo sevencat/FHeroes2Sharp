@@ -28,7 +28,12 @@ public static partial class Mp2ObjectTypes
     /// </summary>
     /// <param name="type">Object type to test.</param>
     /// <returns><see langword="true"/> for the magic well.</returns>
-    public static bool IsDayLife(Mp2ObjectType type) => type == Mp2ObjectType.ActionMagicWell;
+    /// <remarks>
+    /// 参考比较的是 <c>OBJ_ACTION_MAGIC_WELL</c>（`mp2.cpp:507`），因为参考的内存里动作对象带着 +128 的位；
+    /// 端口的瓦片存的是 MP2 文件的原始值（无动作位），所以这里与 <see cref="IsWeekLife"/> 一样比非动作值。
+    /// 一个 `MP2::isDayLife` 的调用点在端口中一条也不差：`Visit.IsDayLife` 只把它当「这个对象一天寿命」用。
+    /// </remarks>
+    public static bool IsDayLife(Mp2ObjectType type) => type == Mp2ObjectType.MagicWell;
 
     /// <summary>
     /// <c>MP2::isInGameActionObject</c> (<c>mp2.cpp:635</c>): whether the object is an action object that

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Random;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
@@ -107,6 +108,12 @@ public sealed partial class World
     private readonly List<int> _allEyeOfMagi = [];
 
     /// <summary>
+    /// The fog of war, made on first use and dropped by <see cref="Reset"/>; <c>Maps::Tile::_fogColors</c>
+    /// gathered into one table.
+    /// </summary>
+    private MapFog? _fog;
+
+    /// <summary>
     /// Creates an empty world. Use <see cref="Current"/> in production code; this constructor exists
     /// for tests and for a second, isolated map instance.
     /// </summary>
@@ -173,6 +180,18 @@ public sealed partial class World
         _heroes.GetHeroForHire(race, heroIdToIgnore);
 
     /// <summary>
+    /// The hero a jail on <paramref name="tileIndex"/> holds, <c>World::FromJailHeroes()</c>
+    /// (<c>world.h:340</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>world.h:340</c>，一行转给 <c>vec_heroes.FromJail</c>。地图加载时被关的英雄由
+    /// <see cref="Hero.LoadFromMP2"/> 设上 <see cref="HeroModes.Jail"/> 位并站到监狱瓦片上，这里按位置找人。
+    /// </remarks>
+    /// <param name="tileIndex">Tile index of the jail.</param>
+    /// <returns>The prisoner, or <see langword="null"/> when the jail is empty.</returns>
+    public Hero? FromJailHeroes(int tileIndex) => _heroes.FromJail(tileIndex);
+
+    /// <summary>
     /// Stone liths grouped by their sprite index, <c>_allTeleports</c> (<c>world.cpp:1201</c>).
     /// </summary>
     /// <remarks>
@@ -218,6 +237,174 @@ public sealed partial class World
     /// <param name="tileIndex">Index of the tile.</param>
     /// <returns>The sphinx, or <see langword="null"/> when the tile carries none.</returns>
     public MapSphinx? GetMapSphinx(int tileIndex) => _mapObjects.Get<MapSphinx>(tileIndex);
+
+    /// <summary>
+    /// The fog of war of the map.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把迷雾<b>存在每一块瓦片的元数据里</b>（<c>Maps::Tile::_fogColors</c>，一个颜色位掩码），
+    /// <c>Maps::ClearFog</c> 直接改瓦片。端口把这层状态收在 <see cref="MapFog"/> 里：
+    /// 「每块瓦片对哪些颜色还没被发现」加一份由此算出的方向掩码，供渲染器使用。
+    /// </para>
+    /// <para>
+    /// <b>按需创建</b>：没有地图时返回 <see langword="null"/>，有尺寸时按 <see cref="Width"/>×
+    /// <see cref="Height"/> 建一张全黑的表。这样两个加载器（<see cref="GenerateUninitializedMap"/> 与
+    /// <see cref="LoadMap"/>）都不必记得同时建迷雾，<see cref="Reset"/> 只管把它丢掉。
+    /// </para>
+    /// <para>
+    /// <b>开局侦察要自己调</b>：地图一加载就是全黑的，参考在 <c>game_startgame.cpp:769</c> 里紧接着调
+    /// <c>World::ClearFog( colors )</c>，端口的同名重载（<see cref="ClearFog(PlayerColor)"/>）就是这一步。
+    /// 之后只有真正调用 <see cref="ClearFog(int, int, PlayerColor)"/> 的对象（观察塔）、
+    /// <see cref="ActionForMagellanMaps"/> 与走动的英雄（<c>FogHeroMovementHandler</c>）才会揭开。
+    /// </para>
+    /// </remarks>
+    public MapFog? Fog
+    {
+        get
+        {
+            if (Width <= 0 || Height <= 0)
+            {
+                return null;
+            }
+
+            return _fog ??= new MapFog(Width, Height);
+        }
+    }
+
+    /// <summary>
+    /// Reveals the disc around a tile, <c>Maps::ClearFog()</c> (<c>maps.cpp:464</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>maps.cpp:464-500</c>。半径 ≤ 0 或瓦片号越界时<b>什么也不做</b>（参考直接 <c>return</c>），
+    /// 端口返回 0。半径到方形距离的换算是 <see cref="MapFog.SquaredRevealLimit"/>，不是简单的半径平方——
+    /// 见那里的说明。
+    /// </para>
+    /// <para>
+    /// 参考顺手用 <c>updateDirectionsInArea</c> 只重算被揭开的矩形；端口按整张图重算
+    /// （<see cref="MapFog.UpdateDirections"/>），代价可以忽略，换来不必追踪脏矩形。
+    /// </para>
+    /// <para>
+    /// <b>只揭自己的颜色</b>：参考揭 <c>Players::GetPlayerFriends( color )</c>（盟友一起看见），端口没有联盟，
+    /// <see cref="Hero.IsFriends"/> 是那个缺口唯一的一处，等联盟落地再改这里。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">Center tile.</param>
+    /// <param name="distance">Radius in tiles; values at or below zero reveal nothing.</param>
+    /// <param name="color">The colors that lose the fog.</param>
+    /// <returns>Number of tiles that were uncovered; <c>0</c> when nothing changed.</returns>
+    public int ClearFog(int tileIndex, int distance, PlayerColor color)
+    {
+        if (distance <= 0 || color == PlayerColor.None || tileIndex < 0 || tileIndex >= _tiles.Count)
+        {
+            return 0;
+        }
+
+        MapFog? fog = Fog;
+
+        if (fog is null)
+        {
+            return 0;
+        }
+
+        int revealed = fog.Reveal(tileIndex % Width, tileIndex / Width, distance, color);
+        fog.UpdateDirections(color);
+
+        return revealed;
+    }
+
+    /// <summary>
+    /// Reveals every water tile of the map, <c>World::ActionForMagellanMaps()</c> (<c>world.cpp:906</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>world.cpp:906-922</c>。逐块看瓦片，<b>只要是水</b>就揭掉——地图上的海一次看全，
+    /// 陆地上的一概不动。这是麦哲伦地图（<c>MagellansMaps</c>）买到的东西。
+    /// </para>
+    /// <para>
+    /// 参考对 AI 王国还会额外通知 <c>AI::Planner::revealFog</c>；端口没有 AI 规划器，那一行留给将来。
+    /// </para>
+    /// </remarks>
+    /// <param name="color">The colors that lose the fog.</param>
+    /// <returns>Number of water tiles that were uncovered; <c>0</c> when nothing changed.</returns>
+    public int ActionForMagellanMaps(PlayerColor color)
+    {
+        if (color == PlayerColor.None)
+        {
+            return 0;
+        }
+
+        MapFog? fog = Fog;
+
+        if (fog is null)
+        {
+            return 0;
+        }
+
+        int revealed = 0;
+
+        for (int index = 0; index < _tiles.Count; ++index)
+        {
+            if (_tiles[index].IsWater)
+            {
+                // A radius of zero reveals the tile it is centered on and nothing else.
+                revealed += fog.Reveal(index % Width, index / Width, 0, color);
+            }
+        }
+
+        if (revealed > 0)
+        {
+            fog.UpdateDirections(color);
+        }
+
+        return revealed;
+    }
+
+    /// <summary>
+    /// Uncovers the fog around everything a player owns, <c>World::ClearFog( PlayerColor )</c>
+    /// (<c>world.cpp:838-848</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>world.cpp:838-848</c>。三件事，顺序固定：<c>vec_castles.Scout( colors )</c>、
+    /// <c>vec_heroes.Scout( colors )</c>、<c>map_captureobj.ClearFog( colors )</c>。前两件现在都在
+    /// （<see cref="Castle.AllCastles.Scout"/> 与 <see cref="Heroes.AllHeroes.Scout"/>），第三件还没有：
+    /// 「被占领的矿井/资源点对盟友可见」要先把占领记录做成带颜色的表，端口的
+    /// <c>CapturedObject</c> 只记颜色与对象类型，没有迷雾位。
+    /// </para>
+    /// <para>
+    /// <b>调用时机</b>：参考在 <c>game_startgame.cpp:769</c> 里，开局读到盘面之后调一次，此后城堡被占领、
+    /// 英雄被招募（<c>Heroes::Scout</c> 也在招募与挖宝之后被单独调用）时再补。端口没有游戏循环，这个方法就是
+    /// 留给它的入口。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="ClearFog(int, int, PlayerColor)"/> 同名的重载：那个揭<b>一个圆</b>，这个揭<b>一方的全部
+    /// 家当</b>。参考里它们甚至不在一个文件（<c>maps.cpp</c> / <c>world.cpp</c>），端口放在一起是因为两者都只是
+    /// 在改同一张迷雾表。
+    /// </para>
+    /// </remarks>
+    /// <param name="color">The color whose towns and heroes scout; <see cref="PlayerColor.None"/> does
+    /// nothing.</param>
+    /// <returns>Number of tiles uncovered.</returns>
+    public int ClearFog(PlayerColor color)
+    {
+        if (color == PlayerColor.None)
+        {
+            return 0;
+        }
+
+        int revealed = _castles.Scout(this, color);
+
+        revealed += _heroes.Scout(this, color);
+
+        // Every reveal already recomputes the masks of its colors, but a call that reveals nothing — a map
+        // whose human color has no hero and no town — still has to leave the table ready to be drawn: the
+        // renderer walks the direction masks, not the fog bytes, and a fresh table has none yet.
+        Fog?.UpdateDirections(color);
+
+        return revealed;
+    }
 
     /// <summary>
     /// The timed events of the map, <c>vec_eventsday</c> (<c>world.h:559</c>).
@@ -413,10 +600,11 @@ public sealed partial class World
     /// </para>
     /// <para>
     /// <b>What is not here</b>: <c>NewMonth()</c> (the month of monsters), <c>NewWeek()</c> (the week-life
-    /// objects, the neutral monster refresh, the recruit reset) and <c>vec_kingdoms/vec_heroes</c>' own ticks.
-    /// Each of them needs a system the port does not have (the monster spawner, the recruit pool, the hero
-    /// pool), so each is added here — in this order — together with that system. The order matters and is the
-    /// part that is expensive to change: the month turns first, then the week, then the day.
+    /// objects, the neutral monster refresh) and <c>vec_heroes</c>' own tick. Each of them needs a system the
+    /// port does not have (the monster spawner, the hero pool), so each is added here — in this order — together
+    /// with that system. The order matters and is the part that is expensive to change: the month turns first,
+    /// then the week, then the day. The kingdoms' own ticks <b>are</b> here (<see cref="Kingdom.Kingdoms.NewWeek"/>
+    /// and <see cref="Kingdom.Kingdoms.NewDay"/>, ADR-120).
     /// </para>
     /// <para>
     /// The week type is <b>not</b> on this list: <see cref="WeekType"/> is derived from the counters
@@ -437,11 +625,12 @@ public sealed partial class World
             }
 
             // world.cpp:443-455: the week reaches the systems before their day does, and the ones that need a
-            // missing system (the month of monsters, the week-life spawner, the kingdoms' recruits) are still
-            // to come — in that order.
+            // missing system (the month of monsters, the week-life spawner) are still to come — in that order.
+            _kingdoms.NewWeek(_week);
             _castles.NewWeek(_week, WeekType, IsBeginMonth, _day);
         }
 
+        _kingdoms.NewDay(_day);
         _castles.NewDay();
 
         // The reference removes events that are past their only occurrence after every tick, checking
@@ -878,6 +1067,9 @@ public sealed partial class World
         _dailyEvents.Clear();
         _rumors.Clear();
         _capturedObjects.Clear();
+
+        // The fog is built for one map's size, exactly like the teleport table below.
+        _fog = null;
 
         // The kingdoms hold no map-dependent state, so clearing them is enough (world.cpp:308).
         _kingdoms.Clear();

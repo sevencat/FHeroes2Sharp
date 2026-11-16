@@ -933,7 +933,7 @@ dotnet run -- --data F:\game\fh2 --open-scenario --smoke-frames 20 → 112 maps 
 | `Game.AdventureMap.FogDirection` / `FogFrames` | ✅ | `DIRECTION_*` 位与复合掩码（`All`、`CenterRow`、四角等）；`Resolve` 按参考 `drawFog` 的 if/else 原始顺序选帧：整瓦 `( column + row ) % 4`，其余落 `CLOP32` 的 34 帧边界表，`Flipped` 对应 `BlitOnTile( ..., revert )`；非法掩码回退整瓦 |
 | `Game.AdventureMap.IFogSpriteSource` + `FogSpriteSet` | ✅ | `CLOF32.TIL`（4 张 32×32）走 `TilFile`、`CLOP32.ICN`（34 帧）走共用的 `IcnSpriteCache`；镜像用 `ImageOps.Flip` 并保留 offset；缺数据或解码失败给 `null`，视图不画雾 |
 | `AdventureMapView` 雾层 | ✅ | `Draw` = 地形 → 精灵 → 雾；整瓦 `ImageOps.Blit`、边界件落位 `x = tileWidth - sprite.OffsetX - sprite.Width`；雾后对每格重画 `OBJNTWBA`、城堡再画 `OBJNTOWN`（`DrawObjectParts` 查 add-on 链与瓦片自身，只画 `GroundIcnType` 匹配的部件）；英雄/怪物在 `IsUnderFog` 时跳过，船用 `IsUnderFogWithUpperTile`（两格都被遮才跳过） |
-| `AdventureMapScene` 初始侦察 | ✅ | 观察者取 `map.Info.HumanPlayers`；英雄半径 4 的圆盘由 `MapFog.CreateForMap` 揭示，聚焦城堡再按半径 5 揭示一次（MP2 城堡无颜色，`AllCastles::Scout` 只能占位）；无人类玩家的地图不传 `MapFog`，不画雾 |
+| `AdventureMapScene` 初始侦察 | ✅ | 观察者取 `map.Info.HumanPlayers`；地图装进 `World.Current` 后由 `World.ClearFog( observers )` 揭示英雄圆盘，聚焦城堡再按半径 5 揭示一次（MP2 城堡无颜色，`AllCastles::Scout` 只能占位）；无人类玩家的地图不传 `MapFog`，不画雾（ADR-131） |
 | `tests/FHeroes2.Game.Tests/MapFogTests` + `FogFramesTests` + `FogSpriteSetTests` + `FogLayerTests` | ✅ | 57 条：圆盘几何与多颜色语义、地图边缘的雾掩码、`Unknown`、34 帧判定顺序与 `Flipped`、真资材的 4 张整瓦与 34 帧 offset、整瓦变体、已探索格不被覆盖、雾下英雄不留痕、城镇窗口在雾上重画 |
 
 ### M4 界面外壳 验证记录
@@ -2155,10 +2155,11 @@ M4 的最后一块：雾。参考里雾不是一张覆盖图，而是**瓦片状
 `OBJNTOWN`，所以城镇轮廓在探明前就在雾上（精灵本体被雾「抹平」，只剩轮廓）。本移植的
 `DrawObjectParts` 遍历 add-on 链与瓦片自身，只画 `GroundIcnType` 匹配的部件。
 
-**初始侦察**：`MapFog.CreateForMap` 只揭示**人类颜色**的英雄半径 4 的圆盘（`AllHeroes::Scout`，
-`FogDiscoveryType::HEROES`）；`AdventureMapScene.CreateFog` 再把「聚焦城堡」按半径 5（`CASTLE`）揭示一次。
-参考的 `AllCastles::Scout` 会遍历所有城堡，但 MP2 的城堡表只有 x / y / 类型，`world_loadmap.cpp` 建
-出来的城堡全是 `PlayerColor::NONE`，没有归属可判，因此「聚焦城堡」是占位（与视口居中的占位规则同源）。
+**初始侦察**：只揭示**人类颜色**的英雄半径 4 的圆盘（`AllHeroes::Scout`，`FogDiscoveryType::HEROES`），
+再把「聚焦城堡」按半径 5（`CASTLE`）揭示一次。参考的 `AllCastles::Scout` 会遍历所有城堡，但 MP2 的城堡表
+只有 x / y / 类型，`world_loadmap.cpp` 建出来的城堡全是 `PlayerColor::NONE`，没有归属可判，因此「聚焦城堡」
+是占位（与视口居中的占位规则同源）。当时这套侦察写在场景的 `MapFog.CreateForMap` 里；**ADR-131 之后改由
+`World.Fog` + `World.ClearFog( colors )` 承担**，`CreateForMap` 已删除，见本文末的「场景接上世界迷雾」一节。
 
 **实测**：`Alteris.mp2`（`HumanPlayers = Blue`，Blue 英雄在 `(83;51)` 与 `(82;52)`）初始可见 **82** 格，
 包围盒 `(78;47)-(87;56)`，正是两个半径 4 的圆盘并集；截图里可见区是八边形、边界件接缝无空洞
@@ -4132,3 +4133,477 @@ ADR-104 之后 `Army` 会合兵、搬兵、换兵，但「把兵种升级」还�
 **下一步**：拼图的两头都缺——「谁数已访问的石阵、何时调 `Update`」在 `heroes_action.cpp` 的石阵分支，
 `ShowMapsDialog` 在渲染层，`Puzzle` 的存档读写要等存档格式。`kingdom` 目录只剩 `experience`/`speed`
 （`_()` 文案）与 `kingdom_overview`/`view_world`（界面）四篇。
+
+## 王国的访问名册与日/周推进 ✅（2026-11-16）
+
+「这座风车我这周拿过了」「这座石阵我看过了」「这周已经过去了」——三句话都要一张按对象类型分类的访问名册，
+和两个每天/每周跑一次的清理动作。参考把它们放在 `visit.cpp`（三条寿命谓词）、`kingdom.cpp`（名册本体与
+`ActionNewDay`/`ActionNewWeek`）、`world.cpp:443`（谁在什么时候调）。这一批三处一起搬，顺手把拼图的调用方接上。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Maps/Visit.cs`（新） | `visit.h:24-33`、`visit.cpp:22-40`、`pairs.h:34-44` | `IndexObject`（格子 + 对象类型，`record struct`）、`VisitScope`（`Local`/`Global`）、`Visit.IsDayLife/IsWeekLife/IsBattleLife` |
+| `Kingdom` 访问名册（新） | `kingdom.h` 的 `visit_object`、`kingdom.cpp:666/681` | `SetVisited`（`OBJ_NONE` 不记、同「格子 + 类型」先删后插表头）、`IsVisited(index, type)`、`IsVisited(type)`、`IsVisited(tile)`、`CountVisitedObjects`、`VisitedObjects` |
+| `Kingdom` 其余状态（新） | `kingdom.h:60-69`、`kingdom.h:224-251` | `KingdomModes`（`IdentifyHero`、`KingdomOverviewCastleSelection`）、`SetModes`/`ResetModes`、旅行者帐篷位图 `MarkTravellerTentVisited`/`IsTravellerTentVisited`、水晶球 `AddMonsterUnderVision`/`IsMonsterUnderVisionSpell`、`IsPlay`/`IsControlHuman` |
+| `Kingdom.ActionNewDay`（新） | `kingdom.cpp:197-231` | 清一天寿命的访问记录（**出局也清**）→ 失城倒计时（第一天不算、有城不递减）→ 出局或归零交给 `LossPostActions` → 否则清「已鉴定」位与水晶球 |
+| `Kingdom.ActionNewWeek`（新） | `kingdom.cpp:266-290` | 清一周寿命的访问记录（出局也清）→ 跳过第一周 → 调试赠礼（仅人类）→ 重排酒馆那一对 |
+| `Kingdoms.NewDay`/`NewWeek`（新） | `kingdom.cpp:770-786` | 七个槽全走一遍 |
+| `World.NewDay`（改） | `world.cpp:443-455` | 王国的周在城之前、王国的日在城之前 |
+| `Kingdom.ActionObelisk`（新） | `heroes_action.cpp:2924-2946` | 全局登记 + 按「已访问 / 总数」重算拼图，返回「是否揭开了一角」 |
+
+要点：
+
+* **名册是「格子 + 类型」，不是「格子」**：编辑器（和事件、和战后的地形）会把一个格子上的对象换掉，
+  只按格子去重会把「新对象还没看过」当成旧对象的记录。参考的 `std::find` 找的也是这个二元组。
+* **最新在前**：`SetVisited` 先删同项、再插表头。按类型问「访问过没有」时可以边走边停，`CountVisitedObjects`
+  也不用排序。
+* **清理在 `isPlay()` 之前**：参考自己写了理由（`kingdom.cpp:198`）——已经出局的王国也要清，否则存档里的
+  访问表会一直涨。顺序照抄，日志里那条注释也照抄。
+* **三条寿命正好是三个清理时机**：一天（魔法井）、一周（风车/水车/巢穴）、永久（石阵、一次性加值建筑）。
+  所以 `Visit` 的三条谓词直接转发 `Mp2ObjectTypes` 的分类，不另立一套表。
+* **`IsPlay` 暂时等于「颜色不是无」**：参考问 `Players::Get(color)->isPlay()`。端口还没有 `Players`，
+  用颜色代替，并在 `ActionNewDay` 里加了一个 `_isOutOfGame`：一旦交出去就不再参战——这正是参考
+  `LossPostActions` 第一件事 `SetPlay(false)` 的效果，不这么做的话「已经输了」的王国每天都会再走一遍
+  `LossPostActions`（第一版就是这样，测试抓到了）。
+* **失城倒计时只在「归零那一天」交出去一次**：`IsLoss` 对「一城一英雄都没有」的王国本来就是真，参考靠
+  `SetPlay(false)` 挡住第二次；端口补上了那个状态位，因此回调恰好一次。
+* **`LossPostActions` 是可选回调**：它要 `Players`（改色、删名册、弹胜负框）。端口保留「出局了就别往下走」
+  这一半语义，另一半等 `Players` 落地由调用方传进来——与 `EventDate` 的显示器回调一个路子（ADR-113/114）。
+* **调试赠礼是编译期开关不是运行时开关**：参考用 `IS_DEVEL()`，端口提成 `isDebugMode` 参数；金额照抄
+  （5000 金、20 木、20 水银、其余各 10）。
+* **帐篷与水晶球不进名册**：帐篷是按颜色位的永久解锁（周/日都不清），水晶球是「今天看得见」（每天清）。
+  两者都放在王国上，但生命周期不同，所以不与 `visit_object` 混在一起。
+* **石阵走 `GLOBAL`、风车走 `LOCAL`**：这是 `heroes_action.cpp` 每一支自己选的。石阵进王国名册，因为
+  换个英雄去同一座石阵不该再揭一次；风车进英雄自己的记录（等 `hero.GetKingdom()` 那条链接落地后再说）。
+
+用例：新增 `KingdomVisitTests` 17 条（最新在前且不重复、按格子/按类型/按瓦片问、`OBJ_NONE` 不记、
+数石阵、日/周各清各的、出局也清、失城倒计时八天归零、胜负流程只交一次、每日清「已鉴定」与水晶球、
+调试赠礼只给人类且跳过第一周、帐篷是永久解锁、`Clear` 忘干净、七槽全 tick、石阵首次/重复/全开）。
+`FHeroes2.Game.Tests` 1437 → **1454**，全解决方案 2124 → **2141** 条全绿，0 警告 0 错误。
+覆盖率：`maps` 目录 `3/7/7` → **`4/7/6`**（`visit` 由「未转」变 ✔），合计 **33/63/153** → **34/63/152**。
+
+**下一步**：`hero.GetKingdom()` 那条链接（英雄 → 王国）是 `heroes_action.cpp` 其余每一支的前置；`ActionNewMonth`
+要 `Settings`；`castle` 的法师塔要 `spell.cpp` 的种族权重表；`battle` 核心要 `HeroBase`/`Battle::Board`。
+
+## 英雄的访问名册、动作层与运气/士气重算 ✅（2026-11-16）
+
+上一批把名册放在王国上，这一批把它放在英雄上：`Heroes::SetVisited`/`isVisited` 有两层（`Visit::LOCAL` 记在
+英雄自己身上，`Visit::GLOBAL` 转给王国），`GetLuck`/`GetMorale` 每次按「访问过的对象类型集合」重算，`heroes_action.cpp`
+的十二支动作对象也一起搬（魔法井、泉眼、运气/士气建筑四支，加上黑猫、风车/水车/小屋/魔法花园、马厩、
+旅行者帐篷、石阵、竞技场、屏障、取宝），顺手把「英雄在每日/每周该做什么」接到王国的 tick 上；后面一章再补
+凉亭与知识树两支（见下一节）。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Hero.Visit.cs`（新） | `heroes.cpp:1165`（`ActionNewDay`）、`:1178`（`ActionNewWeek`）、`:1183`（`ActionAfterBattle`）、`:1190`（`getDailyRestoredSpellPoints`）、`:1261-1320`（`isVisited`/`SetVisited`/`isObjectTypeVisited`/`getAllVisitedObjectTypes`） | 英雄侧名册 `_visitedObjects`（最新在前）、`IsVisited(int, type)`/`IsVisited(Tile)`/`IsObjectTypeVisited`/`GetAllVisitedObjectTypes`（按类型去重）、`SetVisited`、`ClearVisitedObjects`；日/周/战后三个清理动作 |
+| `Hero.Morale.cs`（改） | `heroes.cpp:145-205`（两个对象修正汇总）、`:1033-1102`（`GetMorale`/`getMoraleWithModifiers`/`GetLuck`/`getLuckWithModifiers`） | `GetMorale`/`GetLuck` 改为「技能项 + 访问对象项」重算，`GetVisitedObjectsMorale/Luck` 用 `Sum(GameStatic.Get…)` |
+| `GameStatic.cs`（新） | `game_static.cpp:135`（`GetHeroesRestoreSpellPointsPerDay`）、`:165`（`getObjectLuckEffect`）、`:183`（`getObjectMoraleEffect`）、`:283`（`getMovementPointBonus`） | 每日回蓝常数、运气/士气修正表、移动点加成表 |
+| `HeroActions.cs`（新） | `heroes_action.cpp:795`（资源对象）、`:1109`（运气建筑）、`:1253`（魔法井）、`:1463`（士气建筑）、`:1611`（取宝）、`:2541`（泉眼）、`:2924`（石阵）、`:3313`（马厩）、`:3353`（竞技场）、`:3650`（屏障）、`:3681`（帐篷）、`:3702`（黑猫） | `ActionToMagicWell`、`ActionToArtesianSpring`、`ActionToGoodMoraleObject`、`ActionToGoodLuckObject`、`ActionToBlackCat`、`ActionToObjectResource`（风车/水车/小屋/魔法花园）、`ActionToStables`、`ActionToTravellersTent`、`ActionToObelisk`、`ActionToArena`、`ActionToBarrier`、`ActionToArtifact`（+ `ArtifactPickupOutcome`），以及 `IsGoodLuckObject`/`IsGoodMoraleObject`/`IsResourceObject` 三张清单 |
+| `Tile.GetArtifactCaptureCondition`（新） | `maps_tiles_helper.cpp:623` | 从 `metadata[2]` 读神器守卫条件；非神器对象回 `NoConditions` |
+| `Kingdoms.IsAnyVisited`（新） | `kingdom.cpp` 的 `isVisited(type)` 跨王国版 | 泉眼「全局只算一次」的查询 |
+| `Kingdom.AddHero`（改） | `players.cpp` 里给英雄上色的那一句 | `hero.SetColor(_color)`；没有它英雄的 `Color` 停在 `None`，查王国会落到第七槽 |
+| `Mp2ObjectTypes.IsDayLife`（改） | `mp2.cpp` 的 `isDayLifeObject` | 比较值从 `ActionMagicWell` 改成 `MagicWell` |
+| `Visit.cs`（改） | `visit.cpp:22-40` | 三条谓词改为转发 `Mp2ObjectTypes` 的分类表，不再自己维护一份 |
+
+要点：
+
+* **`LOCAL` 与 `GLOBAL` 是两层，不是一个开关**：参考的 `isVisited(tile, type)` 按 `type` 决定问自己还是问王国；
+  端口照抄，`SetVisited` 则是「`LOCAL` 记自己、`GLOBAL` 记王国」。这样魔法井（每天一次，记自己）和泉眼
+  （每张图一次，记王国）可以共用同一份代码。
+* **英雄的名册遇到重复不动位置**：`SetVisited` 只在「没记过」时插表头，已在表里就直接返回。王国那份是「先删后插」。
+  这是参考的两段不同代码，测试分别钉住了（英雄 `[0]=Fountain`、`[1]=Windmill`，王国表头会翻新）。
+* **`OBJ_NONE` 不记**：`SetVisited` 一进门就挡掉，否则清雾、路边空地的访问会把名册撑爆。
+* **运气/士气是「重算」不是「累计」**：不存计数器，`GetLuck`/`GetMorale` 每次遍历访问名册的类型集合、查
+  `GameStatic` 的两张表求和。所以「战时加成消失」只要删记录——`ActionAfterBattle` 删掉战斗寿命的对象，数值
+  自己就回落了，不需要记「该减多少」。
+* **按类型去重求和**：去过两座不同的喷泉仍然只 +1（参考的 `std::set<MapObjectType>`）。端口用 `Distinct()`。
+* **每日回蓝「第一天不算」**：参考只在 `dayCount > 1` 时回蓝，且仅在移动点满时（`ActionNewDay` 开头就判
+  `move_point < GetMaxMovePoints()` 直接返回）。端口照抄，测试钉住「第 1 天不回」。
+* **神秘术按等级加回蓝**：`getDailyRestoredSpellPoints` 是「常数 1 + 神秘术等级」，端口在
+  `GetDailyRestoredSpellPoints()` 里查 `SecSkills`。
+* **泉眼「无论成败都登记」**：参考把 `GetKingdom().SetVisited(dst_index, GLOBAL)` 写在 `if` 外面——没补到法力
+  也算「这周来过了」。端口照抄，测试用「满法力去一次、第二天再去仍然没补」钉住。
+* **动作层不认英雄的王国**：端口没有 `hero.GetKingdom()`，`HeroActions` 收一个 `Kingdoms`，用 `hero.Color`
+  查。这也是 `Kingdom.AddHero` 补 `SetColor` 的原因——色是空的，查表就会落到第七槽（测试当场抓到）。
+* **`IsDayLife` 比的是不带动作位的值**：端口的瓦片存 MP2 原始值，动作位（+128）是运行时算的；参考的
+  `OBJ_MAGIC_WELL` 本身就带动作位。第一版照抄常量，Assets 侧的分类测试立刻红了。
+* **风车/水车「拿过没有」看瓦片，不看名册**：钱与资源存在瓦片的 `metadata` 里，`ActionToObjectResource` 取完就
+  `ResetObjectMetadata`，第二次读到空的。`setVisitedForAllies` 那句照样登记进王国名册，但那只为界面/AI 提示用。
+* **马厩是 400 不是 500**：参考里 `OBJ_STABLES` 与 `OBJ_WATERING_HOLE` 共用一个 `case`。马厩的另一半（在场骑兵免费
+  升级）属于 `ActionToUpgradeArmyObject`，要费用与确认框，还没搬。
+* **黑猫、帐篷不进同一条路**：黑猫记英雄本地名册（永久，三条清理都不碰），帐篷连名册都不进，只在王国上点一色位。
+* **石阵只做转发**：英雄侧那一支只负责把「地图上石阵总数」喂给 `Kingdom.ActionObelisk`（ADR-121 已有登记与拼图
+  重算），返回值 `false` 同时表示「已经看过」。
+* **竞技场四选一提到参数上**：参考在动作里弹 `Dialog::SelectSkillFromArena()`；端口改成
+  `ActionToArena(tileIndex, skill)`，界面先问再调。守卫那句「The Arena guards turn you away」就是返回 `false`。
+* **屏障什么都不改**：参考 `ActionToBarrier` 只查「同色帐篷进过没有」然后说两句不同的话。端口折成
+  `ActionToBarrier` 返回 `bool`，供移动/界面判定；真正放行仍在移动规则里。
+* **取宝有三道门，顺序不能换**：已有法术书 → 满包 → 守卫条件；前两道都不动瓦片，宝物留在地上。端口在第三道
+  只看「无条件/卷轴」两种，付费三种返回 `NeedsPayment`（等玩家掏钱再来），技能/战斗/阵营返回 `NotSupported`。
+
+用例：新增 `HeroVisitTests` 10 条（名册最新在前且不挪位、去重集合、`None` 不记、每日回蓝、第 1 天不回、
+不超上限、神秘术 +3、日/周/战后各自清理、王国替英雄 tick）与 `HeroActionsTests` 27 条（魔法井一次/满法力/次日再喝、
+泉眼双倍与全局记录、绿洲 800/水坑 400/神殿 +2 无移动点、三座神殿仍 +2、喷泉 +1 运气、战后丢失、跨族对象无效、
+两族清单；黑猫只算一次、风车付钱并清空瓦片、空水车仍登记王国、四类资源对象清单、马厩 400 与每周重置、
+帐篷只解自己那一色且不进名册、石阵只揭一次、竞技场只练一次、屏障只认同色帐篷、免费取宝清空瓦片、
+满包拒收且留宝、第二本法术书被拒、付费守卫等钱、技能守卫不冒充已实现）。`FHeroes2.Game.Tests` **1436**，
+全解决方案 **2123** 条全绿，0 警告 0 错误。（本段初版记的 1491/2178 是计数笔误，两处以本节实测为准。）
+覆盖率不变：`heroes.cpp`、`heroes_action.cpp`、`game_static.cpp`、`maps_tiles_helper.cpp` 早已在「部分」里，
+合计仍 **34/63/152**。
+
+## 英雄的经验、升级抽签与第一批发经验的对象 ✅（2026-11-16）
+
+上一批铺的是「不花经验」的那一半动作，这一批补上经验这条主链：`Heroes::IncreaseExperience` 的连升、`_levelUp`
+的两次抽签（主技能一点 + 副技能二选一），以及两个真正发经验的对象——凉亭（1000 点）与知识树（正好一级的经验，
+可能收费）。升级链一通，后面所有「打赢给经验」「访问给经验」的分支都有了落点。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Hero.Experience.cs`（新） | `heroes.cpp:1482`（`IncreaseExperience`）、`:1848`（`_levelUp`）、`:1862`（副技能那一半）、`:2201`（`_getSeedsForLevelUp`） | `Experience`/`Level`/`SetExperience`/`IncreaseExperience`/`LevelUp`；等级由经验反查，连升时逐级压门槛 |
+| `SkillLevelUp.cs`（新） | `skill.cpp:99`（`SecondaryPriorityFromRace`）、`:217`（`Primary::LevelUp`）、`:782`（`FindSkillsForLevelUp`） | 主技能加权抽签、副技能两候选（Expert 与满书黑名单、魔法职业每三级强制智慧、第二候选带第一候选的黑名单）、`IsMagicalRace` |
+| `HeroActions.cs`（改） | `heroes_action.cpp:1521`（凉亭）、`:2946-3026`（知识树） | `ActionToExperienceObject`、`ActionToTreeKnowledge`（+ `TreeKnowledgeOutcome`）、`ExperienceOfCurrentLevel` |
+| `Tile.GetTreeOfKnowledgeRequirement`（新） | `maps_tiles_helper.cpp:697` | `metadata[0]` 资源 + `metadata[1]` 数量 → `Funds`；零数量即免费 |
+
+要点：
+
+* **等级不存，反查**：参考的存档里只有经验，`GetLevel()` 每次查阈值表。端口照抄，`Level` 是只读属性，`SetExperience`
+  改经验、等级自动跟着走。
+* **连升三级要抽三次，不是抽一次乘三**：参考先把经验压到每一级的门槛上逐级 `_levelUp`，最后写回真实经验。
+  这样每一级的种子都基于「当时的等级与技能」，否则连升的几级会拿到同一套牌。
+* **种子是「地图种子 × 英雄状态」的哈希**：参考 `_getSeedsForLevelUp` 把地图种子、英雄 id、种族、四项主技能和
+  **十四个**副技能等级（含没学的）混进去，再 +0/+1/+2/+3 得到四个种子。少了任何一项，「重开同图」就复现不了，
+  或者每级都抽到同一个技能。端口逐项照抄。
+* **「谁选副技能」抽成委托**：参考有人类弹窗、AI 决策、`autoselect` 三条路；端口 `IncreaseExperience(amount, mapSeed,
+  chooser)`，`chooser` 为 `null` 时就是 `autoselect`（种子掷一次）。界面接上后传自己的函数即可，升级算法不用再改。
+* **主技能从不问人**：参考也只按权重抽一点加上去，没有「选攻击还是防御」这回事。
+* **知识树给的是「本级经验」，不是固定值**：`FromLevel(level) - FromLevel(level - 1)`，所以永远刚好推上一级、
+  且只推一级。参考的 `GetExperienceFromLevel` 表首项是 0，`level - 1` 在 1 级时取到 0 也成立。
+* **知识树写两份名册，顺序不能换**：先**无条件**记王国（参考的 `SetVisited(dst_index, Visit::GLOBAL)`，付费树
+  也是先登记再说），真的加经验时才记英雄本地。于是「钱不够」的英雄下次还能来，「学过了」的那次只看本地。
+* **凉亭记瓦片级名册**：地图上多个凉亭各给一次 1000 点，不是「同类型只算一次」。
+* **侦察术学成后开图那段没搬**：它要雾与雷达，属于迷雾系统；升级本身不依赖它。
+
+用例：新增 `HeroExperienceTests` 10 条（等级按阈值反查、知识树正好给一级经验且第二次不给、付费树扣钱、钱不够
+不扣不加且只记王国、凉亭每片瓦片一次、升级加一点主技能与一项副技能、连升两级抽两次、同种子同状态可复现、
+选择器决定拿哪一张、四个魔法职业）。`FHeroes2.Game.Tests` → **1446**，全解决方案 → **2133** 条全绿，0 警告 0 错误。
+覆盖率不变：`heroes.cpp`、`skill.cpp`、`heroes_action.cpp`、`maps_tiles_helper.cpp` 早已在「部分」里，合计仍
+**34/63/152**。
+
+## 神殿与女巫小屋：给法术、给技能 ✅（2026-11-16）
+
+经验链通了以后，「给法术」与「给技能」这两簇就能落地了。它们的动作本身很短，难的是三处语义：没有法术书、
+没有智慧术却碰上三级法术、八个副技能槽已满；以及一条容易写错的规矩——**名册登记在所有分支之外**。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `TileMetadata.GetSpellFromTile`（新） | `maps_tiles_helper.cpp:388` | 三个圆环的神殿与金字塔共用一个车道：`metadata[0]` 是法术编号，与 `Spell` 同序 |
+| `TileMetadata.GetSecondarySkillFromWitchsHut`（新） | `maps_tiles_helper.cpp:708` | `metadata[0]` 是技能编号，等级固定为基础 |
+| `Hero.SecondarySkills.cs`（新） | `heroes.cpp:1722`（`HasSecondarySkill`）、`:1732`（`HasMaxSecondarySkill`）、`:1737`（`GetLevelSkill`）、`:1742`（`LearnSkill`） | 三个查询与一个学习；都是对 `SecSkills` 的一行转发，独立出来是为了「英雄会不会这门技能」这层语义 |
+| `HeroActions.ActionToShrine`（新） | `heroes_action.cpp:995-1056` | 四道门：无书 / 三级法术无智慧 / 书里已有 / 抄进书；`ShrineOutcome` |
+| `HeroActions.ActionToWitchsHut`（新） | `heroes_action.cpp:1058-1107` | 三道门：满八槽 / 已会 / 按基础等级学会；`WitchsHutOutcome` |
+
+要点：
+
+* **智慧术只挡三级法术**：参考的条件是 `3 == spellLevel && GetLevelSkill( WISDOM ) == NONE`。一二级不看，四五级
+  的金字塔根本不走这条（它走带守卫的 `ActionToPyramid`，`heroes_action.cpp:3902`）。
+* **查书时 `skipBag = true`**：`HaveSpell( id, true )` 只查法术书。若查背包，一张同法术的卷轴会让神殿误判「你已经
+  会了」——而卷轴本身并不在书里。
+* **名册写在所有分支之外**：参考的 `SetVisited( dst_index, Visit::GLOBAL )` 在 if/else 链结束之后无条件执行，端口
+  照抄。于是「没书」「听不懂」「已会」这三次访问都会被王国记住，人类英雄再来一次照样看同一段对话——判定靠
+  「书里有没有」，名册只服务 AI 与界面。这一点与知识树恰好相反（知识树靠名册挡重复访问）。
+* **两支都不登记英雄本地**：只写 GLOBAL，`Hero.IsVisited` 保持干净。凉亭/知识树是「瓦片级一次」，这两支是
+  「每次都能进、但学会了就不再给」，三种语义各有各的落点。
+* **满槽是 8 而不是 14**：`HasMaxSecondarySkill` 比的是 `SecSkills.Count` 与 `MaxCount`（8 个槽），不是会了几种技能。
+  `LearnSkill` 自己不挡第九个——参考也不挡，满槽检查是调用方的事。
+* **侦察术开图没搬**：参考学会 Scouting 时顺手 `Scout`+`ScoutRadar`，端口没有迷雾，技能照常记下。
+
+用例：新增 `HeroShrineTests` 10 条（无书不教但王国仍记账、写入书里、三级法术无智慧被拒、有智慧就学会、同一法术
+不教第二次、只记王国不记英雄、小屋教基础技能、已会不重复、满八槽拒收、小屋也只记王国）。`FHeroes2.Game.Tests` →
+**1456**，全解决方案 → **2143** 条全绿，0 警告 0 错误。覆盖率：`maps_tiles_helper.cpp`、`heroes_action.cpp`、
+`heroes.cpp` 早已在「部分」里，合计仍 **34/63/152**。
+
+## 宝箱与仙那度：二选一，以及「够不够格」 ✅（2026-11-16）
+
+先纠正上一轮的一处错误：fheroes2 里**没有「学者」这个对象**（那是《英雄无敌 3》的 Scholar，两边的
+`MP2::MapObjectType` 与 `Mp2ObjectType` 都查不到）。所以这一轮改做宝箱与仙那度——两者都不需要战斗或军队。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `ArtifactGold.InsteadOf`（新） | `artifact.cpp:1066-1083` | 六种对象在背包满时把神器折成的金币，硬编码：骷髅/宝箱/沉船幸存者 1000、海上宝箱 1500、墓地 2000、沉船 5000 |
+| `GameStatic.IsHeroWorthyToVisitXanadu`（新） | `game_static.cpp:298-308` | 十级以上放行；否则外交术基础/高级/专家分别要 8/6/4 级以上 |
+| `HeroActions.ActionToTreasureChest`（新） | `heroes_action.cpp:1795-1910` | 三条分支 + `TreasureChestReward` |
+| `HeroActions.ActionToXanadu`（新） | `heroes_action.cpp:2577-2617` | 三道门 + `XanaduOutcome` |
+
+要点：
+
+* **宝箱的判断顺序本身就是语义**：先看是否在水上（==只能拿钱，或钱+神器，没有二选一），再看「有钱」或「有神器
+  但背包满」，最后才轮到「只有神器」与空箱。把顺序调换会让一个空箱子白送一次经验选择。
+* **经验式子照抄**：`gold > 500 ? gold - 500 : 500`。拿得越多换经验越亏，且最低保底 500——这不是在算「经验
+  价值」，而是原版压高额宝箱收益的手段，不「优化」。
+* **背包满时折金是覆盖而不是叠加**：`gold = GoldInsteadArtifact( objectType )`，箱子自带的 800 与神器的 1000
+  之间只留 1000。看着像 bug，是原版行为，ADR 里留了记录。
+* **宝箱不进访问名册**：参考的 `ActionToTreasureChest` 只 `resetObjectMetadata`，没有 `SetVisited`。箱子开完就
+  没了，「开过没有」靠瓦片空不空来答。空箱也一样清——`resetObjectMetadata` 写在函数最末尾。
+* **选择交给调用方**：`keepGold` 委托吃（金币, 经验）、回是否拿金币，`null` 表示拿金币。AI 侧那套「按角色 +
+  国库算概率」的逻辑（`ai_hero_action.cpp:751` 起）等 AI 落地再接；端口现在不假装知道。
+* **仙那度的门槛是两条路**：等级 > 9 直接进；否则看外交术等级决定门槛（严格大于 7/5/3）。没有外交术就永远
+  进不去，等级再高也不行——这是唯一一个「技能决定能不能进门」的对象。
+* **不够格不算一次访问**：`SetVisited` 只在受训分支里。记的是**英雄本地**名册（参考的 `hero.SetVisited( dst_index )`
+  是 LOCAL），因为管家「不认同一个学生两次」。这与神殿/女巫小屋「怎么都记王国」、知识树「先记王国后记本地」
+  正好凑成三种名册语义。
+* **四主技能固定各加一点**，不抽签、不看职业。
+
+用例：新增 `HeroTreasureTests` 13 条（默认拿钱、改为拿经验、小额宝箱保底 500、开完清元数据、满包折金覆盖原金币、
+空箱什么都不给、陆地纯神器、海上钱+神器、海上满包只给折金、仙那度受训四维各 +1、不够格不记名册、不教第二次、
+外交术降门槛的边界 7/8 级）。`FHeroes2.Game.Tests` → **1469**，全解决方案 → **2156** 条全绿，0 警告 0 错误。
+覆盖率：`artifact.cpp`、`game_static.cpp`、`heroes_action.cpp` 早已在「部分」里，合计仍 **34/63/152**。
+
+## 「钱或神器」一簇：营火、骷髅、货车、浮木、沉船幸存者 ✅（2026-11-16）
+
+上一轮说的「同形对象一次做完」，这一轮做了。五个动作对象，共同点是产物只有「一袋资源或一件神器」，车道读取
+（`Tile.GetFundsFromTile`、`Tile.GetArtifactFromTile`、`Tile.DoesTileContainValuableItems`）此前就已具备，
+所以它们全是短函数，难点在四件事都不一样的**收尾规则**。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `HeroActions.ActionToPickupResource`（新） | `heroes_action.cpp:752-793` | 散落资源/营火/桶：拿钱与资源、清元数据、<b>不记名册</b> |
+| `HeroActions.IsPickupResource`（新） | 同上 | 上面三个对象的判定；漂流瓶不在内 |
+| `HeroActions.ActionToSkeleton`（新） | `heroes_action.cpp:866-909` | 有神器给神器、满包折 1000 金币；清元数据；<b>记名册</b> |
+| `HeroActions.ActionToWagon`（新） | `heroes_action.cpp:911-962` | 有神器给神器、否则给货物资源；满包<b>什么都不给</b>；清元数据；记名册 |
+| `HeroActions.ActionToFlotsam`（新） | `heroes_action.cpp:964-993` | 木材 + 金币；清元数据；不记名册 |
+| `HeroActions.ActionToShipwreckSurvivor`（新） | `heroes_action.cpp:1570-1609` | 有神器给神器、满包折 1000 金币；无条件清元数据；不记名册 |
+| `ObjectPickupReward`（新） | — | `Funds` + `ArtifactType`，`IsEmpty` 判「什么都没给」 |
+
+要点：
+
+* **四支的收尾规则互不相同**，这是本轮最容易写错的地方，逐一记：
+
+  | 对象 | 满包怎么办 | 清元数据 | 记名册 |
+  | --- | --- | --- | --- |
+  | 营火/桶/散落资源 | 无关（没有神器） | 总是 | 否 |
+  | 骷髅 | 折 1000 金币 | 只在「有价值」分支里 | 总是 |
+  | 货车 | **什么都不给**，车厢直接清空 | 只在「有价值」分支里 | 总是 |
+  | 浮木 | 无关 | 总是 | 否 |
+  | 沉船幸存者 | 折 1000 金币 | 总是 | 否 |
+
+* **货车是唯一不给折金的**：骷髅、宝箱、沉船幸存者都会把神器换成 1000 金币，货车只弹一句「别人先找到了」然后
+  照样清空。所以满包开货车等于白扔一件神器。原版如此，照抄并在文档里写明，免得被人当 bug「修好」。
+* **货车先看神器再看货物**：`metadata[0]` 是神器、`metadata[1]` 是资源类型、`metadata[2]` 是数量。神器车道非空
+  时资源<b>不另算</b>——不是「两样都给」。
+* **营火/桶的换算写在车道里**：`N` 个某种资源 + `N × 100` 金币，`GetFundsFromTile` 一次算完，动作层不重算。
+  资源类型可以是金币本身，此时 `Funds(type, 0)` 不产生任何项，空桶就是空袋。
+* **骷髅与货车「清元数据」在价值分支内**：空骷髅/空车厢不重写车道（本来就是 0），但仍然记一次名册访问；
+  而浮木与沉船幸存者是<b>无条件清</b>。这四行差异都是参考的 `resetObjectMetadata` 写在哪儿决定的。
+* **漂流瓶没进来**：参考在 `ActionToPickupResource` 里给它留了一个分支，只弹留言、不给钱。端口没有留言文本
+  系统，`IsPickupResource` 明确不收它，等留言系统落地再接。
+* 结果类型用 `Funds` 而不是金币数：货车与骷髅都可能给木材、水晶这类非金币资源。
+
+用例：新增 `HeroPickupTests` 14 条（散落资源进国库、营火按 N×100 折金、桶同营火、拾取不记名册、骷髅给神器、
+骷髅满包折 1000、空骷髅只记名册、货车优先神器、货车无神器给货物、货车满包什么都不给、浮木给木材+金币、
+空浮木什么都没有、沉船幸存者给神器、满包折 1000）。`FHeroes2.Game.Tests` → **1483**，全解决方案 → **2170**
+条全绿，0 警告 0 错误。覆盖率：`heroes_action.cpp` 早已在「部分」里，合计仍 **34/63/152**。
+
+## 监牢与英雄入伙：`ActionToJail` + `Hero.Recruit` ✅（2026-11-16）
+
+监牢是动作层里第一个**要把一位英雄交给王国**的对象，所以它顺手补上了「英雄入伙」这条链：找囚犯、查名额、
+上色、站到瓦片、挂进名册。四个新成员，三层。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `HeroActions.ActionToJail`（新） | `heroes_action.cpp:3402-3434` | 满编 → `NoSeat`；牢里没人 → `NoPrisoner`；否则放人 |
+| `JailOutcome`（新） | — | `None`/`Released`/`NoSeat`/`NoPrisoner` |
+| `Hero.Recruit`（新，`Hero.Recruit.cs`） | `heroes.cpp:1105-1150` | 清 `Recruit`/`Jail` 位、上色、定位、给行动力、补空军队、占瓦片、进名册 |
+| `AllHeroes.FromJail`（新） | `heroes.cpp:2475-2486` | 同时要求 `Jail` 模式位与「位置正好是这个瓦片」 |
+| `World.FromJailHeroes`（新） | `world.h:340` | 一行转给 `AllHeroes.FromJail` |
+| `Kingdom.AllowRecruitHero`（新） | `kingdom.cpp:499-502` | `英雄数 < 8`，按需再查酒馆价 `PaymentConditions.RecruitHero()` |
+
+要点：
+
+* **判定顺序是先名额、后囚犯**：参考在函数开头就问 `AllowRecruitHero`，所以满编的国王连「这块地有没有囚犯」
+  都不查，直接看「你已经有 8 位英雄了」。端口照抄，并专门写了一条用例钉住这个顺序。
+* **`AllowRecruitHero` 与 `CanRecruitHeroes` 不是一回事**：前者问「名额/钱够不够」，后者问「有没有城能出兵」。
+  名字像，判据完全不同，文档里明确写了别互替。
+* **监牢不查钱**：`AllowRecruitHero( false )`，囚犯免费；酒馆那条路才查 `PaymentConditions.RecruitHero()`。
+* **不清元数据、不记名册**：参考里没有这两步，端口也没有。监狱靠 `HeroModes.Jail` 回答「还有人吗」——
+  放出来的人模式位已清，再来自然 `NoPrisoner`。监狱**物件本身留在瓦片上**：英雄站上去时它被 `Tile.SetHero`
+  寄存到英雄身上，英雄一走，空牢重新露出来。
+* **`Hero.Recruit` 收王国而不是颜色**：参考是 `Recruit( PlayerColor, Point )` 内部再 `world.GetKingdom( col )`，
+  端口没有 `World.GetKingdom`（王国在 `Kingdoms` 里，ADR-122），所以直接把王国递进去，颜色由
+  `kingdom.Color` 回答，不存在「颜色与名册不一致」的中间态。
+* **行动力给满**：参考只在 `!Modes( SAVEMP )` 时给，端口没有 `SAVEMP` 位，等价于永远给满——刚出狱的英雄
+  本来就该有整天的行动力。空军队时 `GetMaxMovePoints` 返回 0，这与参考一致（参考也是先给行动力再补军队）。
+* **军队只在无效时才补**：`!_army.isValid()` 才 `Reset`，监狱里的英雄携带的兵不会被抹掉。
+* **没搬的三步**：`setAlphaValue( 255 )`（端口没有英雄透明值）、`kingdom.GetRecruits()` 的刷新（ADR-118）、
+  `Scout`/`ScoutRadar`（迷雾与雷达未搬）。
+
+用例：新增 `HeroJailTests` 10 条（有空位就放人、放到监狱瓦片上、放完再也找不到囚犯、放出来是 active、
+朝右站、满编不放人、空牢无人可放、满编优先于空牢、`AllowRecruitHero` 数名额、只在要求时查酒馆价）。
+`FHeroes2.Game.Tests` → **1493**，全解决方案 → **2180** 条全绿，0 警告 0 错误。覆盖率：`heroes_action.cpp`
+已在「部分」里，合计仍 **34/63/152**。
+
+## 塞伦与告示牌：`ActionToSirens` + `ActionToSign` ✅（2026-11-16）
+
+上一节的「下一步」列了两支**不需要新前置**的对象：塞伦（军队已经在）与告示牌（留言早就在
+`World.GetMapSign` 里）。这一轮把这两支都做了。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Army.ActionToSirens`（新） | `army.cpp:1542-1571` | 每栈去掉 30%、至少 1 个、独苗不动；返回「淹死的兵值多少经验」 |
+| `HeroActions.ActionToSirens`（新） | `heroes_action.cpp:3366-3400` | 查英雄级名册、调军队、加经验、记名册 |
+| `SirensReward`（新） | — | `Experience` + `AlreadyVisited` |
+| `HeroActions.ActionToSign`（新） | `heroes_action.cpp:1243-1251` | 取 `World.GetMapSign(...).Message`，不改任何状态 |
+
+要点：
+
+* **塞伦的三条军队规则**：空栈跳过、**只有 1 个的栈完全不动**、其余去 30%（向下取整但**至少 1 个**）。所以
+  3 个兵的栈会掉 1 个而不是 0 个；这一条单独写了一条用例。
+* **经验按血量算，不按金币或战斗力**：`去掉的数量 × 单体生命值`，10 个弓箭手掉 3 个（每个 10 血）= 30 点。
+  全部是营养公式，没有随机数，所以结果可以逐位断言。
+* **分工照抄参考**：军队层只管「兵少了、值多少经验」，名册与加经验都在动作层。要塞进 `IncreaseExperience` 就需要
+  地图种子，所以动作层这次多收一个 `World` 参数（与 `ActionToExperienceObject` 一致）。
+* **名册是英雄级的，而且「没掉兵」也记**：参考用 `hero.SetVisited( dst_index )`（不是王国级），所以同一个英雄
+  听过一次就够，换英雄仍可再听；`SetVisited` 在 `else` 末尾，兵太少一个都没掉时**同样登记**。于是
+  `SirensReward` 必须分开两个字段：`IsEmpty`（什么都没掉）与 `AlreadyVisited`（来过了），调用方据此选文案。
+* **告示牌不改状态**：参考里它只是「取文本 + 弹窗」，不记名册、不动元数据、不加经验，所以可以反复读。端口把它
+  折成返回字符串——留言本来就在 `MapSign` 里，动作层只负责把人领过去；标题与弹窗留给 UI。
+* **空牌子不编内容**：原版会给空留言的牌子随机抽一句话，端口没有那张语言表，如实返回空字符串。
+* **塞伦不再是「等军队」的欠账**：军队系统早已具备（`Army`/`Troop` 完整），此前把它列在「要前置」里是我判断
+  错了——真正缺的只是「谁少兵、值多少经验」这条换算，参考里就在 `army.cpp`。
+
+用例：新增 `HeroSirensTests` 7 条（30% 减员与经验、3 个兵仍掉 1 个、独苗不动、混编按血量合计 31 点、空军队
+无人可掉、没掉兵也记名册、第二次来兵不动）与 `HeroSignTests` 4 条（读出留言、无牌返 null、可反复读、空牌
+仍为空）。`FHeroes2.Game.Tests` → **1504**，全解决方案 → **2191** 条全绿，0 警告 0 错误。覆盖率：
+`heroes_action.cpp` 已在「部分」里，合计仍 **34/63/152**。
+
+## 迷雾入世界：`World.Fog` + 观察塔 + 麦哲伦地图 ✅（2026-11-16）
+
+上一节的「下一步」说得很清楚：剩下两支不需要战斗的对象（`ActionToObservationTower`、
+`ActionToMagellanMaps`）卡在同一件事上——**迷雾此前不是世界状态**。这一轮先把迷雾搬进 `World`，两支对象
+随之落地。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `World.Fog`（新） | `Maps::Tile::_fogColors` | 按需创建、尺寸随地图、`Reset` 丢弃 |
+| `World.ClearFog`（新） | `maps.cpp:464-500` | 半径 ≤ 0 / 越界什么都不做；揭开圆并重算方向 |
+| `World.ActionForMagellanMaps`（新） | `world.cpp:906-922` | 逐块看，是水就揭 |
+| `MapFog.Reveal`（改） | `maps.cpp:480` | 返回<b>真正被揭开的瓦片数</b>（原来返回 void） |
+| `MapFog.ObservationTowerRevealDistance`（新） | `game_static.cpp:119` | 19 格 |
+| `MapFog.MagiEyesRevealDistance`（新） | `game_static.cpp:122` | 9 格（留给法师之眼） |
+| `HeroActions.ActionToObservationTower`（新） | `heroes_action.cpp:2521-2539` | 以塔为心揭 19 格，返回揭开数 |
+| `HeroActions.ActionToMagellanMaps`（新） | `heroes_action.cpp:2759-2809` | 四道门：买过了 / 钱不够 / 要确认 / 成交 |
+| `MagellansMapsOutcome`（新） | — | `None`/`AlreadyBought`/`NotEnoughGold`/`NeedsConfirmation`/`Bought` |
+
+要点：
+
+* **迷雾进 `World` 是按需创建的**：参考把它塞在每块瓦片的元数据里（`_fogColors`），端口本来就有独立的
+  `MapFog`（每格一个颜色掩码 + 一份方向缓存），于是 `World.Fog` 只是给它一个归宿——没有地图时返回
+  `null`，有尺寸时按 `Width`×`Height` 建全黑的表，`Reset` 里丢掉。这样两个加载器（`GenerateUninitializedMap`
+  与 `LoadMap`）都不必记得「同时建迷雾」，也不会出现「地图换了迷雾还是旧的」。
+* **`MapFog.Reveal` 改返回数量**：原来返回 `void`，现在返回「这次真正掉了迷雾的瓦片数」（已经可见的不算）。
+  这是唯一能既让观察塔/麦哲伦地图报告战果、又让测试钉住「第二次爬塔揭不出东西」的写法；语句式调用不受影响。
+* **半径 → 方形距离不是平方**：`SquaredRevealLimit` 里半径 ≥ 6 时用 `(distance+1)²`，所以 19 格对应的是
+  400 而不是 361。18 格与 19 格揭出来的圆<b>一样大</b>，参考本来就这样，测试按同一公式算期望值。
+* **`ClearFog` 的三道早退照抄**：半径 ≤ 0、颜色为空、瓦片号越界——参考在这些情况下直接 `return`，端口返回 0。
+* **只揭自己的颜色**：参考揭 `Players::GetPlayerFriends( color )`（盟友一起看见），端口没有联盟，
+  `Hero.IsFriends` 是那个缺口唯一的一处，注释里写明了等联盟落地再改。
+* **麦哲伦地图是两段式**：参考在同一次调用里弹「是/否」再结算，端口把确认留给调用方——带
+  `confirmed: false` 只会拿到 `NeedsConfirmation`，一分钱不动；玩家点「是」再带 `true` 回来才扣钱开图。
+  与 `ArtifactPickupOutcome.NeedsPayment` 同一套做法，所以「没答应就扣钱」不可能发生。
+* **「买过了」排在「钱不够」前面**：既买过又只剩几块钱的王国应当被告知「你已经把海图拿走了」，而不是
+  「你钱不够」。参考就是这个顺序，专写一条用例钉住。
+* **「买过了」是王国级的**：参考用 `Visit::GLOBAL` + `setVisitedForAllies`，端口用 `Kingdom.IsVisited` 这张
+  王国名册，而且按<b>类型</b>问——地图上有第二个船长也照样挡住。
+* **当时还没搬的两块**（**都已在后续两轮补上**）：开局侦察（`AllHeroes::Scout`，以英雄为心开一圈）没搬，
+  所以地图一加载就是全黑，只有观察塔与麦哲伦地图能揭开——这正是「侦察术开图」那笔欠账，ADR-130 已补；
+  `AdventureMap` 的场景预览图（`MapFog.CreateForMap`）没接 `World.Fog`，ADR-131 已接并且把该助手删掉。
+
+用例：新增 `HeroFogTests` 13 条（迷雾随地图生灭、19 格圆的期望数量、只揭给定颜色、二次揭为 0、
+半径/越界早退、观察塔揭自己颜色、可爬两次、麦哲伦只揭水、船长先问价、扣 1000 金、买过不重复扣、
+穷国买不起、买过优先于没钱）。`FHeroes2.Game.Tests` → **1517**，全解决方案 → **2204** 条全绿，0 警告
+0 错误。覆盖率：`heroes_action.cpp` 已在「部分」里，合计仍 **34/63/152**。
+
+## 开局侦察：`GetScoutingDistance` + 三家 `Scout` ✅（2026-11-16）
+
+上一节的「下一步」说迷雾这条线最自然的一步是「`AllHeroes::Scout` 搬出来」。这一轮把它和它的三个同伴一起搬了：
+英雄看多远、英雄开一圈、城堡开一圈、一个玩家的全部家当开一圈，外加把「走路开图」接上。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `Hero.GetScoutingDistance`（新） | `heroes.cpp:1768-1772` | 神器加成 + 基础 4 + 侦察术数值（1/2/3） |
+| `Hero.Scout`（新） | `heroes.cpp:1749-1766` | 以给定瓦片为心揭 `GetScoutingDistance()` 格，用自己的颜色 |
+| `AllHeroes.Scout`（新） | `heroes.cpp:2435-2446` | 按颜色筛英雄，各自以脚下为心 |
+| `Castle.Scout`（新） | `castle.cpp:2213-2216` | 以城镇为心揭 5 格，用主人的颜色 |
+| `AllCastles.Scout`（新） | `castle.cpp:2380-2391` | 按颜色筛城镇 |
+| `World.ClearFog(PlayerColor)`（新） | `world.cpp:838-848` | 城堡 + 英雄（占领对象还没有迷雾位） |
+| `FogHeroMovementHandler`（新） | `Heroes::Scout` 的移动侧 | 第一个真实的 `IHeroMovementHandler`，走路即开图 |
+
+要点：
+
+* **距离是三项之和，第三项是数值不是等级**：`GetScoutingDistance()` = 神器 `AREA_REVEAL_DISTANCE` +
+  `MapFog.HeroRevealDistance`(4) + `GetSecondarySkillValue( Scouting )`(1/2/3)。所以基础 4 格，专家侦察术 7 格，
+  再加望远镜 8 格。参考在这里<b>不做上限裁剪</b>，端口也不做。
+* **侦察术给的是「数值」**：基础 1／高级 2／专家 3，来自 `secondarySkillValuesPerLevel` 那一行，不是
+  「等级 = 1/2/3」的巧合——两者恰好相等，但代码里问的是数值，将来表变了也不会错。
+* **不是「有多少级就加多少」**：没有技能时 `GetSecondarySkillValue` 返回 0，不会退化成「基础 +1」。
+* **英雄级名册不参与**：侦察<b>不看</b>`IsObjectTypeVisited`，反复走、反复开都是允许的（开图本身不改任何
+  状态，只是把迷雾位清掉）。
+* **`Hero.Scout` 的瓦片由调用方给**：走路时是「即将踏入」的那一格（参考 `_moveStep()`），开局侦察是脚下那一格。
+  所以它收 `tileIndex` 而不是自己读 `MapIndex`。
+* **中立英雄（`PlayerColor.None`）什么都不揭**：参考 `assert`，端口返回 0。
+* **按颜色筛，不按别的状态**：监狱里的英雄只要还挂着颜色也会开图——参考如此，端口照抄，不去替它做决定。
+* **`Castle` 的半径比英雄多一圈**（5 对 4），没有主人的城镇永远筛不进来，所以开局只有英雄与自己的城镇亮着。
+* **`World.ClearFog( PlayerColor )` 是三件事里的两件**：参考还有 `map_captureobj.ClearFog`（被占领的矿井/
+  资源点对盟友可见），端口的 `CapturedObject` 只记颜色与类型、没有迷雾位，留给「占领对象带颜色表」那一轮。
+* **`FogHeroMovementHandler` 是第一个真实的移动处理器**：迷雾落地之前四个回调全是空的
+  （`NullHeroMovementHandler`），现在 `Scout` 有东西可做了——它只做这一件，另三个（雷达、对象动作、AI）
+  仍空着，理由写在接口注释里。它持有世界，所以游戏循环造出世界后为每位英雄装上即可。
+* **与 `ClearFog` 重载的关系**：`ClearFog( tileIndex, distance, color )` 揭一个圆（`maps.cpp`），
+  `ClearFog( color )` 揭一方的全部家当（`world.cpp`），参考里在两个文件，端口放在一起因为都只改同一张迷雾表。
+
+用例：新增 `HeroScoutTests` 12 条（基础 4 格、侦察术基础 5/专家 7、望远镜 5、揭圆且只揭自己颜色、专家 + 望远镜
+到 8 格、无颜色不揭、英雄按颜色筛且不替对手开图、城镇按主人筛且 5 格、无主城镇不揭、全世界侦察等于城堡+英雄
+之和、`ClearFog(None)` 为 0、处理器把「即将踏入」那格揭掉）。`FHeroes2.Game.Tests` → **1529**，全解决方案 →
+**2216** 条全绿，0 警告 0 错误。覆盖率：`heroes.cpp` 已在「部分」里，合计仍 **34/63/152**。
+
+## 场景接上世界迷雾：一套迷雾、一个生产者 ✅（2026-11-16）
+
+上一节的「下一步」说差的只是**装配**。这一轮把装配做完了：`AdventureMapScene` 不再自己按 `Mp2Map` 造一份
+迷雾，而是把地图装进 `World.Current`，画的就是 `World.Fog`；`MapFog.CreateForMap` 因此失去唯一调用者，删掉。
+于是端口的迷雾只剩一条路径：**世界持有，规则改它，渲染器读它**。
+
+| C# | 参考 | 内容 |
+| --- | --- | --- |
+| `AdventureMapScene.TryCreate`（改） | `game_startgame.cpp:769` | `World.Current.LoadMap( map )` 之后调 `ClearFog( observers )`，画 `World.Fog` |
+| `AdventureMapScene.ScoutStart`（新，替 `CreateFog`） | `world.cpp:838` | 人类颜色的英雄圆盘 + 聚焦城堡的占位圆盘，返回揭开格数 |
+| `World.ClearFog(PlayerColor)`（改） | `maps.cpp:updateDirectionsInArea` | 末尾补一次 `Fog?.UpdateDirections( color )`，零揭开时方向掩码也在 |
+| `MapFog.CreateForMap`（**删**） | 无（端口自造） | 存在的唯一理由是场景手里没有 `World`，现在有了 |
+| `MapFog.HeroRevealDistance`（注释改） | `GameStatic::getFogDiscoveryDistance` | 说明它只是**基数**，加成才在 `Hero.GetScoutingDistance` 里 |
+
+要点：
+
+* **顺序照参考**：`LoadMap` → `ClearFog( colors )` → 交给渲染。参考在 `game_startgame.cpp` 里就是这么排的，
+  所以「世界建好但全黑」这个中间态只在 `LoadMap` 与 `ClearFog` 之间**一瞬**存在，不再是场景的常态。
+* **顺手修掉一个真 bug**：`ClearFog( PlayerColor )` 只经 `_castles.Scout` / `_heroes.Scout` 揭开，
+  **零揭开时不更新方向掩码**（`MapFog` 的渲染读的是掩码，不是迷雾字节）。一张有人类颜色却没有英雄也没有
+  城镇的地图，此前会得到「全黑的表 + 全零的掩码」= 一格雾都不画，整张地图明晃晃。现在末尾统一补一次
+  `UpdateDirections`，这条边界有测试钉住（`AMapWithoutAHeroOfThatColorStaysEntirelyUnderTheFog`）。
+* **颜色来自精灵**：`world_loadmap.cpp` 按 `MINIHERO` 帧号（每色 7 帧）给英雄定色，所以「地图文件里的英雄
+  有没有颜色」是装配能不能成立的关键，测试直接断言 `world.GetTile(...).GetHero(...).Color` 是 Blue / Red。
+* **聚焦城堡仍是占位**：MP2 城堡无归属，`AllCastles::Scout` 筛不出来，所以场景按半径 5 手动揭一次
+  （`ClearFog( tileIndex, MapFog.CastleRevealDistance, observers )`）。注释里写明了「等地图自带归属时删掉这段」。
+* **无人类玩家仍是 `null` 迷雾**：给 `AdventureMapView` 传 `null` 而不是一张全黑的表，语义与原来一致。
+* **世界挂在 `World.Current` 上**：场景不 new 一个私有世界（`World` 的构造函数是 internal，本来就为「游戏里
+  只有一个世界」而设），于是后面搬移动、战斗时拿到的就是这份状态。
+* **像素基线没变**：`VerifyAdventureMapBaseline.ps1` 对 `Alteris.mp2` 渲染出的 640×480 帧与
+  `tests/baselines/adventure-map.png` **逐字节一致**——换掉迷雾的生产者没有动到任何一个像素，这是「装配只
+  换主人、不改行为」最直接的证据。
+
+用例：新增 `WorldFogOnLoadTests` 5 条（装载后全黑、开局侦察按人类颜色揭英雄且只揭该色、别色英雄不揭、
+无该色英雄时整图仍在雾下且掩码就绪、装载第二张图丢掉第一张的雾）；`MapFogTests` 删掉针对已移除助手的 2 条。
+`FHeroes2.Game.Tests` → **1532**，全解决方案 → **2219** 条全绿，0 警告 0 错误。覆盖率合计仍 **34/63/152**。
+
+**下一步**：「一套迷雾」这件事到这儿闭合了（造、改、读都经由 `World`）。剩下的都回到**前置系统**：带守卫的
+金字塔/沉船/龙穴与矿井（战斗）、住所/巢穴/流浪营地（军队与城堡招募）、`ActionToPoorMoraleObject`（战斗）、
+传送门与漩涡（移动，需要 `FogHeroMovementHandler` 真正被走路调用）、`ActionToSphinx`（答题 + 战斗）、
+`ActionToOracle`（盗贼公会界面）。两处欠账不变：`LoadFromMP2` 按经验补等级、付费取宝的图标索引映射
+（`getResourceTypeFromIconIndex`）。

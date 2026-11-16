@@ -1,3 +1,4 @@
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.Kingdom;
 
@@ -197,6 +198,47 @@ public sealed class AllCastles : IReadOnlyList<Castle>
         {
             castle.ActionNewWeek(weekCount, week, isBeginMonth, dayCount, generator);
         }
+    }
+
+    /// <summary>
+    /// Scouts around every town of the given colors, <c>AllCastles::Scout()</c> (<c>castle.cpp:2380-2391</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>castle.cpp:2380-2391</c>。没有主人的城堡（<c>PlayerColor::NONE</c>）永远筛不进来，所以
+    /// MP2 里那些还没被占领的城镇不会开图——这正是开局只有英雄脚下亮一片的原因。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="AllHeroes.Scout"/> 一样，<paramref name="colors"/> 在参考里是
+    /// <c>Players::GetPlayerFriends( color )</c>；端口的 <see cref="PlayerColor"/> 是 <c>[Flags]</c>，将来有了
+    /// 盟友不用改签名。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world holding the fog.</param>
+    /// <param name="colors">The colors that lose the fog.</param>
+    /// <returns>Number of tiles uncovered over all those towns.</returns>
+    public int Scout(World world, PlayerColor colors)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (colors == PlayerColor.None)
+        {
+            return 0;
+        }
+
+        int revealed = 0;
+
+        foreach (Castle castle in _castles)
+        {
+            if ((colors & castle.Color) == 0)
+            {
+                continue;
+            }
+
+            revealed += castle.Scout(world);
+        }
+
+        return revealed;
     }
 
     /// <summary>Enumerates the towns in insertion order, the <c>begin()</c>/<c>end()</c> of the reference.</summary>

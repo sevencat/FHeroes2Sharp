@@ -44,6 +44,61 @@ public sealed class Kingdoms
     public Kingdom GetKingdom(PlayerColor color) => _kingdoms[IndexOf(color)];
 
     /// <summary>
+    /// Advances every kingdom by a day, <c>World::NewDay()</c>'s <c>_kingdoms.NewDay()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>world.cpp:443</c>（<c>kingdoms.NewDay()</c>）→<c>kingdom.cpp:770</c>（<c>Kingdoms::NewDay()</c>）。
+    /// 七个槽全走一遍，包括「没有颜色」的垃圾桶——它里面的王国颜色是 <see cref="PlayerColor.None"/>，
+    /// <see cref="Kingdom.IsPlay"/> 为假，因此只会清掉一天寿命的访问记录，其余什么都不做。
+    /// </remarks>
+    /// <param name="dayCount">Days since the start of the game.</param>
+    /// <param name="lossPostActions">
+    /// What to do for a kingdom that just went out of the game; the reference's <c>LossPostActions()</c>.
+    /// </param>
+    public void NewDay(uint dayCount, Action<Kingdom>? lossPostActions = null)
+    {
+        foreach (Kingdom kingdom in _kingdoms)
+        {
+            kingdom.ActionNewDay(dayCount, lossPostActions is null ? null : () => lossPostActions(kingdom));
+        }
+    }
+
+    /// <summary>
+    /// Advances every kingdom by a week, <c>Kingdoms::NewWeek()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>world.cpp:426</c>（<c>kingdoms.NewWeek()</c>）→<c>kingdom.cpp:778</c>。周数在参考里由
+    /// <c>world.CountWeek()</c> 提供，端口提到参数上。
+    /// </remarks>
+    /// <param name="weekCount">Weeks since the start of the game.</param>
+    /// <param name="isDebugMode">Whether the reference's <c>IS_DEVEL()</c> build is in effect.</param>
+    public void NewWeek(uint weekCount, bool isDebugMode = false)
+    {
+        foreach (Kingdom kingdom in _kingdoms)
+        {
+            kingdom.ActionNewWeek(weekCount, isDebugMode);
+        }
+    }
+
+    /// <summary>
+    /// Whether any kingdom has visited that tile for that object, <c>World::isAnyKingdomVisited()</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>world.cpp</c> 的 <c>World::isAnyKingdomVisited( objectType, index )</c>：遍历全部七个槽，
+    /// 任意一个记过就算。泉眼（<c>OBJ_ARTESIAN_SPRING</c>）用它回答「本周是不是已经有人喝过了」。
+    /// </para>
+    /// <para>
+    /// 注意它问的<b>不是</b>「我方势力」，而是「任何一方」——参考的实现没有任何颜色过滤，端口照抄。
+    /// </para>
+    /// </remarks>
+    /// <param name="index">Tile index on the map.</param>
+    /// <param name="objectType">The object type.</param>
+    /// <returns><see langword="true"/> when some kingdom has the pair in its visit list.</returns>
+    public bool IsAnyVisited(int index, Mp2ObjectType objectType) =>
+        _kingdoms.Any(kingdom => kingdom.IsVisited(index, objectType));
+
+    /// <summary>
     /// Wipes every kingdom, <c>Kingdoms::clear()</c>.
     /// </summary>
     /// <remarks>参考：<c>kingdom.cpp:696</c>；<c>Init</c> 的第一步。</remarks>

@@ -26,10 +26,13 @@ public sealed class MapFog
 {
     /// <summary>
     /// Tiles around a hero that start without fog, <c>GameStatic::getFogDiscoveryDistance(
-    /// FogDiscoveryType::HEROES )</c>. The reference adds the scouting skill and the artifacts of the
-    /// hero to it (<c>Heroes::GetScoutingDistance</c>); neither is parsed from an MP2 file yet, so
-    /// every hero here is a level one hero without artifacts.
+    /// FogDiscoveryType::HEROES )</c>.
     /// </summary>
+    /// <remarks>
+    /// The base value only: <c>Heroes::GetScoutingDistance</c> — the port's
+    /// <c>Hero.GetScoutingDistance</c> — adds the scouting skill and the reveal distance of the hero's
+    /// artifacts on top of it, which is what <c>Hero.Scout</c> reveals with.
+    /// </remarks>
     public const int HeroRevealDistance = 4;
 
     /// <summary>
@@ -37,6 +40,25 @@ public sealed class MapFog
     /// <c>GameStatic::getFogDiscoveryDistance( FogDiscoveryType::CASTLE )</c>.
     /// </summary>
     public const int CastleRevealDistance = 5;
+
+    /// <summary>
+    /// The radius an observation tower uncovers,
+    /// <c>GameStatic::getFogDiscoveryDistance( FogDiscoveryType::OBSERVATION_TOWER )</c>
+    /// (<c>game_static.cpp:119</c>).
+    /// </summary>
+    /// <remarks>
+    /// 19 is not a typo: a tower shows a disc of nearly forty tiles across, which is why it is worth the
+    /// detour. The reference clamps the same disc to the map in <c>Maps::ClearFog</c>, which
+    /// <see cref="World.ClearFog"/> does too.
+    /// </remarks>
+    public const int ObservationTowerRevealDistance = 19;
+
+    /// <summary>
+    /// Tiles around an Eye of the Magi that its visit uncovers,
+    /// <c>GameStatic::getFogDiscoveryDistance( FogDiscoveryType::MAGI_EYES )</c>
+    /// (<c>game_static.cpp:122</c>).
+    /// </summary>
+    public const int MagiEyesRevealDistance = 9;
 
     private readonly byte[] _fog;
     private readonly Direction[] _directions;
@@ -93,11 +115,25 @@ public sealed class MapFog
     /// Reveals the disc around a tile for <paramref name="colors"/> — <c>Maps::ClearFog</c>: every
     /// tile whose distance is below <see cref="SquaredRevealLimit"/> loses the fog of those colors.
     /// </summary>
-    public void Reveal(int column, int row, int distance, PlayerColor colors)
+    /// <remarks>
+    /// A <paramref name="distance"/> of zero reveals the tile it is centered on and nothing else (the
+    /// limit is one, and only <c>dx == dy == 0</c> stays below it) — that is how a single tile, a water
+    /// tile for Magellan's maps for instance, is uncovered.
+    /// </remarks>
+    /// <param name="column">Column of the center tile.</param>
+    /// <param name="row">Row of the center tile.</param>
+    /// <param name="distance">Radius in tiles.</param>
+    /// <param name="colors">The colors that lose the fog.</param>
+    /// <returns>
+    /// How many tiles actually lost fog, i.e. how many were undiscovered for at least one of
+    /// <paramref name="colors"/> before; tiles that were already visible do not count.
+    /// </returns>
+    public int Reveal(int column, int row, int distance, PlayerColor colors)
     {
         int limit = SquaredRevealLimit(distance);
         int lastRow = Math.Min(Height - 1, row + distance);
         int lastColumn = Math.Min(Width - 1, column + distance);
+        int revealed = 0;
 
         for (int y = Math.Max(0, row - distance); y <= lastRow; ++y)
         {
@@ -107,10 +143,20 @@ public sealed class MapFog
                 int dx = x - column;
                 if ((dx * dx) + (dy * dy) < limit)
                 {
-                    _fog[(y * Width) + x] &= (byte)~colors;
+                    int index = (y * Width) + x;
+                    byte before = _fog[index];
+                    byte after = (byte)(before & (byte)~colors);
+
+                    if (after != before)
+                    {
+                        ++revealed;
+                        _fog[index] = after;
+                    }
                 }
             }
         }
+
+        return revealed;
     }
 
     /// <summary>
@@ -135,35 +181,6 @@ public sealed class MapFog
                     IsFogged(column, row, colors) ? ComputeDirection(column, row, colors) : Direction.Unknown;
             }
         }
-    }
-
-    /// <summary>
-    /// Builds the fog of a map as the game starts: everything fogged except the discs around the
-    /// heroes of <paramref name="colors"/> (<c>AllHeroes::Scout</c>, which a scenario runs after
-    /// loading).
-    /// </summary>
-    /// <remarks>
-    /// The reference scouts around the castles too (<c>AllCastles::Scout</c>, with
-    /// <see cref="CastleRevealDistance"/>), but an MP2 castle has no owner — the castle table of the
-    /// format stores no color and <c>world_loadmap.cpp</c> creates every castle with
-    /// <c>PlayerColor::NONE</c> — so this method has no castle to scout around. The caller reveals
-    /// whatever tile it treats as the player's position instead, see <c>AdventureMapScene</c>.
-    /// </remarks>
-    public static MapFog CreateForMap(Mp2Map map, PlayerColor colors)
-    {
-        ArgumentNullException.ThrowIfNull(map);
-
-        MapFog fog = new(map.Width, map.Height);
-        foreach (Mp2MapHero hero in map.Heroes)
-        {
-            if ((hero.Color & colors) != 0)
-            {
-                fog.Reveal(hero.X, hero.Y, HeroRevealDistance, colors);
-            }
-        }
-
-        fog.UpdateDirections(colors);
-        return fog;
     }
 
     /// <summary>

@@ -434,6 +434,64 @@ public sealed partial class Army
     }
 
     /// <summary>
+    /// Lets the sirens sing the army into the sea, <c>Army::ActionToSirens()</c> (<c>army.cpp:1542-1571</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>army.cpp:1542-1571</c>。逐栈处理，三条规则缺一不可：
+    /// </para>
+    /// <list type="number">
+    /// <item>空栈跳过；</item>
+    /// <item><b>只有 1 个的栈完全不受影响</b>——塞伦唱不动仅剩的一个人；</item>
+    /// <item>其余栈去掉 30%（向下取整），<b>但至少去掉 1 个</b>：3 个的栈取整后是 0，仍要淹死一个。</item>
+    /// </list>
+    /// <para>
+    /// 返回值是「死掉的那些兵值多少经验」——按<b>每点血 1 点经验</b>算，即 <c>数量 × 单体生命值</c>，
+    /// 不是按金币或战斗力折算。全部是营养公式，没有随机数。
+    /// </para>
+    /// <para>
+    /// 参考里这个方法<b>不管名册</b>：登记访问与加经验都在 <c>Heroes::ActionToSirens</c> 里，这里只负责
+    /// 「兵少了、经验值算出来了」。端口照抄这个分工。
+    /// </para>
+    /// </remarks>
+    /// <returns>Experience the drowned troops are worth; <c>0</c> when no stack lost anyone.</returns>
+    public uint ActionToSirens()
+    {
+        uint experience = 0;
+
+        foreach (Troop troop in this)
+        {
+            if (!troop.IsValid)
+            {
+                continue;
+            }
+
+            uint troopCount = troop.Count;
+
+            if (troopCount == 1)
+            {
+                // Sirens do not affect a stack of one.
+                continue;
+            }
+
+            // 30% of the stack drowns.
+            uint troopToRemove = troopCount * 3 / 10;
+
+            if (troopToRemove == 0)
+            {
+                // At least one creature goes, even when that is more than 30% of the stack.
+                troopToRemove = 1;
+            }
+
+            troop.Count = troopCount - troopToRemove;
+
+            experience += troopToRemove * (uint)MonsterStatistics.GetBattleStats(troop.Monster).HitPoints;
+        }
+
+        return experience;
+    }
+
+    /// <summary>
     /// Puts the stacks into the slots position by position, <c>Troops::Assign()</c> (<c>army.cpp:493-501</c>).
     /// </summary>
     /// <remarks>

@@ -78,6 +78,34 @@ public sealed class AllHeroes : IReadOnlyCollection<Hero>
     }
 
     /// <summary>
+    /// The hero imprisoned on a tile, <c>AllHeroes::FromJail()</c> (<c>heroes.cpp:2475</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes.cpp:2475-2486</c>。两个条件缺一不可：<c>JAIL</c> 模式位，以及位置<b>正好</b>是这个瓦片。
+    /// </para>
+    /// <para>
+    /// 关在监狱里的英雄 <see cref="Hero.Color"/> 仍是 <see cref="PlayerColor.None"/>，看上去和「等着被雇」一样，
+    /// 所以「关着」这条信息只能由模式位带上——<see cref="GetHeroForHire"/> 也正是靠 <see cref="HeroModes.Jail"/>
+    /// 把他从酒馆候选里剔掉。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">Tile index of the jail.</param>
+    /// <returns>The prisoner, or <see langword="null"/> when no jailed hero sits there.</returns>
+    public Hero? FromJail(int tileIndex)
+    {
+        foreach (Hero hero in this)
+        {
+            if (hero.Modes.HasFlag(HeroModes.Jail) && hero.MapIndex == tileIndex)
+            {
+                return hero;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Fills the slots for a map of the given version, <c>AllHeroes::Init()</c> (<c>heroes.cpp:2265</c>).
     /// </summary>
     /// <remarks>
@@ -258,6 +286,51 @@ public sealed class AllHeroes : IReadOnlyCollection<Hero>
 
     /// <inheritdoc />
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    /// <summary>
+    /// Scouts around every hero of the given colors, <c>AllHeroes::Scout()</c> (<c>heroes.cpp:2435-2446</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>heroes.cpp:2435-2446</c>。逐个英雄，<b>颜色不在 <paramref name="colors"/> 里就跳过</b>，否则
+    /// <c>hero->Scout( hero->GetIndex() )</c>——以英雄<b>脚下</b>那一格为心，不是他要去的下一格。
+    /// </para>
+    /// <para>
+    /// 参考的 <paramref name="colors"/> 是 <c>Players::GetPlayerFriends( color )</c>，即「我和我的盟友」；端口
+    /// 没有联盟，传进来的通常就是一位玩家的颜色。位掩码本身在
+    /// <see cref="PlayerColor"/> 上是 <c>[Flags]</c>，所以将来有了盟友不用改签名。
+    /// </para>
+    /// <para>
+    /// 参考按<b>颜色</b>筛，不按别的状态：监狱里的英雄只要还挂着某个颜色也会为他开图，端口照抄——监狱里的英雄
+    /// 究竟该不该开图是另一件事，不该在这里悄悄决定。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world holding the fog.</param>
+    /// <param name="colors">The colors that lose the fog.</param>
+    /// <returns>Number of tiles uncovered over all those heroes.</returns>
+    public int Scout(World world, PlayerColor colors)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (colors == PlayerColor.None)
+        {
+            return 0;
+        }
+
+        int revealed = 0;
+
+        foreach (Hero hero in this)
+        {
+            if ((colors & hero.Color) == 0)
+            {
+                continue;
+            }
+
+            revealed += hero.Scout(world, hero.MapIndex);
+        }
+
+        return revealed;
+    }
 
     /// <summary>Creates a hero and puts it into its slot, the <c>emplace_back</c> of <c>Init()</c>.</summary>
     /// <param name="heroId">Hero id.</param>

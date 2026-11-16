@@ -11,10 +11,11 @@ public sealed class Mp2ObjectTypesClassificationTests
     [Fact]
     public void OnlyTheMagicWellIsRefilledDaily()
     {
-        Assert.True(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.ActionMagicWell));
-        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.ActionWindmill));
-        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.ActionWaterWheel));
-        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.ActionArtifact));
+        // MP2 瓦片上只有基础对象值，动作位（+128）是运行时算出来的，所以这里用非动作值。
+        Assert.True(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.MagicWell));
+        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.Windmill));
+        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.WaterWheel));
+        Assert.False(Mp2ObjectTypes.IsDayLife(Mp2ObjectType.Artifact));
     }
 
     [Theory]

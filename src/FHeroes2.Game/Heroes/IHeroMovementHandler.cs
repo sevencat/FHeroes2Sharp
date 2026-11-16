@@ -79,3 +79,44 @@ public sealed class NullHeroMovementHandler : IHeroMovementHandler
     {
     }
 }
+
+/// <summary>
+/// The handler a hero gets once the world has fog: walking uncovers it, <c>Heroes::Scout()</c>
+/// (<c>heroes.cpp:1749</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// 这是 <see cref="IHeroMovementHandler"/> 存在的<b>第一个真实实现</b>：迷雾落地之前，四个回调全是空的
+/// （<see cref="NullHeroMovementHandler"/>）。现在 <see cref="Scout"/> 有东西可做了，它只做这一件事——
+/// 另外三个仍然没有实现，各自的理由见接口注释（雷达渲染器、对象动作表、AI）。
+/// </para>
+/// <para>
+/// 与 <see cref="NullHeroMovementHandler"/> 不同，它<b>持有世界</b>：迷雾是世界的状态，
+/// <see cref="Hero.Scout"/> 需要它才能改。游戏循环造出世界之后为每位英雄装上这一个，走路就会开图了。
+/// </para>
+/// </remarks>
+/// <param name="world">The world whose fog the hero uncovers.</param>
+public sealed class FogHeroMovementHandler(World world) : IHeroMovementHandler
+{
+    /// <summary>
+    /// Uncovers the fog around a tile for the hero's color, <c>Heroes::Scout( int32_t )</c>.
+    /// </summary>
+    /// <param name="hero">The hero who scouts.</param>
+    /// <param name="tileIndex">Tile whose surroundings get revealed.</param>
+    public void Scout(Hero hero, int tileIndex) => hero.Scout(world, tileIndex);
+
+    /// <inheritdoc />
+    public void Action(Hero hero, int tileIndex)
+    {
+    }
+
+    /// <inheritdoc />
+    public void ActionNewPosition(Hero hero)
+    {
+    }
+
+    /// <inheritdoc />
+    public void ScoutRadar(Hero hero)
+    {
+    }
+}

@@ -85,13 +85,13 @@
 | `h2d` | 1 | 0 | 0 | 1 |
 | `heroes` | 12 | 2 | 4 | 6 |
 | `kingdom` | 14 | 4 | 6 | 4 |
-| `maps` | 17 | 3 | 7 | 7 |
+| `maps` | 17 | 4 | 7 | 6 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 1 | 2 | 1 |
 | `spell` | 4 | 1 | 1 | 2 |
 | `system` | 3 | 0 | 2 | 1 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **33** | **63** | **153** |
+| **合计** | **249** | **34** | **63** | **152** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -370,6 +370,67 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 对话框（`ShowMapsDialog`）与存档读写留给渲染层与存档层。`kingdom` 目录 3/6/5 → **4/6/4**，
 合计 **32/63/154** → **33/63/153**。测试 8 条。
 
+2026-11-16：王国的访问名册与日/周推进（ADR-120）：`visit.cpp`+`visit.h`→`IndexObject`/`VisitScope`/`Visit`
+（三条寿命谓词），`Kingdom` 有了 `SetVisited`/`IsVisited`×3/`CountVisitedObjects`、旅行者帐篷位图、
+`KingdomModes`、`IsPlay`/`IsControlHuman`、失城倒计时与每日/每周清理、调试赠礼；`World.NewDay` 接上
+`Kingdoms.NewDay/NewWeek`。石阵那一行动作也落了（`Kingdom.ActionObelisk`，ADR-121），拼图终于有了调用方。
+`maps` 目录 3/7/7 → **4/7/6**（`visit` 由「未转」变 ✔；`position.cpp` 仍缺），合计 **33/63/153** →
+**34/63/152**。测试 17 条。
+
+2026-11-16：英雄侧的访问名册、动作层与运气/士气重算（ADR-122）：`Hero.Visit.cs`（`LOCAL`/`GLOBAL`
+两层名册、`SetVisited`/`IsVisited`×3/`GetAllVisitedObjectTypes`、日/周/战后三个清理、每日回蓝与神秘术加成）、
+`GameStatic.cs`（每日回蓝、运气/士气修正、移动点加成四张表）、`HeroActions.cs`（魔法井、泉眼、运气/士气建筑、
+黑猫、风车/水车/小屋/魔法花园、马厩、旅行者帐篷、石阵、竞技场、屏障、免费取宝十二支 + `ArtifactPickupOutcome`
++ 三张对象清单）、`Tile.GetArtifactCaptureCondition`，`GetMorale`/`GetLuck` 改为按访问类型集合重算；
+`Kingdom.AddHero` 补 `SetColor`，`Mp2ObjectTypes.IsDayLife` 的比较值改回不带动作位的 `MagicWell`。
+`heroes.cpp`、`heroes_action.cpp`、`game_static.cpp`、`maps_tiles_helper.cpp` 本来都在「部分」里，合计仍
+**34/63/152**。测试 37 条。
+
+2026-11-16（续）：英雄的经验与升级（ADR-123）：`Hero.Experience.cs`（经验 → 等级反查、连升逐级压门槛、
+四个种子由地图种子与英雄状态混合、`autoselect` 抽牌与可注入的选择委托）、`SkillLevelUp.cs`（主技能加权抽签、
+副技能两候选的黑名单与魔法职业每三级强制智慧、`IsMagicalRace`）、`HeroActions.cs` 补凉亭（1000 点、瓦片级
+一次）与知识树（正好一级经验、可收费、两份名册分开写）、`Tile.GetTreeOfKnowledgeRequirement`。
+`skill.cpp` 也进了「部分」列表，合计仍 **34/63/152**（`skill.cpp` 本来算在「部分」）。测试 47 条。
+
+2026-11-16（再续）：神殿与女巫小屋（ADR-124）：`TileMetadata.GetSpellFromTile` 与
+`GetSecondarySkillFromWitchsHut`（车道读取）、`Hero.SecondarySkills.cs`（`HasSecondarySkill`/`GetLevelSkill`/
+`HasMaxSecondarySkill`/`LearnSkill`）、`HeroActions.ActionToShrine`（无书/无智慧/已有/学会四道门）、
+`HeroActions.ActionToWitchsHut`（满八槽/已会/学会三道门），两个结果枚举；名册一律写在分支之外、只写王国。
+合计仍 **34/63/152**。测试 57 条。
+
+2026-11-16（三续）：宝箱与仙那度（ADR-125）：`ArtifactGold.InsteadOf`（神奇折金表）、
+`GameStatic.IsHeroWorthyToVisitXanadu`（等级 + 外交术门槛）、`HeroActions.ActionToTreasureChest`（海上/陆地有钱/
+只有神器三条分支，二选一交给委托）、`HeroActions.ActionToXanadu`（三道门，四主技能各 +1）。更正：fheroes2 里
+没有「学者」对象。合计仍 **34/63/152**。测试 70 条。
+
+2026-11-16（四续）：「钱或神器」一簇（ADR-126）：`HeroActions.ActionToPickupResource`（散落资源/营火/桶）、
+`ActionToSkeleton`、`ActionToWagon`、`ActionToFlotsam`、`ActionToShipwreckSurvivor` 与 `IsPickupResource`、
+结果类型 `ObjectPickupReward`。四支的「满包 / 清元数据 / 记名册」规则各不相同，货车是唯一不折金的。合计仍
+**34/63/152**。测试 84 条。
+
+2026-11-16（五续）：监牢与英雄入伙（ADR-127）：`HeroActions.ActionToJail` + `JailOutcome`、`Hero.Recruit`
+（`Hero.Recruit.cs`）、`AllHeroes.FromJail`、`World.FromJailHeroes`、`Kingdom.AllowRecruitHero`。顺序是先查
+名额再找囚犯，监牢不查钱、不清元数据、不记名册。合计仍 **34/63/152**。测试 94 条。
+
+2026-11-16（六续）：塞伦与告示牌（ADR-128）：`Army.ActionToSirens`（30% / 至少 1 个 / 独苗不动，按血量折经验）、
+`HeroActions.ActionToSirens` + `SirensReward`、`HeroActions.ActionToSign`（取 `World.GetMapSign` 的留言，不改
+状态）。合计仍 **34/63/152**。测试 105 条。
+
+2026-11-16（七续）：迷雾入世界（ADR-129）：`World.Fog`（按需创建、`Reset` 丢弃）、`World.ClearFog`
+（`maps.cpp:464`）、`World.ActionForMagellanMaps`（`world.cpp:906`）、`MapFog.Reveal` 改返回揭开数、
+`ObservationTowerRevealDistance`/`MagiEyesRevealDistance` 两个常量，以及 `HeroActions.ActionToObservationTower`、
+`HeroActions.ActionToMagellanMaps` + `MagellansMapsOutcome`（两段式确认）。合计仍 **34/63/152**。测试 118 条。
+
+2026-11-16（八续）：开局侦察（ADR-130）：`Hero.GetScoutingDistance`（神器 + 4 + 侦察术数值）、
+`Hero.Scout`、`AllHeroes.Scout`、`Castle.Scout`、`AllCastles.Scout`、`World.ClearFog( PlayerColor )`
+（`world.cpp:838`）与第一个真实的移动处理器 `FogHeroMovementHandler`（走路即开图）。合计仍 **34/63/152**。
+测试 130 条。
+
+2026-11-16（九续）：场景接上世界迷雾（ADR-131）：`AdventureMapScene` 把地图装进 `World.Current` 并画
+`World.Fog`，`ClearFog( observers )` + 聚焦城堡占位（`ScoutStart`）；`World.ClearFog( PlayerColor )` 末尾补
+`UpdateDirections`（修「零揭开时一格雾都不画」）；删除 `MapFog.CreateForMap`。冒险地图像素基线与
+`tests/baselines/adventure-map.png` 逐字节一致。合计仍 **34/63/152**。测试 133 条。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`image_palette.cpp`→`Palette`；
@@ -484,7 +545,9 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   kingdom towns / monsters / artifacts 手写（lambda；id 现用 `MonsterType` / `ArtifactType` 枚举，
   见 `PROGRESS.md`）；
   `Tile::getMainObjectType` 依赖 `Tile` 的缓存字段，随 `world` 一起搬
-* ❌ `position.cpp`、`visit.cpp`、
+  ✅ `visit.cpp`+`visit.h`→`IndexObject`/`VisitScope`/`Visit`（三条寿命谓词转发 `Mp2ObjectTypes`，
+  ADR-120），`Kingdom` 有了访问名册与旅行者帐篷位图
+* ❌ `position.cpp`、
   `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
   `map_random_generator.cpp`、`map_random_generator_helper.cpp`、`map_random_generator_info.cpp`
 
@@ -556,7 +619,9 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   肖像/名字/巡逻，ADR-072）已落，另有 `Hero` 的 id 取值域、种族/颜色/肖像、mode 位、`isFriends`（暂等价于
   同色，ADR-083）、瓦片占用契约（ADR-062/068/071）、经验/等级表（`HeroExperience`，ADR-090）、
   军队与移动点（ADR-095/096）、`GetLuck`/`GetMorale` 的技能项（ADR-099）与 `heroes_base` 的法术书/
-  法力点/`GetMagicStrategicValue`（ADR-102）；
+  法力点/`GetMagicStrategicValue`（ADR-102）、英雄侧的访问名册两层（`LOCAL` 自己记 / `GLOBAL` 转王国）、
+  每日回蓝（含神秘术加成）与日/周/战后三个清理、运气/士气按访问类型集合重算（`Hero.Visit`、`Hero.Morale`、
+  `GameStatic`，ADR-122）；
   `skill.cpp` 也记「部分」：14 项枚举、数值表、种族初始技能、`SecSkills`、外交折扣已转（ADR-087~089），
   只差 `FindSkillsForLevelUp`（要随机种子）与技能名/描述文案；`route.cpp` 也记「部分」：
   `Route::Step`→`RouteStep`（ADR-093）与 `Route::Path`→`HeroPath` 的队列语义
@@ -565,7 +630,15 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   ADR-094）已落，`_hero` 指针换成 `movePoints`/`heroIndex` 参数；`heroes_move.cpp` 也记「部分」：
   九帧状态机、转向块、像素偏移、帧循环（`Hero.Movement`，ADR-097），清雾/对象动作/小地图/渲染四个
   缺失子系统走 `IHeroMovementHandler` 接缝（ADR-098）；未转 `GetIndexSprite`（260 行 `ICN::ROUTE`
-  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转；
+  精灵表，等渲染侧）、`String`、行走音效与淡入淡出；法术书、AI 动作仍未转；`heroes_action.cpp` 搬了
+  石阵那一支（王国侧的登记 + 拼图重算，`Kingdom.ActionObelisk`，ADR-121）与魔法井、泉眼、运气/士气建筑、
+  黑猫、风车/水车/小屋/魔法花园、马厩、旅行者帐篷、竞技场、屏障、免费取宝、凉亭、知识树、神殿、女巫小屋、
+  宝箱、仙那度、散落资源/营火/桶、骷髅、货车、浮木、沉船幸存者、监牢、塞伦、告示牌、观察塔、麦哲伦地图
+  二十七支（`HeroActions`，ADR-122 至 ADR-129，用 `Kingdoms` + 英雄颜色代替 `hero.GetKingdom()`），付费取宝
+  与麦哲伦地图只返回 `NeedsPayment`/`NeedsConfirmation`，其余分支还要等军队/战斗这些前置；迷雾已进
+  `World.Fog`，开局侦察也已搬（`Hero.GetScoutingDistance`/`Scout`、`AllHeroes`/`AllCastles.Scout`、
+  `World.ClearFog(color)`、`FogHeroMovementHandler`），冒险地图场景已改画 `World.Fog`（ADR-131）；
+  `Hero.Recruit` 只差 `SAVEMP`、透明值与迷雾侦察三件事；
   ✅ `heroes_recruits.cpp`+`heroes_recruits.h`→`Recruit`/`Recruits`（酒馆那一对、投降日的替换规则，
   ADR-118），`Kingdom` 有了 `GetRecruits()` 与 `clear` 里的重置，只差参考 `GetRecruits()` 的按需补位
   （要 `Settings`/战役存档/`Players`）
@@ -582,9 +655,11 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `CanRecruitHeroes`、`LostTownDays`、五个计数）与七槽容器 `Kingdoms`（`GetKingdom`/`Init`/`Clear`/
   `AddCastles`/`AddHeroes`/`GetNotLossColors`）已转（ADR-111/112），世界装载时按文件头的颜色起王国并填名册；
   **每日入账** `ActionNewDayResourceUpdate`（首日不结算、收入 + 当日事件、AI 跳过人类专属事件、金额按金库
-  钳制）已转（ADR-114）；未转每日/每周/每月推进的其余部分（`ActionNewDay` 的访问记录与胜负、
-  `ActionNewWeek`/`ActionNewMonth`，要 `Settings` 与招募池）、电脑难度加成与人类折扣、招募（`Recruits`）、
-  访问记录、`GetCountArtifacts`、`LossPostActions`；❌ `experience`、`kingdom_overview`、
+  钳制）已转（ADR-114）；`ActionNewDay`/`ActionNewWeek` 与访问名册（`SetVisited`/`IsVisited`×3/
+  `CountVisitedObjects`、`Visit` 的三条寿命、旅行者帐篷位图、`KingdomModes`、失城倒计时、调试赠礼，
+  ADR-120）也已转，石阵分支 `ActionObelisk` 顺带落地（ADR-121）；未转 `ActionNewMonth`（要 `Settings`）、
+  电脑难度加成与人类折扣、招募补位（`GetRecruits()` 的刷新）、`GetCountArtifacts`、`LossPostActions`
+  （端口改成可选回调，见 ADR-120）；❌ `experience`、`kingdom_overview`、
   `speed`、`view_world`（`experience`/`speed` 只剩 `_()` 文案，等翻译层）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
   `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的

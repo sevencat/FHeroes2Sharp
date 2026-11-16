@@ -297,9 +297,11 @@ public sealed partial class Hero
     /// <para>
     /// <b>What is missing, and why</b>: the default army, primary skills and initial spell of the race
     /// (<c>HeroBase::LoadDefaults</c>, <c>_army.Reset</c>), the secondary skills of the race, the custom
-    /// army, the artifacts, the level up from <see cref="Mp2HeroInfo.Experience"/>, the spell points and
-    /// the movement points. Each of them belongs to the army, the skill, the artifact, the level up or the
-    /// movement system; reading them here would only park the values in a field nobody reads.
+    /// army, the artifacts, the level up from <see cref="Mp2HeroInfo.Experience"/> (the experience itself now
+    /// has a home — <see cref="SetExperience"/> — but replaying the level-ups here would need the map seed and
+    /// the chooser), the spell points and the movement points. Each of them belongs to the army, the skill,
+    /// the artifact, the level up or the movement system; reading them here would only park the values in a
+    /// field nobody reads.
     /// </para>
     /// <para>
     /// The <c>assert( _objectTypeUnderHero == OBJ_NONE )</c> at the end of the reference function is not

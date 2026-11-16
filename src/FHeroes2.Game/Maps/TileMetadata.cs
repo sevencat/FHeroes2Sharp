@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.Spells;
 
 namespace FHeroes2.Game.Maps;
 
@@ -17,10 +19,9 @@ namespace FHeroes2.Game.Maps;
 /// whose first parameter is always a tile.
 /// </para>
 /// <para>
-/// What is <b>not</b> here: anything that needs <c>Spell</c> or <c>Artifact</c> as a class
-/// (<c>getSpellFromTile</c>, <c>setSpellOnTile</c>, <c>getArtifactFromTile</c> of a spell scroll's spell
-/// id, <c>getMineSpellIdFromTile</c>) and the troop helpers, which need <c>Troop</c> and
-/// <c>Monster</c>. The ids are read and written as integers instead, which is what the lanes hold.
+/// What is <b>not</b> here: the writing twins of the spell lane (<c>setSpellOnTile</c>,
+/// <c>getMineSpellIdFromTile</c>) and the troop helpers, which need <c>Troop</c> and <c>Monster</c>. The
+/// readers that the adventure map needs are here; the lanes hold ids, so the rest stays as integers.
 /// </para>
 /// </remarks>
 public sealed partial class Tile
@@ -129,6 +130,107 @@ public sealed partial class Tile
                 Debug.Assert(false, "The tile does not hold an object that keeps an artifact.");
                 return ArtifactType.Unknown;
         }
+    }
+
+    /// <summary>
+    /// What a guarded artifact asks for, <c>Maps::getArtifactCaptureCondition()</c>
+    /// (<c>maps_tiles_helper.cpp:623</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 条件存在 <c>metadata[2]</c>，编号本身就是地图数据（见 <see cref="ArtifactCaptureCondition"/>），不能改。
+    /// 非神器对象问这个是无意义的，参考只是断言然后回 <see cref="ArtifactCaptureCondition.NoConditions"/>；
+    /// 端口保留同样的宽容，因为调用方常常不分对象类型就取条件。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
+    /// <returns>The condition the artifact asks for.</returns>
+    public ArtifactCaptureCondition GetArtifactCaptureCondition(World world)
+    {
+        if (GetMainObjectType(world, false) != Mp2ObjectType.Artifact)
+        {
+            Debug.Assert(false, "The tile does not hold an artifact with a capture condition.");
+
+            return ArtifactCaptureCondition.NoConditions;
+        }
+
+        return (ArtifactCaptureCondition)_metadata[2];
+    }
+
+    /// <summary>
+    /// What the tree of knowledge asks for its experience, <c>Maps::getTreeOfKnowledgeRequirement()</c>
+    /// (<c>maps_tiles_helper.cpp:697</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两个车道就是一个 <see cref="Funds"/>：<c>metadata[0]</c> 是资源编号（与 <c>ResourceType</c> 同序号），
+    /// <c>metadata[1]</c> 是数量。零数量即「免费」，参考把这种当成无效需求直接断言——地图编辑器确实会写出
+    /// 「金币 0」的树，用来表示白送。
+    /// </para>
+    /// <para>
+    /// 非知识树对象问这个是错的，参考断言后回空 <see cref="Funds"/>；端口保留同样的宽容，因为调用方常常先取
+    /// 需求再判「要不要收」。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
+    /// <returns>The payment, empty for a free tree or for a tile that is not a tree.</returns>
+    public Funds GetTreeOfKnowledgeRequirement(World world)
+    {
+        if (GetMainObjectType(world, false) != Mp2ObjectType.TreeOfKnowledge)
+        {
+            Debug.Assert(false, "The tile does not hold a tree of knowledge.");
+
+            return new Funds();
+        }
+
+        return new Funds((int)_metadata[0], _metadata[1]);
+    }
+
+    /// <summary>
+    /// The spell a shrine or a pyramid teaches, <c>Maps::getSpellFromTile()</c>
+    /// (<c>maps_tiles_helper.cpp:388</c>).
+    /// </summary>
+    /// <remarks>
+    /// 三个圆环的神殿与金字塔都把法术编号存在 <c>metadata[0]</c>，与 <c>Spell</c> 的编号同序；参考用同一个
+    /// 函数读它们。第 5 级法术的「金字塔」另有一层守卫，那是动作层的事，读车道这一步没有分支。
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
+    /// <returns>The spell, or <see cref="SpellType.None"/> when the tile does not teach one.</returns>
+    public Spell GetSpellFromTile(World world)
+    {
+        Mp2ObjectType objectType = GetMainObjectType(world, false);
+
+        if (objectType is not (Mp2ObjectType.ShrineFirstCircle or Mp2ObjectType.ShrineSecondCircle
+            or Mp2ObjectType.ShrineThirdCircle or Mp2ObjectType.Pyramid))
+        {
+            Debug.Assert(false, "The tile does not hold a shrine or a pyramid.");
+
+            return new Spell(SpellType.None);
+        }
+
+        return new Spell((int)_metadata[0]);
+    }
+
+    /// <summary>
+    /// The skill a witch's hut teaches, <c>Maps::getSecondarySkillFromWitchsHut()</c>
+    /// (<c>maps_tiles_helper.cpp:708</c>).
+    /// </summary>
+    /// <remarks>
+    /// <c>metadata[0]</c> 是技能编号，等级固定为基础——参考把这个车道解成一个完整的
+    /// <c>Skill::Secondary</c>，端口同样返回 <see cref="SecondarySkillLevel"/>。
+    /// </remarks>
+    /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
+    /// <returns>The skill at the basic level, or an unset pair for a tile that is not a hut.</returns>
+    public SecondarySkillLevel GetSecondarySkillFromWitchsHut(World world)
+    {
+        if (GetMainObjectType(world, false) != Mp2ObjectType.WitchsHut)
+        {
+            Debug.Assert(false, "The tile does not hold a witch's hut.");
+
+            return default;
+        }
+
+        return new SecondarySkillLevel((SecondarySkill)(int)_metadata[0], SkillLevel.Basic);
     }
 
     /// <summary>
