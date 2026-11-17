@@ -245,6 +245,30 @@ public sealed class ArtifactBag
     }
 
     /// <summary>
+    /// Whether any artifact in the bag carries a curse, <c>isArtifactCursePresent()</c>
+    /// (<c>artifact.cpp:551-564</c>).
+    /// </summary>
+    /// <remarks>
+    /// The question is asked where the curse's value is irrelevant and only its presence matters — the army's morale
+    /// wants to know whether the "Arm of the Martyr" is worn, not by how much. Unlike the sum below, this one is valid
+    /// for every curse type, so it is also the way to ask about the multiplied and unique ones.
+    /// </remarks>
+    /// <param name="curse">The curse to look for.</param>
+    /// <returns>Whether at least one artifact has it.</returns>
+    public bool IsArtifactCursePresent(ArtifactCurseType curse)
+    {
+        foreach (ArtifactType artifact in _slots)
+        {
+            if (ArtifactTable.Get(artifact).TryGetCurse(curse, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The sum of one curse over the bag, <c>getTotalArtifactEffectValue( curse )</c>
     /// (<c>artifact.cpp:653-687</c>).
     /// </summary>

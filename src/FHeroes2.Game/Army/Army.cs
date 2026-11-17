@@ -1,6 +1,7 @@
 using System.Collections;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
@@ -21,11 +22,13 @@ namespace FHeroes2.Game.Army;
 /// </para>
 /// <para>
 /// Every rule of <c>army.cpp</c> is ported. What is missing is not a rule but a dependency, kept in one list so
-/// the boundary is visible: the castle and artifact terms of <c>GetMoraleModificator()</c>/<c>GetLuckModificator()</c>
-/// (<c>inCastle()</c>, the artifact bag — the army has no way to ask a hero yet), the battle helper
-/// <c>GetCurrentUnit</c>, the text of <c>TroopSizeString</c>/<c>String</c> (plural monster names plus the
-/// translation layer), the three drawing functions and all of <c>army_bar.cpp</c>/<c>army_ui_helper.cpp</c> (UI),
-/// the stream operators (no save format yet) and <c>Army::GetControl</c> (no player object to ask). The
+/// the boundary is visible: the battle helper <c>GetCurrentUnit</c>, the text of
+/// <c>TroopSizeString</c>/<c>String</c> (plural monster names plus the translation layer), the three drawing
+/// functions and all of <c>army_bar.cpp</c>/<c>army_ui_helper.cpp</c> (UI), the stream operators (no save format
+/// yet) and <c>Army::GetControl</c> (no player object to ask). The castle and artifact terms of
+/// <c>GetMoraleModificator()</c>/<c>GetLuckModificator()</c> are ported: they ask the commander for its
+/// <see cref="IArmyCommander.InCastle"/> and its artifact bag, and stay at the neutral value when the commander has
+/// neither. The
 /// <c>Troops::Insert</c>/<c>PushBack</c>/<c>PopBack</c> trio needs no port: it mutates the reference's vector of
 /// slots, while here the five slots are fixed and the open-ended containers are plain
 /// <see cref="List{T}"/> objects.
@@ -323,10 +326,20 @@ public sealed partial class Army : IEnumerable<Troop>
     /// The luck an army has without its hero, <c>Army::GetLuckModificator()</c> (<c>army.cpp:1206</c>).
     /// </summary>
     /// <returns>
-    /// <see cref="Luck.Normal"/>: the only term left in the reference is the castle the army stands in
-    /// (<c>Castle::GetLuckModificator</c>), which the port has no <c>Castle</c> for yet.
+    /// <see cref="Luck.Normal"/> plus the castle's luck modifier when the army stands in a town. The reference has
+    /// no other term here — luck comes from the hero, the artifacts and the town.
     /// </returns>
-    public int GetLuckModificator() => Luck.Normal;
+    public int GetLuckModificator()
+    {
+        int result = Luck.Normal;
+
+        if (Commander?.InCastle is { } castle)
+        {
+            result += castle.GetLuckModificator();
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// The morale the army fights with, <c>Army::GetMorale()</c> (<c>army.cpp:1220</c>).
@@ -336,17 +349,17 @@ public sealed partial class Army : IEnumerable<Troop>
 
     /// <summary>
     /// The morale an army has without its hero, <c>Army::GetMoraleModificator()</c>
-    /// (<c>army.cpp:1226</c>): a bonus for a single-race army, a penalty for every race past the second,
-    /// and one more penalty for undead in the ranks.
+    /// (<c>army.cpp:1226</c>): the castle's own modifier, a bonus for a single-race army, a penalty for every
+    /// race past the second, and one more penalty for undead in the ranks.
     /// </summary>
     /// <returns>
     /// The sum, not clamped — the reference leaves the clamp to the caller
     /// (<c>Morale::Normalize()</c> in <c>Heroes::getMoraleWithModifiers</c>).
     /// </returns>
     /// <remarks>
-    /// Two terms of the reference are missing for want of their subjects: the castle modificator
-    /// (<c>inCastle()</c>) and the "Arm of the Martyr" artifact, which adds the undead penalty to a living
-    /// army. Both are additions to the value, so the rest of the computation is unaffected.
+    /// The castle term is added before the race terms, as in the reference. The undead penalty is decided after it,
+    /// because the "Arm of the Martyr" curse turns a living army into one that takes the penalty: the reference
+    /// folds the curse into <c>hasUndead</c> rather than subtracting twice.
     /// </remarks>
     public int GetMoraleModificator()
     {
@@ -365,6 +378,15 @@ public sealed partial class Army : IEnumerable<Troop>
         }
 
         int result = Morale.Normal;
+
+        if (Commander?.InCastle is { } castle)
+        {
+            result += castle.GetMoraleModificator();
+        }
+
+        // Artifact "Arm of the Martyr" adds the undead morale penalty to an army of the living.
+        hasUndead = hasUndead
+            || (Commander is not null && Commander.BagArtifacts.IsArtifactCursePresent(ArtifactCurseType.UndeadMoralePenalty));
 
         switch (races.Count)
         {

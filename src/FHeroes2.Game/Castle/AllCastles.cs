@@ -62,6 +62,19 @@ public sealed class AllCastles : IReadOnlyList<Castle>
     /// <summary>How many towns the world has, <c>AllCastles::Size()</c>.</summary>
     public int Count => _castles.Count;
 
+    /// <summary>
+    /// The position of the first town in the table, <c>VecCastles::GetFirstCastle()</c>
+    /// (<c>castle.cpp:2400-2412</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference scans for the first non-null entry, because its vector can hold gaps where a town was
+    /// destroyed. The port's list never holds a gap — <see cref="Remove(int, int)"/> compacts it — so "the first
+    /// town" is position 0, and only an empty table has no answer. Callers use it to pick an arbitrary town (the
+    /// starting town of a colour, the town an event fires in), which is what the reference uses it for too.
+    /// </remarks>
+    /// <returns>Zero, or -1 when the world has no towns, the reference's <c>-1</c>.</returns>
+    public int FirstCastle => _castles.Count > 0 ? 0 : -1;
+
     /// <summary>A town by its insertion order, <c>_castles</c>.</summary>
     /// <param name="index">Zero based position in the table.</param>
     public Castle this[int index] => _castles[index];

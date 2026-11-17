@@ -1,8 +1,11 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Spells;
+
 using ArmyTroops = FHeroes2.Game.Army.Army;
+using IArmyCommander = FHeroes2.Game.Army.IArmyCommander;
 
 namespace FHeroes2.Game.Castle;
 
@@ -26,9 +29,17 @@ namespace FHeroes2.Game.Castle;
 /// when there is one, and the captain only fights when there is nobody home (ADR-134).
 /// </para>
 /// </remarks>
-public sealed class Captain : ISpellBookOwner
+public sealed class Captain : ISpellBookOwner, IArmyCommander
 {
+    /// <summary>
+    /// The ceiling on spell power, <c>CAPTAIN_MAX_POWER</c> (<c>captain.cpp:32</c>) — the same 255 a hero's power is
+    /// clamped to.
+    /// </summary>
+    public const int MaxPower = 255;
+
     private readonly SpellStorage _spellBook = new();
+
+    private readonly ArtifactBag _bagArtifacts = new();
 
     private Castle? _home;
 
@@ -74,35 +85,99 @@ public sealed class Captain : ISpellBookOwner
     /// <summary>The town's army, <c>GetArmy()</c>.</summary>
     public ArmyTroops Army => _home?.Army ?? new ArmyTroops();
 
-    /// <summary>The captain's attack, <c>GetAttack()</c>.</summary>
-    public int GetAttack() => _attack;
+    /// <summary>The captain's attack, <c>GetAttack()</c> (<c>captain.cpp:127</c>).</summary>
+    /// <remarks>
+    /// The reference adds <c>GetAttackModificator( nullptr )</c>, which is <c>HeroBase</c>'s castle term plus the
+    /// artifacts'. A captain owns no artifacts, so only the town can move the value — and none of the six races has
+    /// an attack modifier, so the value is currently always <c>_attack</c>.
+    /// </remarks>
+    public int GetAttack() => _attack + (_home?.GetAttackModificator() ?? 0);
 
-    /// <summary>The captain's defence, <c>GetDefense()</c>.</summary>
-    public int GetDefense() => _defense;
+    /// <summary>The captain's defence, <c>GetDefense()</c> (<c>captain.cpp:132</c>); see <see cref="GetAttack"/>.</summary>
+    public int GetDefense() => _defense + (_home?.GetDefenseModificator() ?? 0);
 
-    /// <summary>The captain's spell power, <c>GetPower()</c>.</summary>
-    public int GetPower() => _power;
+    /// <summary>
+    /// The captain's spell power, <c>GetPower()</c> (<c>captain.cpp:137</c>).
+    /// </summary>
+    /// <remarks>The one primary skill the reference clamps: <c>std::clamp( _power + modificator, 1, 255 )</c>.</remarks>
+    public int GetPower() => Math.Clamp(_power + (_home?.GetPowerModificator() ?? 0), 1, MaxPower);
 
-    /// <summary>The captain's knowledge, <c>GetKnowledge()</c>.</summary>
-    public int GetKnowledge() => _knowledge;
+    /// <summary>The captain's knowledge, <c>GetKnowledge()</c> (<c>captain.cpp:142</c>); see <see cref="GetAttack"/>.</summary>
+    public int GetKnowledge() => _knowledge + (_home?.GetKnowledgeModificator() ?? 0);
 
-    /// <summary>The captain's morale, <c>GetMorale()</c>: always normal, it has no modifiers of its own.</summary>
-    public int GetMorale() => Morale.Normal;
+    /// <summary>
+    /// The captain's morale, <c>GetMorale()</c> (<c>captain.cpp:147</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference normalizes <c>GetMoraleModificator( nullptr )</c>, the <c>HeroBase</c> version: the town's
+    /// morale modifier plus the artifacts' (the captain's bag is always empty). Unlike the army's, this sum has no
+    /// race or undead terms — a captain is not troubled by the troops it commands.
+    /// </remarks>
+    public int GetMorale() => Morale.Normalize(Morale.Normal + (_home?.GetMoraleModificator() ?? 0));
 
-    /// <summary>The captain's luck, <c>GetLuck()</c>: always normal.</summary>
-    public int GetLuck() => Luck.Normal;
+    /// <summary>The captain's luck, <c>GetLuck()</c> (<c>captain.cpp:152</c>); see <see cref="GetMorale"/>.</summary>
+    public int GetLuck() => Luck.Normalize(Luck.Normal + (_home?.GetLuckModificator() ?? 0));
 
     /// <summary>The captain's spell points, <c>GetSpellPoints()</c>.</summary>
     public uint SpellPoints => _spellPoints;
 
     /// <summary>Ten per point of knowledge, <c>GetMaxSpellPoints()</c>.</summary>
-    public int GetMaxSpellPoints() => 10 * _knowledge;
+    public int GetMaxSpellPoints() => 10 * GetKnowledge();
 
     /// <inheritdoc />
     public SpellStorage MagicBook => _spellBook;
 
     /// <inheritdoc />
     public bool HasSpellBook => _spellBook.Count > 0 || _knowledge > 0;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A captain carries no artifacts in the reference either — <c>HeroBase</c> gives it a bag that nothing ever
+    /// fills. The army reads the bag for the "Arm of the Martyr" curse, which therefore never applies to a
+    /// garrison.
+    /// </remarks>
+    public ArtifactBag BagArtifacts => _bagArtifacts;
+
+    /// <inheritdoc />
+    public Castle? InCastle => _home;
+
+    /// <inheritdoc />
+    /// <remarks>A captain has no secondary skills: <c>HeroBase::GetSecondarySkillValue</c> answers 0.</remarks>
+    public uint GetSecondarySkillValue(SecondarySkill skill) => 0;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>HeroBase::GetMagicStrategicValue()</c> (<c>heroes_base.cpp:340-400</c>): with no spell points, nothing;
+    /// otherwise the best combat spell the book holds, given the army's strength, the available points and the
+    /// captain's spell power. A captain's book holds at most the race's initial spell.
+    /// </remarks>
+    public double GetMagicStrategicValue(double armyStrength)
+    {
+        if (_spellPoints == 0)
+        {
+            return 0.0;
+        }
+
+        double bestValue = 0.0;
+        int spellPower = GetPower();
+
+        foreach (Spell spell in _spellBook)
+        {
+            if (spell.IsCombat())
+            {
+                bestValue = Math.Max(bestValue, spell.GetStrategicValue(armyStrength, _spellPoints, spellPower));
+            }
+        }
+
+        return bestValue;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>HeroBase::isHeroes()</c> is <c>false</c>; only <c>Heroes</c> overrides it. The distinction matters to
+    /// <c>Army::GetStrength()</c>, which adds a hero's army bonuses but not a captain's.
+    /// </remarks>
+    public bool IsHeroes => false;
 
     /// <summary>
     /// Fills the captain from its town, <c>HeroBase::LoadDefaults( CAPTAIN, race )</c>

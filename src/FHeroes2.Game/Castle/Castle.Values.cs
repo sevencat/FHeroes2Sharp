@@ -22,8 +22,9 @@ namespace FHeroes2.Game.Castle;
 /// </para>
 /// <para>
 /// <b>What is missing</b>, all of it because the system is: the tower's strength in
-/// <see cref="GetGarrisonStrength"/>, the boat the shipyard can launch (<c>castle.cpp:2125-2165</c>), and the merged
-/// army of <c>Army::ArrangeForCastleDefense()</c>. Each one is called out at the method that needs it.
+/// <see cref="GetGarrisonStrength"/> (<c>Battle::Tower</c> is part of the battle batch), and the cost of
+/// <c>ActionNewMonth</c>'s castle-upkeep and tax terms, which need a kingdom round to spend against. Each one is
+/// called out at the method that needs it.
 /// </para>
 /// </remarks>
 public sealed partial class Castle
@@ -48,20 +49,53 @@ public sealed partial class Castle
     /// garrison, which is the whole point of <c>CheckBuyBuilding</c> allowing the walls to be bought.
     /// </para>
     /// <para>
-    /// <b>Two omissions.</b> The towers (<c>Battle::Tower</c>, worth <c>towerStr</c> for the keep and half of it per
+    /// A hero in the town is merged with the garrison first, exactly as <see cref="ActionPreBattle"/> merges it
+    /// before a real battle: the garrison stacks move into the hero's free slots, and the combined army answers.
+    /// The merge works on a copy, so neither the hero's army nor the garrison is disturbed.
+    /// </para>
+    /// <para>
+    /// The reference's merge asks the combined army for <c>isControlAI()</c>, i.e. for the guest hero's control: an
+    /// AI hero squeezes in as many garrison stacks as will fit, a human one only moves them onto matching slots and
+    /// may leave some behind. The port has no player object, so <paramref name="guestIsControlAi"/> carries the
+    /// answer. It defaults to <see langword="true"/> — the conservative side for the only caller this exists for,
+    /// the AI sizing up a target, where the larger of the two numbers is the safe one.
+    /// </para>
+    /// <para>
+    /// <b>One omission.</b> The towers (<c>Battle::Tower</c>, worth <c>towerStr</c> for the keep and half of it per
     /// turret) are part of the battle system and are not ported, so a castle's strength is the army and the
-    /// multipliers only — the same shape with a smaller constant. And a guest hero's army is not merged with the
-    /// garrison: the reference calls <c>Army::ArrangeForCastleDefense()</c>, which moves the garrison stacks into
-    /// the hero's free slots, and the port has no such method, so his army alone answers. That under-estimates a
-    /// town that has both, never over-estimates it.
+    /// multipliers only — the same shape with a smaller constant.
     /// </para>
     /// </remarks>
     /// <param name="guestHero">The hero in the town, or <see langword="null"/> for none.</param>
     /// <param name="attackingHero">The hero who would attack, or <see langword="null"/> when unknown.</param>
+    /// <param name="guestIsControlAi">
+    /// Whether <paramref name="guestHero"/> is an AI hero, which decides how the garrison is merged.
+    /// </param>
     /// <returns>The strength the attacker has to beat; zero for an empty town.</returns>
-    public double GetGarrisonStrength(Hero? guestHero = null, Hero? attackingHero = null)
+    public double GetGarrisonStrength(
+        Hero? guestHero = null,
+        Hero? attackingHero = null,
+        bool guestIsControlAi = true)
     {
-        double totalStrength = (guestHero?.Army ?? _army).GetStrength();
+        double totalStrength;
+
+        if (guestHero is not null)
+        {
+            // The merge needs the hero as the commander of the combined army (the reference constructs it that
+            // way), and it needs a copy of the garrison because the merge empties what it moves.
+            ArmyTroops garrisonArmy = new(Race);
+            garrisonArmy.Assign(_army.Slots);
+
+            ArmyTroops combinedArmy = new(Race) { Commander = guestHero };
+            combinedArmy.Assign(guestHero.Army.Slots);
+            combinedArmy.ArrangeForCastleDefense(garrisonArmy, guestIsControlAi);
+
+            totalStrength = combinedArmy.GetStrength();
+        }
+        else
+        {
+            totalStrength = _army.GetStrength();
+        }
 
         if (IsCastle && totalStrength > 0.1)
         {

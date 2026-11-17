@@ -1,10 +1,12 @@
 using System.Numerics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 using ArmyTroops = FHeroes2.Game.Army.Army;
@@ -47,10 +49,12 @@ namespace FHeroes2.Game.Castle;
 /// <para>
 /// The rest of the object came in with it: the mage guild's spells and the captain
 /// (<see cref="Castle.Training.cs"/>), the AI's numbers — <see cref="GetAvailableArmy"/>,
-/// <see cref="GetVisitValue"/>, <see cref="GetGarrisonStrength"/> — and the three modificators that raise an army's
-/// morale, luck and spell power. What is still missing needs a system rather than a batch: the weekly growth and its
-/// well bonuses (the world's week type), taxes (a kingdom), boats (the sea), the battle hooks and the town screen.
-/// <see cref="Castle.Description.cs"/> lists those by name.
+/// <see cref="GetVisitValue"/>, <see cref="GetGarrisonStrength"/> — the three modificators that raise an army's
+/// morale, luck and spell power, the boats (<see cref="Castle.Boats.cs"/>), the battle hooks
+/// (<see cref="Castle.Battle.cs"/>) and the per-race building ICN table (<see cref="Castle.IcnTables.cs"/>). What is
+/// still missing needs a system rather than a batch: the weekly growth and its well bonuses (the world's week type),
+/// the castle maintenance and tax terms of the new-month event, the towers' battle strength (<c>Battle::Tower</c>)
+/// and the town screen. <see cref="Castle.Description.cs"/> lists the leftovers by name.
 /// </para>
 /// </remarks>
 public sealed partial class Castle
@@ -106,6 +110,11 @@ public sealed partial class Castle
         Version = version;
         _army = new ArmyTroops(race);
         _captain = new Captain(this);
+
+        // The garrison is the captain's army, not a copy: the reference binds them in _postLoad()
+        // (castle.cpp:2457, _army.SetCommander( &_captain )) so that the captain's primary skills already count for
+        // the garrison's strength, morale and luck before any battle.
+        _army.Commander = _captain;
         CanBuildToday = true;
     }
 
@@ -201,6 +210,55 @@ public sealed partial class Castle
     /// <param name="building">A building, or a mask of buildings.</param>
     /// <returns><see langword="true"/> when every bit of <paramref name="building"/> is built.</returns>
     public bool IsBuild(BuildingType building) => (_constructedBuildings & building) == building;
+
+    /// <summary>
+    /// Whether a map point belongs to the town's footprint, <c>Castle::isPosition()</c> (<c>castle.cpp:583-600</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The footprint is the five tiles the town screen covers: three wide on the row below the centre, the centre
+    /// itself, and the two tiles flanking it —
+    /// </para>
+    /// <code>
+    ///       -
+    ///      ---
+    ///     -+++-
+    ///     ++X++
+    /// </code>
+    /// <para>
+    /// The reference reads its own <c>center</c> member; the port derives it from <see cref="TileIndex"/>, so the
+    /// geometry has to come in as an argument. The rows above and below the cross belong to the town's shadow, not
+    /// to the town: the map lets an army walk there.
+    /// </para>
+    /// </remarks>
+    /// <param name="geometry">The map geometry, which turns the tile index into a point.</param>
+    /// <param name="point">The absolute map point.</param>
+    /// <returns>Whether the point is part of the town.</returns>
+    public bool IsPosition(MapGeometry geometry, Point point)
+    {
+        Point center = geometry.GetPoint(TileIndex);
+
+        return (point.X >= center.X - 1 && point.X <= center.X + 1 && (point.Y == center.Y - 1 || point.Y == center.Y))
+            || ((point.X == center.X - 2 || point.X == center.X + 2) && point.Y == center.Y);
+    }
+
+    /// <summary>
+    /// Whether the town's owner is the AI, <c>Castle::GetControl()</c> (<c>castle.cpp:2200-2210</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference returns <c>GetKingdom().GetControl()</c>, one of the three <c>CONTROL_*</c> values. The port
+    /// has no <c>Control</c> enum — control is a boolean on <see cref="Kingdom.Kingdom.IsControlHuman"/> — so the
+    /// question is asked as the boolean it always becomes at the call sites. The kingdom is an argument because the
+    /// port's <see cref="Castle"/> does not own one.
+    /// </remarks>
+    /// <param name="kingdom">The town's owner.</param>
+    /// <returns>Whether the owner is the AI.</returns>
+    public static bool IsControlAi(Kingdom.Kingdom kingdom)
+    {
+        ArgumentNullException.ThrowIfNull(kingdom);
+
+        return !kingdom.IsControlHuman;
+    }
 
     /// <summary>Whether the map forbids the building, <c>_disabledBuildings &amp; build</c>.</summary>
     /// <param name="building">A building, or a mask of buildings.</param>

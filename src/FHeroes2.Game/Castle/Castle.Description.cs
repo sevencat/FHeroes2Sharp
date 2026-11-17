@@ -8,15 +8,15 @@ namespace FHeroes2.Game.Castle;
 
 /// <summary>
 /// The town's texts and the hiring of a hero — <c>castle.cpp:976-1023</c> and <c>castle.cpp:2527-2570</c> — plus the
-/// handful of reference members that belong to systems the port does not have yet, kept here as documented gaps
+/// handful of reference members that still belong to systems the port does not have, kept here as documented gaps
 /// rather than silently missing.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The gaps are the battle (<c>ActionPreBattle</c>, <c>ActionAfterBattle</c>), the sea (the four boat methods) and
-/// the town screen (<c>DrawImageCastle</c>, <c>GetICNBuilding</c>, <c>GetICNBoat</c>). Each one needs a whole system
-/// the port has not reached: <c>Battle::Tower</c>, the world's boat objects, and the AGG/ICN renderer of a castle
-/// screen. They are listed here so that a later batch can find them by name.
+/// The remaining gaps are the town screen (<see cref="DrawImageCastle"/>) and the MP2 name fix-up
+/// (<see cref="FixFrenchCharactersInName"/>). The first needs the castle screen's AGG/ICN renderer; the second
+/// belongs with <see cref="MapTextCodec"/>. The battle hooks and the boats used to live here and now have their own
+/// files, <c>Castle.Battle.cs</c> and <c>Castle.Boats.cs</c>; the ICN tables are in <c>Castle.IcnTables.cs</c>.
 /// </para>
 /// </remarks>
 public sealed partial class Castle
@@ -119,66 +119,6 @@ public sealed partial class Castle
     }
 
     /// <summary>
-    /// Whether the town may launch a boat, <c>Castle::AllowBuyBoat()</c> (<c>castle.cpp:2125-2140</c>).
-    /// </summary>
-    /// <remarks>
-    /// <b>Not ported.</b> Two of the three conditions need the map: <c>HasBoatNearby()</c> scans the water around
-    /// the town for a boat object, and <c>getTileIndexToPlaceBoat()</c> picks the tile the new boat would appear on.
-    /// The port has no boat objects in <see cref="World"/>, so the answer is always <see langword="false"/> — which
-    /// is also the reference's answer for a town without a shipyard, and therefore harmless until the sea lands.
-    /// </remarks>
-    /// <param name="checkPayment">Ignored while the method is a gap.</param>
-    /// <returns>Always <see langword="false"/>.</returns>
-    public bool AllowBuyBoat(bool checkPayment = true) => false;
-
-    /// <summary>
-    /// Launches a boat, <c>Castle::BuyBoat()</c> (<c>castle.cpp:2142-2165</c>).
-    /// </summary>
-    /// <remarks>
-    /// <b>Not ported</b>, see <see cref="AllowBuyBoat"/>: it needs <c>Tile::setBoat()</c> and the boat object on the
-    /// map. Nothing is charged, because nothing is bought.
-    /// </remarks>
-    /// <returns>Always <see langword="false"/>.</returns>
-    public bool BuyBoat() => false;
-
-    /// <summary>
-    /// Whether a boat already waits next to the town, <c>Castle::HasBoatNearby()</c> (<c>castle.cpp:1862-1894</c>).
-    /// </summary>
-    /// <remarks><b>Not ported</b>: the port has no boat objects to look for. Always <see langword="false"/>.</remarks>
-    /// <returns>Always <see langword="false"/>.</returns>
-    public bool HasBoatNearby() => false;
-
-    /// <summary>
-    /// The tile a new boat would appear on, <c>Castle::getTileIndexToPlaceBoat()</c> (<c>castle.cpp:1896-1929</c>).
-    /// </summary>
-    /// <remarks><b>Not ported</b>: it scans the map's water around the town. Always -1, the reference's "nowhere".</remarks>
-    /// <returns>Always -1.</returns>
-    public int GetTileIndexToPlaceBoat() => -1;
-
-    /// <summary>
-    /// What the town does before a battle, <c>Castle::ActionPreBattle()</c> (<c>castle.cpp:2249-2263</c>).
-    /// </summary>
-    /// <remarks>
-    /// <b>Not ported</b>: the reference counts the defending side's castle objects — the walls, the towers, the
-    /// keep — and sets them up in <c>Battle::Arena</c>. The port has no battle, so there is nothing to set up.
-    /// </remarks>
-    public void ActionPreBattle()
-    {
-    }
-
-    /// <summary>
-    /// What the town does after a battle, <c>Castle::ActionAfterBattle()</c> (<c>castle.cpp:2265-2290</c>).
-    /// </summary>
-    /// <remarks>
-    /// <b>Not ported</b>: the reference removes the defenders' special abilities (the moat's, the towers') and, when
-    /// the attacker won, destroys buildings and turns the town over. Both need the battle and the map.
-    /// </remarks>
-    /// <param name="attackerWins">Whether the attacker won, <c>attackerWins</c>.</param>
-    public void ActionAfterBattle(bool attackerWins)
-    {
-    }
-
-    /// <summary>
     /// Draws the town in the town screen, <c>Castle::DrawImageCastle()</c> (<c>castle.cpp:1326-1426</c>).
     /// </summary>
     /// <remarks>
@@ -188,28 +128,6 @@ public sealed partial class Castle
     public void DrawImageCastle()
     {
     }
-
-    /// <summary>
-    /// The ICN index of a building's sprite, <c>Castle::GetICNBuilding()</c> (<c>castle.cpp:1451-1860</c>).
-    /// </summary>
-    /// <remarks>
-    /// <b>Not ported.</b> Despite the name it is not <see cref="CastleBuildingInfo.GetSpriteIndex"/>: that one is the
-    /// offset inside a town's own icon set, while this one is a full <c>ICN::</c> id of the town screen — a
-    /// four-hundred-line table that is only meaningful once the renderer can index ICN files by id. The port's
-    /// asset layer addresses ICNs by file name, so the table would have to be rewritten rather than translated.
-    /// </remarks>
-    /// <param name="buildingType">The building.</param>
-    /// <param name="race">The town's race, <c>static</c> in the reference as well.</param>
-    /// <returns>Always 0, the reference's <c>ICN::UNKNOWN</c>.</returns>
-    public static int GetICNBuilding(BuildingType buildingType, MapRace race) => 0;
-
-    /// <summary>
-    /// The ICN index of a race's boat, <c>Castle::GetICNBoat()</c> (<c>castle.cpp:1428-1449</c>).
-    /// </summary>
-    /// <remarks><b>Not ported</b>, see <see cref="GetICNBuilding"/>. Always 0.</remarks>
-    /// <param name="race">The town's race.</param>
-    /// <returns>Always 0.</returns>
-    public static int GetICNBoat(MapRace race) => 0;
 
     /// <summary>
     /// Repairs the French accents of a town name read from an MP2 file, <c>Castle::fixFrenchCharactersInName()</c>

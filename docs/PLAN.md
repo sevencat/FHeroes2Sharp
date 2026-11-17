@@ -483,6 +483,16 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 `army.cpp` 剩的是文案/绘制/序列化/`GetControl`（与 `spell.cpp` 记 ◐ 同一口径），`army_bar.cpp` 与
 `army_ui_helper.cpp` 整份是界面。测试 86 条新增，Game 2022 → **2108**，全解决方案 2772 → **2858** 全绿。
 
+2026-11-17：`castle` 收尾（ADR-145）：`castle.cpp` 剩下的规则落地 —— 队长变成指挥官（`IArmyCommander`，
+攻防知吃城的 modificator、力量钳到 255、士气/幸运走 `Normalize`）、四条船坞方法、`ActionPreBattle`/
+`ActionAfterBattle`、`IsPosition`/`IsControlAi`、`GetGarrisonStrength` 的客将合军，以及六族的 `GetICNBuilding`/
+`GetICNBoat` 表（`Castle.IcnTables.cs`，147 条用脚本逐条对过参考）。顺带补上 ADR-144 留下的两项遗留：
+`Army.GetMoraleModificator`/`GetLuckModificator` 的城堡与神器项，新增 `ArtifactBag.IsArtifactCursePresent`
+（非累计诅咒不能走 `GetTotalArtifactEffectValue`，那有 cumulative 断言）。**行数与合计不变**（`castle` 仍
+3/5/3，合计 41/63/145）：`castle.cpp` 剩下的是塔的守城强度、`ActionNewMonth` 的维护费与税收、`DrawImageCastle`
+与 `ActionPreBattle` 的 AI 分支，七个界面文件整份未转。测试 37 条新增，Game 2108 → **2145**，全解决方案
+2858 → **2895** 全绿。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -660,20 +670,22 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `App/Audio/AudioPlayer.cs`，未接到这一层
 * `castle`（11）：✔ `castle_building_info.cpp`→`CastleBuildingInfo`（面积、名字、描述、前置条件文字、
   图标序号、绘制优先级，六族三张大表由脚本从参考 `.cpp` 生成，ADR-134）、✔ `captain.cpp`→`Captain`
-  （主技能、法术点、只学 1–2 级，ADR-134）、✔ `mageguild.cpp`→`MageGuild`（布局 `[3,3,2,2,1]`、图书馆
-  各层 +1、必有伤害/取消法术、冒险法术每层一个，ADR-134）；◐ `castle.h` 的 `BuildingType` 位掩码已转
-  （`Game.Castle.BuildingType`，33 项含三个组合掩码，ADR-106），`AllCastles` 这个城表也已转
-  （ADR-110）；◐ `castle.cpp`→`Game.Castle.Castle` 已转：构造 + `_postLoad()`、`isBuild`/`isCastle`/
-  `isBuildingDisabled`/三个种族 `Spec` 谓词、`GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、
-  `GetActualDwelling`/`GetUpgradeBuilding`/`GetMonstersInDwelling`/`IsExactBuildingBuilt`、
-  `CheckBuyBuilding`/`AllowBuyBuilding`/`GetAllBuildingStatus`、`BuyBuilding`（含购买后的训练）、
-  `ActionNewDay`/`ActionNewWeek`、`AddBuildings`、`SetDefaultBuildings`、`ChangeColor`、招募的
-  `GetRecruitLimit`/`RecruitMonster`、70 字节块的 `LoadFromMP2` + `_postLoad()`、默认城名表、周产，
-  以及这一轮的 `GetMoraleModificator`/`GetLuckModificator`/`GetPowerModificator`、`GetAvailableArmy`/
-  `GetArmyRecruitmentValue`/`GetVisitValue`/`GetGarrisonStrength`、`AllowBuyHero`/`RecruitHero`、
-  `TrainHeroInMageGuild`/`TrainGuestHeroAndCaptainInMageGuild`、`GetDescriptionBuilding`（ADR-134）；
-  五处缺口都写明理由：塔的守城强度、四条船的接口、`ActionPreBattle`/`ActionAfterBattle`、
-  `GetICNBuilding`/`GetICNBoat`、`DrawImageCastle`；`ActionNewMonth` 与税收仍未转；
+  （主技能、法术点、只学 1–2 级，并作为 `IArmyCommander` 接管守军的士气/幸运/力量修正，ADR-134/145）、
+  ✔ `mageguild.cpp`→`MageGuild`（布局 `[3,3,2,2,1]`、图书馆各层 +1、必有伤害/取消法术、冒险法术每层一个，
+  ADR-134）；◐ `castle.h` 的 `BuildingType` 位掩码已转（`Game.Castle.BuildingType`，33 项含三个组合掩码，
+  ADR-106），`AllCastles` 这个城表也已转（含 `FirstCastle`，ADR-110/145）；◐ `castle.cpp`→`Game.Castle.Castle`
+  已转：构造 + `_postLoad()`、`isBuild`/`isCastle`/`isBuildingDisabled`/三个种族 `Spec` 谓词、
+  `GetLevelMageGuild`、`CountBuildings`、`GetBuildingValue`、`GetActualDwelling`/`GetUpgradeBuilding`/
+  `GetMonstersInDwelling`/`IsExactBuildingBuilt`、`CheckBuyBuilding`/`AllowBuyBuilding`/`GetAllBuildingStatus`、
+  `BuyBuilding`（含购买后的训练）、`ActionNewDay`/`ActionNewWeek`、`AddBuildings`、`SetDefaultBuildings`、
+  `ChangeColor`、招募的 `GetRecruitLimit`/`RecruitMonster`、70 字节块的 `LoadFromMP2` + `_postLoad()`、
+  默认城名表、周产、`GetMoraleModificator`/`GetLuckModificator`/`GetPowerModificator`、`GetAvailableArmy`/
+  `GetArmyRecruitmentValue`/`GetVisitValue`/`GetGarrisonStrength`（含客将合军）、`AllowBuyHero`/`RecruitHero`、
+  `TrainHeroInMageGuild`/`TrainGuestHeroAndCaptainInMageGuild`、`GetDescriptionBuilding`（ADR-134）、
+  `IsPosition`/`IsControlAi`、船坞四方法（`AllowBuyBoat`/`BuyBoat`/`HasBoatNearby`/`GetTileIndexToPlaceBoat`）、
+  `ActionPreBattle`/`ActionAfterBattle`、`GetICNBuilding`/`GetICNBoat`（ADR-145）；
+  剩余缺口写明白：塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、`DrawImageCastle`
+  （城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）；
   ❌ 七个界面与绘制文件：`buildinginfo.cpp`、`castle_building.cpp`、`castle_dialog.cpp`、
   `castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp`（合计约 4700 行，
   要城堡界面、ICN 贴图与本地化文本，端口 UI 层还没有城堡屏）

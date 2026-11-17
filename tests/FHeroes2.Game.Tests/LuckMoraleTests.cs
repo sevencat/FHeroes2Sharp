@@ -1,9 +1,12 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
 using Xunit;
 using ArmyStack = FHeroes2.Game.Army.Army;
+using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.Game.Tests;
 
@@ -170,5 +173,32 @@ public class LuckMoraleTests
         hero.SecondarySkills.Add(new SecondarySkillLevel(SecondarySkill.Luck, level));
 
         Assert.Equal(expected, hero.GetLuck());
+    }
+
+    [Fact]
+    public void TheArmOfTheMartyrCostsMoraleLikeUndeadInTheRanks()
+    {
+        var hero = new Hero(Hero.Celia, MapRace.Necromancer);
+        var army = new ArmyStack { Commander = hero };
+        army.JoinTroop(MonsterType.Archer, 3);
+        army.JoinTroop(MonsterType.Boar, 2);
+
+        // Two living races: neutral. The curse is the artifact's, not the undead's.
+        Assert.Equal(Morale.Normal, army.GetMorale());
+
+        hero.BagArtifacts.Push(ArtifactType.ArmMartyr);
+
+        Assert.Equal(Morale.Poor, army.GetMorale());
+    }
+
+    [Fact]
+    public void ACastleCommanderPassesTheTownsMoraleToItsGarrison()
+    {
+        CastleTown castle = new(0, MapRace.Knight);
+
+        // An empty garrison has nothing to disagree about, so the tavern's point decides alone.
+        castle.AddBuildings(BuildingType.Tavern);
+
+        Assert.Equal(Morale.Good, castle.Army.GetMorale());
     }
 }

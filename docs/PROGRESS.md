@@ -5118,3 +5118,44 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 �
 `GetLuckModificator`/`GetMoraleModificator` 的城堡与神器两项、`GetCurrentUnit`（战斗侧）、`GetControl`、
 `operator<<`/`>>`（无存档格式）；`army_troop.cpp` 仍记 ◐——`GetName` 与四个数值字符串、`ArmyTroop` 的
 攻防加值（战斗侧）与序列化；`army_bar.cpp`、`army_ui_helper.cpp` 整份是界面绘制，与 `castle_dialog` 等同批。
+
+### 追加：`castle` 收尾（2026-11-17）
+
+`src/fheroes2/castle/` 剩下的规则一起落地（ADR-145）：队长变成指挥官、船坞四条、两个战斗钩子、
+`isPosition`/`GetControl` 与六族的建筑 ICN 表；顺带补上 ADR-144 留下的两项 `Army` 遗留。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Castle/Captain.cs`（重写） | `captain.cpp:170-330` | `ISpellBookOwner` + `IArmyCommander`：攻/防/知识 = 本值 + 城 modificator，力量钳到 `[1, 255]`，士气/幸运 `Normalize`，`InCastle`/`BagArtifacts`，`GetMagicStrategicValue` |
+| `Game/Castle/Castle.Boats.cs`（新） | `castle.cpp:1799-1934` | `allowBuyBoat`/`buyBoat`/`hasBoatNearby`/`getTileIndexToPlaceBoat` + `GetICNBoat` |
+| `Game/Castle/Castle.Battle.cs`（新） | `castle.cpp:1999-2032` | `ActionPreBattle`（人类同槽位合军、AI 分支留空）、`ActionAfterBattle`（攻方胜才清空） |
+| `Game/Castle/Castle.IcnTables.cs`（新） | `castle.cpp:1451-1797` | `GetICNBuilding` + 六个 per-race `switch`，147 条 |
+| `Game/Castle/Castle.cs`（追加） | `castle.cpp:2457`、`2527` | 构造里 `_army.Commander = _captain`；`IsPosition`（八格十字）、`IsControlAi` |
+| `Game/Castle/Castle.Values.cs`（改） | `castle.cpp:2167-2240` | `GetGarrisonStrength` 接客将合军，新增 `guestIsControlAi` |
+| `Game/Castle/AllCastles.cs`（追加） | `castle.h` `VecCastles` | `FirstCastle`（有城 0、无城 -1） |
+| `Game/Army/IArmyCommander.cs`（追加） | — | `InCastle`（默认 `null`）、`BagArtifacts` |
+| `Game/Army/Army.cs`（改） | `army.cpp:270-390` | 士气/幸运的城堡项与神器项，殉难者之臂的诅咒 |
+| `Game/Artifacts/ArtifactBag.cs`（追加） | `artifact.cpp:551-564` | `IsArtifactCursePresent`（非累计诅咒不能走累计查询） |
+
+要点：
+
+* **`HasBoatNearby` 查带动作位的值**：`MP2::OBJ_BOAT`/`OBJ_HERO` 是 43+128 / 55+128，端口对应
+  `Mp2ObjectType.ActionBoat`/`ActionHero`；写成 `Boat`/`Hero`（mp2 文件里的原值）会永远拿不到，第一次就写错了。
+* **队长的修正只来自城**：参考 `GetAttack()` 加 `GetAttackModificator( nullptr )`，即城项 + 神器项；端口的队长
+  口袋永远为空、也不在冒险地图上，所以只有城项。
+* **合军的并法由客将的控制决定**：`isControlAI()` 问的是合并后那支军队（客将）的控制，不是城的。端口没有玩家
+  对象，参数化并默认 `true`（AI 评估目标城的口径）。
+* **法师塔要归一**：参考把 `BUILD_MAGEGUILD1..5` 列成五个 `case` 共一个图，端口的表按掩码建，入口把五个等级
+  折成掩码。
+* **怪癖照抄**：骑士 2 级住所与升级互换、术士无 5/6 级升级与 `Well2` 借用骑士农场、亡灵无酒馆（神殿顶位）
+  与独立队长建筑、术士帐篷 `Twnstent`、warlock 7 级升级 `Twnwup5b`、wizard 无 2/4 级升级。
+* **表用脚本对过**：从参考 `GetICNBuilding` 抽出 147 条（键名去下划线后与端口枚举名同构），逐条比对全等。
+
+用例 37 条新增：`CastleCaptainTests` 7、`CastleBoatsTests` 8、`CastleRulesTests` 9、`CastleIcnTableTests` 11、
+`LuckMoraleTests` 追加 2。Game 2108 → **2145**，全解决方案 2858 → **2895** 全绿，0 警告 0 错误。覆盖率：
+`castle` 行不变（3/5/3），合计不变（41/63/145）。
+
+**遗留**：`castle.cpp` 仍记 ◐——塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、
+`DrawImageCastle`（城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）、
+`FixFrenchCharactersInName`（文本批次）；`buildinginfo.cpp`、`castle_building.cpp`、`castle_dialog.cpp`、
+`castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp` 七份（约 4700 行）仍是界面批次。

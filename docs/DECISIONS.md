@@ -5358,3 +5358,69 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 `GetLuckModificator`/`GetMoraleModificator` 的城堡与神器两项、`GetCurrentUnit`（战斗侧）、`GetControl`
 （没有玩家对象）、`operator<<`/`>>`（无存档格式）；`army_troop.cpp` 仍记 ◐——`GetName`/四个数值字符串、
 `ArmyTroop` 的攻防加值（战斗侧）与序列化；`army_bar.cpp`、`army_ui_helper.cpp` 仍记未转——整份是界面绘制。
+
+---
+
+## ADR-145：`castle` 收尾——队长成为指挥官、四条船坞方法、两个战斗钩子，以及六族的建筑 ICN 表 ✅
+
+**背景**：`castle/` 的 11 份 `.cpp` 里 3 份完整、5 份部分、3 份未转，而 `castle.cpp`（约 2600 行）剩下的不是
+「界面」而是仍然独立的规则：队长（`captain.cpp` 的那一半）没有接进守军、船坞四条方法还是空桩、
+`ActionPreBattle`/`ActionAfterBattle` 没有实现、`GetICNBuilding`/`GetICNBoat` 与 `isPosition` 都没转，
+`GetGarrisonStrength` 在有客将时只算客将不算守军。这一批把它们补齐，并顺手补上 ADR-144 留下的两项遗留
+（`Army` 的士气/幸运里缺城堡与神器两项）。
+
+**决定**：
+
+1. **队长是 `IArmyCommander`，并且知道自己的城**：`Captain` 实现 `IArmyCommander`（`IsHeroes => false`、
+   `InCastle => _home`、`BagArtifacts` 自带一个永远为空的口袋、`GetSecondarySkillValue` 恒 0），
+   `Castle` 的构造函数里 `_army.Commander = _captain`（参考在 `_postLoad` 里做同一件事，
+   `castle.cpp:2457`）。攻/防/知识是「本值 + 城的 modificator」，力量钳到 `[1, 255]`，士气/幸运走
+   `Morale.Normalize( Morale.Normal + 城项 )`。训练、法术点、只学 1–2 级沿用 ADR-134。
+2. **城堡项与神器诅咒接进 `Army`**：`Army.GetMoraleModificator`/`GetLuckModificator` 现在问
+   `Commander?.InCastle` 与 `Commander?.BagArtifacts`，没有指挥官时退回中立值。殉难者之臂这类**非累计**诅咒
+   不能走 `GetTotalArtifactEffectValue`（它对非 cumulative 有 `Debug.Assert`），所以
+   `ArtifactBag` 新增 `IsArtifactCursePresent( curse )`，只问「在不在」。英雄的 `InCastle` 仍是 `null`
+   （英雄还不追踪自己站在哪座城），队长是唯一实现者。
+3. **四条船坞方法照抄**：`AllowBuyBoat` = 有船坞 + （`checkPayment` 为真时）付得起 + `GetTileIndexToPlaceBoat`
+   不返回 -1；`BuyBoat` 先验，然后扣钱、给 `SetBoat( world, Direction.Right, kingdom.Color )`；
+   `HasBoatNearby` 扫港口行三格找 `ActionBoat`/`ActionHero`。**`HasBoatNearby` 查的是带动作位的值**
+   （`MP2::OBJ_BOAT` = 43 + 128），写成 `Mp2ObjectType.Boat`（43，mp2 文件里的原值）会永远拿不到——
+   这是本批唯一一处「先写错再改对」的地方，记在这里免得后人再踩。港口行的落点规则照抄：
+   `isWater() && ( icnType == Unknown || isPassabilityTransparent() )`，中心格优先。
+4. **两个战斗钩子**：`ActionPreBattle( guestHero, isControlAi )` —— AI 分支是 `AI::Planner::CastlePreBattle`，
+   规划器未转，留空并注明；人类分支 `guestHero.Army.ArrangeForCastleDefense( _army, isControlAi: false )`，
+   即同槽位规则（ADR-144 的第 4 条）。`ActionAfterBattle( attackerWins )` —— 只有攻方胜才清空守军并复位
+   `HasCustomArmy`，攻方负时什么都不做（战斗已经扣过伤亡）。参考的钩子就这么短，塔与护城河是竞技场自己的事。
+5. **`GetGarrisonStrength` 的合军与 `guestIsControlAi`**：参考把守军并进客将的军（`combinedArmy`）再问强度，
+   而并法取决于 `isControlAI()`，即**客将的控制**。端口没有玩家对象，所以加可选参数
+   `guestIsControlAi`，默认 `true`：这个函数只服务于「AI 评估目标城」，多算进去的那点兵力是安全的一侧。
+   合军在副本上做（合并会清空来源），客将与守军都不受影响。
+6. **`GetICNBuilding`/`GetICNBoat` 逐族照抄**：六个私有 per-race `switch`，缺省的 `_ => Unknown`。参考的怪癖
+   全部保留：骑士 2 级住所与它的升级**互换**图（`Twnkup1`/`Twnkdw1`）；术士没有 5/6 级升级；亡灵没有酒馆
+   （神殿用酒馆的 `Twnntvrn`）、队长是独立建筑 `NecromancerCastleStandaloneCaptainQuarters`；术士的帐篷是
+   `Twnstent`、`Well2` 用骑士的右农场 `KnightCastleRightFarm`；warlock 的 7 级升级是 `Twnwup5b`；wizard 没有
+   2/4 级升级。法师塔在参考里是五个 `case` 共一个图，端口的表按掩码建，所以在入口把
+   `MageGuild1..5` 归一成 `MageGuild`。六族 147 条用脚本与参考 `GetICNBuilding` 逐条对比过（键名去下划线
+   后比对），全等。
+7. **`IsPosition`/`IsControlAi`/`FirstCastle`**：`IsPosition( MapGeometry, Point )` 是「上面一行三格 + 本行
+   五格」的十字（八格）；`IsControlAi( Kingdom )` = `!kingdom.IsControlHuman`（端口没有 `Control` 枚举，
+   控制是谁在 `Kingdom.Init` 时定下）；`AllCastles.FirstCastle` —— 端口城表没有空位，等价于「有城就是 0，
+   没城就是 -1」。
+
+**后果**：新增 `Castle.Battle.cs`、`Castle.Boats.cs`、`Castle.IcnTables.cs` 三个分部文件；`Captain.cs` 重写为
+指挥官；`Castle.cs` 加 `IsPosition`/`IsControlAi`/构造函数里的守军绑定；`Castle.Values.cs` 的
+`GetGarrisonStrength` 接上合军；`AllCastles.cs` 加 `FirstCastle`；`Army/IArmyCommander.cs` 加
+`InCastle`/`BagArtifacts`；`Army/Army.cs` 的两项 modificator 接上城堡与神器；`Artifacts/ArtifactBag.cs` 加
+`IsArtifactCursePresent`。测试 37 条新增：`CastleCaptainTests` 7（指挥官三态、城的士气/幸运/力量、无点数为 0、
+书里最好的战斗法术、只学 1–2 级）、`CastleBoatsTests` 8（船坞/钱/水三条件、落点、付款与旗色、英雄算船、
+地图边缘无港口、六族船图）、`CastleRulesTests` 9（八格十字、控制、`FirstCastle`、战前合军、空城、AI 分支不动、
+战后清空、合军强度与副本、人机并法有别）、`CastleIcnTableTests` 11（六族公共建筑、城图互不相同、法师塔五级归一、
+骑士互换、骑士农场、亡灵神殿、亡灵队长、术士无 5/6 升级、warlock 7 级升级、wizard 无 2/4 升级、空槽与未知族），
+`LuckMoraleTests` 追加 2（殉难者之臂、队长的城把士气传给守军）。Game 2108 → **2145**，全解决方案 2858 →
+**2895** 全绿，`-warnaserror` 0 警告。覆盖率：**`castle` 行不变（3/5/3），合计不变（41/63/145）**。
+
+**遗留**：`castle.cpp` 仍记 ◐——塔的守城强度（`Battle::Tower`，`towerStr` 与每座箭塔半额）、`ActionNewMonth`
+的维护费与税收、`DrawImageCastle`（要城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）、
+`FixFrenchCharactersInName`（属 `MapTextCodec` 所在的文本批次）。`buildinginfo.cpp`、`castle_building.cpp`、
+`castle_dialog.cpp`、`castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp` 七份
+（约 4700 行）仍是界面批次，与 `army_bar.cpp`/`spell_book.cpp` 同批。

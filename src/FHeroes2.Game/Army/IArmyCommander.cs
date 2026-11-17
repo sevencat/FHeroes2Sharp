@@ -1,4 +1,7 @@
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
+
+using CastleType = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.Game.Army;
 
@@ -73,4 +76,31 @@ public interface IArmyCommander
     /// <c>JoinStrongestFromArmy</c> and <c>MoveTroops</c>. <see cref="Heroes.Hero"/> answers true.
     /// </remarks>
     bool IsHeroes { get; }
+
+    /// <summary>
+    /// The town the commander stands in, <c>HeroBase::inCastle()</c> (<c>heroes_base.h:243</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The army asks it for one thing: the castle's morale and luck modifiers
+    /// (<c>army.cpp:1206-1270</c>). A captain answers with the town it defends; a hero answers <see langword="null"/>
+    /// for now — the port's <see cref="Heroes.Hero"/> does not track the town it stands in, and the reference's
+    /// answer is a map lookup the hero cannot make on its own. The morale of a hero's army therefore still misses
+    /// its castle term, exactly as before the interface had the member.
+    /// </para>
+    /// <para>
+    /// The default implementation returns <see langword="null"/> so that a commander without a town needs no code.
+    /// </para>
+    /// </remarks>
+    CastleType? InCastle => null;
+
+    /// <summary>
+    /// The commander's artifacts, <c>HeroBase::GetBagArtifacts()</c> (<c>heroes_base.h:250</c>).
+    /// </summary>
+    /// <remarks>
+    /// The army reads it once: the "Arm of the Martyr" curse adds the undead morale penalty to a living army
+    /// (<c>army.cpp:1236</c>). A hero carries a real bag; a captain's is permanently empty, which is what the
+    /// reference's captain has too.
+    /// </remarks>
+    ArtifactBag BagArtifacts { get; }
 }
