@@ -235,6 +235,20 @@ public static class MonsterStatistics
         monster > MonsterType.Unknown && monster < MonsterType.RandomMonster;
 
     /// <summary>
+    /// <c>Monster::isRandomMonster()</c> (<c>monster.h:227</c>): one of the five markers the map editor puts
+    /// on a monster object to have the game pick a creature later.
+    /// </summary>
+    /// <remarks>
+    /// The markers are the last five members before <see cref="MonsterType.MonsterCount"/>, and
+    /// <see cref="IsValid"/> excludes exactly those, so the two are complements over the real creatures plus
+    /// the unknown monster.
+    /// </remarks>
+    /// <param name="monster">Monster to test.</param>
+    /// <returns><see langword="true"/> for <see cref="MonsterType.RandomMonster"/> and the four level markers.</returns>
+    public static bool IsRandomMonster(MonsterType monster) =>
+        monster >= MonsterType.RandomMonster && monster <= MonsterType.RandomMonsterLevel4;
+
+    /// <summary>
     /// The base strength of every monster, folded once from the stats and the ability table.
     /// </summary>
     /// <remarks>

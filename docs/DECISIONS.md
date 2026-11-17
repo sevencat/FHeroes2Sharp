@@ -5424,3 +5424,58 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 `FixFrenchCharactersInName`（属 `MapTextCodec` 所在的文本批次）。`buildinginfo.cpp`、`castle_building.cpp`、
 `castle_dialog.cpp`、`castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp` 七份
 （约 4700 行）仍是界面批次，与 `army_bar.cpp`/`spell_book.cpp` 同批。
+
+---
+
+## ADR-146：`monster` 目录的规则面——弱点表、随机分桶、弹道与住所图标、法术抗性与召唤映射 ✅
+
+**背景**：`monster/` 的 3 份 `.cpp` 里已有 id 枚举、通用/战斗数值表、能力表与载荷、升级关系、住所反查与
+`GetRNDSize`，但 `monster.cpp` 还差 `GetMissileICN`、`ICNMonh`、`GetRandomUnitLevel`、`Rand(LevelType)`、
+`Monster( const Spell & )`、`isWeaknessPresent`、`isRandomMonster`；`monster_info.cpp` 差整张 `weaknesses`
+表与 `getSpellResistance`；`monster_anim.cpp` 整份未转。
+
+**决定**：
+
+1. **弱点表与能力表同形**：`MonsterWeaknesses` 是 `MonsterAbilities` 的孪生——`MonsterWeaknessType` 枚举
+   （`NONE` + 七个）、`MonsterWeaknessInstance` 记录（`Type`/`Percentage`/`Value`，`Value` 是法术 id）、
+   按怪物给的实例表 + 折出来的 `IsPresent`/`TryGetInstance`。**只有四个元素人有弱点**，内容照抄
+   `monster_info.cpp:531-561`：空气元素被三个闪电法术（连锁闪电、元素风暴、闪电箭）打 100% 额外伤害、被土系
+   生物打双倍；土系反之；火元素怕冰系法术与水系生物，水系怕火系法术与火系生物。顺序照抄，因为
+   `getSpellResistance` 与描述都按列表走。
+2. **`IsBasic` 画的是"描述里藏不藏"的线**：四个"双倍伤害来自某系生物"是基本项，怪物信息面板不显示，只在
+   伤害计算里生效；其余（冰/火法术、指定法术）显示。参考用同一个 `ignoreBasicWeaknesses` 开关，端口把它做成
+   静态谓词，供将来的描述函数共用。
+3. **随机分桶照抄，包括它的边界**：`MonsterLevelType` 的 `Any = 0`、`Level1..4 = 1..4`（参考用它减一索引
+   数组），四桶是 10/15/27/14、共 66 只。`Any` 不查桶，直接 `Rand.Get( Peasant, WaterElement )`——正是
+   参考的 `Rand::Get( PEASANT, WATER_ELEMENT )`，因此永远不会掷到 marker。桶按 creature id 升序一次建成
+   （`Lazy`），与参考的 `static std::vector` 同序，同种子下掷出的序列一致。`RANDOM_MONSTER` 每问一次掷一个
+   桶，这是参考 getter 里的行为，不是端口的发明。越界（`(MonsterLevelType)5`）抛
+   `ArgumentOutOfRangeException`，参考那边是数组越界的未定义行为——端口不复制未定义行为。
+4. **两个 ICN 查询**：`GetMissileIcn` 逐条照抄，半人马没有自己的弹道文件，参考用注释说明回落到
+   `ELF__MSL`，端口照做；`GetDwellingIcn` 是 `ICN::MONH0000 + id - PEASANT`，端口的 `IcnType` 把
+   `Monh0000…Monh0065` 列成连续值，所以偏移就是加法。**范围内检查是端口加的**：参考的 `ICNMonh()` 不检查，
+   拿 marker 去问会算到 MONH 之外，端口对 `[Peasant, WaterElement]` 之外一律答 `Unknown`。
+5. **召唤映射**：`MonsterSummons.FromSpell` 对应 `Monster( const Spell & )`——八个元素召唤/守卫法术各自
+   开自己的元素，`HAUNT` 叫一个幽灵，其余法术给 `Unknown`（参考构造函数的初始值）。
+6. **法术抗性照抄判定顺序**：心灵类法术先看亡灵/元素/心灵免疫，再"只对活物""只对亡灵"，再冰、火、元素
+   免疫，然后魔抗（`100` 直接短路成全部免疫，否则只在**伤害法术**与**对敌法术**上生效），最后遍历
+   `IMMUNE_TO_CERTAIN_SPELL` 取最大值。顺序不能换：龙的 `MAGIC_RESISTANCE 100` 一旦排在前面，矮子的 25
+   就会盖掉龙的免疫；指定法术之所以取最大值，是因为表里可能有两项同名法术。
+7. **`IsRandomMonster` 与 `IsValid` 互补**：marker 是 `MonsterCount` 前的五个，`IsValid` 正好排除它们。
+
+**后果**：新增 `Monsters/MonsterWeaknesses.cs`、`Monsters/MonsterLevels.cs`、`Monsters/MonsterIcnIds.cs`、
+`Monsters/MonsterSummons.cs`、`Monsters/MonsterSpellResistance.cs`；`MonsterStatistics` 加 `IsRandomMonster`。
+测试 61 条新增：`MonsterWeaknessTests` 7、`MonsterLevelTests` 8（含四桶 10/15/27/14 与 66 只的计数、
+`Any` 掷出的永远是真怪物、越界抛异常）、`MonsterSpellResistanceTests` 13、`MonsterSummonsTests` 14
+（九个 theory 行 + 四个"什么都不叫"）、`MonsterIcnIdTests` 20。Game 2145 → **2206**，全解决方案
+2895 → **2956** 全绿，`-warnaserror` 0 警告。
+
+**覆盖率不动**：`monster` 行仍是 0/2/1，因为剩下的两处不是规则：
+
+- **文案**：`GetName`/`GetMultiName`/`GetPluralName`/`getRandomRaceMonstersName`、
+  `getMonsterAbilityDescription`/`getMonsterWeaknessDescription`/`getMonsterDescription`/
+  `getMonsterPropertiesDescription` 都要 `Spell.GetName()` 与 `_()`，属于文本批次（`Spell` 类的注释里早已
+  把 `GetName`/`GetDescription` 记作未转）。
+- **两张战斗表与动画**：`monsterData` 里的 `icnId`/`sounds` 只被 `monster_anim.cpp`、`battle_troop.cpp`、
+  `dialog_armyinfo.cpp` 读，`monster_anim.cpp` 的 `RandomMonsterAnimation` 依赖 `battle_animation.h` 的
+  `AnimationReference`——两者都随战斗批次一起落，现在生成就是死数据。

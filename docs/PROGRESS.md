@@ -5159,3 +5159,37 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 �
 `DrawImageCastle`（城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）、
 `FixFrenchCharactersInName`（文本批次）；`buildinginfo.cpp`、`castle_building.cpp`、`castle_dialog.cpp`、
 `castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp` 七份（约 4700 行）仍是界面批次。
+
+### 追加：`monster` 目录的规则面（2026-11-17）
+
+`src/fheroes2/monster/` 补齐规则部分（ADR-146）：
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Monsters/MonsterWeaknesses.cs`（新） | `monster_info.cpp:531-561`、`:947` | `MonsterWeaknessType`（8 项）、`MonsterWeaknessInstance`、四元素人的弱点表、`IsPresent`/`TryGetInstance`/`IsBasic` |
+| `Game/Monsters/MonsterLevels.cs`（新） | `monster.cpp:576-689` | `MonsterLevelType`、`GetRandomUnitLevel`、`GetRandom`（10/15/27/14 四桶，共 66 只） |
+| `Game/Monsters/MonsterIcnIds.cs`（新） | `monster.cpp:40-75`、`:825-828` | `GetMissileIcn`、`GetDwellingIcn`（`Monh0000 + id - Peasant`） |
+| `Game/Monsters/MonsterSummons.cs`（新） | `monster.cpp:77-108` | `Monster( const Spell & )`：八个元素法术 + `Haunt` |
+| `Game/Monsters/MonsterSpellResistance.cs`（新） | `monster_info.cpp:880-940` | `getSpellResistance`，判定顺序照抄 |
+| `Game/Monsters/MonsterStatistics.cs`（追加） | `monster.h:227` | `IsRandomMonster` |
+
+要点：
+
+* **弱点只有四个元素人**：空气/土互怕闪电三件套与对方生物，火怕冰法术与水生物，水怕火法术与火生物；
+  `IsBasic` 画"描述里显示不显示"的线（四个"双倍伤害来自某系生物"不显示）。
+* **`Any` 不查桶**：直接 `Rand.Get( Peasant, WaterElement )`，永远掷不到 marker；桶按 id 升序一次建成，
+  同种子下与参考同序。`RANDOM_MONSTER` 每问一次掷一个桶，这是参考 getter 本身的行为。越界抛异常而不是
+  数组越界（不复制未定义行为）。
+* **半人马借精灵的箭**：`GetMissileIcn` 照参考注释回落到 `ElfMsl`。
+* **`GetDwellingIcn` 的边界是端口加的**：参考的 `ICNMonh()` 不检查，marker 会算出 MONH 之外；端口对
+  `[Peasant, WaterElement]` 之外答 `Unknown`。
+* **抗性顺序不能换**：心灵类 → 只对活物 → 只对亡灵 → 冰/火/元素免疫 → 魔抗（100 短路，否则只作用于伤害
+  法术与对敌法术）→ 指定法术免疫取最大。龙的 `MAGIC_RESISTANCE 100` 必须晚于前三项才算"全免疫"。
+
+用例 61 条新增：`MonsterWeaknessTests` 7、`MonsterLevelTests` 8、`MonsterSpellResistanceTests` 13、
+`MonsterSummonsTests` 14、`MonsterIcnIdTests` 20。Game 2145 → **2206**，全解决方案 2895 → **2956** 全绿，
+0 警告 0 错误。覆盖率不动（`monster` 仍 0/2/1）。
+
+**遗留**：`monster.cpp`/`monster_info.cpp` 只剩文案（`GetName`/`GetMultiName`/`GetPluralName`/
+`getRandomRaceMonstersName` 与四个描述函数，都要 `Spell.GetName()` 与 `_()`）与两张只被战斗侧读的表
+（`icnId`/`sounds`）；`monster_anim.cpp` 的 `RandomMonsterAnimation` 依赖 `battle_animation.h`，随战斗批次。

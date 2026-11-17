@@ -493,6 +493,14 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 与 `ActionPreBattle` 的 AI 分支，七个界面文件整份未转。测试 37 条新增，Game 2108 → **2145**，全解决方案
 2858 → **2895** 全绿。
 
+2026-11-17：`monster` 目录的规则面（ADR-146）：弱点表（只有四个元素人，顺序照抄）、随机分桶
+（`GetRandomUnitLevel`/`Rand`，四桶 10/15/27/14 共 66 只，`Any` 直接掷 `Peasant..WaterElement`）、
+弹道与住所图标（`GetMissileICN`/`ICNMonh`，半人马借精灵的箭）、`Monster( const Spell & )` 的召唤映射、
+`getSpellResistance`（判定顺序不能换：龙的 100 魔抗必须晚于三项心灵/亡灵免疫）与 `isRandomMonster`。
+**覆盖率不动**：两份 `.cpp` 只剩文案（要 `Spell.GetName()` 与 `_()`）与只被战斗侧读的 `icnId`/`sounds`，
+`monster_anim.cpp` 依赖 `battle_animation.h`。测试 61 条新增，Game 2145 → **2206**，全解决方案
+2895 → **2956** 全绿。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -764,14 +772,19 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   `extraValue` 分支，ADR-137）、✅ `experience.cpp`→`Experience`（两条文案；参考走 `_()`，端口返回原文，
   ADR-137）；❌ `kingdom_overview`、`view_world`（两者都是渲染 + 对话框）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
-  `monster.cpp` 只有 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
-  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）  与住所反查
+  `monster.cpp` 已转 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
+  `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）、住所反查
   （`DwellingMonsters.GetDwelling`，ADR-108）、随机堆叠数量 `Monster::GetRNDSize`→
-  `MonsterStatistics.GetRandomCount`（七级表 + 十六种特例，ADR-137）；◐ `monster_info.cpp`：
+  `MonsterStatistics.GetRandomCount`（七级表 + 十六种特例，ADR-137）、`GetMissileICN`/`ICNMonh`
+  （`MonsterIcnIds`）、随机分桶 `GetRandomUnitLevel`/`Rand`（`MonsterLevels`，10/15/27/14 四桶共 66 只）、
+  `Monster( const Spell & )`（`MonsterSummons`）与 `isRandomMonster`（ADR-146），只剩文案
+  （`GetName`/`GetMultiName`/`GetPluralName`/`getRandomRaceMonstersName`）；◐ `monster_info.cpp`：
   通用数值表、战斗数值表、住所映射（`DwellingMonsters`，ADR-095；住所位本身已搬进 `BuildingType`，
-  ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）与两条
-  强度（`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）已转，`weaknesses` 与战斗图标/音效未转；
-  `RandomMonster`/`GetRandomMonster`/`GetDwellingFromMonster` 等随机与住所反查未转；❌ `monster_anim`
+  ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）、两条强度
+  （`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）、`weaknesses` 表（`MonsterWeaknesses`）与
+  `getSpellResistance`（`MonsterSpellResistance`，ADR-146）已转，剩四个描述函数（要 `Spell.GetName()` 与
+  `_()`）与只被战斗侧读的 `icnId`/`sounds` 两张表；❌ `monster_anim`（`RandomMonsterAnimation` 依赖
+  `battle_animation.h`，随战斗批次）
 * `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.cpp`→`ArtifactBag`（平铺 14 格、
   魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、两种求和、`getTotalArtifactMultipliedPercent` 两个重载、
   `getArtifactValue`、`GetFirstArtifactWith*` 与两个 `isArtifact*Present`、`assembleArtifactSetIfPossible`、
