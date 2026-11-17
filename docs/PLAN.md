@@ -507,6 +507,61 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 **41/64/144**（`battle_board.cpp` 的几何已全，剩绘制与单位相关部分）。测试 33 条新增，Game 2206 → **2239**，
 全解决方案 2956 → **2989** 全绿。
 
+2026-11-17：`battle` 的第二批（ADR-148）：先补上压在 `Unit` 底下、却不依赖 `Unit` 的三层 ——
+`engine/timing.h` 的 `TimeDelay`（`>=` 判过期、`Pass()` 把起点拨到 `now - 2*delay`）、
+`battle_animation.cpp` 的 `RandomizedDelay`/`AnimationSequence`/`AnimationReference`/`AnimationState`
+（33 支动画拼战斗序列，远程优先 `Shoot*`、否则 `DoubleHex*` 当吐息，无 STATIC 时兜底 `[1]`；状态机与
+多状态拼接的帧偏移），以及 `battle_command.cpp` 的 `BattleCommand`（参数**倒着存**，`GetNextValue` 从尾部弹，
+`UpdatePcg32Stream` 在攻击时只混移动格与双方 UID，好让人机与人类掷同一条序列）。同时 `battle_cell.cpp` 的
+`BattleCell` 几何落地（44×52 的格、42 的行距、奇数行左移 22、六边形八切片与三角判定）。
+另有两条测试期望被参考纠正：`IDLE` 取不到待机时回落静态图所以不算缺失；偏移行在 `bin_info.cpp:315-317`
+已被裁到对应动画帧数，因此只设起步帧时拿不到三段 48 个偏移。**行数动了**：`battle` 0/1/17 → **2/2/14**
+（`battle_animation.cpp`、`battle_command.cpp` 由未转变 ✔，`battle_cell.cpp` 转 ◐），合计 **41/64/144** →
+**43/65/142**。测试 47 条新增（`BattleAnimationTests` 23、`BattleCommandTests` 9、`BattleCellTests` 8、
+`TimeDelayTests` 7），Game 2239 → **2279**，全解决方案 2989 → **3036** 全绿。
+
+2026-11-17：`battle` 的第三批（ADR-149）：开门的就是 `Unit` 本身。先把它脚下的东西铺平 —— `BattleBoardCells`
+（99 格数组，替代 `Board::GetCell` 那个竞技场单例转发）、`BattlePosition`（头尾两格、`Set`/`Swap`/`GetRect`/
+`GetPosition`/`CompareTo`，只差要问竞技场的 `GetReachable`）、`BattleMonsterState`（`SP_`/`TR_`/`CAP_` 那张
+标志位表）与 `BattleModesAffected`/`BattleModeDuration`（限时法术效果的时钟），再落 `BattleUnit` 的第一层：
+位置与朝向（含格子占位）、兵力/血量/箭矢、模式位、`GetSpeed`（减速与加速互斥、定身与「已行动」返回 0）、
+飞行/双击/反击/再生/定身这些能力判定。伤害结算（`ApplyDamage`/`CalculateDamageUnit`）、`GetDefense` 的城堡与
+护城河、`GetMorale`/`GetControl`、`ApplySpell` 族与 `isHandFighting` 留到下一批 —— 它们各自要
+`battle_arena`、`HeroBase` 与法术应用层。**行数**：`battle` 2/2/14 → **2/3/13**，合计 **43/65/142** →
+**43/66/141**。测试 29 条新增（`BattleUnitTests` 12、`BattlePositionTests` 12、`BattleModesAffectedTests` 5），
+Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
+
+2026-11-17：`battle` 的第四批（ADR-150）：`Unit` 的第二层——战斗算术。`GetAttack`/`GetDefense`
+（血 lust、石肤/钢肤的 else-if、每道瓦解射线 −3 防御且不到 0、护城河 −3）、`CalculateDamageUnit`
+（射手近战减半且 `NO_MELEE_PENALTY` 免疫、箭术加成、城墙射击惩罚、护盾只挡射击、致盲反击减伤、石化减半、
+对亡灵与四系元素弱点只翻一倍、攻防差 +10%/−5% 各自封顶）、`GetDamage`（祝福取顶/诅咒取底、幸运翻倍/减半）、
+`HowManyWillBeKilled`、`ApplyDamage`（噬魂可超上限、吸血按对方单兵血量且封顶）、`Resurrect`（不许超上限时截断）、
+`NewTurn`（再生补满、六个「本回合用过」标记清零、限时法术减时并在到期时摘掉、镜像到期连镜像一起打死）与
+`PostKilledAction`（解镜像、摘法术、交还格子；坟场登记等 `battle_grave`）。竞技场那侧的四件事收进 `IBattleField`。
+同时**纠正第三批的 `GetSpeed`**：参考不看 `CAP_TOWER`（塔不动是竞技场不让它动），且加速先判、减速后判；
+逐行对齐 `battle_troop.cpp:424-447`。测试 24 条新增（`BattleUnitCombatTests`），Game 2308 → **2332**，
+全解决方案 3065 → **3089** 全绿。
+
+2026-11-17：`battle` 的第五批（ADR-151）：坟场、桥与单位集合 —— 三份围着 `Unit` 转、却不依赖竞技场的小对象。
+`BattleGraveyard`（`std::map` 的格子→尸体链，宽单位压两格，`MoveToLastIfPresent` 用 rotate 语义把尸体挪到最上面）
+接进 `BattleUnit.PostKilledAction`（先登记再交还格子；镜像与元素不进坟场）；`BattleBridge`（六格常量、
+`NeedDown` 的六个落点分支、`AllowUp` 的「桥上有活人有死尸都不许拉」、`SetPassability` 把 0/1 写进闸门格、
+`SetDestroyed` 的断桥终态）；`BattleUnits`（FindUid/FindMode/稳定降序的 `SortFastest`——按**战斗速度**排，
+与参考里 `Troop::GetSpeed` 是虚函数一致——以及三个筛选副本）。桥与坟场之间只靠「闸门/护城河上有没有东西」耦合，
+所以桥的构造参数就是格盘、坟场与守城方颜色。测试 27 条新增（`BattleGraveyardTests` 9、`BattleBridgeTests` 10、
+`BattleUnitsTests` 8），Game 2332 → **2359**，全解决方案 3089 → **3116** 全绿。
+
+2026-11-17：`battle` 的第六批（ADR-152）：`BattleForce` —— 把一支 `Army` 摆上战场。摆位公式逐字照抄
+（列间距 11/铺开 22、镜像侧 +10、宽单位让一格），UID 记在槽位表里好与「原始军队」对号；伤亡清点、亡灵巫术的
+「只算本场真死的人」、按兵种表血量算经验、战后写回人数、每回合清英雄的 `SPELLCASTED`、投降价（英雄基数 0.5、
+宝物连乘、外交再乘一档、四舍五入且不低于 1）。顺带给 `BattleUnit` 补上 `Army` 回指、`IsMonster`、`GetCost`、
+`GetSurrenderCost`、`GetControl`/`GetCurrentControl`；`Army` 补 `IsSpreadFormation` 与 `GetControl`；
+`IArmyCommander` 补 `GetLevelSkill`（默认 None）与 `ResetModes`（默认空实现），英雄与队长各自实现
+`GetControl`；`HeroModes` 补 `Spellcasted = 0x4`。测试 16 条新增（`BattleForceTests`），Game 2359 → **2375**，
+全解决方案 3116 → **3132** 全绿。
+
+
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -676,9 +731,23 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 * `battle`（18）：◐ 已起步（ADR-147）—— `battle.h` 的 `Result` 与胜负位（`BattleOutcome`/`BattleResult`）、
   两个方向环（`CellDirection`/`AttackDirection` 与其环运算）、`battle_board.cpp` 的**纯几何**（11×9 偏移
   六角格、两格之间的方向、六向距离、城堡/墙外/护城河三张表、宽单位的环与半径环）落在 `Game.Battle`；
-  其余 17 份未转，且全部压在 `Unit` 上：`battle_cell` 的 `Cell`/`Position` 持有 `Unit*`，`battle_troop` 的
-  `Unit` 又要动画与竞技场，`battle_army`/`battle_grave`/`battle_bridge`/`battle_pathfinding` 都是在单位上
-  做查询。下一批从 `battle_troop` 的 `Unit` 与 `battle_cell` 的 `Cell`/`Position` 入手
+  ✅ `battle_animation.cpp`→`RandomizedDelay`/`AnimationSequence`/`AnimationReference`/`AnimationState`
+  （33 支 `.BIN` 动画拼序列、无 STATIC 兜底 `[1]`、吐息当远程、多状态拼接与帧偏移，ADR-148）与底层
+  `fheroes2::TimeDelay`；✅ `battle_command.cpp`→`BattleCommand`（参数倒着存、`GetNextValue` 从尾部弹、
+  `UpdatePcg32Stream` 的攻击只混移动格与双方 UID）；◐ `battle_cell.cpp` 的 `BattleCell` 几何（格位、行距 42、
+  六边形八切片与三角判定）+ 格上单位与 `IsPassable`，`Position` 除 `GetReachable`（要竞技场问移动力）外已全；
+  ✅ `battle_troop.cpp`→`BattleUnit`（`BattleMonsterState` 标志、`BattleModesAffected`、位置/兵力/血量/模式/速度/
+  能力判定、`GetAttack`/`GetDefense`、`CalculateDamageUnit`、`GetDamage`、`ApplyDamage`/`Resurrect`、`NewTurn`、
+  `PostKilledAction`、`GetMorale`/`GetLuck` 与掷骰，以及法术应用层 `AllowApplySpell`/`ApplySpell`/`GetMagicResist`/
+  `CalculateSpellDamage`/`GetCurrentSpellEffects` 与 `TargetInfo`→`BattleTargetInfo`；竞技场那侧的护城河/城墙射击
+  惩罚/箭术/反向颜色/敌方骨龙由 `IBattleField` 注入，`GetControl` 随同留待竞技场）；✅ `battle_grave.cpp`→`BattleGraveyard`
+  （格子→尸体链、宽单位压两格、把尸体挪到最上面）与 `battle_bridge.cpp`→`BattleBridge`（六格常量、`NeedDown`
+  的六个落点分支、`AllowUp` 的占用判据、闸门格上的 0/1 通行性、断桥终态；动画归界面）；◐ `battle_army.cpp` 转了
+  `Units`（`BattleUnits`：按 UID/模式查找、稳定降序的战斗速度排序、三个筛选副本）与 `Force`（`BattleTroopsUidGenerator`、
+  按阵形摆位、伤亡/亡灵/经验统计、投降价、`SyncOriginalArmy`、`NewTurn`），还差 `GetKilledTroops`（要 `Troops` 容器）
+  与 `Force` 继承来的两个「撤退/投降过」标记（归 `battle_result`）。剩余 10 份未转：`battle_pathfinding`/`battle_arena`/
+  `battle_action` 等都在单位与竞技场上做查询。`Unit` 侧到这里已无遗漏（ADR-153），下一批转向
+  `battle_arena`（选目标、法术路径）与 `battle_action`（行动执行）
 * `h2d`（1）：✅ `h2d.cpp`→`Game.H2D.H2DResources`（68 个文件名的样本表、开档三处失败、`Current` 门面，
   ADR-141）；读取本身在 `Assets.H2D`（`H2DArchive`/`H2DWriter`/`H2DImageCodec`，即 `engine/h2d_file.cpp`）。
   `Settings::findFile` 的文件搜索没搬，路径由组合根给出（`GetDefaultPath`）

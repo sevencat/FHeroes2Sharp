@@ -5528,3 +5528,243 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 `battle_animation` 与 `battle_interface`）、`battle_army`/`battle_grave`/`battle_bridge`/`battle_pathfinding`
 都是在单位上做查询，`battle_arena` 是它们的宿主。下一批从 `Unit` 与 `Cell`/`Position` 入手；`monster_anim.cpp`
 的 `RandomMonsterAnimation` 与 `monsterData` 的 `icnId`/`sounds`（ADR-146 遗留）也在那时一起落地。
+
+## ADR-148：`battle` 第二批——计时器、动画序列、命令与格子几何 ✅
+
+**背景**：ADR-147 之后剩下的 17 份 `.cpp` 全部压在 `Battle::Unit` 上，而 `Unit` 本身又压着三样不依赖单位的东西：
+`fheroes2::TimeDelay`（`engine/timing.h`）、`battle_animation` 的动画序列、`battle_command` 的命令载体，
+以及 `battle_cell` 里 `Cell` 的纯几何。先把这四层压实，`Unit` 落地时才不会一次跨太多层。
+
+**决定**：
+
+1. **`TimeDelay` 的边界是 `>=`，`Pass()` 不是 `Reset()`**：`IsPassed()` 用 `now >= _trigger`（相等即过期），
+   `Pass()` 把起点拨到 `now - 2*delay`，于是下一次必然已过期但仍保留余量；`Reset()` 才是 `now + delay`。
+   时钟做成 `Func<long>` 注入，测试用一条手推时钟。时钟倒退时端口直接答「未到」，不做无符号回绕——
+   参考把时间差存进 `uint64_t`，倒退会算出天文数字，端口选可预测的一侧。
+2. **`RandomizedDelay` 的骰子放在第一次询问时**：`delay = Rand.Get(0, half) + half*3/2`，即 75%～125%，
+   过期后重置并重掷；构造时不掷，免得无谓地消耗全局随机流。
+3. **`AnimationReference` 拆出两个构造函数**：参考只从 `MonsterAnimInfo` 缓存里取记录，端口额外提供直接吃
+   `MonsterAnimInfo` 的版本，测试不必先造 `AssetBundle`。`ResolveMonsterInfo` 因此是 `protected static`
+   （`AnimationState` 要用）。
+4. **33 支动画的拼法逐条照抄**：站立/挨打（拆上下两段）/死亡/待机/`MoveStart..MoveQuick` 四段移动/
+   飞起降落/三向近战与远程。两种兜底**不同**且都保留：非怪物直接返回空序列、所有序列为空；没有 `STATIC`
+   的兵种把 `_static` 塞成 `[1]`。远程优先 `Shoot*`，否则**必须存在 `DoubleHex2`** 才把吐息当远程
+   （原版只有六只），三段各取自己的起止帧。
+5. **状态机拒绝的前提是序列为空**：`SwitchAnimation` 只在 `GetAnimationVector(state)` 为空时返回 `false`，
+   而 `IDLE` 取不到待机会回落静态图，所以「没有待机动画」并不构成拒绝——测试按参考改口。
+6. **帧偏移只对四段移动有意义**：`GetAnimationOffset` 对 `MoveStart`/`Moving`/`MoveEnd`/`MoveQuick`
+   按子段拼行，其余返回等长零表；`GetCurrentFrameXOffset` 则在当前状态里按子段累进，`Static` 永远答 0。
+   注意偏移行在 `bin_info.cpp:315-317` 已被 `WithLength` 裁到对应动画的帧数，所以「只设起步帧」时拿不到
+   三段 48 个偏移——这是参考行为，不是索引写错（`Row()` 的 `(int)MonsterAnimId` 索引本身是对的）。
+7. **命令的参数倒着存**：参考继承 `std::vector<int>`，构造时用折叠表达式**从右到左**压栈，于是
+   `ATTACK(a, d, move, target, dir)` 存成 `[dir, target, move, d, a]`；`GetNextValue()` 从尾部弹，因此按调用方
+   写参数的顺序返回，空命令答 0 而不报错。C# 没有 `static_assert` 的等价物，每种命令给一个静态工厂方法，
+   参数个数与类型在签名上定死；`SpellCast` 只在 `Teleport` 时接受两个格子。
+8. **`UpdatePcg32Stream` 攻击只混三个数**：`move`、防守方 UID、攻击方 UID（`at(2)/at(3)/at(4)`）。注释里
+   参考写得明白：攻击格与方向会随人类/AI 而变，混进去会让同一条指令在两种控制方式下掷出不同序列。
+   `ToggleAutoCombat`/`QuickCombat` 什么都不混。命令的流是 `uint64_t`，故给 `Rand` 补一个 `ulong` 重载。
+9. **`BattleCell` 本期只做几何**：`Unit *`、`isPassable`/`isPassableFromAdjacent`/`isPassableForUnit` 随
+   `battle_troop` 补。几何部分照抄：44×52 的格、行距 42（六边形竖直重叠）、奇数行左移 22、
+   七个缓存点乘 12 化整、八切片按顺时针依次判、`CENTER` 只认正中心。
+
+**后果**：新增 `Core/Timing/TimeDelay.cs`、`Game/Monsters/MonsterAnimationType.cs`、`Game/Battle/BattleAnimation.cs`、
+`Game/Battle/BattleCommand.cs`、`Game/Battle/BattleCell.cs`，`Rand` 加 64 位混种重载；测试 47 条
+（`BattleAnimationTests` 23、`BattleCommandTests` 9、`BattleCellTests` 8、`TimeDelayTests` 7）。Game 2239 → **2279**，
+全解决方案 2989 → **3036** 全绿，`-warnaserror` 0 警告。覆盖率：`battle` 0/1/17 → **2/2/14**
+（`battle_animation.cpp`、`battle_command.cpp` 转 ✔，`battle_cell.cpp` 转 ◐），合计 41/64/144 → **43/65/142**。
+
+**遗留**：`battle_troop` 的 `Unit` 是下一扇门；`battle_cell` 的 `Position`、`battle_army`、`battle_grave`、
+`battle_bridge`、`battle_pathfinding`、`battle_arena`、`battle_action`、`battle_interface*`、`battle_main`
+共 14 份在门后。
+
+## ADR-149：`battle` 第三批——格子数组、位置与单位的第一层 ✅
+
+**背景**：`Unit` 是整目录的门，但它脚下还有三层没铺：99 格数组（参考挂在 `Arena` 单例上、由 `Board::GetCell()`
+转发）、`Position` 的头尾两格、以及一整套模式位常量。这三层不依赖竞技场，先铺平，再把 `Unit` 里能独立算的
+那一半落下来。
+
+**决定**：
+
+1. **格子数组做成对象而不是单例**：`BattleBoardCells` 持有 99 个 `BattleCell`，`GetCell(index)` 与
+   `GetCell(index, direction)` 越界答 `null`，与参考「非法下标返回 `nullptr`」一致。`BattleArena` 落地时它就是
+   竞技场的成员，`Position`/`Unit` 暂时持有同一个实例。
+2. **`Position` 存格子引用而非下标**：这样「谁站在哪」只有一处真相——`Cell::Unit`。由此带来一个必然后果：
+   `SetReflection` 必须显式释放旧尾巴格。参考的 `Position::Set()` 换掉两个 `Cell *` 后，旧格子上的 `Unit *`
+   是由竞技场的重绘流程收拾的；端口不能用这种「等别人擦」的做法。
+3. **`GetPosition` 允许踩自己的格子**：`unit.Position.Contains(index)` 时格子算通得过，否则宽单位朝自己尾巴的
+   方向挪半格会被自己挡死。先试当前朝向的尾侧，被挡再试另一侧，两侧都不行才算不能走。
+4. **`CompareTo` 按下标排序**：参考特意把 `Position::operator<` 从指针比较改成下标比较，端口照抄，否则同一个
+   局面在两次运行里顺序会漂。
+5. **模式位保留裸 `uint` 常量**：`BattleMonsterState` 用 `public const uint` 而不是 `[Flags] enum`。`IS_BAD_MAGIC`
+   这样的大组合当枚举成员读起来反而绕，而且 `BitModes` 本身就是 `uint`，直接对接最省事。中间那个 `UNUSED`
+   空位也照留，好让十六进制与参考对得上。
+6. **`BattleUnit` 用组合而不是继承 `Troop`**：参考是 `Unit : ArmyTroop : Troop : Monster` 四层，端口的 `Troop`
+   已经在但 `ArmyTroop` 没有；单位改的是自己的兵力，不该写回军队里那份，所以持有 `Troop` 并转发访问器。
+7. **本期只做不依赖竞技场与英雄的那一半**：位置/朝向/格子占位、兵力/血量/箭矢、模式位、`GetSpeed`
+   （减速与加速互斥、定身与「已行动」返回 `Speed.Standing`、塔不能动）、`isFlying`/`isDoubleAttack`/
+   `isRetaliationAllowed`/`isRegenerating`/`isImmovable`。`ApplyDamage`/`CalculateDamageUnit`/`NewTurn`、
+   `GetDefense`（城堡与护城河）、`GetMorale`/`GetControl`（所属军队）、`ApplySpell` 族与 `isHandFighting`
+   （要竞技场的颜色）留到下一批——它们会各自再拉进 `HeroBase`、`Spell` 应用层与 `BattleArena`，硬塞会让这一层不可测。
+
+**后果**：新增 `BattleBoardCells`、`BattlePosition`、`BattleMonsterState`、`BattleModesAffected`/`BattleModeDuration`、
+`BattleUnit`，`BattleCell` 加了格上单位与 `IsPassable`，`BattleBoard` 加了吃两个 `Position` 的 `GetDistance`。
+测试 29 条（`BattleUnitTests` 12、`BattlePositionTests` 12、`BattleModesAffectedTests` 5）。Game 2279 → **2308**，
+全解决方案 3036 → **3065** 全绿，`-warnaserror` 0 警告。覆盖率：`battle` 2/2/14 → **2/3/13**
+（`battle_troop.cpp` 转 ◐），合计 43/65/142 → **43/66/141**。
+
+**遗留**：`battle_troop` 的伤害与回合是下一批；`battle_cell` 的 `GetReachable`/`isPassableFromAdjacent` 要等
+`battle_bridge`；`battle_army`、`battle_grave`、`battle_pathfinding`、`battle_arena`、`battle_action`、
+`battle_interface*`、`battle_main` 等 13 份仍在门后。
+
+## ADR-150：`battle` 第四批——单位第二层，战斗算术 ✅
+
+**背景**：ADR-149 把 `Unit` 立到「站着、走着」，战斗本身还缺：攻防、伤害、死亡、复活、回合重置。这一层不需要
+竞技场对象，只需要四个**事实**：脚下是不是护城河、这一箭有没有被城墙削、射手的英雄箭术多高、被催眠后对面是谁。
+参考靠 `Arena` 单例随手取，端口把它们收进一个接口。
+
+**决定**：
+
+1. **`IBattleField` 只放四个查询，且可空**：`IsOnMoat(unit)`、`GetShootingPenaltyPercent(attacker, defender)`、
+   `GetArcheryBonusPercent(unit)`、`GetOppositeColor(color)`。空引用按「没有加成、不在护城河、没有对面」处理，
+   于是单测里造一个 `BattleUnit` 不必先造城堡与英雄；将来的 `BattleArena` 直接实现它。
+2. **攻防的加成顺序照抄**：血 lust 加攻击；石肤与钢肤是 `else if`（同时存在只算石肤）；每道瓦解射线扣
+   `Spell(DISRUPTING_RAY).ExtraValue()`，护城河扣 `GameStatic::BattleMoatReduceDefense`，两者都把防御夹在 1 以上。
+   `_disruptingRaysNum` 本来由 `ApplySpell` 直接自增，端口显式给一个 `AddDisruptingRay()`。
+3. **`CalculateDamageUnit` 逐条照抄，包括「翻倍只翻一次」**：射手不在近战里才吃箭术与城墙惩罚；在近战里就减半，
+   除非有 `NO_MELEE_PENALTY`；护盾只挡射击（塔的射击不吃）；致盲反击按致盲的减伤比例；石化目标减半；
+   对亡灵与四系元素弱点是**或**关系，同时成立也只 ×2；最后攻防差正差每点 +10%（封顶 +300%）、负差每点 −5%
+   （封底 −80%），结果至少 1。
+4. **两种吸血计量对象不同**：噬魂（`SOUL_EATER`）按**攻击方**单兵血量算点数并允许超出历史上限；吸血（`HP_DRAIN`）
+   按**被攻击方**单兵血量算且不许超上限。两者都只在 `killed != 0` 时才走。
+5. **`Resurrect` 的三段**：先按点数换算成生物数，再在「不许超上限」时截断并把血量拉到满员（否则半血队伍复活到
+   上限会带着不满的血），最后「非临时」才减死亡数。临时复活（镜像）不动死亡数。
+6. **`_applyDamage` 会顺手破控制**：定身与致盲挨打即解，且因此算作「本回合已行动」；无无限反击的补「已反击」。
+   镜像被打中血量直接归零；本体死时镜像跟着死。这一层保留 `ApplyDamage`/`Resurrect` 的公开形状，
+   竞技场只需按参考调用。
+7. **`NewTurn` 与 `PostKilledAction` 先做到不依赖坟场**：`NewTurn` = 再生补满 + 六个「本回合用过」标记清零 +
+   逐个法术减时到期摘除（镜像到期打死镜像本体）；`PostKilledAction` = 解镜像引用 + 摘掉全部法术 + 交还两格。
+   坟场登记（`Graveyard::addUnit`）要等 `battle_grave`，元素与镜像本来也不进坟场，所以那一支留到那时补。
+8. **纠正 ADR-149 的 `GetSpeed`**：上一批把「塔不能动」写成了 `CAP_TOWER → STANDING`，并把「已行动」放进了
+   `else`；参考实际是把 `TR_MOVED` **并进定身掩码**、且**不看** `CAP_TOWER`，加速先判、减速后判。已按
+   `battle_troop.cpp:424-447` 逐行对齐，三条旧测试随之改口——这类偏差必须当批修掉，不能因为它「看起来合理」就留着。
+
+**后果**：新增 `Game/Battle/IBattleField.cs`，`BattleUnit` 扩到约 900 行（攻防、伤害、死亡、复活、回合、清理）。
+测试 24 条（`BattleUnitCombatTests`）。Game 2308 → **2332**，全解决方案 3065 → **3089** 全绿，`-warnaserror` 0 警告。
+覆盖率不变：`battle` 2/3/13，合计 43/66/141（`battle_troop.cpp` 仍是 ◐）。
+
+**遗留**：`ApplySpell` 族、`GetMorale`/`GetControl`/`GetLuck`、`GetMagicResist` 与坟场登记。下一步
+`battle_army`/`battle_grave`/`battle_bridge`——它们正好给 `Unit` 补上「所属军队」与「坟场」这两块。
+
+## ADR-151：`battle` 第五批——坟场、桥与单位集合 ✅
+
+**背景**：ADR-150 把 `Unit` 的算术补全了，但它周围还有三个小对象没落地：尸体躺在哪（`Graveyard`）、护城河上的桥
+开没开（`Bridge`）、以及一堆单位怎么按 UID/模式找、怎么按速度排序（`Units`）。三者都不需要竞技场，而且正好是
+`battle_cell` 的桥通行性与 `battle_army` 的 `Force` 的前置。
+
+**决定**：
+
+1. **坟场是 `SortedDictionary<int, List<BattleUnit>>`**：参考是 `std::map`，键有序遍历才有意义（`getOccupiedCells`
+   按格子升序）。空链留着不删（与参考一致），查询时跳过；`Count` 数的是「有尸体的格子」而不是尸体数。
+2. **宽单位压两格，尸体排序用 rotate 语义**：`MoveToLastIfPresent` 把该单位挪到链尾、其余保持相对顺序——对尸体
+   施法时它的动画要叠在最上面。用 `RemoveAt` + `Add` 复刻；不能用「与末尾交换」那种会打乱其余顺序的写法。
+3. **坟场登记接进 `PostKilledAction`，且必须在交还格子之前**：参考在 `removeAffection( IS_MAGIC )` 之后、
+   `head->SetUnit( nullptr )` 之前调 `graveyard->addUnit( this )`，因为坟场按格子下标归档。两个例外——镜像
+   （`CAP_MIRRORIMAGE`）与元素（`isElemental`）——不进坟场。端口把 `Graveyard` 做成可空属性，单测造单位不必先造战场。
+4. **桥的三个依赖做成构造参数**：格盘、坟场、守城方颜色。参考从 `Arena` 单例取，端口显式注入；颜色可写，因为
+   竞技场通常是先建桥再建城堡。`NeedDown` 的六个落点分支逐条照抄。
+5. **桥认 `GetColor()` 而不是 `GetCurrentColor()`**：被催眠的守城兵按参考不算守城方，过不了升起的桥。这类
+   「看起来应该用 current」的地方要照抄参考，否则催眠+桥的组合会与参考分叉。
+6. **`ActionUp`/`ActionDown` 返回布尔**：参考用 `assert` 卡前置条件（失败即崩），端口返回「到底动没动」。
+   参考在这里还会触发 `Interface::RedrawBridgeAnimation`，动画归界面批次，不进这个类。
+7. **`SortFastest` 用稳定排序，且比的是战斗速度**：参考把 `Unit*` 传给 `Army::FastestTroop( const Troop * )`，
+   而 `Troop::GetSpeed` 是虚函数、被 `Unit::GetSpeed()` 覆盖，所以减速/加速会改变出手顺序（不是兵种表上的数字）。
+   `List.Sort` 不稳定，用 LINQ 的稳定排序再写回；注释与测试都钉住「同速保持原序」。
+
+**后果**：新增 `BattleGraveyard`、`BattleBridge`、`BattleUnits`；`BattleUnit` 加了 `Graveyard` 并在
+`PostKilledAction` 里登记尸体。测试 27 条（`BattleGraveyardTests` 9、`BattleBridgeTests` 10、`BattleUnitsTests` 8）。
+Game 2332 → **2359**，全解决方案 3089 → **3116** 全绿，`-warnaserror` 0 警告。覆盖率：`battle` 2/3/13 → **4/4/10**，
+合计 43/66/141 → **45/67/140**。
+
+**遗留**：`battle_army.cpp` 只转了 `Units`；`Force` 还差 `TroopsUidGenerator`（参考在 `battle_arena.h`，只是个计数器）、
+按阵形摆位、`GetTotalNumberOfDeadUnitsForNecromancy`/`CalculateExperienceBasedOnLosses`、`syncOriginalArmy` 与
+`GetSurrenderCost`（要英雄的宝物与外交技能）。`battle_bridge` 的动画与 `battle_grave` 的对尸体施法接口随界面与
+法术批次补。
+
+## ADR-152：`battle` 第六批——把一支军队摆上战场 ✅
+
+**背景**：ADR-151 落地后，`BattleUnits` 只是「一堆单位」。可战斗从来不操作裸单位：它操作的是两片军队，要按阵形
+摆位、要知道某个单位属于哪个槽位（伤亡回写、投降价、经验都靠这条对号），还要在每回合开头把英雄的「本回合已
+施法」清掉。这就是 `Battle::Force`。
+
+**决定**：
+
+1. **`BattleForce` 继承 `BattleUnits`**，而不是包一层。参考里 `Force : public Units`，端口把 `BattleUnits` 去封即可——
+   「一支军队」本来就是「一堆单位」，多了摆位与对号。`Force` 继承的 `BitModes`（撤退/投降标记）暂不跟，它们只影响
+   战斗结果与经验加成，等 `battle_result` 落地再加。
+2. **摆位公式逐字照抄**：`22 + 11*i`（铺开阵型 `22*i`），镜像侧 `+10`，宽单位上侧 `+9`、下侧 `+1`。这些不是随手挑的
+   间距，而是棋盘上两片出发区的真实坐标；改一个数字就会压格或越界，所以宁可留硬编码也不「抽象成参数」。
+3. **`_uids` 与 `Army` 槽位一一对应，空槽存 0**：所有「场上 ↔ 原始军队」的换算都走这张表。这样召唤物、镜像顶替、
+   中途被清场的单位不会污染伤亡统计，`GetSurrenderCost` 也不会把召唤出来的兵算进价钱。
+4. **伤亡统计一律夹在 `min( initialCount, dead )`**：死亡数可能因为吸血超过初始人数（`ApplyDamage` 允许），
+   不夹的话亡灵巫术与经验都会凭空变大。
+5. **投降价照抄三段式**：先按活着的单位累加 `cost * 存活数`；有指挥官时基数从 `0.5` 起步、宝物按百分比连乘、
+   外交术先乘 2 再乘一档折扣；最后四舍五入且**不低于 1**。那个 `0.5` 是参考给的「英雄在场就打对折」，不是
+   「没有折扣」，很容易抄错成 1。
+6. **`IArmyCommander` 从只读扩出两个成员**：`GetLevelSkill`（默认 `None`，队长本来就没技能）与
+   `ResetModes`（默认空，只有英雄有模式字）。这是唯一一处战斗要写指挥官的地方——清 `SPELLCASTED`；不开一个
+   通用的「拿 HeroBase 指针」口子。
+7. **`GetControl` 走 `Players`**：参考里英雄问王国、队长问城堡，两条路最后都落到 `Players::GetPlayerControl( color )`。
+   端口没有「英雄→王国」的反向指针（同色只有一份玩家记录），于是两边都直接问 `Players`，答案相同、依赖更少。
+8. **类型别名 `GameArmy`**：`FHeroes2.Game.Army` 既是命名空间又有同名类。`BattleForce`/`BattleUnit` 里统一
+   `using GameArmy = FHeroes2.Game.Army.Army;`，同时保留 `Army` 作为属性名（与参考 `GetArmy()` 对应）。
+
+**后果**：新增 `BattleForce`、`BattleTroopsUidGenerator`；`BattleUnits` 去封；`BattleUnit` 加 `Army` 回指、
+`IsMonster`、`GetCost`、`GetSurrenderCost`、`GetControl`、`GetCurrentControl`；`Army` 加 `IsSpreadFormation` 与
+`GetControl`；`IArmyCommander`、`Hero`、`Captain`、`HeroModes` 各加一到两个成员。测试 16 条（`BattleForceTests`）。
+Game 2359 → **2375**，全解决方案 3116 → **3132** 全绿，`-warnaserror` 0 警告。覆盖率不变：`battle` 4/4/10，
+合计 45/67/140（本批补的是 ◐ 文件的内部，没有新增 ✅ 文件）。
+
+**遗留**：`GetKilledTroops`（要参考的 `Troops` 容器做同兵种合并）、`Force` 的撤退/投降标记；`Unit` 侧还差
+`ApplySpell` 族与 `GetMorale`/`GetLuck`——所属军队已接通，可以顺着做。
+
+## ADR-153：`battle` 第七/八批——士气运气与法术应用层 ✅
+
+**背景**：`BattleForce`（ADR-152）让单位知道自己属于哪支军队之后，`battle_troop.cpp` 只剩两块：
+士气/运气的来源与掷骰（`.cpp:276-329`），以及法术应用层（`.cpp:65-98`、`793-890`、`1174-1534`）。
+后者是整个战斗最密的算术之一：能落不能落、落了打多少、打完治多少，全都写在这几百行里。
+
+**决定**：
+
+1. **`Army.GetMorale()` 先问指挥官，英雄侧自己补军队修正**。参考的 `Army::GetMorale()` 是
+   `commander ? commander->GetMorale() : GetMoraleModificator()`（`army.cpp:1220-1224`），
+   `Heroes::GetMorale()` 再自己叠 `GetArmy().GetMoraleModificator()`。两条必须同时照抄：
+   只做前一条，有指挥官的军队会把「多种族 -1」与亡灵惩罚静默吃掉；两边互相回调则成环。
+2. **骨龙减士气走 `IBattleField.EnemyHasMonster( color, monster )`**。参考在 `Unit::GetMorale()` 里
+   直接问竞技场「对面有没有骨龙」，端口不因此把敌方军队塞进 `BattleUnit`——`IBattleField` 本来就是
+   「单位需要问竞技场的那几件事」的集合，加一条比多一条反向引用便宜。
+3. **随机序列逐字照抄**：好士气 `if`、坏士气 `else if`、AI 豁免只在坏分支。换成两个独立 `if` 会多掷一次骰，
+   整场战斗的随机序列随之错位——这类错误不会在单条测试里暴露，只会在长战斗里「AI 运气怪怪的」。
+4. **法术应用层留在 `BattleUnit`**，分成三条私有路：`SpellApplyDamage`、`SpellRestoreAction`、
+   `SpellModesAction`。公共入口只有 `AllowApplySpell`/`ApplySpell`/`GetMagicResist`/`CalculateSpellDamage`
+   与 `GetCurrentSpellEffects`，签名与参考一一对应。
+5. **`TargetInfo` 用类（`BattleTargetInfo`）**。参考按引用传 `TargetInfo &`；C# 里结构体会让每个签名都加 `ref`，
+   而类天然是引用语义。伤害与击杀数写回同一个对象，测试可以直接断言 `target.Damage`/`target.Killed`。
+6. **`GetMagicResist` 先判「法术有没有意义」**：反魔 100%、治疗满血且干净 100%、复活满员 100%、驱散无可摘 100%、
+   催眠目标超过法术上限 100%，然后才是宝物免疫与怪物抗魔。顺序不能换——「反魔单位对治疗也免疫」与
+   「对满员的队伍不必复活」是两种不同的 100%，测试要能分辨。
+7. **`CalculateSpellDamage` 的四分支是 `if/else if` 链**：指定法术减伤 → 元素法术减伤（附 `IsElementalSpell()`
+   条件）→ 指定法术弱点 → 火焰/寒冷弱点，只取最具体的一条；元素那一条的条件不成立时要**继续**落到弱点分支。
+   宝物加成则逐项连乘（不是把百分比相加），连锁闪电的 `/2`、`/4`、`/8` 写在**有施法者**的分支里——参考就是
+   这样写的，没有英雄时不减半，照着留。
+8. **宝物免疫只认参考的八种**：诅咒、催眠、死亡、狂暴、致盲、麻痹、神圣、驱散。没有「寒冷免疫」这类
+   `ArtifactBonusType`，不要凭直觉补。
+
+**后果**：新增 `BattleTargetInfo`；`BattleUnit` 加 `GetCommander`、`IsHaveDamage`、`AddAffection`、
+`AllowApplySpell`、`ApplySpell`、`GetMagicResist`、`CalculateSpellDamage`、`GetCurrentSpellEffects` 与三条私有路；
+`IBattleField` 加 `EnemyHasMonster`；`IArmyCommander` 加 `GetColor`/`GetPower`/`GetMorale`/`GetLuck`；
+`Army`/`Hero`/`Captain` 接线。测试 13 + 24 条（`BattleUnitMoraleTests`、`BattleUnitSpellTests`）。
+Game 2375 → **2412**，全解决方案 3132 → **3169** 全绿，`-warnaserror` 0 警告。覆盖率不变：
+`battle` 4/4/10，合计 45/67/140（补的是 ◐ 文件的内部）。
+
+**遗留**：`battle_troop.cpp` 已无未转函数；下一步是 `battle_arena`/`battle_action`（选目标、法术路径、行动执行），
+那才是真正需要棋盘与单位集合的地方。

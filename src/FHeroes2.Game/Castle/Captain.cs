@@ -3,6 +3,7 @@ using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Spells;
+using FHeroes2.Game.System;
 
 using ArmyTroops = FHeroes2.Game.Army.Army;
 using IArmyCommander = FHeroes2.Game.Army.IArmyCommander;
@@ -144,6 +145,22 @@ public sealed class Captain : ISpellBookOwner, IArmyCommander
     /// <inheritdoc />
     /// <remarks>A captain has no secondary skills: <c>HeroBase::GetSecondarySkillValue</c> answers 0.</remarks>
     public uint GetSecondarySkillValue(SecondarySkill skill) => 0;
+
+    /// <inheritdoc />
+    /// <remarks>A captain knows no skills, so its diplomacy discount is always zero.</remarks>
+    public SkillLevel GetLevelSkill(SecondarySkill skill) => SkillLevel.None;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>Captain::GetControl()</c> asks its castle (<c>captain.cpp:180-183</c>), and a castle answers
+    /// <c>Players::GetPlayerControl</c> unless it is neutral — a neutral one is always AI. A battle-only captain is
+    /// never neutral, so the two answers coincide.
+    /// </remarks>
+    public PlayerControl GetControl() => _home is null ? PlayerControl.Ai : Players.GetPlayerControl(_home.Color);
+
+    /// <inheritdoc />
+    /// <remarks>The captain belongs to the town it defends, <c>HeroBase::GetColor()</c> (<c>captain.cpp:88</c>).</remarks>
+    public PlayerColor GetColor() => Color;
 
     /// <inheritdoc />
     /// <remarks>

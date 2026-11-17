@@ -18,8 +18,15 @@ namespace FHeroes2.Game.Heroes;
 /// expert leadership and a fountain is still only <see cref="Morale.Blood"/>.
 /// </para>
 /// <para>
-/// The port has the first two terms. The artifact ones need the artifact bag's luck/morale fields, which are
-/// still missing; they are additions, so the order above still describes what is computed here.
+/// The port has the first two terms and the army's own share (the race penalty, the undead penalty, the
+/// garrison bonus of a castle — all of them <see cref="HeroBaseMorale"/>'s job in the reference, which folds
+/// <c>GetArmy().GetMoraleModificator()</c> in). The artifact ones need the artifact bag's luck/morale fields,
+/// which are still missing; they are additions, so the order above still describes what is computed here.
+/// </para>
+/// <para>
+/// <b>The army's share has to be added here now</b>: <see cref="Heroes.Hero"/> implements
+/// <see cref="Army.IArmyCommander"/>, so <c>Army.GetMorale()</c> asks the hero and not the other way round —
+/// stop adding it and a hero's army would silently lose its race and undead penalties.
 /// </para>
 /// <para>
 /// <b>The objects are counted by type, not by visit</b>: <c>getAllVisitedObjectTypes()</c> is a set, so three
@@ -34,22 +41,27 @@ public sealed partial class Hero
     /// The morale of the hero's army, <c>Heroes::GetMorale()</c> (<c>heroes.cpp:1033</c>).
     /// </summary>
     /// <returns>
-    /// <see cref="Morale.Normal"/> plus the leadership skill and the visited-object effect, clamped into the
-    /// scale. The army's own share (one race, undead in the ranks) is
-    /// <see cref="Army.Army.GetMoraleModificator()"/>, which the reference adds here as well and which is not
-    /// part of this number yet.
+    /// <see cref="Morale.Normal"/> plus the leadership skill, the visited-object effect and the army's own
+    /// modificator, clamped into the scale.
     /// </returns>
     public int GetMorale() =>
-        Morale.Normalize(Morale.Normal + (int)SecondarySkills.GetValue(SecondarySkill.Leadership) + GetVisitedObjectsMorale());
+        Morale.Normalize(Morale.Normal
+                         + (int)SecondarySkills.GetValue(SecondarySkill.Leadership)
+                         + GetVisitedObjectsMorale()
+                         + Army.GetMoraleModificator());
 
     /// <summary>
     /// The luck of the hero's army, <c>Heroes::GetLuck()</c> (<c>heroes.cpp:1069</c>).
     /// </summary>
     /// <returns>
-    /// <see cref="Luck.Normal"/> plus the luck skill and the visited-object effect, clamped into the scale.
+    /// <see cref="Luck.Normal"/> plus the luck skill, the visited-object effect and the army's own
+    /// modificator, clamped into the scale.
     /// </returns>
     public int GetLuck() =>
-        Luck.Normalize(Luck.Normal + (int)SecondarySkills.GetValue(SecondarySkill.Luck) + GetVisitedObjectsLuck());
+        Luck.Normalize(Luck.Normal
+                       + (int)SecondarySkills.GetValue(SecondarySkill.Luck)
+                       + GetVisitedObjectsLuck()
+                       + Army.GetLuckModificator());
 
     /// <summary>
     /// The morale the visited objects are worth, <c>getObjectMoraleModifiers( getAllVisitedObjectTypes() )</c>.

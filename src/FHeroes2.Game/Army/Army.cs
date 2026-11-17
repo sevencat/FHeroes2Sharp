@@ -6,6 +6,7 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Army;
 
@@ -80,6 +81,26 @@ public sealed partial class Army : IEnumerable<Troop>
     /// reference, a stored value here.
     /// </summary>
     public PlayerColor Color { get; set; } = PlayerColor.None;
+
+    /// <summary>
+    /// Whether the army is deployed in the wide formation, <c>Army::isSpreadFormation()</c> /
+    /// <c>SetSpreadFormation()</c> (<c>army.h:243-251</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只在开战摆位时用：铺开时五队兵每隔 22 格排一行，否则每 11 格一队（见 <c>BattleForce</c>）。
+    /// 参考由竞技场（以及「军团旗帜」之类的地图效果）置位，端口先留一个可写属性。
+    /// </remarks>
+    public bool IsSpreadFormation { get; set; }
+
+    /// <summary>
+    /// Who commands the army, <c>Army::GetControl()</c> (<c>army.cpp:1387-1390</c>).
+    /// </summary>
+    /// <remarks>
+    /// 有指挥官就问指挥官（英雄问王国、队长问城堡，两者最终都落到 <c>Players::GetPlayerControl</c>）；
+    /// 没有指挥官的散兵（中立军）是电脑的。颜色为空的军队也按电脑算。
+    /// </remarks>
+    public PlayerControl GetControl() =>
+        Commander?.GetControl() ?? (Color == PlayerColor.None ? PlayerControl.Ai : Players.GetPlayerControl(Color));
 
     /// <summary>The slots, in order. The array is fixed size; its slots are mutable.</summary>
     public IReadOnlyList<Troop> Slots => _slots;
@@ -316,11 +337,12 @@ public sealed partial class Army : IEnumerable<Troop>
     /// The luck the army fights with, <c>Army::GetLuck()</c> (<c>army.cpp:1200</c>).
     /// </summary>
     /// <returns>
-    /// Without a commander the reference falls back to <see cref="GetLuckModificator()"/>. The port's army
-    /// has no commander, so a hero's luck is asked of the hero (<c>Hero.GetLuck()</c>) and this is the
-    /// army's own share.
+    /// With a commander: the commander's own luck, <c>commander-&gt;GetLuck()</c>; without one,
+    /// <see cref="GetLuckModificator()"/> (the castle's term). A hero's army therefore takes no
+    /// race/undead penalty from <see cref="GetLuckModificator()"/> — that is the reference's behaviour too,
+    /// not a missing piece here.
     /// </returns>
-    public int GetLuck() => GetLuckModificator();
+    public int GetLuck() => Commander?.GetLuck() ?? GetLuckModificator();
 
     /// <summary>
     /// The luck an army has without its hero, <c>Army::GetLuckModificator()</c> (<c>army.cpp:1206</c>).
@@ -344,8 +366,12 @@ public sealed partial class Army : IEnumerable<Troop>
     /// <summary>
     /// The morale the army fights with, <c>Army::GetMorale()</c> (<c>army.cpp:1220</c>).
     /// </summary>
-    /// <returns>Without a commander, <see cref="GetMoraleModificator()"/>.</returns>
-    public int GetMorale() => GetMoraleModificator();
+    /// <returns>
+    /// With a commander: the commander's own morale, <c>commander-&gt;GetMorale()</c>; without one,
+    /// <see cref="GetMoraleModificator()"/> — the multi-race and undead penalties only apply to an army
+    /// nobody leads (<c>army.cpp:1220-1224</c>).
+    /// </returns>
+    public int GetMorale() => Commander?.GetMorale() ?? GetMoraleModificator();
 
     /// <summary>
     /// The morale an army has without its hero, <c>Army::GetMoraleModificator()</c>

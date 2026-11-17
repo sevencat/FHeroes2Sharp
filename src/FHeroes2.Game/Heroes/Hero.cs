@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Heroes;
 
@@ -159,6 +160,21 @@ public sealed partial class Hero
 
     /// <summary>The mode bits of the hero, <c>Modes()</c> (<c>heroes.h:196</c>).</summary>
     public HeroModes Modes => _modes;
+
+    /// <summary>
+    /// Who gives the hero orders, <c>Heroes::GetControl()</c> (<c>heroes.cpp:2004-2007</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考问王国（<c>Kingdom::GetControl()</c>），王国问 <c>Players::GetPlayerControl()</c>。端口没把英雄钉在
+    /// 某个王国上（同一颜色只有一份玩家记录），所以直接问同一个地方，答案一样。
+    /// </remarks>
+    /// <returns>The control of the hero's player.</returns>
+    public PlayerControl GetControl() => Players.GetPlayerControl(Color);
+
+    /// <summary>The hero's side, <c>HeroBase::GetColor()</c>.</summary>
+    /// <remarks>端口把颜色存在 <see cref="Color"/> 上，接口要求的是方法形状，这里只是转一手。</remarks>
+    /// <returns>The colour the hero serves, or <see cref="PlayerColor.None"/>.</returns>
+    public PlayerColor GetColor() => Color;
 
     /// <summary>
     /// Whether the hero may be offered in a tavern, <c>Heroes::isAvailableForHire()</c>

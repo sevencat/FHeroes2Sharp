@@ -2,7 +2,7 @@ namespace FHeroes2.Game.Heroes;
 
 /// <summary>
 /// The mode bits of a hero, the subset of <c>Heroes::Modes</c> (<c>heroes.h:196</c>) that the port needs —
-/// the three the hiring rules and the recruitment pool look at.
+/// the hiring rules, the recruitment pool and the battle's "already cast this round" flag.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,6 +23,12 @@ public enum HeroModes : uint
 {
     /// <summary>No mode set.</summary>
     None = 0x0000_0000,
+
+    /// <summary>
+    /// The hero has already cast a battle spell this round, <c>Heroes::SPELLCASTED</c>
+    /// (<c>heroes.h:200</c>). <c>Battle::Force::NewTurn()</c> clears it at the start of every round.
+    /// </summary>
+    Spellcasted = 0x0000_0004,
 
     /// <summary>
     /// The hero may still move today, <c>Heroes::ENABLEMOVE</c> (<c>heroes.h:195</c>). Set at the start of a

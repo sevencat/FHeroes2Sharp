@@ -218,6 +218,23 @@ public static class Rand
         => CombineSeedWithValueHash(seed, unchecked((uint)value));
 
     /// <summary>
+    /// The 64-bit seed flavour of <see cref="CombineSeedWithValueHash(uint, uint)"/>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的模板对 <c>uint32_t</c> 与 <c>uint64_t</c> 都成立；战斗命令的 <c>updatePCG32Stream()</c> 用的正是
+    /// 64 位的那一支，所以这里补一个 <see cref="ulong"/> 重载，移位与加法都在 64 位内完成。
+    /// </remarks>
+    /// <param name="seed">The seed to mix into.</param>
+    /// <param name="value">The value to mix in, usually a salt such as a command type or a parameter.</param>
+    /// <returns>The mixed seed.</returns>
+    public static ulong CombineSeedWithValueHash(ulong seed, int value)
+    {
+        ulong hash = unchecked((uint)value);
+
+        return unchecked(seed ^ (hash + 0x9e3779b9ul + (seed << 6) + (seed >> 2)));
+    }
+
+    /// <summary>
     /// A weighted pool of values, <c>Rand::Queue</c> (<c>rand.h:224</c>).
     /// </summary>
     /// <remarks>

@@ -263,6 +263,43 @@ public static class BattleBoard
     }
 
     /// <summary>
+    /// How many steps separate two units, <c>Board::GetDistance( const Position &amp;, const Position &amp; )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 宽单位占两格，此时取四种头尾配对里最小的那个——「离得最近的那半格」才是两个单位之间的距离。
+    /// 任一位置为空时参考会解引用空指针，端口改答 0：调用方本来就该先确认位置有效。
+    /// </remarks>
+    /// <param name="first">One unit's position.</param>
+    /// <param name="second">The other unit's position.</param>
+    /// <returns>The distance in steps.</returns>
+    public static uint GetDistance(BattlePosition first, BattlePosition second)
+    {
+        if (first.Head == null || second.Head == null)
+        {
+            return 0;
+        }
+
+        uint headToHead = GetDistance(first.HeadIndex, second.HeadIndex);
+
+        if (first.Tail == null)
+        {
+            return second.Tail == null ? headToHead : Math.Min(headToHead, GetDistance(first.HeadIndex, second.TailIndex));
+        }
+
+        uint tailToHead = GetDistance(first.TailIndex, second.HeadIndex);
+
+        if (second.Tail == null)
+        {
+            return Math.Min(headToHead, tailToHead);
+        }
+
+        uint tailToTail = GetDistance(first.TailIndex, second.TailIndex);
+        uint headToTail = GetDistance(first.HeadIndex, second.TailIndex);
+
+        return Math.Min(Math.Min(headToHead, headToTail), Math.Min(tailToHead, tailToTail));
+    }
+
+    /// <summary>
     /// <c>Board::GetDistanceFromBoardEdgeAlongXAxis()</c>: how many cells is the column from one edge?
     /// </summary>
     /// <remarks>
