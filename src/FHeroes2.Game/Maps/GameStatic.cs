@@ -33,9 +33,19 @@ public static class GameStatic
     /// </summary>
     /// <remarks>
     /// 参考：<c>game_static.cpp:273-276</c>，常数 3。用在两处：护城河的说明文字
-    /// （<see cref="Castle.Castle.GetDescriptionBuilding"/>），以及战斗里对护城河内单位减防——战斗系统还没搬。
+    /// （<see cref="Castle.Castle.GetDescriptionBuilding"/>），以及 <c>BattleUnit.GetDefense()</c> 对护城河内单位减防。
     /// </remarks>
     public const int BattleMoatReduceDefense = 3;
+
+    /// <summary>
+    /// How much damage a shot loses when it has to cross a standing castle wall,
+    /// <c>GameStatic::getCastleWallRangedPenalty()</c> (<c>game_static.cpp:278-281</c>).
+    /// </summary>
+    /// <remarks>
+    /// 常数 50（百分比）。只有 <c>BattleArena.IsShootingPenalty</c> 判出「这一箭确实被城墙挡住」时才减，
+    /// 城墙被砸塌、射手在城内或射手有弹道术/黄金弓时不减。
+    /// </remarks>
+    public const int CastleWallRangedPenalty = 50;
 
     /// <summary>
     /// How much luck an object grants once visited, <c>GameStatic::getObjectLuckEffect()</c>.

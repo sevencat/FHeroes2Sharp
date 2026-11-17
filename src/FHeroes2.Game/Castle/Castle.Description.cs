@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Battle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
@@ -33,9 +34,11 @@ public sealed partial class Castle
     /// which is why one text serves six towns.
     /// </para>
     /// <para>
-    /// <b>Two paragraphs are missing</b> from the castle's text: the towers' and the moat's combat descriptions,
-    /// which are <c>Battle::Tower::GetInfo()</c> and <c>Battle::Board::GetMoatInfo()</c> — text that belongs to the
-    /// battle system. The numbers in the rest of the text are the town's own and are substituted here.
+    /// The keep's text is followed by two paragraphs that belong to the battle system rather than to the town's table:
+    /// the towers' shooting (<c>Battle::Tower::GetInfo()</c>, always when the keep stands) and the moat
+    /// (<c>Battle::Board::GetMoatInfo()</c>, when the moat is built). Outside combat no tower is damaged, so the
+    /// paragraphs describe the full complement. The numbers in the rest of the text are the town's own and are
+    /// substituted here.
     /// </para>
     /// </remarks>
     /// <param name="buildingType">The building to describe.</param>
@@ -59,6 +62,19 @@ public sealed partial class Castle
                 "%{count}",
                 ProfitConditions.FromBuilding(BuildingType.Castle, Race).Gold.ToString(),
                 StringComparison.Ordinal);
+
+            // The keep's own text is followed by the battle parameters of what it brings: the towers' shooting and
+            // the moat. Both are the battle system's, so they are asked for rather than kept in the town's table.
+            if (IsBuild(BuildingType.Castle))
+            {
+                description += "\n\n" + BattleTower.GetInfo(this);
+            }
+
+            if (IsBuild(BuildingType.Moat))
+            {
+                description += "\n\n" + BattleBoard.GetMoatInfo();
+            }
+
             break;
 
         case BuildingType.Moat:

@@ -131,6 +131,17 @@ public interface IArmyCommander
     }
 
     /// <summary>
+    /// The commander's mode bits, <c>HeroBase::Modes()</c> (<c>heroes_base.h:190</c>).
+    /// </summary>
+    /// <remarks>
+    /// 战斗只读一位：<see cref="HeroModes.Spellcasted"/>。竞技场用它回答「这个英雄本回合还能不能施法」
+    /// （<c>battle_arena.cpp</c> 的 <c>isDisableCastSpell</c>）与「敌方英雄能不能投降」。没有模式字的队长默认
+    /// 回答 <see cref="HeroModes.None"/>。
+    /// </remarks>
+    /// <returns>The mode bits that are set.</returns>
+    HeroModes Modes => HeroModes.None;
+
+    /// <summary>
     /// Who gives this commander orders, <c>HeroBase::GetControl()</c>.
     /// </summary>
     /// <remarks>

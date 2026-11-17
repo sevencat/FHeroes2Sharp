@@ -4,18 +4,18 @@ using FHeroes2.Game.Monsters;
 namespace FHeroes2.Game.Battle;
 
 /// <summary>
-/// The four facts about the battlefield that a unit cannot know by itself, <c>Battle::Arena</c>'s side of
+/// The six facts about the battlefield that a unit cannot know by itself, <c>Battle::Arena</c>'s side of
 /// <c>battle_troop.cpp</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// 参考里 <c>Battle::Unit</c> 随时能问 <c>Arena::GetCastle()</c>、<c>Arena::GetOppositeColor()</c> 与
-/// <c>Arena::IsShootingPenalty()</c>，因为竞技场是单例。端口不做单例：射击惩罚要城堡与城墙的判据、护城河要
-/// 城堡是否建了护城河、箭术加成要英雄、反向颜色要两支军队，这四件事都只有竞技场（以及将来的
-/// <c>BattleArena</c>）知道，于是收进这一个接口，单位持有一个可空的引用。
+/// 参考里 <c>Battle::Unit</c> 随时能问 <c>Arena::GetCastle()</c>、<c>Arena::GetOppositeColor()</c>、
+/// <c>Arena::IsShootingPenalty()</c> 与 <c>Arena::getAttackingArmyColor()</c>，因为竞技场是单例。端口不做单例：
+/// 射击惩罚要城堡与城墙的判据、护城河要城堡是否建了护城河、箭术加成要英雄、反向颜色与攻方颜色要两支军队、
+/// 敌方兵种要两支军队的部队表，这些只有竞技场（<c>BattleArena</c>）知道，于是收进这一个接口，单位持有一个可空的引用。
 /// </para>
 /// <para>
-/// 引用为空时一律按「没有任何加成、也不在任何城堡地形上」处理——单测里造一个单位不必先造一座城堡。
+/// 引用为空时一律按「没有任何加成、也不在任何城堡地形上、朝哪边都不动」处理——单测里造一个单位不必先造一座城堡。
 /// </para>
 /// </remarks>
 public interface IBattleField
@@ -62,4 +62,13 @@ public interface IBattleField
     /// <param name="monster">The creature to look for.</param>
     /// <returns>True when the opposing force still has such a stack.</returns>
     bool EnemyHasMonster(PlayerColor color, MonsterType monster);
+
+    /// <summary>
+    /// The colour of the side that walked into the fight, <c>Arena::getAttackingArmyColor()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考只有一个调用者：<c>Unit::UpdateDirection()</c> 用它决定「没被打过、也没走过路的单位该朝哪边」——
+    /// 攻方朝右、守方朝左（<c>battle_troop.cpp:196-202</c>）。这是竞技场被单位反查的第六个事实。
+    /// </remarks>
+    PlayerColor AttackingArmyColor { get; }
 }

@@ -1,3 +1,5 @@
+using FHeroes2.Game.Maps;
+
 namespace FHeroes2.Game.Battle;
 
 /// <summary>
@@ -602,4 +604,16 @@ public static class BattleBoard
 
         return [.. boardIndexes];
     }
+
+    /// <summary>
+    /// The combat description of the moat, <c>Battle::Board::GetMoatInfo()</c> (<c>battle_board.cpp:1038-1044</c>).
+    /// </summary>
+    /// <remarks>
+    /// The castle screen appends this to the keep's description, right after the towers' — the moat interrupts movement
+    /// through it rather than merely slowing it down, which is why it gets a paragraph of its own.
+    /// </remarks>
+    /// <returns>The sentence, with the defense reduction substituted.</returns>
+    public static string GetMoatInfo() =>
+        "The Moat interrupts any movement through it and reduces the defense skill of troops present in it by " +
+        GameStatic.BattleMoatReduceDefense.ToString() + ".";
 }

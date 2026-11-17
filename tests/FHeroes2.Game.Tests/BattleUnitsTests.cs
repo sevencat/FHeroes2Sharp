@@ -155,5 +155,7 @@ public class BattleUnitsTests
         public PlayerColor GetOppositeColor(PlayerColor color) => opposite;
 
         public bool EnemyHasMonster(PlayerColor color, MonsterType monster) => false;
+
+        public PlayerColor AttackingArmyColor => PlayerColor.Blue;
     }
 }

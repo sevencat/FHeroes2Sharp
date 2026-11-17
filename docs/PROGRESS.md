@@ -5450,3 +5450,154 @@ Game 2332 → **2359**，全解决方案 3089 → **3116** 全绿，0 警告。�
 
 **遗留**：`battle_troop.cpp` 到这里没有未转的函数了；下一步回到 `battle_arena`/`battle_action`
 （选目标、法术路径、行动执行），那边才是真正需要棋盘与单位集合的地方。
+
+### `battle` 第九批：寻路（2026-11-17）
+
+单位层收尾之后，竞技场的前置只剩寻路。这一批把 `battle_pathfinding.h/.cpp` 整份转掉，顺带补上
+`battle_cell.cpp` 里两个「要问别的格子」的通行性判定——它们当初因为缺棋盘邻居查询被留了下来。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Battle/BattlePathfinder.cs`（新） | `battle_pathfinding.h/.cpp` 全份 | `BattleNodeIndex`、`BattlePathNode`、`BattlePathfinder` 与六个查询 |
+| `Game/Battle/BattleCell.cs`（改） | `battle_cell.cpp:324-359` | `IsPassableFromAdjacent`、`IsPassableForUnit` |
+
+要点：
+
+* **`default( struct )` 不是 `{ -1, -1 }`**：参考用父节点 `{ -1, -1 }` 表示「没走到过」，C# 的 `default` 是全零，
+  `( 0, 0 )` 是一个合法格子，于是「未到达」被误判成「已到达」——所有节点的松弛都被跳过，寻路结果永远是空的。
+  改成显式 `BattlePathNode.None`，并把这条写进测试。
+* **可变结构体在字典里必须「取出→改→写回」**：`_cache[key].Update(...)` 改的是副本，编译能过、结果全错。
+  飞行分支就踩了这个坑，改成局部变量再赋回。
+* **棋盘不再是「一次性快照」**：缓存键是起点、速度、宽窄、飞行、颜色加整张棋盘的通行性。单位自己的回合里棋盘也会
+  被改（英雄施法、尸体挪位），所以每次查询都要重新取一遍通行性再比对。
+* **护城河的罚款记在「迈出」那一步**：走进护城河只要 1，从护城河迈出去要 `65535`。直觉上是反的，但参考如此，
+  于是「站进护城河」在当回合反而是划算的，「穿过护城河进城」才走不动。测试按这个语义写，别再按直觉改。
+* **宽单位的转身不算一步**：头尾互换的节点代价与步数都是 0；`buildPath` 末尾还要补一步转身，让单位面朝目标方向。
+* **飞行单位一次落地**：代价恒为 1，步数按直线距离算（至少 1，因为两个位置可能重叠）。
+* **竞技场依赖降到两个构造参数**：棋盘、有没有护城河、桥对这个单位通不通（一个委托）。`Bridge::isPassable( unit )`
+  要问单位，只能晚绑定；桥不存在与桥吊起给同一个答案。
+
+测试 13 条新增（`BattlePathfinderTests`）。Game 2412 → **2425**，全解决方案 3169 → **3182** 全绿，0 警告。
+覆盖率：`battle` 4/4/10 → **5/4/9**（`battle_pathfinding.cpp` 整份转完），合计 45/67/140 → **46/67/139**。
+
+**遗留**：`Position::GetReachable`（要问竞技场「这个单位多少移动力」）与 `battle_arena` 本身的选目标、法术路径。
+
+### `battle` 第十批：投石车与箭塔（2026-11-17）
+
+围城的两件器械。它们都不在棋盘上（投石车在城外，塔的箭手是凭空的），依赖极少，正好在竞技场之前清掉；
+顺带补了三处一直挂着的「缺了它所以先留白」的小口子。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Battle/BattleCatapult.cs`（新） | `battle_catapult.h/.cpp` 全份 | 射数/双倍概率/可否失手、`GetDamage`、八项合法目标、目标优先级、命中判定、落点 |
+| `Game/Battle/BattleTower.cs`（新） | `battle_tower.h/.cpp` 全份 | 箭手数与血量、攻击加成、三段描述、摧毁后把格子变障碍 |
+| `Game/Battle/CastleDefenseStructure.cs`（新） | `battle.h:135-148` | 投石车目标枚举 |
+| `Game/Battle/BattleTowerType.cs`（新） | `battle_tower.h:36-41` | 左/中/右三座塔 |
+| `Game/Battle/BattleUnit.cs`（改） | `army_troop.cpp:158-171` | `GetAttack`/`GetDefense` 补上军团指挥官的攻击/防御；新增 `GetStrengthWithBonus` |
+| `Game/Battle/BattleBoard.cs`（改） | `battle_board.cpp:1038-1044` | `GetMoatInfo` |
+| `Game/Castle/Castle.Description.cs`（改） | `castle.cpp:2544-2566` | 主堡描述后接塔与护城河两段 |
+| `Game/Castle/Castle.Values.cs`（改） | `castle.cpp:2100-2111` | `GetGarrisonStrength` 补上塔强度 |
+
+要点：
+
+* **塔不是 `Unit` 的子类，而是包着一个 `Unit`**。参考让 `Tower` 继承 `Unit` 并覆盖 `isValid()`，好让被砸掉的塔
+  「人还在、但不打了」。端口的 `BattleUnit` 是 sealed，所以改成组合：内部那个单位完全按参考构造，`IsValid` 由
+  自己的标志回答。塔没有棋盘位置，那个单位拿一张一次性的空棋盘当位置，永远不会占格。
+* **炮塔是「半队人、满血」**：参考用 `SetCount()` 折半，而它只改数量、不动血量，所以炮塔的血量等于主堡那一队的
+  血量。照抄，并在测试里钉死（`HitPoints` 相等而 `Count` 不等）。
+* **攻击加成不是弹道术，而是法师塔等级**：`GetAttackBonus() = castle.GetLevelMageGuild()`。别被「箭塔」的名字
+  骗了，英雄的弹道术只影响投石车。
+* **投石车的目标优先级是硬的**：墙全倒才轮到塔，塔倒了才轮到桥，最后才是主堡；只有同一级内部随机。少一层判断
+  就会让电脑在墙上还有缺口时去砸主堡。
+* **「能不能失手」决定要不要掷骰**：有弹道术时 `IsNextShotHit` 不消耗随机数。回放依赖这一点。
+* **`GetAttack` 原先漏了指挥官**：参考的 `Unit::GetAttack()` 调 `ArmyTroop::GetAttack()`，即
+  `Troop::GetAttack() + 指挥官攻击`。端口一直只算怪物基础值，塔的虚拟箭手「继承英雄攻击」这件事就无从谈起。这一批
+  把攻击与防御都补上——英雄带的兵与野兵由此拉开差距。
+* **驻军本来就挂着队长**：`Castle` 造出来就把 `_army.Commander` 指向自己的 `Captain`，所以「换成英雄」不是加法，
+  测试按「塔的箭手拿到哪个指挥官」来断言。
+* **`GetGarrisonStrength` 的塔项**：主堡算一整座塔，两个炮塔各算半座，加进军队强度之后再乘围城系数。
+
+测试 26 条新增（`BattleTowerTests` 14、`BattleCatapultTests` 12）。Game 2425 → **2451**，全解决方案 3182 →
+**3208** 全绿，0 警告。覆盖率：`battle` 5/4/9 → **7/4/7**（`battle_catapult.cpp`、`battle_tower.cpp` 转完），
+合计 46/67/139 → **48/67/137**。
+
+**遗留**：`battle_arena` 与 `battle_action`。塔与投石车在竞技场里各只有一句调用，真正的选目标与结算在那边。
+
+### `battle` 第十一批：竞技场的装配与查询（2026-11-17）
+
+`battle_arena` 约 1500 行，是战斗层的枢纽，但其中一半是界面、一半是行动执行。这一批先把「战场是什么」定下来：
+两支军队、城堡/墙/桥/塔/投石车、棋盘障碍、寻路器、当前单位与回合数，以及单位算伤害时会反查竞技场的那几个问题。
+`Turns()`/`UnitTurn()`/`ApplyAction()`/`TowerAction()`/`CatapultAction()` 留到 `battle_action` 那一批——它们的形状
+取决于行动命令，现在写只会写成空壳。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Battle/BattleArena.cs`（新） | `battle_arena.h:94-367`、`cpp:120-500`、`cpp:560-900` | 九个格号常量；野战/围城两套构造；`FromTile`；双方 Force/指挥官/颜色；当前单位与回合数；`BattleValid`；寻路六问的转发；`GetFreePositionNearHero`；装饰与障碍铺设 |
+| `Game/Battle/BattleArena.Castle.cs`（新） | `cpp:252-279`、`cpp:1096-1328` | 结构→格号；剩余耐久；四类摧毁语义；地震目标表与伤害区间 |
+| `Game/Battle/BattleArena.Combat.cs`（新） | `cpp:1392-1441`、`battle_troop.cpp:993/1170` | `IsShootingPenalty`（含穿墙采样）、`IsOnMoat`、箭术加成、敌方兵种 |
+| `Game/Battle/BattleBoardCells.cs`（改） | `battle_board.cpp:416-695` | `SetCovrObjects`/`SetCobjObjects` 与放置上限、两条硬约束 |
+| `Game/Battle/CastleDefenseStructure.cs`（改） | `battle_arena.h:68-72` | `SiegeWeaponType` |
+
+要点：
+
+* **竞技场不是单例**。参考把自己登记进文件静态变量，之后 `Arena::Get()` 到处可取；端口让战场成为对象，并在构造末尾
+  把 `Field`/`Graveyard` 回指注入每个单位。塔内部那个单位也接同样的两个回指，否则以后 `TowerAction` 一来就得改。
+* **`IsTown` 与 `Castle` 不是一回事**。没有主堡（`BUILD_CASTLE`）的村庄照样算「攻城」，但棋盘上没有墙，构造函数把
+  城堡指针置空、只留 `IsTown = true`（`battle_arena.cpp:360-362`）。两者一起判会少掉「村庄野战多 500 经验」那条路。
+* **墙的耐久起点看 `Spec`**：`IsFortificationBuilt` 只对骑士且建了 `Spec` 成立，此时四段墙 `Object = 3`，否则 `2`。
+  测试一开始按「建了主堡就是 3」写，被参考纠正。
+* **三类结构三种「摧毁」**：墙可以打到 0（变成可通行）；桥头塔与箭塔最低停在 1（掉一级、永久挡路）；桥一下到底。
+  有炮塔建筑的箭塔把伤害记在 `BattleTower` 上并把格子改成瓦砾 `1`，没有炮塔的箭塔直接扣格子数。
+* **塔射的是「实际守城的军队」**：参考问 `castle->GetActualArmy()`（客将优先，否则驻军）；端口没有城堡→英雄的回指，
+  而交给竞技场的那支军队本来就等于这个答案，于是把 `tower.Unit.Army` 指向 `DefendingForce.OriginalArmy`。
+* **障碍用独立随机源**：`PCG32( world.GetMapSeed() + tileIndex )`，与战斗随机数无关，同一格野战的地形永远一样。
+  放置上限按已有大障碍（`0x40`）的格数分四档（6/4/3/2），另有两条硬约束：双格障碍不能从第 8 列起（第 9 列留给
+  部队）、高障碍不能在最上两行。
+* **射击惩罚先判豁免、再判几何**：无城堡 → 塔 → 黄金弓/箭术 → 射手在墙内 → 双方同侧，最后才沿两支单位的「背点」
+  连线每 14 像素采样，检查是否从**已打穿**的墙格看过去。顺序不能换：先算几何会把「塔不受墙影响」这类豁免埋掉。
+* **护城河要同时问城堡与桥**：城墙建了没有问城堡，飞行与桥面通行问棋盘/桥。桥的 `IsPassable` 还要看「有没有人站在
+  闸门或护城河格上」——所以自己站在护城河格上时桥也被自己占住，照样吃罚款，与参考一致。
+
+测试 31 条新增（`BattleArenaTests` 24、`BattleBoardObstacleTests` 7）。Game 2451 → **2482**，全解决方案 3208 →
+**3239** 全绿，0 警告。覆盖率：`battle` 7/4/7 → **7/5/6**（`battle_arena.cpp` 转 ◐），合计 48/67/137 → **48/68/136**。
+
+**遗留**：`Turns()`/`UnitTurn()` 与全部行动执行（`battle_action`）；`Interface`、音乐等待、AI 规划器、自动战斗；
+`FromTile` 已实现并有棋盘层面的测试，但还缺一个真正 `World` 的端到端用例。
+
+### `battle` 第十二批：行动层的移动与回合动作（2026-11-17）
+
+`battle_action.cpp` 有 1274 行，其中一半是界面动画。这一批只取与画面无关的那一段：分发器加上移动、跳过、士气三个
+动作。攻击、法术、塔、投石车与「战斗结束」留在后面——它们要先有反击判定与 `TargetsApplyDamage`。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Battle/BattleArena.Action.cs`（新） | `battle_action.cpp:122-140`、`278-365`、`367-410`、`629-759` | `checkMoveParams`、`moveUnit`、`ApplyAction` 分发器、`MOVE`/`SKIP`/`MORALE` |
+| `Game/Battle/BattlePosition.cs`（改） | `battle_cell.cpp:131-209` | `GetReachable`：宽单位「头先试、尾巴再试」、当回合速度与飞行分支 |
+| `Game/Battle/BattleUnit.cs`（改） | `battle_troop.cpp:196-219` | `UpdateDirection()` / `UpdateDirection(Rect)` |
+| `Game/Battle/IBattleField.cs`（改） | `battle_arena.cpp:60-70` | 第五个成员 `AttackingArmyColor` |
+
+要点：
+
+* **`GetReachable` 晚于 `GetPosition`**。后者只看格子占用，前者还要问竞技场「走不走得到、花多少移动力」。参考从单例
+  取竞技场，端口把 `BattleArena` 作为第一个参数传进来，`BattlePosition` 因此第一次依赖了 `battle_arena`。
+* **`GetReachable` 的宽单位要试两次**：先按当前朝向「头落在 dst、尾巴在身后」，不行再「尾巴落在 dst、头在身前」。
+  但 `checkMoveParams` 要求**头**正好在目标格上，所以后一种解在真实命令里会被否掉——两条规则要一起看才说得通。
+* **飞行与步行的分支不同**：飞行先按落点转向、必要时交换头尾，然后一步到位；步行沿寻路器给的路径逐格挪，途中遇到
+  「下一格就是自己的尾巴」时只转身不挪格。
+* **参考只在有桥时逐格挪**（`battle_action.cpp:333-350`）：没有界面也没有桥的野战里它原地不动，因为实际游戏里
+  动画层会接管。端口没有界面，把逐格挪提成主路径，桥的升降作为附加动作。
+* **桥的通不通要先烘进闸门格**。`Bridge::SetPassability()` 把答案写进格子 `objectType`，寻路器只读格子。参考在
+  `Turns()` 里、每个单位行动前刷一次（`battle_arena.cpp:503-505`）；端口还没有回合循环，于是把刷新挂在移动的两个
+  入口上。写测试时先 `ActionDown()` 再直接 `GetReachable` 会失败——闸门格还是 `1`，正是这条被漏掉的刷新。
+* **士气是「给一次」与「拿一次」**：好士气清 `Moved`+`MoraleGood`（于是本回合还能再动），坏士气清 `MoraleBad`、
+  打上 `Moved`（于是这次行动作废）。
+* **非法命令抛异常而不静默**。参考对非法命令打日志、调试构建里 `assert`、发布构建里返回。端口一律抛
+  `ArgumentException`：一条被吞掉的 `ATTACK` 会让战斗停在原地而无任何迹象。未移植的命令类型抛
+  `NotSupportedException`，消息里写明还差哪些。
+
+测试 11 条新增（`BattleArenaActionTests`）。Game 2482 → **2493**，全解决方案 3239 → **3250** 全绿，0 警告。
+覆盖率：`battle` 7/5/6 → **7/6/5**（`battle_action.cpp` 转 ◐），合计 48/68/136 → **48/69/135**。
+
+**遗留**：`battle_action` 的攻击/法术/塔/投石车/撤退/投降/自动战斗；`Turns()`/`UnitTurn()` 的回合循环；
+`BattleUnit` 的反击判定与 `PostAttackAction`；`Interface`、音乐等待、AI 规划器。
+

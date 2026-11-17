@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Artifacts;
@@ -390,6 +391,55 @@ public sealed class BattleUnit : BitModes
     }
 
     /// <summary>
+    /// Turns the unit back to its side's default facing, <c>Unit::UpdateDirection()</c>
+    /// (<c>battle_troop.cpp:196-202</c>): the attacker faces right, the defender faces left.
+    /// </summary>
+    /// <remarks>
+    /// 参考在单位停下之后调它，把「追着谁打就朝谁」的临时朝向收回去。没有竞技场的单位（单测里手工造的那种）
+    /// 不改朝向——参考在这里是 <c>assert( arena != nullptr )</c>，端口没有可断的东西。
+    /// </remarks>
+    public void UpdateDirection()
+    {
+        if (_field == null)
+        {
+            return;
+        }
+
+        SetReflection(_field.AttackingArmyColor != Color);
+    }
+
+    /// <summary>
+    /// Turns the unit towards a rectangle, <c>Unit::UpdateDirection( const fheroes2::Rect &amp; )</c>
+    /// (<c>battle_troop.cpp:204-219</c>).
+    /// </summary>
+    /// <param name="position">The rectangle of the cell(s) the unit is about to occupy.</param>
+    /// <returns>True when the facing changed.</returns>
+    /// <remarks>
+    /// 只比较横坐标：目标在右边就朝右、在左边就朝左，同一列则保持原样。飞行单位落地前用它转身，好让翅膀与
+    /// 落点对得上——参考把这个判断放在动画层，端口放在这里，因为朝向是单位的属性而不是画面的属性。
+    /// </remarks>
+    public bool UpdateDirection(Rect position)
+    {
+        Rect current = _position.GetRect();
+
+        if (current.X == position.X)
+        {
+            return false;
+        }
+
+        bool isReflected = current.X > position.X;
+
+        if (isReflected == _isReflected)
+        {
+            return false;
+        }
+
+        SetReflection(isReflected);
+
+        return true;
+    }
+
+    /// <summary>
     /// Turns the unit around, <c>Unit::SetReflection()</c>.
     /// </summary>
     /// <param name="isReflected">Whether it should face left.</param>
@@ -482,6 +532,49 @@ public sealed class BattleUnit : BitModes
     }
 
     /// <summary>
+    /// The colour the unit fights for, falling back to its army's, <c>Unit::GetCurrentOrArmyColor()</c>.
+    /// </summary>
+    /// <returns>The current colour, or the army's own when the unit is berserk and has none.</returns>
+    /// <remarks>
+    /// 参考：<c>battle_troop.cpp</c> 的 <c>Unit::GetCurrentOrArmyColor()</c>。被狂暴的单位按「谁都打」处理，颜色是
+    /// <see cref="PlayerColor.None"/>，但竞技场问「现在轮到哪一方」时不能没有答案，于是退回它所属军队的颜色。
+    /// </remarks>
+    public PlayerColor GetCurrentOrArmyColor()
+    {
+        PlayerColor currentColor = GetCurrentColor();
+
+        return currentColor == PlayerColor.None ? Color : currentColor;
+    }
+
+    /// <summary>
+    /// Whether the unit stands outside the castle walls, <c>Unit::isOutOfCastleWalls()</c>.
+    /// </summary>
+    /// <returns>True when the head cell — and the tail cell of a wide unit — is outside the wall line.</returns>
+    /// <remarks>
+    /// 参考：<c>battle_troop.cpp</c> 的 <c>Unit::isOutOfCastleWalls()</c>，判据是格号小于闸门格（50）：城外 0..49，
+    /// 城内 50..98。城墙的射击惩罚只对「城外射城内」生效，所以这个判定是它的前提之一。
+    /// </remarks>
+    public bool IsOutOfCastleWalls() =>
+        BattleBoard.IsOutOfWallsIndex(HeadIndex) || (IsWide && TailIndex >= 0 && BattleBoard.IsOutOfWallsIndex(TailIndex));
+
+    /// <summary>
+    /// The point a shot leaves the unit from, <c>Unit::GetBackPoint()</c>.
+    /// </summary>
+    /// <returns>The middle of the unit's rear edge, in board pixels.</returns>
+    /// <remarks>
+    /// 参考：<c>battle_troop.cpp</c> 的 <c>Unit::GetBackPoint()</c>——取单位矩形朝后方那条边的中点，用作弹道线的起点。
+    /// 面朝左的单位后方在右侧，所以镜像时要取右边的中点。
+    /// </remarks>
+    public Point GetBackPoint()
+    {
+        Rect area = Position.GetRect();
+
+        return Position.IsReflect
+            ? new Point(area.Right, area.Y + (area.Height / 2))
+            : new Point(area.X, area.Y + (area.Height / 2));
+    }
+
+    /// <summary>
     /// Whether the unit is locked in close combat, <c>Unit::isHandFighting()</c>: an enemy stands next to it.
     /// </summary>
     /// <returns>False for a tower and for a unit with no enemy around; true otherwise.</returns>
@@ -532,10 +625,17 @@ public sealed class BattleUnit : BitModes
         return BattleBoard.GetDistance(attacker._position, defender._position) == 1;
     }
 
-    /// <summary>The attack the unit fights with, <c>Unit::GetAttack()</c>: its own, plus bloodlust.</summary>
+    /// <summary>
+    /// The attack the unit fights with, <c>Unit::GetAttack()</c>: its own, the army commander's, plus bloodlust.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>battle_troop.cpp</c> 的 <c>Unit::GetAttack()</c> 调 <c>ArmyTroop::GetAttack()</c>，后者是
+    /// <c>Troop::GetAttack() + 指挥官的 GetAttack()</c>（<c>army_troop.cpp:158-161</c>）。这一项是塔的虚拟箭手拿到
+    /// 英雄攻击力的唯一通道，也是英雄带的兵与地图上的野兵拉开差距的地方。
+    /// </remarks>
     public uint GetAttack()
     {
-        uint attack = (uint)MonsterStatistics.GetBattleStats(Monster).Attack;
+        uint attack = (uint)(MonsterStatistics.GetBattleStats(Monster).Attack + (_army?.Commander?.GetAttack() ?? 0));
 
         if (HasModes(BattleMonsterState.SpellBloodlust))
         {
@@ -556,7 +656,7 @@ public sealed class BattleUnit : BitModes
     /// </remarks>
     public uint GetDefense()
     {
-        uint defense = (uint)MonsterStatistics.GetBattleStats(Monster).Defense;
+        uint defense = (uint)(MonsterStatistics.GetBattleStats(Monster).Defense + (_army?.Commander?.GetDefense() ?? 0));
 
         if (HasModes(BattleMonsterState.SpellStoneSkin))
         {
@@ -583,6 +683,20 @@ public sealed class BattleUnit : BitModes
 
         return defense;
     }
+
+    /// <summary>
+    /// The strength of the stack with a flat attack and defense bonus, <c>Troop::GetStrengthWithBonus()</c> as
+    /// inherited by <c>Battle::Unit</c>.
+    /// </summary>
+    /// <remarks>
+    /// The castle's towers are valued this way: <c>castle.cpp:2103</c> asks a center tower for its strength with its
+    /// own attack bonus, which is how the AI prices a siege. The unit is not damaged or blessed in that call, so the
+    /// plain troop formula is what the reference uses.
+    /// </remarks>
+    /// <param name="bonusAttack">Attack to add.</param>
+    /// <param name="bonusDefense">Defense to add.</param>
+    /// <returns>The strength of one creature times the count.</returns>
+    public double GetStrengthWithBonus(int bonusAttack, int bonusDefense) => _troop.GetStrengthWithBonus(bonusAttack, bonusDefense);
 
     /// <summary>Counts one more disrupting ray, <c>++_disruptingRaysNum</c> in <c>ApplySpell</c>.</summary>
     /// <remarks>参考没有单列的接口，这个计数只是被法术应用层直接改；端口把它显式化，好测「每次扣 3 点防御」。</remarks>

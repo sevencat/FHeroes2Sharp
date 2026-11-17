@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Army;
+using FHeroes2.Game.Battle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
@@ -21,10 +22,8 @@ namespace FHeroes2.Game.Castle;
 /// the rest of <see cref="Castle"/> makes.
 /// </para>
 /// <para>
-/// <b>What is missing</b>, all of it because the system is: the tower's strength in
-/// <see cref="GetGarrisonStrength"/> (<c>Battle::Tower</c> is part of the battle batch), and the cost of
-/// <c>ActionNewMonth</c>'s castle-upkeep and tax terms, which need a kingdom round to spend against. Each one is
-/// called out at the method that needs it.
+/// <b>What is missing</b>: the cost of <c>ActionNewMonth</c>'s castle-upkeep and tax terms, which need a kingdom round
+/// to spend against. It is called out at the method that needs it.
 /// </para>
 /// </remarks>
 public sealed partial class Castle
@@ -61,9 +60,9 @@ public sealed partial class Castle
     /// the AI sizing up a target, where the larger of the two numbers is the safe one.
     /// </para>
     /// <para>
-    /// <b>One omission.</b> The towers (<c>Battle::Tower</c>, worth <c>towerStr</c> for the keep and half of it per
-    /// turret) are part of the battle system and are not ported, so a castle's strength is the army and the
-    /// multipliers only — the same shape with a smaller constant.
+    /// The keep's archers are added to the army before the multipliers: a whole <c>towerStr</c> for the keep plus half
+    /// of it for each turret that was built. The reference asks a real <c>Battle::Tower</c> for that number, so the
+    /// port does too, with the count and the mage-guild attack bonus the tower would have in a battle.
     /// </para>
     /// </remarks>
     /// <param name="guestHero">The hero in the town, or <see langword="null"/> for none.</param>
@@ -99,6 +98,23 @@ public sealed partial class Castle
 
         if (IsCastle && totalStrength > 0.1)
         {
+            // The keep's archers are worth a full tower, and each turret half of that again. Only the center tower is
+            // asked for, so all three get the same count and the same mage-guild attack bonus.
+            BattleTower centerTower = new(this, BattleTowerType.Center, 0, guestHero);
+            double towerStrength = centerTower.GetStrengthWithBonus((int)centerTower.AttackBonus, 0);
+
+            totalStrength += towerStrength;
+
+            if (IsBuild(BuildingType.LeftTurret))
+            {
+                totalStrength += towerStrength / 2;
+            }
+
+            if (IsBuild(BuildingType.RightTurret))
+            {
+                totalStrength += towerStrength / 2;
+            }
+
             bool isWeakAgainstMissileFire = attackingHero is not null
                 && attackingHero.GetLevelSkill(SecondarySkill.Ballistics) == SkillLevel.None
                 && attackingHero.Army.IsMeleeDominantArmy();

@@ -13,8 +13,8 @@ namespace FHeroes2.Game.Battle;
 /// <see cref="BattleCell"/> 引用。
 /// </para>
 /// <para>
-/// <c>GetReachable()</c> 要问竞技场「这一步走不走得到、花多少移动力」，随 <c>battle_arena</c> 一起补；
-/// 本期只有不依赖竞技场的 <see cref="GetPosition(BattleUnit, int)"/>——它只看格子占用与单位朝向。
+/// <see cref="GetPosition(BattleUnit, int)"/> 只看格子占用与单位朝向；<see cref="GetReachable"/> 还要问竞技场
+/// 「这一步走不走得到、花多少移动力」，所以竞技场作为参数传进来，而不是像参考那样从单例取。
 /// </para>
 /// </remarks>
 public sealed class BattlePosition
@@ -212,6 +212,108 @@ public sealed class BattlePosition
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Where a unit can actually end up when it steps onto a cell this turn, <c>Position::GetReachable()</c>
+    /// (<c>battle_cell.cpp:131-209</c>).
+    /// </summary>
+    /// <param name="arena">The battlefield, asked whether the position is reachable and what it costs.</param>
+    /// <param name="unit">The unit that would move.</param>
+    /// <param name="dst">The cell it is sent to.</param>
+    /// <param name="speed">
+    /// The movement to spend. The reference's default — no limit — leaves <paramref name="speed"/> empty and asks the
+    /// arena whether the cell is reachable <em>this turn</em> instead, which is the cheaper question.
+    /// </param>
+    /// <returns>The position, or an empty one when the move cannot be made.</returns>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="GetPosition"/> 的区别：那个只问「格子上有没有人、尾巴放不放得下」，这个还要问竞技场
+    /// 「这一步走不走得到、是不是这一回合能走到」。因此障碍、护城河罚款与移动力都在这里合并判断。
+    /// </para>
+    /// <para>
+    /// 宽单位先试「头落在 dst、尾巴在身后」，再试「尾巴落在 dst、头在身前」——前者是它按当前朝向走过去的结果，
+    /// 后者是它倒着蹭过去的结果。参考<b>不</b>检查格子占用：可达性已经由竞技场的寻路器回答过了。
+    /// </para>
+    /// </remarks>
+    public static BattlePosition GetReachable(BattleArena arena, BattleUnit unit, int dst, uint? speed = null)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(unit);
+
+        BattleBoardCells board = unit.Position.Board;
+
+        BattlePosition Empty() => new(board);
+
+        BattlePosition CheckReachability(BattlePosition pos)
+        {
+            if (speed.HasValue)
+            {
+                if (arena.IsPositionReachable(unit, pos, false) && arena.CalculateMoveCost(unit, pos) <= speed.Value)
+                {
+                    return pos;
+                }
+            }
+            else if (arena.IsPositionReachable(unit, pos, true))
+            {
+                return pos;
+            }
+
+            return Empty();
+        }
+
+        BattlePosition CheckCells(BattleCell? headCell, BattleCell? tailCell)
+        {
+            if (headCell == null || tailCell == null)
+            {
+                return Empty();
+            }
+
+            BattlePosition pos = new(board);
+            pos.SetHeadAndTail(headCell, tailCell);
+
+            return CheckReachability(pos);
+        }
+
+        if (unit.IsWide)
+        {
+            CellDirection tailDirection = unit.IsReflect ? CellDirection.Right : CellDirection.Left;
+
+            if (BattleBoard.IsValidDirection(dst, tailDirection))
+            {
+                BattlePosition headPosition = CheckCells(
+                    board.GetCell(dst),
+                    board.GetCell(BattleBoard.GetIndexDirection(dst, tailDirection)));
+
+                if (headPosition.Head != null && headPosition.Tail != null)
+                {
+                    return headPosition;
+                }
+            }
+
+            CellDirection headDirection = unit.IsReflect ? CellDirection.Left : CellDirection.Right;
+
+            if (BattleBoard.IsValidDirection(dst, headDirection))
+            {
+                return CheckCells(
+                    board.GetCell(BattleBoard.GetIndexDirection(dst, headDirection)),
+                    board.GetCell(dst));
+            }
+
+            return Empty();
+        }
+
+        BattleCell? headCell = board.GetCell(dst);
+
+        if (headCell == null)
+        {
+            return Empty();
+        }
+
+        BattlePosition position = new(board);
+        position.SetHeadAndTail(headCell, null);
+
+        return CheckReachability(position);
     }
 
     /// <summary>

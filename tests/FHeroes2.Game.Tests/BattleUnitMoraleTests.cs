@@ -33,6 +33,8 @@ public class BattleUnitMoraleTests
         public PlayerColor GetOppositeColor(PlayerColor color) => PlayerColor.None;
 
         public bool EnemyHasMonster(PlayerColor color, MonsterType monster) => EnemyMonster == monster;
+
+        public PlayerColor AttackingArmyColor => PlayerColor.Blue;
     }
 
     /// <summary>A commander that answers exactly what a test needs, without a hero or a town.</summary>

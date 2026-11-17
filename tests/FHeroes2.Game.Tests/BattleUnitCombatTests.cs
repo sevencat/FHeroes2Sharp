@@ -65,6 +65,8 @@ public class BattleUnitCombatTests
         public MonsterType? EnemyMonster { get; set; }
 
         public bool EnemyHasMonster(PlayerColor color, MonsterType monster) => EnemyMonster == monster;
+
+        public PlayerColor AttackingArmyColor => PlayerColor.Blue;
     }
 
     [Fact]

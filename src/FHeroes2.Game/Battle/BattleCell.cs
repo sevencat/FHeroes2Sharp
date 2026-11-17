@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using FHeroes2.Core.Geometry;
 
 namespace FHeroes2.Game.Battle;
@@ -72,6 +74,64 @@ public sealed class BattleCell
     /// <summary>Places a unit on the cell or clears it, <c>Cell::SetUnit()</c>.</summary>
     /// <param name="unit">The unit, or <see langword="null"/> to clear the cell.</param>
     public void SetUnit(BattleUnit? unit) => Unit = unit;
+
+    /// <summary>
+    /// Whether a unit may step onto this cell from a neighbouring one,
+    /// <c>Cell::isPassableFromAdjacent()</c> (<c>battle_cell.cpp:324-347</c>).
+    /// </summary>
+    /// <param name="unit">The unit that would move.</param>
+    /// <param name="adjacent">The cell it moves from; it has to be a neighbour of this one.</param>
+    /// <returns><see langword="true"/> if the step is possible.</returns>
+    /// <remarks>
+    /// 窄单位只问自己。宽单位的三条规矩：横着挪过去只看落点（迈半步，尾巴就压在原位），斜着挪时要求尾巴落在
+    /// 「非移动方向」那一侧——单位不能倒着走，所以斜向左上/左下时尾巴必须在右边，反之亦然。
+    /// 相邻查询走的是 <see cref="BattleUnit.Position"/> 的棋盘，格子本身不持有棋盘。
+    /// </remarks>
+    public bool IsPassableFromAdjacent(BattleUnit unit, BattleCell adjacent)
+    {
+        Debug.Assert(BattleBoard.IsNearIndexes(Index, adjacent.Index));
+
+        if (!unit.IsWide)
+        {
+            return IsPassable(true);
+        }
+
+        CellDirection direction = BattleBoard.GetDirection(adjacent.Index, Index);
+
+        if (direction == CellDirection.Left || direction == CellDirection.Right)
+        {
+            // 横着走是迈半步，被自己尾巴压住的那格照样能落。
+            return IsPassable(true) || Index == unit.TailIndex;
+        }
+
+        CellDirection tailDirection = direction is CellDirection.TopLeft or CellDirection.BottomLeft
+            ? CellDirection.Right
+            : CellDirection.Left;
+
+        BattleCell? tail = unit.Position.Board.GetCell(Index, tailDirection);
+
+        return tail != null && tail.IsPassable(true) && IsPassable(true);
+    }
+
+    /// <summary>
+    /// Whether a unit fits on this cell at all, <c>Cell::isPassableForUnit()</c> (<c>battle_cell.cpp:349-359</c>).
+    /// </summary>
+    /// <param name="unit">The unit that would stand here.</param>
+    /// <returns><see langword="true"/> when <see cref="BattlePosition.GetPosition"/> finds a spot.</returns>
+    /// <remarks>宽单位要连尾巴一起有地方站，这一点由 <see cref="BattlePosition.GetPosition"/> 回答。</remarks>
+    public bool IsPassableForUnit(BattleUnit unit)
+    {
+        BattlePosition position = BattlePosition.GetPosition(unit, Index);
+
+        if (position.Head == null)
+        {
+            return false;
+        }
+
+        Debug.Assert(position.IsValidForUnit(unit));
+
+        return true;
+    }
 
     /// <summary>One of the seven cached points, scaled; <c>0</c> is the centre.</summary>
     /// <param name="index">The point's number in the reference.</param>

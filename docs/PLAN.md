@@ -735,19 +735,33 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
   （33 支 `.BIN` 动画拼序列、无 STATIC 兜底 `[1]`、吐息当远程、多状态拼接与帧偏移，ADR-148）与底层
   `fheroes2::TimeDelay`；✅ `battle_command.cpp`→`BattleCommand`（参数倒着存、`GetNextValue` 从尾部弹、
   `UpdatePcg32Stream` 的攻击只混移动格与双方 UID）；◐ `battle_cell.cpp` 的 `BattleCell` 几何（格位、行距 42、
-  六边形八切片与三角判定）+ 格上单位与 `IsPassable`，`Position` 除 `GetReachable`（要竞技场问移动力）外已全；
+  六边形八切片与三角判定）+ 格上单位与 `IsPassable`/`IsPassableFromAdjacent`/`IsPassableForUnit`；
+  ✅ `battle_pathfinding.cpp`→`BattlePathfinder`（`BattleNodeIndex`/`BattlePathNode` 与走法图、飞行一次落地、
+  护城河 65535 的罚款记在「迈出护城河」那一步、宽单位原地转身不计步、五项缓存键加棋盘通行性快照，ADR-154），
+  `Position` 除 `GetReachable`（要竞技场问移动力）外已全；
   ✅ `battle_troop.cpp`→`BattleUnit`（`BattleMonsterState` 标志、`BattleModesAffected`、位置/兵力/血量/模式/速度/
-  能力判定、`GetAttack`/`GetDefense`、`CalculateDamageUnit`、`GetDamage`、`ApplyDamage`/`Resurrect`、`NewTurn`、
-  `PostKilledAction`、`GetMorale`/`GetLuck` 与掷骰，以及法术应用层 `AllowApplySpell`/`ApplySpell`/`GetMagicResist`/
-  `CalculateSpellDamage`/`GetCurrentSpellEffects` 与 `TargetInfo`→`BattleTargetInfo`；竞技场那侧的护城河/城墙射击
-  惩罚/箭术/反向颜色/敌方骨龙由 `IBattleField` 注入，`GetControl` 随同留待竞技场）；✅ `battle_grave.cpp`→`BattleGraveyard`
+  能力判定、`GetAttack`/`GetDefense`（含军团指挥官的攻击/防御，即 `ArmyTroop` 那一项）、`CalculateDamageUnit`、
+  `GetDamage`、`ApplyDamage`/`Resurrect`、`NewTurn`、`PostKilledAction`、`GetMorale`/`GetLuck` 与掷骰，以及法术
+  应用层 `AllowApplySpell`/`ApplySpell`/`GetMagicResist`/`CalculateSpellDamage`/`GetCurrentSpellEffects` 与
+  `TargetInfo`→`BattleTargetInfo`；竞技场那侧的护城河/城墙射击惩罚/箭术/反向颜色/敌方骨龙由 `IBattleField` 注入，
+  `GetControl` 随同留待竞技场）；✅ `battle_grave.cpp`→`BattleGraveyard`
   （格子→尸体链、宽单位压两格、把尸体挪到最上面）与 `battle_bridge.cpp`→`BattleBridge`（六格常量、`NeedDown`
   的六个落点分支、`AllowUp` 的占用判据、闸门格上的 0/1 通行性、断桥终态；动画归界面）；◐ `battle_army.cpp` 转了
   `Units`（`BattleUnits`：按 UID/模式查找、稳定降序的战斗速度排序、三个筛选副本）与 `Force`（`BattleTroopsUidGenerator`、
   按阵形摆位、伤亡/亡灵/经验统计、投降价、`SyncOriginalArmy`、`NewTurn`），还差 `GetKilledTroops`（要 `Troops` 容器）
-  与 `Force` 继承来的两个「撤退/投降过」标记（归 `battle_result`）。剩余 10 份未转：`battle_pathfinding`/`battle_arena`/
-  `battle_action` 等都在单位与竞技场上做查询。`Unit` 侧到这里已无遗漏（ADR-153），下一批转向
-  `battle_arena`（选目标、法术路径）与 `battle_action`（行动执行）
+  与 `Force` 继承来的两个「撤退/投降过」标记（归 `battle_result`）；
+  ✅ `battle_catapult.cpp`→`BattleCatapult`（弹道术定射数与双倍概率/命中，`GetAllowedTargets` 八项、目标优先级
+  墙→塔→桥→主堡、掷 1..20 需 ≥6 命中）与 `battle_tower.cpp`→`BattleTower`（箭手数 `min(CountBuildings,20)`、
+  炮塔折半但血量不折、攻击加成 = 法师塔等级、`GetInfo` 的三段描述与「已摧毁」、摧毁炮塔把 19/85 变为障碍），
+  `CastleDefenseStructure`/`BattleTowerType` 两个枚举同批；顺带补上 `Board::GetMoatInfo`、城堡描述里塔与护城河
+  两段，并把 `GetGarrisonStrength` 原先缺的塔强度项接上（ADR-155）；◐ `battle_arena.cpp`→`BattleArena`（三件套：
+  野战/围城两套装配、`IsTown` 与 `Castle` 分开、九个格号、`FromTile` 的独立种子铺障碍、`IBattleField` 的几问、
+  `IsShootingPenalty` 的豁免顺序与穿墙采样、结构耐久与四类摧毁、地震目标与伤害区间；`Turns` 未转），
+  `BattleBoardCells` 补 `SetCovrObjects`/`SetCobjObjects`，`SiegeWeaponType` 同批（ADR-156）；◐ `battle_action.cpp`
+  →`BattleArena.Action`（`checkMoveParams`、`moveUnit` 的步行/飞行两支、`ApplyAction` 分发器与 `MOVE`/`SKIP`/`MORALE`，
+  文件其余部分显式抛 `NotSupportedException`；同批补 `Position::GetReachable`、`Unit::UpdateDirection` 与
+  `IBattleField.AttackingArmyColor`，ADR-157）。剩余 5 份未转：`battle_action` 的攻击/法术/塔/投石车/撤退/投降
+  与回合循环。下一批进攻击与伤害结算（`calculateAttackTarget`、反击、`TargetsApplyDamage`），之后是法术、AI 与结算
 * `h2d`（1）：✅ `h2d.cpp`→`Game.H2D.H2DResources`（68 个文件名的样本表、开档三处失败、`Current` 门面，
   ADR-141）；读取本身在 `Assets.H2D`（`H2DArchive`/`H2DWriter`/`H2DImageCodec`，即 `engine/h2d_file.cpp`）。
   `Settings::findFile` 的文件搜索没搬，路径由组合根给出（`GetDefaultPath`）
