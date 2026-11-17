@@ -32,6 +32,34 @@ internal struct WorldNode
     public uint RemainingMovePoints;
 
     /// <summary>
+    /// The AI's cached answer to "may I stand on this tile", <c>_isAccessibleForAI</c>
+    /// (<c>world_pathfinding.h:52</c>).
+    /// </summary>
+    /// <remarks>
+    /// The AI's passability rules are expensive — they build an <see cref="Army.Army"/> for the tile — and
+    /// the same tile is asked about over and over during one search, so the answer is kept next to the
+    /// route. <see langword="null"/> means "not asked yet"; it is cleared with the rest of the node, which
+    /// is why the whole cache is refilled on every search.
+    /// </remarks>
+    public bool? IsAccessibleForAI;
+
+    /// <summary>
+    /// The AI's cached answer to "may I walk through this tile when arriving from water",
+    /// <c>_isAvailableForWalkThroughForAI.fromWater</c> (<c>world_pathfinding.h:53</c>).
+    /// </summary>
+    public bool? IsAvailableForWalkThroughForAiFromWater;
+
+    /// <summary>
+    /// The AI's cached answer to "may I walk through this tile when arriving from land",
+    /// <c>_isAvailableForWalkThroughForAI.fromLand</c> (<c>world_pathfinding.h:53</c>).
+    /// </summary>
+    /// <remarks>
+    /// Two slots and not one: a boat can be entered from land but not sailed through, so the same tile
+    /// answers differently depending on the side the hero comes from.
+    /// </remarks>
+    public bool? IsAvailableForWalkThroughForAiFromLand;
+
+    /// <summary>
     /// The three fields at once, <c>WorldNode::update()</c>.
     /// </summary>
     /// <param name="from">Index of the tile the step came from.</param>

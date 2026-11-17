@@ -560,6 +560,49 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
 `GetControl`；`HeroModes` 补 `Spellcasted = 0x4`。测试 16 条新增（`BattleForceTests`），Game 2359 → **2375**，
 全解决方案 3116 → **3132** 全绿。
 
+2026-11-17：`world` 收尾（ADR-160）：上一批留下的四条 `world.cpp` 尾巴一起去掉 —— **周与月**
+（`NewDay` 的 `++_week`/`++_month`、`NewWeek` 的招募池重置与周命对象刷新、`NewMonth` 的怪物月
+`MonthOfMonstersAction` 与它的 85/10/5 比例与数量下限）、**埋宝**（`setUltimateArtifact`：读占位对象
+`ActionRandomUltimateArtifact` 的半径与神器 id、半径内挑格、占位物与其左格影子一起移除、`Width/9` 的边缘
+不可用）、**只打一场的世界**（`generateBattleOnlyMap` 2×2 + `setUniformTerrain`）与**法文地图的字符修复**
+（`ui_font.cpp:7190` 的 16 项表 + `fixFrenchCharactersInStrings` 走英雄/城堡/传闻/事件/牌瓶/地面事件/斯芬克斯）；
+`world_loadmap` 的**可占领对象表**也在这一批（锯木厂、炼金实验室、五座矿、灯塔、龙城、废矿，中立主）。
+顺带修掉一个真 bug：`TileTroops.SetMonster` 原先写非动作值 `Monster`，而 `NewWeek` 的怪物成长与怪物月的邻格
+排除都按 `ActionMonster` 判，等于永不生效；现在按参考（`maps_tiles_helper.cpp:1727`）写 `ActionMonster`，
+寻路里那条 `Monster` 分支同步改，两条既有测试随之更正。合计仍 **48/69/135**（都还在「部分」里），
+测试 Game 2538 → **2565**、Assets 412 → **416**，合计 3295 → **3326** 全绿。
+
+2026-11-17：`ai` 只落契约（ADR-161）：`ai_planner.h` 的公开半（`AiPlanner` 十五个成员 + 五个数据结构）、
+`ai_battle.h`（四个结构 + `BattlePlanner` + `getBerserkerTarget`）、`ai_common.h` 的九个自由函数、
+`ai_hero_action.h` 的四个入口、`ai_planner_internals.h` 的四个常量全部搬进 `Game/Ai/`；签名照抄参考，行为留
+`NotImplementedException`（消息带参考文件），只把没有依赖的真行为写掉：`RegionStats` 的未求值默认值、
+`BudgetEntry.Reset`、`SpellcastOutcome.UpdateOutcome` 的三条语义、两个单例、四个优势阈值。三处**端口化改写**
+记在 ADR 里：`GameMode` → `AiTurnOutcome`（只有 `EndTurn`/`QuitGame` 两个值）、`HeroBase&` → `IArmyCommander`、
+`Battle::Actions&` → `List<BattleCommand>`。私有方法一律不声明（三十来个，参数依赖未落地的对象价值表）；
+`AIWorldPathfinderStateRestorer` 不落（要 `AIWorldPathfinder`）。测试 13 条（`AiContractTests`），Game 2565 →
+**2578** 全绿。
+
+2026-11-17：`dialog` 的 24 个入口落成契约（ADR-163）：`dialog.h` 的 `AdventureOptions`…`ArtifactSetAssembled`
+搬进 `UI/Dialogs/` 的 20 个模型（`QuickInfo` 七个入口合一个类、`SelectFileLoad`/`Save` 合一个、`ArmyJoinFree`/
+`WithCost` 合一个），每个只有 `Create(...)` + 结果类型，`Area`/`Render`/事件留给控件层（`Create` 签名不会因
+此改变）。`DialogButton` 从 4 个值扩到参考的 14 个（`Dismiss`/`Upgrade`/`Max`/`Prev`/`Next`/`World`/`Puzzle`/
+`Info`/`Dig`），因为 `AdventureOptions` 与 `ArmyInfo` 的答案就是它们。三处类型改写：`GameMode` →
+`FileOptionsResult`（六个值，含两个存档动作）、`bool` → `GoldOrExperience`、哨兵值（`-1`/`UNKNOWN`/空 `Troop`）
+→ `null`，每个都写在 ADR 里。`FromButton(int)` 的按钮索引映射与 `Create` 的参数校验（`min <= max`、`step > 0`、
+`join > 0`、负值拒绝）是真行为，其余是纯 DTO。占位三处：`inputString` 的 `TextBase` → `string`、`SelectCount`
+的上下控件与屏幕偏移不建模、`SelectFile` 的列表不建模。测试 25 条（`DialogModelsTests`），UI 145 → **170**，
+全解决方案 3 339 → **3 364** 全绿。
+
+2026-11-17：`world_pathfinding` 的 AI 侧（ADR-164）：`AIWorldPathfinder`（`world_pathfinding.cpp:543-1434`）整块
+落下 —— AI 的成本函数与无移动点上限、守怪强度（`WorldMapScan.IsTileProtectionStrongerThan`，`maps.cpp:644`）、
+节点里的三份 `bool?` 记忆槽、城门户播种与石柱/漩涡零成本跳转「到了不许再走」、需正面交互对象离开时补计一次、
+`BuildPath( target, accountNearestObject )` 的裁剪。基类 `ProcessWorldMap` 改 `protected virtual` 并拆出
+`ClearCache`/`SeedStartNode`/`ProcessNodes`/`ResetNode` 与六个缓存访问器；`World.AiPathfinder` 惰性创建并交给
+`AiPlanner.AttachPathfinder`，`ResetPathfinder()` 同时重置两份缓存。英雄相关的六个入口（`GetFogDiscoveryTile`/
+`GetNearestTileToMove`/`IsHeroPossiblyBlockingWay`/`BuildDimensionDoorPath`/`GetObjectsOnTheWay`/
+`ReEvaluateIfNeeded(Hero, double)`）仍抛异常，注释写明缺的数据。测试 13 条（`AIWorldPathfinderTests`），
+Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
+
 
 
 ### `engine`（26）
@@ -598,10 +641,18 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
 * ✅ `dialog_box.cpp`→`FrameBox`；`dialog_frameborder.cpp`→`FrameBoxChrome`
 * ◐ `dialog_game_settings.cpp`→`SettingsDialog`（只有 Language 一行）；`dialog_selectscenario.cpp`→
   `ScenarioSelectionDialog`（列表/缩略图子集）；`dialog_language_selection.cpp`→`LanguageSelectionDialog`
-* ❌ 其余 24：`adventure`、`arena`、`armyinfo`、`artifact`、`audio`、`buyboat`、`chest`、`file`、
-  `gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、`interface_settings`、`levelup`、
-  `marketplace`、`quickinfo`、`random_map_generator`、`recruit`、`resolution`、`selectcount`、
-  `selectfile`、`selectitems`、`system_options`、`thievesguild`
+* ◐ **24 个入口的契约**（ADR-163，只有契约、无实现）：`dialog.h` 的 24 个函数落成 20 个模型，每个带
+  `Create(...)` 与结果类型（列表见下），`FromButton` 的索引映射与 `Create` 的参数校验是真行为；`DialogButton`
+  补齐参考的 14 个值。`Area`/`Render`/事件与控件层（`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/
+  `OptionButtonGroup`/`TextBox`）未转，所以覆盖率不动。模型：`AdventureOptionsDialog`、`FileOptionsDialog`、
+  `SelectFileDialog`、`QuickInfoDialog`（七个入口一个类）、`LevelUpDialog`、`GoldOrExperienceDialog`、
+  `ArenaDialog`、`SelectCountDialog`、`InputStringDialog`、`ArmySplitDialog`、`RecruitDialog`、
+  `DwellingInfoDialog`、`ArmyInfoDialog`、`ArmyJoinDialog`（两个入口一个类）、`MarketplaceDialog`、
+  `GiftResourcesDialog`、`BuyBoatDialog`、`ThievesGuildDialog`、`GameInfoDialog`、`ArtifactSetDialog`
+* ❌ 上述 24 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`armyinfo`、`artifact`、`audio`、
+  `buyboat`、`chest`、`file`、`gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、
+  `interface_settings`、`levelup`、`marketplace`、`quickinfo`、`random_map_generator`、`recruit`、
+  `resolution`、`selectcount`、`selectfile`、`selectitems`、`system_options`、`thievesguild`
 
 ### `editor`（18）
 
@@ -700,6 +751,17 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
 * ❌ `map_format_helper.cpp`、`map_format_info.cpp`（编辑器自有格式，本项目走 MP2，**不适用**）、
   `map_random_generator.cpp`、`map_random_generator_helper.cpp`、`map_random_generator_info.cpp`
 
+### 已落契约、补实现与测试的清单（2026-11-17 起）
+
+`ai` 与 `dialog` 两批只落了签名/模型，**实现与测试都还欠着**，按下面的顺序补：
+
+| 目录 | 已落 | 还欠的实现 | 还欠的测试 |
+| --- | --- | --- | --- |
+| `ai`（ADR-161） | `Game/Ai/` 六个文件：`AiPlanner` 的十五个成员、五种数据结构、九个自由函数、四个入口、四个阈值；签名照抄参考，真行为只有数据默认值/`Reset`/`UpdateOutcome`/单例/常量 | `ai_battle.cpp`（`BattlePlanner` 的决策）、`ai_common.cpp`（九个函数）、`ai_hero_action.cpp`（四个入口）、`ai_planner_hero.cpp`/`_castle`/`_kingdom`/`_internals`；现在除上面几处以外全是 `NotImplementedException` | 每换掉一个 `NotImplementedException` 配一条行为测试。`AiContractTests` 只钉住数据结构、单例、常量与「未移植会抛」，不能替代行为测试 |
+| `dialog`（ADR-163） | 20 个模型 + `DialogButton` 的 14 个位值；`Create` 的参数校验与 `FromButton` 的按钮映射是真行为 | 24 个入口的 `Area`/`Render`/事件；前置是控件层 `DialogElement`/`TextBase`/`Slider`/`Scrollbar`/`OptionButtonGroup`/`TextBox`；另欠 `SelectFile` 的列表、`SelectCount` 的上下控件、各对话框的屏幕偏移 | 模型层已有 25 条（`DialogModelsTests`）。渲染与交互要等控件层，届时按基线图（`tools/Verify*Baseline.ps1`）补像素与点击测试 |
+
+这两张表在实现批次完成后删除并把内容并回各自目录的条目；在此之前，`ai` 与 `dialog` 在覆盖率表里继续按「无整篇落地」计。
+
 ### 其余目录
 
 * `world`（5）：◐ `world.cpp` 搬了骨架与通行重算——`World` 的 `w()`/`h()`、瓦片表与两个 `getTile`、
@@ -710,24 +772,36 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
   `ResetCapturedObjects`，ADR-078）；**城堡表**（`AllCastles`、`getCastle`/`getCastleEntrance`/
   `isValidCastleEntrance` 与 `DoesCastleHaveSeaAccess`，ADR-110）与**王国表**（`Kingdoms` 七槽 +
   `CreateMapKingdoms`/`AttachMapRosters`，ADR-111）已转；**周**（`MapSeed`/`WeekSeed`/`WeekType` 与
-  `GetEventsDate`，ADR-114）已接，`NewDay` 里的周推进也把周交给城表（ADR-115）；英雄表这批只差容器语法糖，
-  `NewWeek`/`NewMonth`（周命对象、中立怪刷新、招募池重置）未转，**区域图**已转（`MapRegion`/`MapRegionNode`
+  `GetEventsDate`，ADR-114）已接，`NewDay` 里的周推进也把周交给城表（ADR-115）；**周与月**（`NewWeek` 的招募池
+  重置与周命对象刷新、`NewMonth` 的怪物月、`NewDay` 的 `++_week`/`++_month`，ADR-160）与**埋宝**
+  （`PlaceUltimateArtifact`）已转，只打一场的 2×2 世界（`GenerateBattleOnlyMap`/`SetUniformTerrain`）与
+  法文地图的字符修复（`FixFrenchCharactersInStrings`）同批落地；**区域图**已转（`MapRegion`/`MapRegionNode`
   与 `ComputeStaticAnalysis`，ADR-116，`PostLoad` 末尾调用）；静态分析另外两项统计（`WaterPercentage`/
   `LandRoughness`）同批落地；
   ◐ `world_loadmap` 搬了瓦片循环、add-on 链、`fixMP2MapTileObjectType`、`MP2::OBJ_HERO` 与
   `MP2::OBJ_JAIL` 的信息块建人（ADR-067/072/073）、`MP2::OBJ_SIGN`/`OBJ_BOTTLE`/`OBJ_EVENT` 的
   对象装载（ADR-074）、`MP2::OBJ_SPHINX` 与无瓦片的每日事件/传闻块（ADR-075）与 `PostLoad` 的
-  可运行子集；**城堡表落格 + 两种城堡块 + 随机城重绘 + 默认城名**也已接（ADR-110），AI 区域未转
-  （俘获对象的数据结构已落，ADR-078）；`PostLoad` 的石阵/漩涡/法师之眼缓存另在
-  `World` 上落地（ADR-069），读取端 `GetTeleportEndPoints`/`GetWhirlpoolEndPoints`/`NextTeleport`/
-  `NextWhirlpool` 已接（ADR-070）；AI 区域地图的「种子」也就位了（`PostLoad` 调 `ComputeStaticAnalysis`）；
+  可运行子集；**城堡表落格 + 两种城堡块 + 随机城重绘 + 默认城名**也已接（ADR-110），**可占领对象表**
+  （锯木厂/炼金实验室/五矿/灯塔/龙城/废矿）随 ADR-160 落地，AI 区域未转；`PostLoad` 的石阵/漩涡/
+  法师之眼缓存另在 `World` 上落地（ADR-069），读取端 `GetTeleportEndPoints`/`GetWhirlpoolEndPoints`/
+  `NextTeleport`/`NextWhirlpool` 已接（ADR-070）；AI 区域地图的「种子」也就位了（`PostLoad` 调
+  `ComputeStaticAnalysis`）；
   ◐ `world_object_uid` 的计数器改挂在 `World` 上（`LastObjectUid`/`GetNewObjectUid`，ADR-067）；
-  ◐ `world_pathfinding` 的**玩家侧**已转：`WorldPathfinder` 抽象基类包住缓存、标签修正式搜索、
+  ◐ `world_pathfinding` 的**两侧**都已转：`WorldPathfinder` 抽象基类包住缓存、标签修正式搜索、
   「最后一格」规则、船的对角切角与怪物「只到不穿」（ADR-091），`PlayerWorldPathfinder` 是五元组
-  缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
-  都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
+  缓存 + `BuildPath` 反向回溯（ADR-092），`AIWorldPathfinder` 是 AI 的成本/通行判定、三份节点缓存、
+  传送播种与 `BuildPath` 裁剪（ADR-164）；入口挂 `World.Pathfinder`/`World.AiPathfinder`，
+  `ResetPathfinder()`/`LoadMap` 都会丢缓存；只剩 `ObjectValueStorage`（要对象价值表）；
   ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
-* `ai`（9）、`campaign`（3）：**全部未转**
+* `ai`（9）：◐ **只有契约**（ADR-161）—— `ai_planner.h` 的公开半（`AiPlanner` 的十五个成员、
+  `RegionStats`/`AiCastle`/`BudgetEntry`/`EnemyArmy`/`PriorityTask`）、`ai_battle.h` 的四个结构与
+  `BattlePlanner`、`ai_common.h` 的九个自由函数、`ai_hero_action.h` 的四个入口、`ai_planner_internals.h`
+  的四个常量都落在 `Game/Ai/`，签名照抄、行为未转（抛 `NotImplementedException`），真行为只落数据结构的默认值、
+  `BudgetEntry.Reset`、`SpellcastOutcome.UpdateOutcome` 与单例；`ai_personality.cpp` 的枚举与随机/取名在
+  `System/AiPersonality.cs`；`ai_battle.cpp`/`ai_common.cpp`/`ai_hero_action.cpp`/`ai_planner*.cpp` 的实现在
+  `ai` 的下一批；`AIWorldPathfinderStateRestorer` 的两个开关现在有地方挂了（`AIWorldPathfinder` 已落），
+  本轮未做。
+* `campaign`（3）：**全部未转**——它要的多半是 `dialog` 与 `Maps` 的战役数据，等 `dialog` 控件层落地再看。
 * `battle`（18）：◐ 已起步（ADR-147）—— `battle.h` 的 `Result` 与胜负位（`BattleOutcome`/`BattleResult`）、
   两个方向环（`CellDirection`/`AttackDirection` 与其环运算）、`battle_board.cpp` 的**纯几何**（11×9 偏移
   六角格、两格之间的方向、六向距离、城堡/墙外/护城河三张表、宽单位的环与半径环）落在 `Game.Battle`；
@@ -923,9 +997,12 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
    （`ActionNewWeek` 与 `World.NewDay` 的「月 → 周 → 日」顺序，ADR-115）、区域图与地形统计
    （`ComputeStaticAnalysis`，ADR-116）也已落，`PostLoad` 到这里已经完整（1.1.18 的 `PostLoad` 没有别的尾巴：
    带船的漩涡格被记成船对象、于是按部件查找，端口本来就是这么做的）。
-   市场的价目与汇率也已落（`PaymentConditions`/`ResourceTrading`，ADR-117）。下一步是给每日入账找调用方
-   ——那需要 `Game::NewDay` 那一层的会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往
-   `kingdom/*`/`castle/*` 里走。
+   市场的价目与汇率也已落（`PaymentConditions`/`ResourceTrading`，ADR-117）。胜负条件这一段（`KingdomIsWins`/
+  `KingdomIsLoss`/`CheckKingdomWins`/`CheckKingdomLoss` + 条件位掩码与其参数翻译 + 条件英雄反查）与按英雄的两个
+  寻路入口（`GetDistance`/`GetPath`）也已落（ADR-158）。挖终极神器这一条链的前半（坑贴图表 +
+  `DiggingForUltimateArtifact` + 世界持有那份神器）也已落（ADR-159），后半（`setUltimateArtifact` 挑格子埋下去）需要
+  对象的扩展 metadata。下一步是给每日入账与胜负判定找调用方——那需要 `Game::NewDay`/`Game::CheckKingdom*` 那一层的
+  会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往 `kingdom/*`/`castle/*` 里走。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
 5. 旁支：`engine/serialize.cpp`（存档，M8）、`smk_decoder.cpp`（过场动画）；
    `h2d_file.cpp` 与 `h2d.cpp` 已转（ADR-141，`AssetProbe h2d` 可对拍真实档），

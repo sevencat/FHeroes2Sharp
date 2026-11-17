@@ -34,7 +34,13 @@ public sealed class MapSign : MapObject
     }
 
     /// <summary>The message of the sign, empty when the block carries none.</summary>
-    public string Message { get; private init; } = string.Empty;
+    public string Message { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Restores the stolen French characters of the message, <c>World::fixFrenchCharactersInStrings()</c>
+    /// (<c>world.cpp:1296-1302</c>).
+    /// </summary>
+    internal void FixFrenchCharacters() => Message = MapTextCodec.FixFrenchCharacters(Message);
 
     /// <summary>
     /// Reads the block of a sign or a bottle, <c>MapSign::LoadFromMP2()</c> (<c>maps_objects.cpp:286</c>).

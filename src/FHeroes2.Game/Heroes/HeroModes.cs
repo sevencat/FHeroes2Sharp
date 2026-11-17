@@ -53,6 +53,12 @@ public enum HeroModes : uint
     Custom = 0x0000_1000,
 
     /// <summary>
+    /// The hero cannot be dismissed, <c>Heroes::NOTDISMISS</c> (<c>heroes.h:212</c>). Set on the hero a map's
+    /// loss condition protects, so that the player cannot lose the game by firing him.
+    /// </summary>
+    NotDismiss = 0x0000_2000,
+
+    /// <summary>
     /// The hero is a guard that keeps to the area around his position, <c>Heroes::PATROL</c>
     /// (<c>heroes.h:214</c>).
     /// </summary>

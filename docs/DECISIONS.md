@@ -5915,3 +5915,324 @@ Game 2375 → **2412**，全解决方案 3132 → **3169** 全绿，`-warnaserro
 
 **遗留**：攻击（`calculateAttackTarget`、反击、`TargetsApplyDamage`）、法术、塔与投石车的执行、撤退/投降（需
 `World` 的王国入口）、`Turns`/`UnitTurn` 的回合循环、界面与 AI。
+
+## ADR-158：`world` 第三批——胜负条件、英雄查询与按英雄寻路 ◐
+
+**背景**：`world.cpp` 里「谁赢了」这一段（`941-1157`）是 `world` 目录最后一块纯逻辑：地图文件头给出条件位掩码与
+参数，`World` 拿当前局面去比对。它上接 `battle` 的结束判定与 `kingdom` 的存亡，下接 AI 的「我还有没有赢面」。
+`getDistance`/`getPath` 则是参考给英雄留的唯一两个寻路入口（`1159-1169`），界面、AI、`Route` 都从这里走。
+
+**决定**：
+
+1. **条件位掩码与其参数翻译单独成两层**。`GameOver`（`Game/GameOver.cs`）只有常量，一字节对一位；`MapConditions`
+   （`Game/Maps/MapConditions.cs`）把 `Mp2FileInfo` 的两个条件块翻成「位掩码 + 坐标/神器/千枚金币/天数」。
+   翻译不放在 `Assets` 里：`FHeroes2.Assets` 不依赖 `FHeroes2.Game`，而 `GameOver` 的位定义属于游戏语义。
+2. **文件头存在世界里，不每次去 `Settings` 拿**。参考每回判定都问 `Settings::Get().getCurrentMapInfo()`；端口的文件头
+   就是 `LoadMap(map)` 的入参，`World.MapInfo` 收下它，`Reset()` 清掉。好处是判定在测试里不需要初始化单例，坏处是
+   「运行期改 `Settings` 里的文件头」这类参考行为端口看不见——目前没有这种调用者。
+3. **「实际在场的颜色」直接问王国**。`WINS_ALL`/`WINS_SIDE` 在参考里问 `Game::GetActualKingdomColors()`，它取的是
+   `Settings` 里的玩家槽；端口还没有开局流程去填槽，而槽里的颜色正是同一份文件头建出来的，于是改用
+   `Kingdoms.GetColors()`（颜色不为 `None` 的槽）。
+4. **`WINS_SIDE` 在没有玩家槽时把自己当盟友**。参考的 `Players::GetPlayerFriends` 直接解引用玩家槽，没有槽就崩；
+   端口在没有槽（`None`）时退化成 `friends = kingdom.Color`，等价于「单人、没有热座共享」的取值。
+5. **`WINS_HERO` 的方向照抄参考，不做「直觉修正」**：`hero.isAvailableForHire() || GetKingdom(hero.Color).isControlHuman()`。
+   读起来像是「英雄被电脑带走就赢」，但参考要的正是这一条，测试把它钉死，免得下一个人凭直觉改成 `!isControlHuman`。
+6. **缺英雄不让装载失败**。参考在 `setHeroIdsForMapConditions()` 里找不到英雄就返回 `false`，整张图装载失败。端口的
+   `LoadMap` 契约是「坏输入抛异常」，而这时世界已经装了一半，抛出去只会留下半个世界；于是记一条 `GameLog.Error` 并
+   继续，效果是该条件永远不满足。等有开局错误对话框时把这里改成让装载失败。
+7. **战役的两条特殊条件跳过**。`Campaign` 模块还没有：「占龙城即胜」与「女巫村全失即负」两条分支不写，`Switch` 里
+   也没有它们的位置——写了只会是永远为假的死代码。
+8. **`GetDistance`/`GetPath` 由 `World` 拆五个值喂寻路器**。参考有 `reEvaluateIfNeeded( const Heroes & )` 的重载；
+   端口的寻路器只收拆开的五个值（它出现时 `Hero` 还没有移动力），所以这两个入口负责用户侧的便利。英雄不在图上时抛
+   `ArgumentException`，与「非法输入不静默」的既定做法一致。
+9. **`getCastleEntrance` 补一个以 `Point` 为参数的版本**，先查图内再换算下标。条件里存的正是 `Point`，而且可能是
+   (-1, -1)（条件没有坐标时），参考那版对图外的点会断言。
+10. **`HeroModes.NotDismiss` 补上**（`heroes.h:212`，`0x2000`）。它是条件英雄的「不许解雇」标记，与 `Custom` 一起
+    打在守的那位英雄身上。
+
+**后果**：新增 `Game/GameOver.cs`、`Game/Maps/MapConditions.cs`、`Game/World/World.Conditions.cs`；`World` 加
+`MapInfo`/`GetHeroesCondWins`/`GetHeroesCondLoss`/`KingdomIsWins`/`KingdomIsLoss`/`CheckKingdomWins`/
+`CheckKingdomLoss`/`GetKingdom`/`GetDistance`/`GetPath`/`GetCastleEntrance(Point)`，`LoadMap` 末尾接上
+`SetHeroIdsForMapConditions()`；`Kingdoms` 加 `GetColors`/`FindWins`；`HeroModes` 加 `NotDismiss`。
+测试 38 条新增（`MapConditionsTests` 18、`WorldConditionsTests` 20）。Game 2493 → **2531**，全解决方案 3250 →
+**3288**，`-warnaserror` 0 警告。覆盖率不变：`world` 仍是 1/4/0（`world.cpp` 本来就记 ◐，这一批填的是它的内部函数，
+没有让任何文件变 ✔），合计仍 **48/69/135**。
+
+**遗留**：`world.cpp` 的 `NewMonth`/`_monthOfMonstersAction`、`getCurrentRumor`、
+`fixFrenchCharactersInStrings`、`generateBattleOnlyMap`；AI 侧的王国动作与 `world_loadmap` 里的可占领对象表与终极
+神器的埋放；战役的两条特殊条件。
+
+## ADR-159：`world` 第四批——挖终极神器 ◐
+
+**背景**：`world.cpp:850-873` 的 `DiggingForUltimateArtifact()` 是玩法里最直白的一步：英雄花一天挖一格，地上留一个
+坑；坑下面有神器就归他。它需要的只有两样东西——坑的贴图（`MP2::getDiggingHoleSprite()`，`mp2.cpp:937`）和神器埋在
+哪儿（`_ultimateArtifact`）。同一段里还有一个跨王国的「这个对象被碰过吗」（`isAnyKingdomVisited()`，`world.cpp:1272`）。
+
+**决定**：
+
+1. **坑贴图表放 Game 层，`Game/Maps/DiggingHole.cs`**。参考的表在 `mp2.cpp`，参数是 `Maps::Ground`；端口的
+   `MapGround` 在 `FHeroes2.Game.AdventureMap`，`FHeroes2.Assets` 不能反向依赖它，所以表跟着枚举走。
+2. **水面挖不了：返回 `false`，不 assert、不留对象部分**。参考在 `getDiggingHoleSprite` 的 `WATER` 分支和调用处各写
+   一个 `assert(0)`；端口把「挖不了」当成正常输入处理，因为地图上水面就在那里，英雄站在船上挖是玩家会做的事。
+3. **坑是地形层的一个部分，带新 UID**。它不是纯装饰：地形层决定通行与渲染，UID 让它和同一格上别的对象区分开。
+4. **神器只标「已找到」，不从地图上移除**。参考的 `_ultimateArtifact` 记的是位置，不是地图对象；`markAsFound()` 之后
+   同一格再挖返回 `false`，坑照留。
+5. **神器归世界所有**（`World.UltimateArtifact`，`world.h:358`），因为它同时回答三个问题：`WINS_ARTIFACT` 条件、
+   法师之眼的拼图提示、挖掘。归英雄会因为换手而丢。
+6. **`isDiggingHoleSprite` 先保留、暂不接线**。它唯一的调用者是拼图模型的 `MP2::isHiddenForPuzzle()`，那个模型没移植；
+   两张表是一对，拆开放反而要将来再找回来。文件注释写明了这一点，等拼图落地时接上。
+7. **神器埋放不进这一批**。装载器要读对象的扩展 metadata（半径 + 神器 id）并挑格子（`setUltimateArtifact()`，
+   `world_loadmap.cpp:1596-1662`），与 metadata 一起做更完整；在此之前 `UltimateArtifact.Position == -1`，
+   `DiggingForUltimateArtifact()` 永远挖不到东西——这正是「地图里没有埋宝」的正常状态。
+8. **`IsAnyKingdomVisited` 只是委托**。参考自己循环王国，端口那份循环已经在 `Kingdoms.IsAnyVisited`（`kingdom.cpp`），
+   这里换一次参数顺序（参考是 `(type, index)`，端口是 `(index, type)`）交给它，不复制第二个循环。
+
+**后果**：新增 `Game/Maps/DiggingHole.cs`；`World` 加 `_ultimateArtifact`/`UltimateArtifact`/
+`DiggingForUltimateArtifact`/`IsAnyKingdomVisited`，`Reset()` 清神器。测试 7 条（`WorldUltimateArtifactTests`）。
+Game 2531 → **2538**，全解决方案 3288 → **3295**，`-warnaserror` 0 警告。覆盖率不变：`world` 仍 1/4/0，合计仍
+**48/69/135**。
+
+**遗留**：`setUltimateArtifact()` 与它需要的对象 metadata、拼图模型（接 `DiggingHole.IsSprite`）、`NewMonth`/
+`_monthOfMonstersAction`、`getCurrentRumor`、`generateBattleOnlyMap`。
+
+## ADR-160：`world` 第五批——周与月、埋宝、可占领对象、战棋世界与法文文本 ◐
+
+**背景**：ADR-159 收尾时点名的四条尾巴（`setUltimateArtifact`、`NewMonth`/`_monthOfMonstersAction`、
+`generateBattleOnlyMap`、`fixFrenchCharactersInStrings`）加上 `world_loadmap` 的可占领对象表，是 `world`
+目录最后一批还能靠现有系统立起来的函数。`getCurrentRumor` 是唯一一个依赖外部字符串系统的（见第 8 条）。
+
+**决定**：
+
+1. **周与月的钟表照抄参考的取模**：`BeginWeek()` 是 `day % 7 == 1`、`BeginMonth()` 是 `day % 28 == 1`
+   (`world.h`)，时钟从 0 起，所以**第 8 天才开第二周、第 29 天才开第二月**；`NewDay` 先 `++_day`，再按两位
+   推进 `_week`/`_month`，然后按「月 → 周 → 城/王国」的顺序调。第一周不刷新周命对象（参考的 `_week > 1`
+   守卫），但招募池的清空在第一周也做——那两句在 `NewWeek` 的守卫之前。
+2. **`World.Week.cs` 装日历与怪物月、`Maps/TileWeekLife.cs` 装瓦片刷新**。`updateObjectInfoTile()`
+   (`maps_tiles_helper.cpp:1641`) 是瓦片自己的事（魔法花园 5 宝石或 500 金、水车首日 500 之后 1000、风车
+   循环抽到非木再给 2 份、二十种住宅加人口），跟着 `Tile` 的其它 partial 走比塞进 `World` 更贴近参考。
+3. **埋宝叫 `PlaceUltimateArtifact` 而不是 `setUltimateArtifact`**：端口已经有 `World.UltimateArtifact` 属性，
+   C# 里属性和方法不能同名。行为逐条对齐 `world_loadmap.cpp:1596-1662`：找 `ActionRandomUltimateArtifact`
+   占位物 → 读 metadata（`[0]` 半径、`[1]` 神器 id）→ 占位物与其**左格影子**一起用 `RemoveObjectPartsByUID`
+   移除 → 半径 0 表示全图、半径 >0 时取 `GetAroundIndexes` 的邻格加自身 → `Width / 9` 的边缘一律不用 →
+   挑不到就落回占位格。装载时在瓦片定稿之后、`PostLoad` 建缓存之前调用（`world_loadmap.cpp:1451`）。
+   `UltimateArtifact` 归 `World`（ADR-159），这里只负责放。
+4. **`SetMonster` 改存 `ActionMonster`**。这是一处真 bug：端口一直写非动作值 `Monster`，而
+   `NewWeek` 的怪物成长、怪物月的邻格排除、`GetMonstersProtectingTile` 的落格判定都按 `ActionMonster` 找，
+   于是「中立怪每周成长」与「怪物月避开已有怪」永远不生效（更早的寻路测试也只好用 `Monster` 当挡路样本）。
+   参考的 `setMonsterOnTile()` 写的是 `MP2::OBJ_MONSTER`（带动作位，`maps_tiles_helper.cpp:1727`），与
+   ADR-075「瓦片存文件给的值」一致，所以现在写 `ActionMonster`；寻路里那条 `Monster` 分支同步改成
+   `ActionMonster`，两条既有测试（`TileTroopsTests`、`WorldPathfinderTests`）随之更正，
+   `ReusesTheSearchWhenNothingChanged` 的期望也从「绕过去 >300」变成「怪物守护的格不再展开 → 0」，正是参考的
+   `processCurrentNode` 行为。
+5. **可占领对象表照表逐项落**：锯木厂 `0x00`、炼金实验室 `0x01`、五座矿 `0x02…0x06`、灯塔 `0x64`、龙城
+   `0x65`、废矿 `0x67`，一律 `PlayerColor.None`；解析器已经把字节换成对象类型，所以端口只判「未知类型」
+   （`Mp2ObjectType.None`）与「越界」两件事，各留一条警告并跳过。**不在这里写 ownership flag**——参考也不写，
+   flag 归信息块（`world_loadmap.cpp:498` 那段）。
+6. **只打一场的世界不经过 `LoadMap`**。`GenerateBattleOnlyMap` 直接调 `GenerateUninitializedMap(2)`、自己给
+   四个瓦片编号、再 `SetUniformTerrain`（`world.cpp:338-357`）。绕开 `LoadMap` 有两个理由：参考的
+   `generateUninitializedMap` 不做埋宝，而端口的 `LoadMap` 会；2×2 也不是合法的 MP2 尺寸。
+   `SetUniformTerrain` 取 `MapGrounds.StartImageIndex`（参考是 `getTerrainStartImageIndex`），并把 shape 位清 0。
+7. **法文文本修复：表是纯函数，门控交给调用方**。表落在 `MapTextCodec.FixFrenchCharacters`（`ui_font.cpp:7190`
+   的 16 项，返回新串而不是原地改字节）；`World.FixFrenchCharactersInStrings` 覆盖英雄名、城堡名、传闻、每日
+   事件、指示牌/漂流瓶、地面事件与斯芬克斯的谜面与答案。参考只在**界面语言是法语**时从装载器调用它，端口没有
+   语言层，所以不在 `LoadMap` 里自动跑——对英文/中文地图跑一遍会把标点变成重音。为此把
+   `MapSign.Message`/`MapEvent.Message`/`MapSphinx.Answers`/`MapSphinx.Riddle`/`EventDate.Message` 的属性从
+   `private init` 放宽到 `private set`（构造仍走各自的 `TryRead`，外部看不出区别）。
+8. **`getCurrentRumor` 不转**。它四分之一的分支要 `UltimateArtifact.GetName()`（神器名表）和区域名
+   （`getUltimateArtifactRegion()` 一类），这两套字符串属于资源/本地化模块，端口都还没有；半截实现只会返回
+   `UltimateBook` 这样的枚举名。等神器名表落地再补，届时它是一段纯粹的拼接。
+
+**后果**：新增 `Game/World/World.Week.cs`、`Game/World/World.UltimateArtifact.cs`、
+`Game/World/World.FrenchText.cs`、`Game/Maps/TileWeekLife.cs`;`World.LoadMap` 加埋宝与可占领对象表，`NewDay`
+接上周/月，`World` 加 `GenerateBattleOnlyMap`/`SetUniformTerrain`/`FixFrenchCharactersInStrings`；
+`MapTextCodec` 加 `FixFrenchCharacters`，`Funds` 加 `Rand`，`Kingdoms` 加 `ResetRecruits`，`AllHeroes` 加
+`ResetModes`。新增测试 31 条（`WorldWeekTests` 9、`WorldCaptureObjectsTests` 10、`WorldTests` 3、
+`WorldSphinxAndEventsTests` 5、`MapTextCodecTests` 4）。Game 2538 → **2565**，Assets 412 → **416**，全解决方案
+3295 → **3326** 全绿，`-warnaserror` 0 警告。覆盖率不变：`world` 仍 1/4/0，合计仍 **48/69/135**（`world.cpp`
+与 `world_loadmap.cpp` 都还在「部分」里，剩下的是 AI 侧与区域）。
+
+**遗留**：`getCurrentRumor`（要神器名表与区域名）、`world_loadmap` 的 AI 区域、`Kingdom::ActionAI*` 那一半王国
+动作、战役的两条特殊条件、拼图模型（接 `DiggingHole.IsSprite`）。
+
+## ADR-161：`ai` 的契约层——先把签名立起来 ◐
+
+**背景**：`ai` 目录的九个文件（`ai_battle`/`ai_common`/`ai_hero_action`/`ai_personality`/`ai_planner` 及其
+`ai_planner_{castle,hero,kingdom,internals}`）此前一个都没转（`ai_personality.h` 的枚举除外，它落在
+`System/AiPersonality.cs`）。这些文件的好处是**接口几乎全在头文件里**：`ai_planner.h` 的 281 行里公开契约与
+数据结构占了 160 行，`ai_battle.h`/`ai_common.h`/`ai_hero_action.h` 同理。因此先把签名照抄成 C#，让后面写
+`ai_planner_hero.cpp` 那几千行动作代码时有地方落、有地方调，比边写边改签名便宜。
+
+**决定**：
+
+1. **只落公开契约，不落私有方法**。`Planner` 有三十来个小方法（`getObjectValue` 的值表旁支、`evaluateRegionSafety`、
+   `getMineralValue`、`followHero` 之类），它们全是 `ai_planner_{hero,castle,kingdom}.cpp` 的内部细节：没有跨文件
+   调用者，参数形状也依赖尚未落地的东西（对象价值表、AI 寻路器）。提前声明等于猜，落地时必然改签名，所以干脆
+   不写——公开契约是「谁调用 AI」，私有方法是「AI 怎么写」，后者只能在写实现的那一批一起出现。
+2. **`fheroes2::GameMode` 折成 `AiTurnOutcome`**。`Planner::KingdomTurn()` 返回 `GameMode`，但它只会产出两个值：
+   `END_TURN` 与 `QUIT_GAME`（AI 认输、自动战斗超时）。端口还没有 `GameMode`（场景是 `App/SceneKind` + 各 Scene
+   自己决定下一幕），把整个 `game_mode.h` 拉进来只为了两个值不值得，因此定义 `AiTurnOutcome { EndTurn, QuitGame }`，
+   并在文档里写明它对应哪两个参考值。等游戏的回合循环（`Game::StartGame`）落地，如果那时确实需要完整的
+   `GameMode`，换过来只是一处 `switch` 的改动。
+3. **`HeroBase&` 折成 `IArmyCommander`**。`HeroesPreBattle(HeroBase&, bool)` 的实参既可能是冒险地图英雄，也可能是城堡
+   队长；参考用基类统一，端口没有 `HeroBase`（`Hero` 与 `Captain` 各写各的），但两者都实现了
+   `IArmyCommander`（战斗侧已有的接口）。签名取 `IArmyCommander`，注释里说明「实现若真需要英雄专属成员再窄化
+   成 `Hero`」。
+4. **`Battle::Actions&` 折成 `List<BattleCommand>`**。参考的 `BattlePlanner::BattleTurn(arena, unit, Actions&)` 往一个
+   动作队列里塞若干命令，由战斗循环稍后执行；端口没有队列，`BattleArena.ApplyAction(BattleCommand)` 是一次一条。
+   所以 `BattleTurn` 收一个 `List<BattleCommand>`，语义一致（一次决策一整回合，按序执行），只是容器换了。
+5. **真行为照写，其余 `throw new NotImplementedException`**。契约层不是一行不写：`RegionStats` 的默认值
+   （`highestThreat = -1`、`spellLevel = 2`）、`BudgetEntry.Reset()`、`PriorityTask` 的构造函数、
+   `SpellcastOutcome.UpdateOutcome()`（含「群体法术累加、单体取最大、不碰 `destinationCell`」这三条）、四个
+   `ARMY_ADVANTAGE_*` 常量都是照参考抄的真代码，可以直接写。只有「要读地图/要算价值/要改游戏状态」的成员才抛，
+   且抛的消息里带参考文件名，方便 grep 回源头。
+6. **单例照旧**：`AiPlanner.Instance`（`Planner::Get()`）与 `BattlePlanner.Instance` 都是懒汉单例，与参考一样保存
+   一整个回合的状态（优先级目标、敌人军队、预算、寻路器缓存）。`ResetPathfinder()` 现在是空实现——AI 侧寻路器
+   （`AIWorldPathfinder`）还没转，planner 手里没有可清的东西；玩家侧的 `World.ResetPathfinder()` 已接（ADR-091）。
+7. **`AIWorldPathfinderStateRestorer` 不落**（`ai_planner_internals.h:32-56`）。它的全部工作就是保存/恢复
+   `AIWorldPathfinder` 的两个开关（`isOnBeach` 一览、`debug`），没有那个类它无事可做；`ai_planner_internals.h`
+   这一批只落四个常量。
+8. **文件名对齐参考**：`AiPlanner.cs`（`ai_planner.h`）、`AiPlannerTypes.cs`（同头里的五个数据结构）、
+   `AiCommon.cs`、`AiBattlePlanner.cs`（`ai_battle.h` + 那个自由函数 `getBerserkerTarget`）、`AiHeroAction.cs`、
+   `AiPlannerInternals.cs`。放在 `Game/Ai/` 而不是新开项目：契约依赖 `Kingdom`/`Castle`/`Hero`/`Army`/`Funds`/
+   `UltimateArtifact`/`Tile`，全部在 `FHeroes2.Game` 里。
+9. **`dialog` 这一轮不写代码骨架**，理由与替代路径见 ADR-162。
+
+**后果**：新增 `Game/Ai/AiPlanner.cs`、`AiPlannerTypes.cs`、`AiCommon.cs`、`AiBattlePlanner.cs`、`AiHeroAction.cs`、
+`AiPlannerInternals.cs`（6 个文件，约 640 行）。新增测试 13 条（`AiContractTests`）：三个枚举值、`RegionStats` 的
+未求值状态、`BudgetEntry.Reset`、`EnemyArmy` 的两个构造、`PriorityTask` 的两种构造、`AiCastle` 的空值检查、
+`UpdateOutcome` 的三条语义、两个单例、四个常量、一条「未移植的成员会显式抛」。Game 2565 → **2578** 全绿，
+全解决方案 `-warnaserror` 0 警告。覆盖率不变（`ai` 仍 0 个整篇落地：`ai_personality.cpp` 在 `System/` 里只落了
+枚举与随机/取名两个函数）。
+
+**遗留**：`ai_battle.cpp`/`ai_common.cpp`/`ai_hero_action.cpp`/`ai_planner*.cpp` 的实现（契约已就位，填实现不需要
+再动签名）；`AIWorldPathfinder`（契约里的 `ResetPathfinder` 等它）；`AiCommon` 的 `Funds?` 返回值等
+`Economy`/市场规则落地后一起校。
+
+## ADR-162：`dialog` 暂不写代码骨架——它是阻塞式门面，端口是场景式 ◐
+
+**背景**：用户希望 `ai` 与 `dialog` 都先把接口写好。`ai` 的头文件天然是契约，照抄即可（ADR-161）；`dialog` 不是：
+`dialog.h` 的 40 余个函数全是**阻塞式**的——`int SelectCount(...)` 内部跑一遍事件循环、返回按钮位；
+`Dialog::GameInfo()` 自己读 `world.GetKingdoms()` 并画完整个窗口。端口从第一个 `SettingsDialog` 起就没有
+事件循环：对话框是**不可变模型 + Scene 分派事件**（`Area`/`Buttons`/`Render`，按下哪个按钮由 Scene 读
+`ButtonGroup` 的返回值）。照抄 `dialog.h` 的签名会得到一堆「阻塞函数」，与端口范式正面冲突，等于写一批注定要
+重写的死代码。
+
+**决定**：
+
+1. **不照抄 `dialog.h` 的函数签名**。端口里「一个对话框」= 一个模型类（`Create(...)` + `Area` + `Render`）+
+   一个结果表达（`DialogButton` 或该对话框自己的枚举），事件由 Scene 处理。`SettingsDialog`、`MessageBox`、
+   `ScenarioSelectionDialog`、`LanguageSelectionDialog` 都已经是这样，`dialog.h` 的 24 个文件落地时照此办理。
+2. **公共结构层已经齐了，不用再造**：`dialog.h` 里的 `ResizableFrameBox`/`FrameBox`/`FrameBorder` 在端口对应
+   `Dialogs/FrameBox.cs` 与 `Dialogs/FrameBoxChrome.cs`（参考的继承层次被折成了组合，行为已在
+   `FrameBox` 的构造与 `Chrome` 的九宫格里）；`StandardWindow`/`StandardWindowChrome` 对应 9-patch 窗口。
+   所以 dialog 的「接口」不缺口在这一层。
+3. **真正的缺口是控件**。24 个对话框全都站在 `fheroes2::DialogElement`/`TextBase`/`Slider`/`Scrollbar`/
+   `OptionButtonGroup`/`TextBox` 上，这些一个都没转（端口现有 `Button`/`ButtonGroup`/`ScrollSlider`/`ButtonSprite`）。
+   没有它们，`ArmyInfo`、`Marketplace`、`SelectCount` 的签名连参数都写不出来（`SelectCount` 收
+   `const DialogElement* topUiElement`，`inputString` 收两个 `TextBase`），硬写只能靠猜控件形状，必然是返工。
+4. **顺带确认的既有原则**：`Dialogs/DialogButton.cs` 的注释写着「只落四个按钮位，布局位（`Dismiss`/`Upgrade`/
+   `Prev`/`Next`）跟用到它们的对话框一起加，不提前造值」。这条正好适用于现在的局面：`dialog.h` 的
+   `DISMISS/UPGRADE/MAX/PREV/NEXT/WORLD/PUZZLE/INFO/DIG` 九个位值虽然照抄无风险，但没有任何调用者，先加就是死值。
+   等第一个用到它们的对话框落地时一起补，那时还能顺手为 `ButtonGroup` 的布局参数写测试。
+
+**后果**：本轮 `dialog` 目录零代码改动。下一次动 `dialog` 的正确顺序是：先落**控件契约**
+（`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/`OptionButtonGroup` 的端口形态，含 `Rect` + 渲染 + 事件三件套），
+再按 `dialog.h` 的清单从最小的对话框（`ArtifactSetAssembled`、`BuyBoat`）开始验证范式，最后才是 `ArmyInfo`/
+`Marketplace`/`KingdomOverview` 这些互相牵连的大块。
+
+**遗留**：`dialog` 的 29 个文件全部未转；它们的共同前置是上面那批控件。
+
+**后续**：第 3、4 条的判断没有变，但用户选择先要入口契约再做控件层，因此 `dialog.h` 的 24 个入口按
+「模型 + `Create` + 结果类型」直接落下，见 ADR-163。`DialogButton` 的布局位也随之补齐——理由从「等调用者」
+变成「已经有调用者」。上面「下一次动 `dialog` 的顺序」一条作废。
+
+## ADR-163：`dialog` 的 24 个入口契约层 ◐
+
+**背景**：ADR-162 判断 `dialog` 的代码骨架要等控件层，用户选择反向推进：先把 `dialog.h` 的 24 个入口按
+「模型 + `Create` + 结果类型」落成可编译的契约，控件参数先占位，接受后续返工。理由也站得住——入口形状决定
+`App` 层的场景怎么调它，这件事不依赖 `DialogElement` 长什么样。
+
+**决定**：
+
+1. **24 个入口落成 20 个模型文件**（另扩 `DialogButton`），放在 `src/FHeroes2.UI/Dialogs/`，命名与参考的
+   `.cpp` 对齐：
+   `AdventureOptionsDialog`（`dialog_adventure.cpp`）、`FileOptionsDialog`（`dialog_file.cpp`）、
+   `SelectFileDialog`（`dialog_selectfile.cpp`，两个入口一个类）、`QuickInfoDialog`（`dialog_quickinfo.cpp`，七个
+   入口一个类）、`LevelUpDialog`（`dialog_levelup.cpp`）、`GoldOrExperienceDialog`（`dialog_chest.cpp`）、
+   `ArenaDialog`（`dialog_arena.cpp`）、`SelectCountDialog`（`dialog_selectcount.cpp`）、`InputStringDialog`
+   （同文件）、`ArmySplitDialog`（同文件）、`RecruitDialog`（`dialog_recruit.cpp`）、`DwellingInfoDialog`（同）、
+   `ArmyInfoDialog`（`dialog_armyinfo.cpp`）、`ArmyJoinDialog`（同，两个入口一个类）、`MarketplaceDialog`
+   （`dialog_marketplace.cpp`）、`GiftResourcesDialog`（`dialog_giftresources.cpp`）、`BuyBoatDialog`
+   （`dialog_buyboat.cpp`）、`ThievesGuildDialog`（`dialog_thievesguild.cpp`）、`GameInfoDialog`
+   （`dialog_gameinfo.cpp`）、`ArtifactSetDialog`（`dialog_artifact.cpp`）。`ResizableFrameBox`/`FrameBox`/
+   `FrameBorder` 三个类不重复实现（`FrameBox`/`FrameBoxChrome` 已有，ADR-162 第 2 条）。
+2. **模型只承载「输入 + 答案」，不写 `Area`/`Render`**。参考的对话框自己画、自己跑事件循环；端口的场景发事件、
+   模型描述内容。所以这一批只定 `Create(...)` 与结果，布局与渲染等控件层（`DialogElement`/`TextBase`/`Slider`/
+   `Scrollbar`/`OptionButtonGroup`）落地时补——**补的时候 `Create` 的签名不变**，因为它的参数全是业务值。
+3. **`DialogButton` 补齐到参考的 14 个值**（`dialog.h:65-85`）：四个按钮位 + `Dismiss`/`Upgrade`/`Max`/`Prev`/
+   `Next`/`World`/`Puzzle`/`Info`/`Dig`。这不再是「提前造值」：`AdventureOptions` 的答案就是 `WORLD|PUZZLE|INFO|DIG`，
+   `ArmyInfo` 的按钮就是 `UPGRADE|DISMISS`，有真实调用者。数值照抄参考，测试逐值钉住。
+4. **`GameMode` 折成 `FileOptionsResult`**。`Dialog::FileOptions()` 返回 `fheroes2::GameMode`，但它只产出
+   `NEW_GAME`/`LOAD_GAME`/`QUIT_GAME`/`CANCEL` 加上两个存档动作（`EventSaveGame`、`Game::QuickSave`），
+   `MAIN_MENU`/`LOAD_STANDARD`/战役值都不会出现。端口按场景组织，「存档」「快速存档」是两件不同的事，所以结果
+   是六个值：`Cancel`/`NewGame`/`LoadGame`/`SaveGame`/`QuickSave`/`Quit`。
+5. **结果类型一律表达参考的返回语义**：返回 `bool` 的（`SelectCount`/`inputString`/`SelectGoldOrExp`）改成可空的
+   值（`int?`/`string?`/`GoldOrExperience`），返回 `-1`/`UNKNOWN` 表示取消的改成 `null`（`MakeGiftResource`、
+   `LevelUpSelectSkill`、`SelectSkillFromArena`），返回空 `Troop` 的改成 `Troop?`（`RecruitMonster`）。理由一致：
+   参考用哨兵值表达「没有」，C# 有 `null`，用 `null` 可以少一类误读。
+6. **`FromButton(int)` 是纯映射，属于真行为**。参考把「按了第几个按钮 → 返回什么」写成事件循环里的
+   `if (le.MouseClickLeft(button[i])) return ...;`，端口把它抽成静态方法，逐条照抄按钮顺序，测试直接钉住
+   （`AdventureOptions` 4 项、`FileOptions` 6 项、`BuyBoat`、`ArmyInfo`、`ArmyJoin`、`ArmySplit`、`ArmyInfo` 等）。
+7. **参数校验按参考的断言补**：`SelectCount` 的 `min <= max`、`step > 0`（参考的 `step` 若为 0 会死循环），
+   `ArmySplitTroop` 的两个非负值，`ArmyJoinWithCost` 的 `join > 0`。这些是 `Create` 里唯一的真逻辑，都写成
+   `ArgumentOutOfRangeException`。
+8. **三处占位，都在注释里点名**：（a）`inputString` 的 `fheroes2::TextBase` 用 `string` 代替（端口没有 `TextBase`）；
+   （b）`SelectCount` 的 `topUiElement`/`bottomUiElement` 与 `ArmyInfo`/`RecruitMonster`/`QuickInfo` 的屏幕偏移
+   `offsetY` 不建模（纯渲染参数）；（c）`SelectFileLoad`/`Save` 的文件列表不建模（存档目录还没有端口），
+   `Choose(string?)` 先由场景把选中项写回。
+9. **纯显示类不给结果**：`DwellingInfo`、`ThievesGuild`、`GameInfo`、`ArtifactSetAssembled` 只有 `Create`，
+   因为参考返回 `void`，它们的效果全在画面上。
+
+**后果**：新增 20 个模型文件（`src/FHeroes2.UI/Dialogs/`，1 225 行），`DialogButton` 从 4 个值扩到 14 个。
+新增测试 25 条（`DialogModelsTests`：14 个位值、`AdventureOptions` 的两种按钮集与 6 条映射、`FileOptions` 的 6 条
+映射、`BuyBoat`/`ArmySplit`/`ArmyJoin`/`ArmyInfo` 的映射与 `HasButtons`、`SelectCount` 的 clamp 与两条拒绝、
+`inputString` 的上限、`Recruit` 的空栈、`LevelUp` 的未提供技能、`GiftResources` 的越界、`QuickInfo` 的三种目标）。
+UI 145 → **170**，全解决方案 3 339 → **3 364** 全绿，`-warnaserror` 0 警告。覆盖率不变（`dialog` 仍 0/0/29）：这一批是契约，不是
+实现。
+
+**遗留**：全部 `Render`/`Area`/事件处理与控件层（`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/
+`OptionButtonGroup`/`TextBox`）；`PaymentConditions`（`BuyBoat` 的价格与能否购买）；存档目录（`SelectFile`）；
+`QuickInfo` 的雷达与定位绘制；`GameInfo`/`ThievesGuild` 要读的世界数据（端口 `World`/`Kingdoms` 已有，实现时传）。
+
+## ADR-164：`AIWorldPathfinder` 与玩家寻路器共用骨架 ◐
+
+**背景**：`world_pathfinding.cpp:543-1434` 的 AI 侧一直以「要军队与对象价值表」为由押后。军队、逐格成本与
+守怪强度（`WorldMapScan.IsTileProtectionStrongerThan`）就位后，它只剩自己的通行判定与成本记账，不必再等
+对象价值表——那是 `ObjectValueStorage`，AI 计划器的事。
+
+**决定**：
+
+1. **继承 `WorldPathfinder`，不复制搜索**。参考的 `AIWorldPathfinder : PathfinderBase` 与玩家侧共用缓存、标签
+   修正、邻居展开和「最后一格」；端口把同一骨架留在基类，只放开四个钩子（`ProcessWorldMap`、
+   `ProcessCurrentNode`、`GetMovementPenalty`、`GetMaxMovePoints`）并让 `IsMovementAllowed` 可覆盖。基类
+   `GetMaxMovePoints` 的「最后一格」判据在 AI 报 0 时自动失效，AI 侧不重写。
+2. **AI 的三份重计算缓存放进 `WorldNode`**。参考把 `std::optional<bool> _isAccessibleForAI` 与
+   `_isAvailableForWalkThroughForAI.{fromWater,fromLand}` 放在节点里，端口原样落成三个 `bool?` 字段。语义也照
+   抄：`reset()` **不清**它们，整表失效发生在 `ProcessWorldMap` 的 `ClearCache()`——这一点容易看错，测试
+   `TheWorldOwnsOneAiPathfinderAndHandsItToThePlanner` 因此改用可调参数观察 `Reset()`，而不是看距离。
+3. **全局单例换成「世界持有 + 交给计划器」**。参考各处调用 `AIWorldPathfinder::Get()`，它背后是唯一的全局
+   `world`。端口由 `World.AiPathfinder` 惰性创建，并在创建时 `AiPlanner.Instance.AttachPathfinder(...)`，让计划器
+   仍有一个入口可取；`World.ResetPathfinder()` 重置这一份，避免多世界测试里重置到别人的缓存。
+4. **没数据的成员不猜**。`ReEvaluateIfNeeded(Hero, double)`、`GetFogDiscoveryTile`、`GetNearestTileToMove`、
+   `IsHeroPossiblyBlockingWay`、`BuildDimensionDoorPath`、`GetObjectsOnTheWay` 需要英雄↔城堡关系、集合点、
+   装备或冒险地图对象扫描；一律抛 `NotImplementedException`，XML 注释写明缺哪份数据。
+5. **`BuildPath` 的裁剪只在 `accountNearestObject` 时发生**。参考在回溯时用基类通行判定记下最后一个「不可穿越」
+   的格，再把从它出发的步骤删光；`accountNearestObject == false` 时原样返回整条链。初版把裁剪做成了无条件的，
+   会让「目标本身是拾取物」的路径少一步；本轮按参考改回，并补测试钉住两种形态。裁剪判定的水陆身份取**整条路
+   起点**，不是逐格 `from`。
+
+**后果**：新增 `src/FHeroes2.Game/World/AIWorldPathfinder.cs`（约 900 行）与 `WorldMapScan` 的守怪强度；`WorldNode`
+多三个 `bool?`；`World` 多一个 `AiPathfinder`。新增测试 13 条（`AIWorldPathfinderTests`）。Game 2578 → **2591**，
+全解决方案 3 364 → **3 377** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`ai` 的九个 `.cpp` 实现（含 `ObjectValueStorage` 与 AI 计划器私有方法）；上面第 4 条那一串入口。

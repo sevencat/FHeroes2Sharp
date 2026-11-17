@@ -284,6 +284,12 @@ public sealed partial class Hero
     public string Name { get; private set; } = string.Empty;
 
     /// <summary>
+    /// Restores the stolen French characters of the name, <c>Heroes::fixFrenchCharactersInName()</c>
+    /// (called from <c>world.cpp:1281-1283</c>).
+    /// </summary>
+    internal void FixFrenchCharactersInName() => Name = MapTextCodec.FixFrenchCharacters(Name);
+
+    /// <summary>
     /// The tile a patrolling hero guards, <c>_patrolCenter</c>; the tile he stands on when the map placed
     /// him, <see cref="NoPosition"/> otherwise.
     /// </summary>

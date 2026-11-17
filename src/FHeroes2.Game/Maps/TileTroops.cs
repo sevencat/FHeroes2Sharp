@@ -103,7 +103,11 @@ public sealed partial class Tile
     /// <param name="count">Number of creatures, or zero to roll <see cref="MonsterStatistics.GetRandomCount"/>.</param>
     public void SetMonster(World world, MonsterType monster, uint count)
     {
-        SetMainObjectType(Mp2ObjectType.Monster);
+        // The reference stores `MP2::OBJ_MONSTER`, which carries the action bit
+        // (maps_tiles_helper.cpp:1727). The port keeps the file's convention on the tile (ADR-075), so a wandering
+        // stack is ActionMonster — the same value a map file gives it; Monster is only the stripped form the
+        // classification predicates compare against.
+        SetMainObjectType(Mp2ObjectType.ActionMonster);
 
         ObjectPart mainObjectPart = MainObjectPart;
 

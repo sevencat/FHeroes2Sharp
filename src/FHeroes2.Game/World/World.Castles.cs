@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Maps;
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -67,6 +68,19 @@ public sealed partial class World
     /// <returns>The town, or <see langword="null"/> when the tile is not a castle entrance.</returns>
     public CastleTown? GetCastleEntrance(int tileIndex) =>
         IsValidCastleEntrance(tileIndex) ? GetCastle(tileIndex) : null;
+
+    /// <summary>
+    /// The town whose gate stands on a tile, given as an absolute position,
+    /// <c>World::getCastleEntrance( const fheroes2::Point &amp; )</c> (<c>world.cpp:399</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只有一个以 <c>Point</c> 为参数的版本，而 <c>getTile()</c> 对图外的点会断言；地图条件里存的正是
+    /// <c>Point</c>，而且它可能是 (-1, -1)（条件没有坐标时），所以这个重载先查图内再换算成下标。
+    /// </remarks>
+    /// <param name="tile">Absolute map position of the entrance.</param>
+    /// <returns>The town, or <see langword="null"/> when the tile is outside the map or not a castle entrance.</returns>
+    public CastleTown? GetCastleEntrance(Point tile) =>
+        IsInsideMap(tile.X, tile.Y) ? GetCastleEntrance(tile.Y * Width + tile.X) : null;
 
     /// <summary>
     /// Whether a tile carries the entrance of a town, <c>World::isValidCastleEntrance()</c>
@@ -183,6 +197,50 @@ public sealed partial class World
             _castles.Add(castle);
 
             _capturedObjects.Set(tileIndex, Mp2ObjectType.Castle, PlayerColor.None);
+        }
+    }
+
+    /// <summary>
+    /// Registers the capturable objects of a map file, the mine loop of <c>World::LoadMapMP2()</c>
+    /// (<c>world_loadmap.cpp:382-430</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The table is the list of mines and similar objects the map marks as owned: the sawmill (<c>0x00</c>), the
+    /// alchemist lab (<c>0x01</c>), the five mines (<c>0x02…0x06</c>), the lighthouse (<c>0x64</c>), the dragon city
+    /// (<c>0x65</c>) and the abandoned mine (<c>0x67</c>). The parser has already turned the byte into an object
+    /// type (<see cref="Mp2CaptureObject.ObjectType"/>), so only the entry itself is left; an unknown byte becomes
+    /// <see cref="Mp2ObjectType.None"/> and is skipped with a warning, like the reference.
+    /// </para>
+    /// <para>
+    /// The reference registers the town table right before this loop with the same neutral owner, and the answer to
+    /// "who owns the mine" is completed later by the information blocks, which may name a colour
+    /// (<c>world_loadmap.cpp:498</c>). The port keeps the same split: a mine is owned from the moment it exists, and
+    /// its colour follows when a block says so.
+    /// </para>
+    /// </remarks>
+    /// <param name="map">The map being loaded.</param>
+    private void ReadCaptureObjects(Mp2Map map)
+    {
+        foreach (Mp2CaptureObject captureObject in map.CaptureObjects)
+        {
+            if (!IsInsideMap(captureObject.X, captureObject.Y))
+            {
+                GameLog.Warn(
+                    $"Map capture object at [{captureObject.X}, {captureObject.Y}] is outside the {Width}x{Height} map, skipped.");
+
+                continue;
+            }
+
+            if (captureObject.ObjectType == Mp2ObjectType.None)
+            {
+                GameLog.Warn(
+                    $"Map capture object of type 0x{captureObject.RawType:X2} at [{captureObject.X}, {captureObject.Y}] is not known, skipped.");
+
+                continue;
+            }
+
+            _capturedObjects.Set(captureObject.Y * Width + captureObject.X, captureObject.ObjectType, PlayerColor.None);
         }
     }
 

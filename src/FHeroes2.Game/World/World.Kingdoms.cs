@@ -31,6 +31,17 @@ public sealed partial class World
     public Kingdoms Kingdoms => _kingdoms;
 
     /// <summary>
+    /// The kingdom of a color, <c>World::GetKingdom()</c> (<c>world.h:275</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只有一行 <c>return vec_kingdoms.GetKingdom( color );</c>，跨槽写回那份内存是 <c>Kingdom</c> 的引用语义在
+    /// 做事；端口的 <see cref="Kingdom"/> 是引用类型，同样直接返回。
+    /// </remarks>
+    /// <param name="color">The player color; <see cref="PlayerColor.None"/> returns the seventh slot.</param>
+    /// <returns>The kingdom.</returns>
+    public Kingdom.Kingdom GetKingdom(PlayerColor color) => _kingdoms.GetKingdom(color);
+
+    /// <summary>
     /// Starts a kingdom for every color the map puts in play, <c>vec_kingdoms.Init()</c>.
     /// </summary>
     /// <remarks>

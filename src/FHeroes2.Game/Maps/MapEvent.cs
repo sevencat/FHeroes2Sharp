@@ -68,7 +68,13 @@ public sealed class MapEvent : MapObject
     public PlayerColor Colors { get; private init; }
 
     /// <summary>The message of the event, empty when the block carries none.</summary>
-    public string Message { get; private init; } = string.Empty;
+    public string Message { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Restores the stolen French characters of the message, <c>World::fixFrenchCharactersInStrings()</c>
+    /// (<c>world.cpp:1304-1309</c>).
+    /// </summary>
+    internal void FixFrenchCharacters() => Message = MapTextCodec.FixFrenchCharacters(Message);
 
     /// <summary>
     /// Reads the block of a ground event, <c>MapEvent::LoadFromMP2()</c> (<c>maps_objects.cpp:44</c>).

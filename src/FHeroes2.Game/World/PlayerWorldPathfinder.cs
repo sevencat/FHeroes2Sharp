@@ -19,11 +19,12 @@ namespace FHeroes2.Game;
 /// </para>
 /// <para>
 /// <b>Substitution.</b> The reference takes the hero itself
-/// (<c>reEvaluateIfNeeded( const Heroes &amp; )</c>) and reads four of its members. The port has no
-/// <c>Hero</c> instance with movement points yet, so the four values are passed in — they are exactly
-/// <c>hero.GetIndex()</c>, <c>hero.GetColor()</c>, <c>hero.GetMovePoints()</c>,
-/// <c>hero.GetLevelSkill( PATHFINDING )</c> and <c>hero.GetMaxMovePoints()</c>. When the hero side of
-/// the port lands, the hero overload calls this one and nothing else changes.
+/// (<c>reEvaluateIfNeeded( const Heroes &amp; )</c>) and reads five of its members. The port takes the
+/// five values instead — they are exactly <c>hero.GetIndex()</c>, <c>hero.GetColor()</c>,
+/// <c>hero.GetMovePoints()</c>, <c>hero.GetLevelSkill( PATHFINDING )</c> and
+/// <c>hero.GetMaxMovePoints()</c> — so that the search can be asked about a hero that is not on the map
+/// (the AI does that). <see cref="World.GetDistance"/> and <see cref="World.GetPath"/> are the hero
+/// overloads: they read the five values off the hero and call this.
 /// </para>
 /// </remarks>
 public sealed class PlayerWorldPathfinder : WorldPathfinder

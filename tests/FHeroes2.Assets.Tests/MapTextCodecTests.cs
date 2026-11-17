@@ -68,4 +68,42 @@ public sealed class MapTextCodecTests
         Assert.Equal(0, MapTextCodec.CountCjkCharacters("Alteris"));
         Assert.Equal(1, MapTextCodec.CountCjkCharacters("Map 山"));
     }
+
+    [Fact]
+    public void FixFrenchCharacters_ReadsTheWholeTableOfTheReference()
+    {
+        // fheroes2::fixFrenchCharactersForMP2Map() (ui_font.cpp:7190-7262), one entry per line.
+        (char Stolen, char Letter)[] table =
+        [
+            ('\t', 'î'), ('#', 'ô'), ('$', 'û'), ('&', 'ù'), ('*', 'â'), ('<', 'ï'), ('>', 'î'), ('@', 'à'),
+            ('\\', '.'), ('^', 'ç'), ('`', 'è'), ('{', 'ï'), ('|', 'ê'), ('}', 'ï'), ('~', 'é'), ('\u007F', 'î'),
+        ];
+
+        foreach ((char stolen, char letter) in table)
+        {
+            Assert.Equal(letter.ToString(), MapTextCodec.FixFrenchCharacters(stolen.ToString()));
+        }
+    }
+
+    [Fact]
+    public void FixFrenchCharacters_RestoresASentence()
+    {
+        // "Voilà l'île" as the French editor stored it: @ stands for à, > for î, the apostrophe is untouched.
+        Assert.Equal("Voilà l'île", MapTextCodec.FixFrenchCharacters("Voil@ l'>le"));
+    }
+
+    [Fact]
+    public void FixFrenchCharacters_LeavesPlainTextAlone()
+    {
+        const string text = "The ultimate artifact is really the Sword of Judgement.";
+
+        Assert.Same(text, MapTextCodec.FixFrenchCharacters(text));
+        Assert.Equal(string.Empty, MapTextCodec.FixFrenchCharacters(string.Empty));
+    }
+
+    [Fact]
+    public void FixFrenchCharacters_KeepsTheAccentedLettersAlreadyThere()
+    {
+        Assert.Equal("Château", MapTextCodec.FixFrenchCharacters("Château"));
+    }
 }

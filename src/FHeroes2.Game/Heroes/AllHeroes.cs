@@ -78,6 +78,24 @@ public sealed class AllHeroes : IReadOnlyCollection<Hero>
     }
 
     /// <summary>
+    /// Clears a mode bit on every hero, <c>AllHeroes::ResetModes()</c> (<c>heroes.cpp:2385</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference has this because the new week needs it: the recruit bit is a property of "every hero at once",
+    /// since a hero may have been hired by any kingdom during the week, and only the heroes the kingdoms still offer
+    /// get it back. The port could loop the heroes in <c>World::NewWeek</c> itself, but keeping the loop here mirrors
+    /// the reference and keeps the world out of the hero table's internals.
+    /// </remarks>
+    /// <param name="mode">The bit to clear.</param>
+    public void ResetModes(HeroModes mode)
+    {
+        foreach (Hero hero in this)
+        {
+            hero.ResetModes(mode);
+        }
+    }
+
+    /// <summary>
     /// The hero imprisoned on a tile, <c>AllHeroes::FromJail()</c> (<c>heroes.cpp:2475</c>).
     /// </summary>
     /// <remarks>

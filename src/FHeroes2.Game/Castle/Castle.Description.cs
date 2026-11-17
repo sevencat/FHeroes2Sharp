@@ -150,11 +150,9 @@ public sealed partial class Castle
     /// (<c>castle.cpp:664-667</c>).
     /// </summary>
     /// <remarks>
-    /// <b>Not ported</b>: it is <c>fheroes2::fixFrenchCharactersForMP2Map()</c>, the table that maps the
-    /// DOS-era code page onto Latin-1, and it belongs with <see cref="MapTextCodec"/> rather than with the town. A
-    /// town loaded from a French map therefore keeps the raw bytes of its name.
+    /// The table itself is <see cref="MapTextCodec.FixFrenchCharacters"/>; the caller
+    /// is <see cref="World.FixFrenchCharactersInStrings"/>, which runs it over the towns along with everything else
+    /// the map holds (<c>world.cpp:1284-1286</c>).
     /// </remarks>
-    public void FixFrenchCharactersInName()
-    {
-    }
+    public void FixFrenchCharactersInName() => Name = MapTextCodec.FixFrenchCharacters(Name);
 }

@@ -117,6 +117,71 @@ public static class MapTextCodec
     }
 
     /// <summary>
+    /// Undoes the character stealing of the French maps, <c>fheroes2::fixFrenchCharactersForMP2Map()</c>
+    /// (<c>ui_font.cpp:7190</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The French editor had no accented letters in its text fields and borrowed ASCII characters for them, so a
+    /// French map stores <c>î</c> as a horizontal tab and <c>ô</c> as a number sign. The table below is the exact
+    /// one of the reference; every other character, the accented letters the reference writes as a byte in
+    /// <c>0xE0…0xFB</c> included, stays as it is.
+    /// </para>
+    /// <para>
+    /// The reference edits the bytes in place and its callers decide when the fix applies — the original does it
+    /// only while the interface runs in French (<c>world_loadmap.cpp</c>). The port takes and returns a string, so a
+    /// caller has to keep the same gate: applying this to English or Chinese text would turn its punctuation into
+    /// accents.
+    /// </para>
+    /// </remarks>
+    /// <param name="text">Text read from a legacy French map.</param>
+    /// <returns>The fixed text.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="text"/> is <see langword="null"/>.</exception>
+    public static string FixFrenchCharacters(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        if (text.Length == 0)
+        {
+            return text;
+        }
+
+        char[]? fixedText = null;
+
+        for (int i = 0; i < text.Length; ++i)
+        {
+            char replacement = text[i] switch
+            {
+                '\t' => 'î',      // 9, the horizontal tab, used for the lowercase i with circumflex
+                '#' => 'ô',       // 35, the number sign, used for the lowercase o with circumflex
+                '$' => 'û',       // 36, the dollar sign, used for the lowercase u with circumflex
+                '&' => 'ù',       // 38, the ampersand, used for the lowercase u with grave accent
+                '*' => 'â',       // 42, the asterisk, used for the lowercase a with circumflex
+                '<' => 'ï',       // 60, the less than sign, used for the lowercase i with diaeresis
+                '>' => 'î',       // 62, the greater than sign, used for the lowercase i with circumflex
+                '@' => 'à',       // 64, the at sign, used for the lowercase a with grave accent
+                '\\' => '.',      // 92, the backslash, some maps use it as a full stop
+                '^' => 'ç',       // 94, the caret, used for the lowercase c with cedilla
+                '`' => 'è',       // 96, the grave accent, used for the lowercase e with grave accent
+                '{' => 'ï',       // 123, the opening brace, used for the lowercase i with diaeresis
+                '|' => 'ê',       // 124, the vertical bar, used for the lowercase e with circumflex
+                '}' => 'ï',       // 125, the closing brace, used for the lowercase i with diaeresis
+                '~' => 'é',       // 126, the tilde, used for the lowercase e with acute
+                '\u007F' => 'î',  // 127, the delete, used for the lowercase i with circumflex
+                _ => text[i],
+            };
+
+            if (replacement != text[i])
+            {
+                fixedText ??= text.ToCharArray();
+                fixedText[i] = replacement;
+            }
+        }
+
+        return fixedText is null ? text : new string(fixedText);
+    }
+
+    /// <summary>
     /// Picks the code page a new or edited field is stored in: ASCII as is, Chinese text in GBK so the
     /// Chinese map packs can be written back, everything else in Latin-1.
     /// </summary>

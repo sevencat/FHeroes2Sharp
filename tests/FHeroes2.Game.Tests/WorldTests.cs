@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Tests;
@@ -184,5 +185,50 @@ public sealed class WorldTests
         world.GetTile(6).SetMainObjectType(Mp2ObjectType.Mine);
 
         Assert.Equal(2u, world.CountObeliskOnMaps());
+    }
+
+    [Fact]
+    public void ABattleOnlyMapIsTwoByTwoOfOneGround()
+    {
+        var world = new World();
+
+        // World::generateBattleOnlyMap() (world.cpp:338-346): two by two, tiles numbered, one uniform ground.
+        world.GenerateBattleOnlyMap(MapGround.Grass);
+
+        Assert.Equal(2, world.Width);
+        Assert.Equal(2, world.Height);
+        Assert.Equal(4, world.Size);
+        Assert.Equal([0, 1, 2, 3], world.Tiles.Select(tile => tile.Index).ToArray());
+
+        ushort grass = MapGrounds.StartImageIndex(MapGround.Grass);
+        Assert.All(world.Tiles, tile => Assert.Equal(grass, tile.TerrainImageIndex));
+        Assert.All(world.Tiles, tile => Assert.Equal((byte)0, tile.TerrainFlags));
+        Assert.All(world.Tiles, tile => Assert.Equal(MapGround.Grass, tile.Ground));
+    }
+
+    [Fact]
+    public void SetUniformTerrainPaintsEveryTileAndClearsTheShapeBits()
+    {
+        var world = new World();
+        world.GenerateUninitializedMap(4);
+
+        // A tile that held a shape bit and another ground, so the switch of the ground is visible.
+        world.Tiles[0].SetTerrain(MapGrounds.StartImageIndex(MapGround.Snow), 0x1F);
+
+        world.SetUniformTerrain(MapGround.Desert);
+
+        ushort desert = MapGrounds.StartImageIndex(MapGround.Desert);
+        Assert.All(world.Tiles, tile => Assert.Equal(desert, tile.TerrainImageIndex));
+        Assert.All(world.Tiles, tile => Assert.Equal((byte)0, tile.TerrainFlags));
+        Assert.All(world.Tiles, tile => Assert.Equal(MapGround.Desert, tile.Ground));
+    }
+
+    [Fact]
+    public void SetUniformTerrainRejectsAnUnknownGround()
+    {
+        var world = new World();
+        world.GenerateUninitializedMap(2);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => world.SetUniformTerrain(MapGround.Unknown));
     }
 }

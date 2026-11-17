@@ -262,7 +262,7 @@ public sealed class WorldPathfinderTests
         // but not beyond it.
         World world = LoadMap(1, 5);
 
-        world.GetTile(2).SetMainObjectType(Mp2ObjectType.Monster);
+        world.GetTile(2).SetMainObjectType(Mp2ObjectType.ActionMonster);
 
         PlayerWorldPathfinder pathfinder = Search(world, 0);
 
@@ -281,7 +281,7 @@ public sealed class WorldPathfinderTests
         Assert.Equal(300u, pathfinder.GetDistance(3));
 
         // The search is not re-run for the same question, so the monster does not change the answer...
-        world.GetTile(1).SetMainObjectType(Mp2ObjectType.Monster);
+        world.GetTile(1).SetMainObjectType(Mp2ObjectType.ActionMonster);
         pathfinder.ReEvaluateIfNeeded(0, PlayerColor.Blue, 2000, SkillLevel.None, 2000);
 
         Assert.Equal(300u, pathfinder.GetDistance(3));
@@ -289,8 +289,10 @@ public sealed class WorldPathfinderTests
         // ...but any change to what the search depends on re-runs it.
         pathfinder.ReEvaluateIfNeeded(0, PlayerColor.Blue, 2001, SkillLevel.None, 2000);
 
+        // The monster may be walked up to, but a guarded tile is not expanded any further
+        // (`processCurrentNode`, world_pathfinding.cpp), so the row behind it is out of reach.
         Assert.Equal(100u, pathfinder.GetDistance(1));
-        Assert.True(pathfinder.GetDistance(3) > 300u);
+        Assert.Equal(0u, pathfinder.GetDistance(3));
     }
 
     [Fact]

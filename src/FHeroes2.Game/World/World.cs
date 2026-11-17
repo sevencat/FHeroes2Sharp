@@ -1,8 +1,11 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Ai;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
@@ -63,6 +66,15 @@ public sealed partial class World
     /// </remarks>
     private PlayerWorldPathfinder? _pathfinder;
 
+    /// <summary>The AI's pathfinder for this world, the planner's <c>_pathfinder</c>.</summary>
+    /// <remarks>
+    /// Created on first use as well, and dropped by <see cref="Reset"/> for the same reason: it caches one
+    /// node per tile. The reference reaches it through the global <c>AIWorldPathfinder::Get()</c>; the port
+    /// keeps the instance on the world it was built for and hands it to <see cref="AiPlanner"/> when it is
+    /// created.
+    /// </remarks>
+    private AIWorldPathfinder? _aiPathfinder;
+
     /// <summary>Signs, bottles, sphinxes and ground events, keyed by tile index, <c>map_objects</c>.</summary>
     private readonly MapObjects _mapObjects = new();
 
@@ -112,6 +124,9 @@ public sealed partial class World
     /// gathered into one table.
     /// </summary>
     private MapFog? _fog;
+
+    /// <summary>The buried ultimate artifact, <c>_ultimateArtifact</c> (<c>world.cpp:326</c>).</summary>
+    private readonly UltimateArtifact _ultimateArtifact = new();
 
     /// <summary>
     /// Creates an empty world. Use <see cref="Current"/> in production code; this constructor exists
@@ -624,8 +639,15 @@ public sealed partial class World
                 ++_month;
             }
 
-            // world.cpp:443-455: the week reaches the systems before their day does, and the ones that need a
-            // missing system (the month of monsters, the week-life spawner) are still to come — in that order.
+            // world.cpp:443-455: the month turns first, then the week, then the week reaches the systems before
+            // their day does.
+            if (IsBeginMonth)
+            {
+                NewMonth();
+            }
+
+            NewWeek();
+
             _kingdoms.NewWeek(_week);
             _castles.NewWeek(_week, WeekType, IsBeginMonth, _day);
         }
@@ -744,6 +766,62 @@ public sealed partial class World
 
         return count > 0 ? count : 6;
     }
+
+    /// <summary>
+    /// Digs a hole on a tile and reports whether the ultimate artifact was under it,
+    /// <c>World::DiggingForUltimateArtifact()</c> (<c>world.cpp:850</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The hole is left behind either way — a hero spends the day digging whether or not there is
+    /// anything under the tile. The hole is a part of the terrain layer with a fresh UID, so the tile knows
+    /// it as an object and the renderer draws it.
+    /// </para>
+    /// <para>
+    /// <b>The artifact is not removed from the tile.</b> The reference only marks it as found: the treasure
+    /// is not a map object to begin with, it is a position the world remembers, and once found every later
+    /// dig on that tile reports nothing. Water is the one ground that cannot be dug; the reference asserts
+    /// there, the port answers <see langword="false"/> without adding a part (see
+    /// <see cref="DiggingHole.TryGetSprite"/>).
+    /// </para>
+    /// </remarks>
+    /// <param name="center">Tile the hero digs on.</param>
+    /// <returns>Whether the ultimate artifact was found by this dig.</returns>
+    public bool DiggingForUltimateArtifact(Point center)
+    {
+        Tile tile = GetTile(center.X, center.Y);
+
+        if (!DiggingHole.TryGetSprite(tile.Ground, out Mp2ObjectIcnType icnType, out byte imageIndex))
+        {
+            return false;
+        }
+
+        tile.PushGroundObjectPart(
+            new ObjectPart(ObjectLayerType.Terrain, GetNewObjectUid(), icnType, imageIndex));
+
+        if (_ultimateArtifact.IsAt(tile.Index) && !_ultimateArtifact.IsFound)
+        {
+            _ultimateArtifact.MarkAsFound();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether any kingdom on the map has visited an object, <c>World::isAnyKingdomVisited()</c>
+    /// (<c>world.cpp:1272</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference keeps the visit log per kingdom and asks every one of them; the port keeps the same
+    /// log in <see cref="Kingdom"/> and the loop lives in <see cref="Kingdoms.IsAnyVisited"/>.
+    /// </remarks>
+    /// <param name="objectType">Object type, action bit included.</param>
+    /// <param name="tileIndex">Tile index of the object.</param>
+    /// <returns>Whether at least one kingdom has visited it.</returns>
+    public bool IsAnyKingdomVisited(Mp2ObjectType objectType, int tileIndex) =>
+        _kingdoms.IsAnyVisited(tileIndex, objectType);
 
     /// <summary>
     /// Gives a tile to a player, <c>World::CaptureObject()</c> (<c>world.cpp:815</c>).
@@ -1078,10 +1156,53 @@ public sealed partial class World
     }
 
     /// <summary>
+    /// Makes a two by two world of one ground for a battle only game, <c>World::generateBattleOnlyMap()</c>
+    /// (<c>world.cpp:338</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference builds the uninitialized map, numbers the tiles and paints them with the start image of
+    /// the ground. The numbering loop is the reference's own, because <see cref="GenerateUninitializedMap"/>
+    /// deliberately leaves every index at zero.
+    /// </remarks>
+    /// <param name="ground">Ground every tile gets.</param>
+    public void GenerateBattleOnlyMap(MapGround ground)
+    {
+        GenerateUninitializedMap(2);
+
+        for (int i = 0; i < _tiles.Count; ++i)
+        {
+            _tiles[i].Index = i;
+        }
+
+        SetUniformTerrain(ground);
+    }
+
+    /// <summary>
+    /// Paints every tile of the world with the first image of one ground, <c>World::setUniformTerrain()</c>
+    /// (<c>world.cpp:349</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference takes the raw ground id and asks <c>Maps::Ground::getTerrainStartImageIndex()</c> for the
+    /// image; the port takes the ground itself and asks <see cref="MapGrounds.StartImageIndex"/> for the same
+    /// number, which is the table that function reads. The shape bits of a tile are cleared, exactly like the
+    /// reference's <c>setTerrain( index, 0 )</c>.
+    /// </remarks>
+    /// <param name="ground">Ground to paint.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The ground has no terrain images.</exception>
+    public void SetUniformTerrain(MapGround ground)
+    {
+        ushort terrainImageIndex = MapGrounds.StartImageIndex(ground);
+
+        foreach (Tile tile in _tiles)
+        {
+            tile.SetTerrain(terrainImageIndex, 0);
+        }
+    }
+
+    /// <summary>
     /// Empties the world, <c>Reset()</c> (<c>world.cpp:299</c>): dimensions back to zero, the tile vector,
-    /// the hero list, the map objects, the daily events, the rumors, the captured objects and the date
-    /// counters cleared. The reference also clears the kingdoms and the castles and resets the seed (and
-    /// the win/loss conditions); those containers do not exist yet and are added with their systems.
+    /// the hero list, the map objects, the daily events, the rumors, the captured objects, the kingdoms, the
+    /// castles, the date counters, the seed and the win/loss conditions cleared.
     /// </summary>
     /// <remarks>
     /// The reference keeps this <c>private</c> (the destructor and the two map loaders call it). The
@@ -1118,15 +1239,25 @@ public sealed partial class World
         // The seed goes with the counters: Defaults() draws a new one for every map (world.cpp:291, :335).
         _seed = 0;
 
+        // The conditions belong to one map: the header they are read from and the two heroes they name
+        // (world.cpp:308-330 resets the condition state along with the rest of the world).
+        MapInfo = null;
+        _heroIdAsWinCondition = Hero.UnknownId;
+        _heroIdAsLossCondition = Hero.UnknownId;
+
+        // The buried artifact is per map too: nothing is buried before a map is loaded (world.cpp:311).
+        _ultimateArtifact.Reset();
+
         // The port clears the three post load caches here as well. The reference leaves them to
         // PostLoad(), but they hold tile indexes, and a cache that outlives its tiles is a landmine.
         _allTeleports.Clear();
         _allWhirlpools.Clear();
         _allEyeOfMagi.Clear();
 
-        // Same reasoning: the pathfinder caches one node per tile and the map dimensions, so it must not
-        // outlive the map it was built for.
+        // Same reasoning: both pathfinders cache one node per tile and the map dimensions, so they must not
+        // outlive the map they were built for.
         _pathfinder = null;
+        _aiPathfinder = null;
 
         // And the regions, which are tile ids in a tile table that is about to be emptied.
         ClearRegions();
@@ -1135,10 +1266,35 @@ public sealed partial class World
     /// <summary>
     /// The pathfinder of this world's heroes, <c>_pathfinder</c>. Created on first use.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The world holds no map; a pathfinder is one node per
-    /// tile and cannot exist before the tiles do.</exception>
+    /// <exception cref="ArgumentException">The world holds no map; a pathfinder is one node per tile and
+    /// cannot exist before the tiles do.</exception>
     public PlayerWorldPathfinder Pathfinder =>
         _pathfinder ??= new PlayerWorldPathfinder(this);
+
+    /// <summary>
+    /// The AI's pathfinder for this world, <c>AIWorldPathfinder</c>. Created on first use.
+    /// </summary>
+    /// <remarks>
+    /// The reference has one global AI pathfinder; the port builds it against a world, so the first use
+    /// also hands it to <see cref="AiPlanner"/>, which is where the AI code looks for it. Keeping the
+    /// instance on the world means <see cref="ResetPathfinder"/> resets the copy that belongs to this map
+    /// rather than whichever world was attached last.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The world holds no map; a pathfinder is one node per tile and
+    /// cannot exist before the tiles do.</exception>
+    public AIWorldPathfinder AiPathfinder
+    {
+        get
+        {
+            if (_aiPathfinder is null)
+            {
+                _aiPathfinder = new AIWorldPathfinder(this);
+                AiPlanner.Instance.AttachPathfinder(_aiPathfinder);
+            }
+
+            return _aiPathfinder;
+        }
+    }
 
     /// <summary>
     /// Invalidates the pathfinder caches, <c>resetPathfinder()</c> (<c>world.cpp:1171</c>): the
@@ -1146,10 +1302,75 @@ public sealed partial class World
     /// </summary>
     /// <remarks>
     /// The reference calls this whenever a tile changes in a way the search would have seen — a hero
-    /// moving away, a monster killed, a road built. The port has the world pathfinder only, so the AI
-    /// half is still missing; when it lands it is reset here too and nowhere else.
+    /// moving away, a monster killed, a road built. Both copies belong to this world, so both are reset
+    /// here; the planner's copy is the same object the <see cref="AiPathfinder"/> getter attaches.
     /// </remarks>
-    public void ResetPathfinder() => _pathfinder?.Reset();
+    public void ResetPathfinder()
+    {
+        _pathfinder?.Reset();
+        _aiPathfinder?.Reset();
+    }
+
+    /// <summary>
+    /// The movement cost from where <paramref name="hero"/> stands to a tile, <c>World::getDistance()</c>
+    /// (<c>world.cpp:1159</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把整位英雄交给寻路器（<c>reEvaluateIfNeeded( const Heroes &amp; )</c>），寻路器再去问那五个值。端口的
+    /// 寻路器收的是拆开的五个值（它出现时 <c>Hero</c> 还没有移动力），所以这里负责把它们从英雄身上读出来——两行
+    /// 代码，和参考一一对应。
+    /// </remarks>
+    /// <param name="hero">The hero to measure from; must stand on the map.</param>
+    /// <param name="targetIndex">Index of the tile to measure to.</param>
+    /// <returns>The movement points a trip costs; zero when the tile cannot be reached.</returns>
+    /// <exception cref="ArgumentException"><paramref name="hero"/> stands nowhere.</exception>
+    public uint GetDistance(Hero hero, int targetIndex)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+        ReEvaluatePathfinder(hero);
+
+        return Pathfinder.GetDistance(targetIndex);
+    }
+
+    /// <summary>
+    /// The steps from where <paramref name="hero"/> stands to a tile, <c>World::getPath()</c>
+    /// (<c>world.cpp:1165</c>).
+    /// </summary>
+    /// <remarks>
+    /// 和 <see cref="GetDistance"/> 同一趟搜索：<c>buildPath()</c> 读的就是刚才那次搜索留下的父节点，所以先问路再问
+    /// 距离不重复算。
+    /// </remarks>
+    /// <param name="hero">The hero to plan for; must stand on the map.</param>
+    /// <param name="targetIndex">Index of the tile to plan to.</param>
+    /// <returns>The steps, starting with the one that leaves the hero's tile.</returns>
+    /// <exception cref="ArgumentException"><paramref name="hero"/> stands nowhere.</exception>
+    public List<RouteStep> GetPath(Hero hero, int targetIndex)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+        ReEvaluatePathfinder(hero);
+
+        return Pathfinder.BuildPath(targetIndex);
+    }
+
+    /// <summary>
+    /// Hands the hero's five settings to the pathfinder, <c>_pathfinder.reEvaluateIfNeeded( hero )</c>.
+    /// </summary>
+    /// <param name="hero">The hero whose movement the search depends on.</param>
+    /// <exception cref="ArgumentException"><paramref name="hero"/> stands nowhere.</exception>
+    private void ReEvaluatePathfinder(Hero hero)
+    {
+        if ((uint)hero.MapIndex >= (uint)Size)
+        {
+            throw new ArgumentException("The hero stands outside the map.", nameof(hero));
+        }
+
+        Pathfinder.ReEvaluateIfNeeded(
+            hero.MapIndex,
+            hero.Color,
+            hero.MovePoints,
+            hero.GetLevelSkill(SecondarySkill.Pathfinding),
+            hero.GetMaxMovePoints());
+    }
 
     /// <summary>
     /// The last object UID handed out, <c>Maps::getLastObjectUID()</c>
@@ -1199,10 +1420,8 @@ public sealed partial class World
     /// fixup).
     /// </para>
     /// <para>
-    /// <b>What is not here</b>: everything the port has no system for yet. The capturable object table is not read
-    /// (a town is registered in it as it is created, but mines and the rest are not); the heroes of the map are
-    /// placed on their tiles but no kingdom owns them (<c>Kingdoms::AddHeroes()</c>), and their ids for the map
-    /// conditions are not reassigned; the obelisk counter and the Price of Loyalty metadata are not read; the AI
+    /// <b>What is not here</b>: everything the port has no system for yet. The obelisk counter and the
+    /// Price of Loyalty metadata are not read; the AI
     /// regions of <c>ComputeStaticAnalysis</c> are not computed. None of them affects which tiles exist or whether
     /// they can be walked on, which is what this method is for.
     /// </para>
@@ -1223,6 +1442,10 @@ public sealed partial class World
         }
 
         Reset();
+
+        // The header the conditions are read from (world_loadmap.cpp:1760 asks Settings for it; the port keeps
+        // the header it was handed). See World.Conditions.cs.
+        MapInfo = map.Info;
 
         Width = map.Width;
         Height = map.Height;
@@ -1281,6 +1504,11 @@ public sealed partial class World
         // by the tile it stands on, and after the tiles, because a town's sea access is read off the map.
         CreateMapCastles(map);
 
+        // The capturable objects of the file: the sawmill, the alchemist lab, the mines, the lighthouse, the dragon
+        // city and the abandoned mine, all with a neutral owner (world_loadmap.cpp:382-430). The towns were already
+        // registered above; a block may give the owner of any of them later.
+        ReadCaptureObjects(map);
+
         // The information blocks of the map: a hero block describes the army, the artifacts, the experience,
         // the skills and the name of a hero whose position the tile carries, a jail block the hero waiting
         // inside the prison, a sign block a message, an event block resources, an artifact and a message, and a
@@ -1303,6 +1531,14 @@ public sealed partial class World
         // The rosters of the kingdoms, now that every town and hero carries the color the map gave it
         // (world_loadmap.cpp:1443-1445).
         AttachMapRosters();
+
+        // The two heroes the win/loss conditions name, found by the tile they stand on
+        // (world_loadmap.cpp:1447-1449). See World.Conditions.cs.
+        SetHeroIdsForMapConditions();
+
+        // The buried artifact, after the tiles are final and before the caches are built
+        // (world_loadmap.cpp:1451-1452). See World.UltimateArtifact.cs.
+        PlaceUltimateArtifact();
 
         PostLoad(true, false);
     }

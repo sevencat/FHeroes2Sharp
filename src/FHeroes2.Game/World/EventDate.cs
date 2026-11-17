@@ -75,10 +75,16 @@ public sealed class EventDate
     public bool IsApplicableForAIPlayers { get; private init; }
 
     /// <summary>The message of the event, empty when the block carries none.</summary>
-    public string Message { get; private init; } = string.Empty;
+    public string Message { get; private set; } = string.Empty;
 
     /// <summary>The title of the event; only the newer map format fills it.</summary>
     public string Title { get; private init; } = string.Empty;
+
+    /// <summary>
+    /// Restores the stolen French characters of the message, <c>World::fixFrenchCharactersInStrings()</c>
+    /// (<c>world.cpp:1290-1292</c>).
+    /// </summary>
+    internal void FixFrenchCharacters() => Message = MapTextCodec.FixFrenchCharacters(Message);
 
     /// <summary>
     /// Whether a date is past the only occurrence of the event, <c>EventDate::isDeprecated()</c>

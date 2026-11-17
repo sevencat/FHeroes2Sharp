@@ -111,7 +111,7 @@ public sealed class TileTroopsTests
 
         tile.SetMonster(world, MonsterType.Goblin, 5);
 
-        Assert.Equal(Mp2ObjectType.Monster, tile.MainObjectType);
+        Assert.Equal(Mp2ObjectType.ActionMonster, tile.MainObjectType);
         Assert.Equal(Mp2ObjectIcnType.Mons32, tile.MainObjectPart.IcnType);
         Assert.Equal((byte)(MonsterType.Goblin - 1), tile.MainObjectPart.IcnIndex);
         Assert.Equal(5u, tile.GetMonsterCount());

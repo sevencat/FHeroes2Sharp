@@ -163,22 +163,91 @@ public abstract class WorldPathfinder
     /// <c>from</c> stays at <c>-1</c> while being reached — that is the sentinel the backwards walk of
     /// <c>buildPath()</c> stops at.
     /// </remarks>
-    protected void ProcessWorldMap()
+    protected virtual void ProcessWorldMap()
     {
         Debug.Assert(_cache.Length == _map.Size, "The cache does not belong to this map.");
         Debug.Assert(_pathStart >= 0 && _pathStart < _map.Size, "The search has no valid start tile.");
 
-        Array.Fill(_cache, Unvisited);
+        ClearCache();
+        SeedStartNode();
 
-        _cache[_pathStart].Update(-1, 0, _remainingMovePoints);
+        ProcessNodes([_pathStart]);
+    }
 
-        List<int> nodesToExplore = [_pathStart];
+    /// <summary>
+    /// Puts every node back into the "never reached" state, the <c>for ( WorldNode &amp; node : _cache ) node = {}</c>
+    /// loop of <c>processWorldMap()</c>.
+    /// </summary>
+    /// <remarks>
+    /// This also drops the AI's per-tile answers (<see cref="WorldNode.IsAccessibleForAI"/> and the two
+    /// walk-through slots), because a node is cleared as a whole. <see cref="SeedStartNode"/> has to run
+    /// after it.
+    /// </remarks>
+    protected void ClearCache() => Array.Fill(_cache, Unvisited);
 
+    /// <summary>
+    /// Writes the start node, the only reached node whose <c>from</c> stays <c>-1</c>.
+    /// </summary>
+    protected void SeedStartNode() => _cache[_pathStart].Update(-1, 0, _remainingMovePoints);
+
+    /// <summary>
+    /// Walks the queue until it is empty, calling <see cref="ProcessCurrentNode"/> once per entry.
+    /// </summary>
+    /// <param name="nodesToExplore">The queue, or a list already seeded with extra entries.</param>
+    protected void ProcessNodes(List<int> nodesToExplore)
+    {
         // The list grows while it is walked: every improved neighbour is appended and will be processed
         // after the ones already queued. See the class remarks — this order is part of the result.
         for (int lastProcessedNode = 0; lastProcessedNode < nodesToExplore.Count; ++lastProcessedNode)
         {
             ProcessCurrentNode(nodesToExplore, nodesToExplore[lastProcessedNode]);
+        }
+    }
+
+    /// <summary>
+    /// Clears one node back to "never reached", <c>node.reset()</c> of the AI's <c>processCurrentNode()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The AI reaches a tile before it knows whether it may stand on it, and drops the node again when it
+    /// may not: the tile must not look reachable to whoever asks afterwards.
+    /// </remarks>
+    /// <param name="index">Index of the tile.</param>
+    protected void ResetNode(int index) => _cache[index] = Unvisited;
+
+    /// <summary>The AI's cached "may I stand here" answer, <c>_cache[index]._isAccessibleForAI</c>.</summary>
+    /// <param name="index">Index of the tile.</param>
+    /// <returns><see langword="null"/> when the question has not been asked in this search.</returns>
+    protected bool? GetAccessibleForAI(int index) => _cache[index].IsAccessibleForAI;
+
+    /// <summary>Stores the AI's "may I stand here" answer.</summary>
+    /// <param name="index">Index of the tile.</param>
+    /// <param name="value">The answer.</param>
+    protected void SetAccessibleForAI(int index, bool value) => _cache[index].IsAccessibleForAI = value;
+
+    /// <summary>
+    /// The AI's cached "may I walk through here when arriving from <paramref name="fromWater"/>" answer.
+    /// </summary>
+    /// <param name="index">Index of the tile.</param>
+    /// <param name="fromWater">Which of the two slots to read.</param>
+    /// <returns><see langword="null"/> when the question has not been asked in this search.</returns>
+    protected bool? GetAvailableForWalkThroughForAI(int index, bool fromWater) =>
+        fromWater
+            ? _cache[index].IsAvailableForWalkThroughForAiFromWater
+            : _cache[index].IsAvailableForWalkThroughForAiFromLand;
+
+    /// <summary>Stores the AI's "may I walk through here" answer in one of the two slots.</summary>
+    /// <param name="index">Index of the tile.</param>
+    /// <param name="fromWater">Which of the two slots to write.</param>
+    /// <param name="value">The answer.</param>
+    protected void SetAvailableForWalkThroughForAI(int index, bool fromWater, bool value)
+    {
+        if (fromWater)
+        {
+            _cache[index].IsAvailableForWalkThroughForAiFromWater = value;
+        }
+        else
+        {
+            _cache[index].IsAvailableForWalkThroughForAiFromLand = value;
         }
     }
 
@@ -456,7 +525,7 @@ public abstract class WorldPathfinder
         Tile tile = map.GetTile(tileIndex);
         Mp2ObjectType objectType = tile.MainObjectType;
 
-        if (objectType is Mp2ObjectType.ActionHero or Mp2ObjectType.Monster or Mp2ObjectType.ActionBoat)
+        if (objectType is Mp2ObjectType.ActionHero or Mp2ObjectType.ActionMonster or Mp2ObjectType.ActionBoat)
         {
             return false;
         }

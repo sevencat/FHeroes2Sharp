@@ -1,5 +1,7 @@
 using System.Globalization;
 
+using FHeroes2.Core.Random;
+
 namespace FHeroes2.Game.Resources;
 
 /// <summary>
@@ -34,6 +36,35 @@ public static class Resource
 
     /// <summary>All resources.</summary>
     public const int All = Wood | Mercury | Ore | Sulfur | Crystal | Gems | Gold;
+
+    /// <summary>
+    /// One resource, drawn uniformly, <c>Resource::Rand()</c> (<c>resource.cpp:94</c>).
+    /// </summary>
+    /// <param name="includeGold">
+    /// <see langword="true"/> to let gold be drawn as well; the reference passes <see langword="false"/> where the
+    /// caller wants a resource pile (the windmill), which never holds gold.
+    /// </param>
+    /// <returns>The flag of the drawn resource.</returns>
+    /// <remarks>
+    /// The draw is over <b>positions</b>, not over the flag values: the seven resources are not a dense sequence of
+    /// bits, so a random value of <see cref="All"/> would be wrong. The reference switches over <c>Rand::Get( 1, 7 )</c>
+    /// for exactly this reason.
+    /// </remarks>
+    public static int Rand(bool includeGold = true)
+    {
+        // Fully qualified: the method's own name shadows the generator class inside the class body.
+        return FHeroes2.Core.Random.Rand.Get(1, includeGold ? 7 : 6) switch
+        {
+            1 => Wood,
+            2 => Mercury,
+            3 => Ore,
+            4 => Sulfur,
+            5 => Crystal,
+            6 => Gems,
+            7 => Gold,
+            _ => Unknown,
+        };
+    }
 
     /// <summary>
     /// <c>Resource::CalculateEventResourceUpdate</c>: the part of an event's resources that fits into the current funds.

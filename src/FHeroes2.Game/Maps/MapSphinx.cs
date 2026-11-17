@@ -70,10 +70,27 @@ public sealed class MapSphinx : MapObject
     public ArtifactType Artifact { get; private init; }
 
     /// <summary>The correct answers, in lower case.</summary>
-    public IReadOnlyList<string> Answers { get; private init; } = [];
+    public IReadOnlyList<string> Answers { get; private set; } = [];
 
     /// <summary>The riddle the sphinx asks.</summary>
-    public string Riddle { get; private init; } = string.Empty;
+    public string Riddle { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Restores the stolen French characters of the answers and the riddle,
+    /// <c>MapSphinx::fixFrenchCharacters()</c> (<c>world.cpp:1311-1320</c>).
+    /// </summary>
+    internal void FixFrenchCharacters()
+    {
+        string[] answers = new string[Answers.Count];
+
+        for (int i = 0; i < answers.Length; ++i)
+        {
+            answers[i] = MapTextCodec.FixFrenchCharacters(Answers[i]);
+        }
+
+        Answers = answers;
+        Riddle = MapTextCodec.FixFrenchCharacters(Riddle);
+    }
 
     /// <summary>
     /// Whether the sphinx is worth asking at all, <c>MapSphinx::valid</c> (<c>maps_objects.h:117</c>): a

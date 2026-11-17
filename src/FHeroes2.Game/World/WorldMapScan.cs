@@ -1,6 +1,9 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Maps;
 
+// "Army" is both a namespace (FHeroes2.Game.Army) and the type inside it, so the type needs an alias.
+using ArmyUnit = FHeroes2.Game.Army.Army;
+
 namespace FHeroes2.Game;
 
 /// <summary>
@@ -231,6 +234,50 @@ public sealed partial class World
     public bool IsTileUnderProtection(int tileIndex) =>
         GetTile(tileIndex).GetMainObjectType(this) == Mp2ObjectType.ActionMonster
         || GetMonstersProtectingTile(tileIndex).Count > 0;
+
+    /// <summary>
+    /// Whether some monster that guards a tile is stronger than <paramref name="strength"/>,
+    /// <c>Maps::isTileProtectionStrongerThan()</c> (<c>maps.cpp:644</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The AI asks this to decide whether it may walk onto a guarded object at all: a guard that is
+    /// stronger than the army it brings means the tile stays unreachable, and the path is not built
+    /// through it.
+    /// </para>
+    /// <para>
+    /// Every guard is compared, not just the first — the reference does not stop at the first hit either,
+    /// so a tile protected by two stacks costs two strength computations. A monster on the tile itself
+    /// counts as its own guard here, which is why this walks
+    /// <see cref="ForEachMonsterProtectingTile"/> and not <see cref="GetMonstersProtectingTile(int, bool)"/>
+    /// with its "objects that are attacked from the front are their own guard" shortcut: the AI already
+    /// made that decision before calling this.
+    /// </para>
+    /// <para>
+    /// The comparison is strict (<c>&gt;</c>): a guard exactly as strong as the army does not stop it,
+    /// because the fight is resolved elsewhere.
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">Index of the tile to test.</param>
+    /// <param name="strength">Strength of the army that wants to take the tile.</param>
+    /// <returns><see langword="true"/> when at least one guard is stronger.</returns>
+    public bool IsTileProtectionStrongerThan(int tileIndex, double strength)
+    {
+        bool isStronger = false;
+        ArmyUnit tileArmy = new();
+
+        ForEachMonsterProtectingTile(tileIndex, monsterTileIndex =>
+        {
+            tileArmy.SetFromTile(this, GetTile(monsterTileIndex));
+
+            if (tileArmy.GetStrength() > strength)
+            {
+                isStronger = true;
+            }
+        });
+
+        return isStronger;
+    }
 
     /// <summary>
     /// Calls <paramref name="action"/> with the index of every monster that protects a tile,

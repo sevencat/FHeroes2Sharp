@@ -134,6 +134,71 @@ public sealed class WorldSphinxAndEventsTests
     }
 
     [Fact]
+    public void TheFrenchCharactersOfTheRumorsAreRestored()
+    {
+        World world = new();
+        world.LoadMap(MapWithWorldBlock(RumorBlock("Le ch*teau de l'>le")));
+
+        // The French editor had no accents and wrote the circumflex of "château" as an asterisk and the one of
+        // "île" as a greater than sign (ui_font.cpp:7190-7262). The loader keeps the bytes as they are; the fix is
+        // the separate step of world.cpp:1279.
+        Assert.Equal("Le ch*teau de l'>le", world.Rumors[0]);
+
+        world.FixFrenchCharactersInStrings();
+
+        Assert.Equal("Le château de l'île", world.Rumors[0]);
+    }
+
+    [Fact]
+    public void TheFrenchCharactersOfADailyEventAreRestored()
+    {
+        World world = new();
+        world.LoadMap(MapWithWorldBlock(DailyEventBlock("Voil@ l'>le.")));
+
+        world.FixFrenchCharactersInStrings();
+
+        Assert.Equal("Voilà l'île.", Assert.Single(world.DailyEvents).Message);
+    }
+
+    [Fact]
+    public void TheFrenchCharactersOfASphinxAreRestoredInTheRiddleAndInTheAnswers()
+    {
+        World world = new();
+        world.LoadMap(MapWithSphinx(SphinxBlock("Qui vit dans l'>le ?", ["l'>le"])));
+
+        world.FixFrenchCharactersInStrings();
+
+        MapSphinx sphinx = world.GetMapSphinx(ObjectTileIndex)!;
+        Assert.Equal("Qui vit dans l'île ?", sphinx.Riddle);
+        Assert.Equal(["l'île"], sphinx.Answers);
+    }
+
+    [Fact]
+    public void TheFrenchCharactersOfASignAreRestored()
+    {
+        World world = new();
+        world.LoadMap(MapWithSign(SignBlock("Voil@ l'>le.")));
+
+        Assert.Equal("Voil@ l'>le.", world.GetMapSign(ObjectTileIndex)!.Message);
+
+        world.FixFrenchCharactersInStrings();
+
+        Assert.Equal("Voilà l'île.", world.GetMapSign(ObjectTileIndex)!.Message);
+    }
+
+    [Fact]
+    public void TheFixLeavesAMapWithoutStolenCharactersAlone()
+    {
+        World world = new();
+
+        world.LoadMap(MapWithWorldBlocks(RumorBlock("A rumor.")));
+
+        world.FixFrenchCharactersInStrings();
+
+        Assert.Equal("A rumor.", world.Rumors[0]);
+    }
+
+    [Fact]
     public void TheEventsOfADayComeBackInMapOrder()
     {
         World world = new();
@@ -198,6 +263,19 @@ public sealed class WorldSphinxAndEventsTests
         Mp2Map map = Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex);
 
         map.SetTileAt(ObjectTileIndex, ObjectTile(ObjectTileType(Mp2ObjectType.Sphinx), 79));
+
+        return map with { InfoBlocks = [new Mp2InfoBlock(0, block)] };
+    }
+
+    /// <summary>
+    /// A map with one sign tile and the given information block.
+    /// </summary>
+    /// <param name="block">Payload of the block.</param>
+    private static Mp2Map MapWithSign(byte[] block)
+    {
+        Mp2Map map = Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex);
+
+        map.SetTileAt(ObjectTileIndex, ObjectTile(ObjectTileType(Mp2ObjectType.Sign), 12));
 
         return map with { InfoBlocks = [new Mp2InfoBlock(0, block)] };
     }
@@ -348,6 +426,15 @@ public sealed class WorldSphinxAndEventsTests
         byte[] text = Encoding.ASCII.GetBytes(rumor);
 
         return [0x00, 0, 0, 0, 0, 0, 0, 0, .. text, 0];
+    }
+
+    /// <summary>A sign block: the 0x01 marker, eight unused bytes and the message.</summary>
+    /// <param name="message">The message.</param>
+    private static byte[] SignBlock(string message)
+    {
+        byte[] text = Encoding.ASCII.GetBytes(message);
+
+        return [0x01, 0, 0, 0, 0, 0, 0, 0, 0, .. text, 0];
     }
 
     /// <summary>
