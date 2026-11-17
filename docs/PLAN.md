@@ -77,7 +77,7 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `ai` | 9 | 0 | 0 | 9 |
 | `army` | 4 | 0 | 2 | 2 |
 | `audio` | 1 | 1 | 0 | 0 |
-| `battle` | 18 | 0 | 0 | 18 |
+| `battle` | 18 | 0 | 1 | 17 |
 | `campaign` | 3 | 0 | 0 | 3 |
 | `castle` | 11 | 3 | 5 | 3 |
 | `dialog` | 29 | 2 | 3 | 24 |
@@ -93,7 +93,7 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `spell` | 4 | 1 | 3 | 0 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **41** | **63** | **145** |
+| **合计** | **249** | **41** | **64** | **144** |
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -501,6 +501,12 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
 `monster_anim.cpp` 依赖 `battle_animation.h`。测试 61 条新增，Game 2145 → **2206**，全解决方案
 2895 → **2956** 全绿。
 
+2026-11-17：`battle` 起步（ADR-147）：`battle.h` 的方向环与 `Result`、`battle_board.cpp` 的纯几何先搬过来 ——
+11×9 偏移六角格的 `isValidDirection`/`GetIndexDirection`/`GetDirection`/`GetDistance`、城堡/墙外/护城河三张
+索引表、宽单位的四个候选格与八格环、半径环。**行数动了**：`battle` 0/0/18 → **0/1/17**，合计 41/63/145 →
+**41/64/144**（`battle_board.cpp` 的几何已全，剩绘制与单位相关部分）。测试 33 条新增，Game 2206 → **2239**，
+全解决方案 2956 → **2989** 全绿。
+
 ### `engine`（26）
 
 * ✅ `agg_file.cpp`→`AssetArchive`/`AggFileNameHash`；`h2d_file.cpp`→`H2DArchive`/`H2DWriter`/`H2DImageCodec`
@@ -666,7 +672,13 @@ countCapturedMines, events, isAiControlled, displayEventDialog )` 落地 `kingdo
   缓存 + `BuildPath` 反向回溯（ADR-092），入口挂 `World.Pathfinder`，`ResetPathfinder()`/`LoadMap`
   都会丢缓存；AI 侧（`AIWorldPathfinder`/`ObjectValueStorage`）要军队与对象价值表，未转；
   ✔ `world_regions`（`MapRegion`/`MapRegionNode`/`ComputeStaticAnalysis` 与两项地形统计，ADR-116）
-* `ai`（9）、`battle`（18）、`campaign`（3）：**全部未转**
+* `ai`（9）、`campaign`（3）：**全部未转**
+* `battle`（18）：◐ 已起步（ADR-147）—— `battle.h` 的 `Result` 与胜负位（`BattleOutcome`/`BattleResult`）、
+  两个方向环（`CellDirection`/`AttackDirection` 与其环运算）、`battle_board.cpp` 的**纯几何**（11×9 偏移
+  六角格、两格之间的方向、六向距离、城堡/墙外/护城河三张表、宽单位的环与半径环）落在 `Game.Battle`；
+  其余 17 份未转，且全部压在 `Unit` 上：`battle_cell` 的 `Cell`/`Position` 持有 `Unit*`，`battle_troop` 的
+  `Unit` 又要动画与竞技场，`battle_army`/`battle_grave`/`battle_bridge`/`battle_pathfinding` 都是在单位上
+  做查询。下一批从 `battle_troop` 的 `Unit` 与 `battle_cell` 的 `Cell`/`Position` 入手
 * `h2d`（1）：✅ `h2d.cpp`→`Game.H2D.H2DResources`（68 个文件名的样本表、开档三处失败、`Current` 门面，
   ADR-141）；读取本身在 `Assets.H2D`（`H2DArchive`/`H2DWriter`/`H2DImageCodec`，即 `engine/h2d_file.cpp`）。
   `Settings::findFile` 的文件搜索没搬，路径由组合根给出（`GetDefaultPath`）

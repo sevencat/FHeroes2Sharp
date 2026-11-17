@@ -5193,3 +5193,34 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，0 警告 0 �
 **遗留**：`monster.cpp`/`monster_info.cpp` 只剩文案（`GetName`/`GetMultiName`/`GetPluralName`/
 `getRandomRaceMonstersName` 与四个描述函数，都要 `Spell.GetName()` 与 `_()`）与两张只被战斗侧读的表
 （`icnId`/`sounds`）；`monster_anim.cpp` 的 `RandomMonsterAnimation` 依赖 `battle_animation.h`，随战斗批次。
+
+### `battle` 起步：方向环、战场几何、胜负位（2026-11-17）
+
+`src/fheroes2/battle/` 的 18 份 `.cpp`（约 1.5 万行）此前一份未转，整份目录压在 `Battle::Unit` 上。先搬不依赖
+单位的两块地基（ADR-147）。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Battle/BattleCellDirection.cs`（新） | `battle_cell.h:37-113` | `CellDirection`/`AttackDirection` 两个位环、`All`/`Next`/`Previous`、左右掩码、`AsAttackDirection` |
+| `Game/Battle/BattleBoard.cs`（新） | `battle_board.cpp:99-410`、`:697-1140` | 11×9 偏移六角格的 `isValidDirection`/`GetIndexDirection`/`GetDirection`/`GetDistance`、城堡/墙外/护城河三表、宽单位的四格候选与八格环、半径环 |
+| `Game/Battle/BattleResult.cs`（新） | `battle.h:35-66`、`battle_main.cpp:163-179` | `BattleOutcome` 位值 + `BattleResult`，优先级收在 `GetOutcome` 一处 |
+
+要点：
+
+* **方向是位环**：`operator++` 就是左移一位，`CENTER` 是环的收口（0x40 / 0x100）；`All` 与 `Next` 链由测试锁死，
+  防止数组顺序被改坏。左右掩码只能被 `IsLeftSide`/`IsRightSide` 消费。
+* **`GetDirection` 按参考写法沿环试**，不查增量表；`GetDistance` 走轴向坐标，同号取 max、异号相加，越界答 0。
+* **城堡表与墙外表在 8/29/73/96 四个格子上重叠**（参考的区间首尾相接），不是转录错误，测试钉住，
+  并断言其余 95 格恰在一侧。
+* **护城河 49 格看单位与桥**：`unit.isFlying() || bridge == nullptr || !bridge->isPassable( unit )`，端口化成
+  `unitIsFlying`/`bridgeIsPassable` 两个参数（桥与竞技场未转）。
+* **宽单位的环只有一支**：参考的 `headIdx > tailIdx` 两个分支是同一序列（从小索引那端顺时针绕一圈）。
+* **半径环含内层**：`GetDistanceIndexes(45, 2)` 得 17 格，包含距离 1 的格子——参考语义是 "within radius"，
+  注释里点明，免得后人当 bug 修掉。
+
+测试 33 条新增：`BattleCellDirectionTests` 7、`BattleBoardTests` 19、`BattleResultTests` 7。Game 2206 →
+**2239**，全解决方案 2956 → **2989** 全绿，0 警告 0 错误。覆盖率：`battle` 0/0/18 → **0/1/17**，
+合计 41/63/145 → **41/64/144**。
+
+**遗留**：其余 17 份都压在 `Unit` 上。下一批从 `battle_troop` 的 `Unit` 与 `battle_cell` 的 `Cell`/`Position`
+入手；`monster_anim.cpp` 与 `monsterData` 的 `icnId`/`sounds` 也在那时一起落地。

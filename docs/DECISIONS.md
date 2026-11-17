@@ -5479,3 +5479,52 @@ Game 1889 → **1995**，全解决方案 2639 → **2745** 全绿，`-warnaserro
 - **两张战斗表与动画**：`monsterData` 里的 `icnId`/`sounds` 只被 `monster_anim.cpp`、`battle_troop.cpp`、
   `dialog_armyinfo.cpp` 读，`monster_anim.cpp` 的 `RandomMonsterAnimation` 依赖 `battle_animation.h` 的
   `AnimationReference`——两者都随战斗批次一起落，现在生成就是死数据。
+
+---
+
+## ADR-147：`battle` 起步——两个方向环、战场几何与胜负位 ✅
+
+**背景**：`battle/` 的 18 份 `.cpp`（约 1.5 万行）此前一份未转。整份目录压在 `Battle::Unit` 上：
+`battle_cell` 的 `Cell`/`Position` 持有 `Unit*`，`battle_arena`/`battle_troop`/`battle_action` 都绕着单位转，
+`battle_interface`（6100 行）是绘制，`battle_anim`/`battle_dialogs` 是表现层。真正**不依赖单位**的地基只有两块：
+`battle.h` 的枚举与结果类型、`battle_board.cpp` 的索引几何。这一批先把这两块搬过来，让后续批次有落点。
+
+**决定**：
+
+1. **方向是位环，不是连续枚举**：`CellDirection` 取 1,2,4,8,16,32，`AttackDirection` 再加 TOP/BOTTOM 取
+   1..0x80，`CENTER` 分别是 0x40 与 0x100——参考的 `operator++` 就是左移一位，`operator--` 是右移，环在
+   `CENTER` 处绕回。端口给 `BattleCellDirections.All`（顺时针六项）与 `Next`/`Previous`，并用测试证明
+   `All` 与 `Next` 链完全一致，防止有人后来改数组顺序。
+2. **`RightSide`/`LeftSide` 是掩码**：它们是三个方向的并，只能被 `IsLeftSide`/`IsRightSide` 消费。
+   `AsAttackDirection` 收到掩码、`CENTER` 或 `UNKNOWN` 一律回 `Unknown`——参考的 `default` 分支。
+3. **几何只搬 index 版本**：`GetDirection` 保持参考的写法——沿环试六个邻居、比 index，而不是查增量表；
+   `GetDistance` 换到轴向坐标上，`du`/`dv` 同号取 `max`、异号相加。两个函数对越界 index 都答
+   `Unknown`/`0`，与参考一致。除 `IsValidDirection` 之外一律不检查边界——参考自己也不检查。
+4. **城堡表与墙外表在四个格子上重叠**：8、29、73、96 两表都答 true，因为参考的区间首尾相接
+   （`index <= 8` 与 `8 <= index`）。这不是转录错误：测试钉住这四个格子，并断言其余 95 格恰在一侧，
+   免得以后被"修正"成互斥。
+5. **护城河九格**：7、18、28、39、61、72、84、95 八格无条件；49 格看 `unit.isFlying() || bridge == nullptr ||
+   !bridge->isPassable( unit )`。桥与竞技场还没转，端口把答案化成两个参数
+   （`unitIsFlying`/`bridgeIsPassable`），与 `IsMoatIndex` 的签名一起说明。
+6. **宽单位的环只有一支**：参考按 `headIdx > tailIdx` 写了两个分支，实际是同一个序列——从小索引的那一端
+   顺时针绕一圈，最后回到它。端口合成一支并注明；`GetMoveWideIndexes` 的四个候选保持参考顺序
+   （左、右、朝向上的两个对角），因为调用方取第一个可用的。
+7. **半径环包含内层**：`GetDistanceIndexes(center, 2)` 同时含距离 1 与距离 2 的格子——参考的循环边界是
+   `|dq|,|dr|,|dq+dr| <= R`，语义是 "within radius"。测试按此断言（中心 45 的半径 2 得 17 格），
+   并在注释里点明，防止后人当成越界 bug 修掉。宽单位版本经 `SortedSet` 合并两环、剔除自身两格，
+   因此顺序是 index 升序（参考用 `std::set`，同序）。
+8. **`Result` 的位值原样保留**：`LOSS=0x01`、`RETREAT=0x02`、`SURRENDER=0x04`、`WINS=0x80`，中间 0x08..0x40
+   留空；零散组合的化简只在 `GetOutcome` 一处，优先级 surrender > retreat > loss > wins
+   （`battle_main.cpp:163-179`）。
+
+**后果**：新增 `Battle/BattleCellDirection.cs`、`Battle/BattleBoard.cs`、`Battle/BattleResult.cs`；测试
+`BattleCellDirectionTests` 7、`BattleBoardTests` 19、`BattleResultTests` 7，共 33 条：方向环的正反向、
+每个邻格的互反方向与距离 1（98×6 全覆盖）、偏移行的对角缺失、四张索引表、宽单位的环对称与四格候选、
+半径环与邻格的等价性、结果的优先级。Game 2206 → **2239**，全解决方案 2956 → **2989** 全绿，
+`-warnaserror` 0 警告。覆盖率：`battle` 0/0/18 → **0/1/17**，合计 41/63/145 → **41/64/144**
+（`battle_board.cpp` 的几何部分齐了，还剩绘制与 `Unit` 相关的重载）。
+
+**遗留**：其余 17 份都压在 `Unit` 上——`battle_cell` 的 `Cell`/`Position`、`battle_troop` 的 `Unit`（还要
+`battle_animation` 与 `battle_interface`）、`battle_army`/`battle_grave`/`battle_bridge`/`battle_pathfinding`
+都是在单位上做查询，`battle_arena` 是它们的宿主。下一批从 `Unit` 与 `Cell`/`Position` 入手；`monster_anim.cpp`
+的 `RandomMonsterAnimation` 与 `monsterData` 的 `icnId`/`sounds`（ADR-146 遗留）也在那时一起落地。
