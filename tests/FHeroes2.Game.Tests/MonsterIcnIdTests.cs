@@ -69,4 +69,50 @@ public class MonsterIcnIdTests
         Assert.Equal(IcnType.Unknown, MonsterIcnIds.GetDwellingIcn(MonsterType.RandomMonster));
         Assert.Equal(IcnType.Unknown, MonsterIcnIds.GetDwellingIcn(MonsterType.RandomMonsterLevel4));
     }
+
+    [Theory]
+    [InlineData(MonsterType.Ranger, IcnType.Archer2)]
+    [InlineData(MonsterType.VeteranPikeman, IcnType.Pikeman2)]
+    [InlineData(MonsterType.MasterSwordsman, IcnType.Swordsm2)]
+    [InlineData(MonsterType.Champion, IcnType.Cavalryb)]
+    [InlineData(MonsterType.Crusader, IcnType.Paladin2)]
+    [InlineData(MonsterType.OrcChief, IcnType.Orc2)]
+    [InlineData(MonsterType.MinotaurKing, IcnType.Minotau2)]
+    [InlineData(MonsterType.Giant, IcnType.Titanblu)]
+    [InlineData(MonsterType.Titan, IcnType.Titanbla)]
+    [InlineData(MonsterType.Mummy, IcnType.Mummyw)]
+    [InlineData(MonsterType.MutantZombie, IcnType.Zombie2)]
+    [InlineData(MonsterType.BoneDragon, IcnType.Dragbone)]
+    public void AnUpgradeDrawsItsOwnFrames(MonsterType monster, IcnType expected)
+    {
+        Assert.Equal(expected, MonsterIcnIds.GetSpriteIcn(monster));
+    }
+
+    [Fact]
+    public void TheChampionRidesTheBlackCavalryFile()
+    {
+        // The archive calls the black cavalry CAVALRYB, so the champion reads a "black" file while the
+        // cavalry reads CAVALRYR — the two names are colours, not upgrades.
+        Assert.Equal(IcnType.Cavalryr, MonsterIcnIds.GetSpriteIcn(MonsterType.Cavalry));
+        Assert.Equal(IcnType.Cavalryb, MonsterIcnIds.GetSpriteIcn(MonsterType.Champion));
+    }
+
+    [Fact]
+    public void EveryCreatureHasASprite()
+    {
+        Assert.Equal(66, (int)MonsterType.WaterElement - (int)MonsterType.Peasant + 1);
+
+        for (MonsterType monster = MonsterType.Peasant; monster <= MonsterType.WaterElement; ++monster)
+        {
+            Assert.NotEqual(IcnType.Unknown, MonsterIcnIds.GetSpriteIcn(monster));
+        }
+    }
+
+    [Fact]
+    public void TheMarkersHaveNoSprite()
+    {
+        Assert.Equal(IcnType.Unknown, MonsterIcnIds.GetSpriteIcn(MonsterType.Unknown));
+        Assert.Equal(IcnType.Unknown, MonsterIcnIds.GetSpriteIcn(MonsterType.RandomMonster));
+        Assert.Equal(IcnType.Unknown, MonsterIcnIds.GetSpriteIcn(MonsterType.RandomMonsterLevel4));
+    }
 }

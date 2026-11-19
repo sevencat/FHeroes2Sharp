@@ -27,9 +27,9 @@ namespace FHeroes2.Game.Spells;
 /// <see cref="GetSummonableBoat"/>, <see cref="IsHeroNearWater"/>) are the rest of the same file.
 /// </para>
 /// <para>
-/// <b>Not ported</b>: <c>getSpellDescription</c> (<c>spell_info.cpp:214-321</c>), which only assembles
-/// translated sentences around these numbers — the port leaves translated text to the text layer, the same
-/// way <c>Speed</c> does.
+/// <b>Not ported</b>: <c>getSpellDescription</c> (<c>spell_info.cpp:214-427</c>), the long sentence that wraps these
+/// numbers with the caster's state — it wants a <c>HeroBase</c>, the nearest castle and the map, so it waits for the
+/// spell book screen. The spell's own short description is <see cref="SpellText.GetDescription"/>.
 /// </para>
 /// </remarks>
 public static class SpellInfo

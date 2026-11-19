@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Castle;
+using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 
@@ -18,11 +19,13 @@ namespace FHeroes2.Game.Army;
 /// the value stored inside map objects and scripted events.
 /// </para>
 /// <para>
-/// Not ported: <c>GetName()</c>/<c>GetPluralName()</c> (translated strings), <c>GetAttackString()</c> and
-/// the three siblings (display), and the battle-only overrides (<c>isBattle()</c>,
-/// <c>GetHitPointsLeft()</c>, the mode flags). The ability queries (<c>isUndead()</c>,
-/// <c>isAffectedByMorale()</c>) are here since <see cref="MonsterAbilities"/> landed; the rest of them are
-/// battle rules and wait for the battle engine. The upgrade pair is here since
+/// Not ported: <c>GetName()</c>/<c>GetPluralName()</c> — the words live in <see cref="MonsterNames"/>, which
+/// the port calls by monster id rather than through the stack — and the battle-only overrides
+/// (<c>isBattle()</c>, <c>GetHitPointsLeft()</c>, the mode flags). The four display strings
+/// (<c>GetAttackString()</c> and its three siblings) are here since the army info dialog was laid out: the info
+/// screen prints them, so they belong to the troop and not to the screen. The ability queries
+/// (<c>isUndead()</c>, <c>isAffectedByMorale()</c>) are here since <see cref="MonsterAbilities"/> landed; the rest
+/// of them are battle rules and wait for the battle engine. The upgrade pair is here since
 /// <see cref="MonsterUpgrades"/> landed — the dwelling check that decides whether an upgrade is *available*
 /// lives in the castle dialog, not in the troop.
 /// </para>
@@ -163,6 +166,62 @@ public sealed class Troop
     /// <summary>Speed of the stack, <c>Troop::GetSpeed()</c> — the slowest member sets the pace.</summary>
     /// <returns>The speed of the stack's monster.</returns>
     public MonsterSpeed GetSpeed() => GetBattleStats().Speed;
+
+    /// <summary>Attack of one creature in the stack, <c>Troop::GetAttack()</c>.</summary>
+    /// <returns>The attack of the stack's monster.</returns>
+    public int GetAttack() => GetBattleStats().Attack;
+
+    /// <summary>Defense of one creature in the stack, <c>Troop::GetDefense()</c>.</summary>
+    /// <returns>The defense of the stack's monster.</returns>
+    public int GetDefense() => GetBattleStats().Defense;
+
+    /// <summary>Shots of the stack, <c>Troop::GetShots()</c>.</summary>
+    /// <returns>The ammunition of the stack's monster, zero for a creature that does not shoot.</returns>
+    public int GetShots() => GetBattleStats().Shots;
+
+    /// <summary>
+    /// The attack as the info screen prints it, <c>Troop::GetAttackString()</c> (<c>army_troop.cpp:113-117</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Just the number, because a <see cref="Troop"/> knows nothing about heroes: the reference's
+    /// <c>ArmyTroop</c> overrides this to print <c>"12 (14)"</c> — the base stat and, in parentheses, the total
+    /// with the commander's bonus. That half waits for <c>ArmyTroop</c>.
+    /// </para>
+    /// <para>
+    /// The port keeps it on the troop rather than on <see cref="MonsterType"/> for the same reason as
+    /// <see cref="GetCountFromHitPoints"/>: an enum has no methods to hang it on.
+    /// </para>
+    /// </remarks>
+    /// <returns>The attack of one creature, as digits.</returns>
+    public string GetAttackString() => GetAttack().ToString();
+
+    /// <summary>
+    /// The defense as the info screen prints it, <c>Troop::GetDefenseString()</c> (<c>army_troop.cpp:119-123</c>).
+    /// </summary>
+    /// <returns>The defense of one creature, as digits.</returns>
+    public string GetDefenseString() => GetDefense().ToString();
+
+    /// <summary>
+    /// The shots as the info screen prints it, <c>Troop::GetShotString()</c> (<c>army_troop.cpp:125-128</c>).
+    /// </summary>
+    /// <returns>The ammunition, as digits.</returns>
+    public string GetShotString() => GetShots().ToString();
+
+    /// <summary>
+    /// The speed as the info screen prints it, <c>Troop::GetSpeedString()</c> (<c>army_troop.cpp:130-141</c>):
+    /// the word and, in parentheses, the number — <c>"Very Fast (6)"</c>.
+    /// </summary>
+    /// <returns>The speed word and value.</returns>
+    public string GetSpeedString() => GetSpeedString((uint)GetSpeed());
+
+    /// <summary>
+    /// The speed of a given value in the info screen's form, <c>Troop::GetSpeedString( uint32_t )</c>
+    /// (<c>army_troop.cpp:133-141</c>) — the overload the reference exposes for a speed that is not the troop's.
+    /// </summary>
+    /// <param name="speed">The speed value.</param>
+    /// <returns>The speed word and value.</returns>
+    public static string GetSpeedString(uint speed) => $"{Speed.GetName(speed)} ({speed})";
 
     /// <summary>Cost of one creature, <c>Monster::GetCost()</c> (<c>monster.h:306</c>).</summary>
     /// <returns>The cost.</returns>

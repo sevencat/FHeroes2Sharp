@@ -202,6 +202,55 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Draws <paramref name="sourceArea"/> of <paramref name="sprite"/> so that the area's own top left corner
+    /// lands on <paramref name="destinationPoint"/>, with the result clipped to <paramref name="clip"/>: the
+    /// equivalent of <c>fheroes2::Blit( in, inPos, inSize, out, outPos )</c> behind a <c>FitToRoi</c>.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="BlitSprite(PixelBuffer, Point, Sprite, in Rect)"/> overload places the <i>sprite's</i> origin on
+    /// the offset, which is the wrong end of the arithmetic when only a slice of a sprite travels somewhere — the
+    /// bottom bar and the guild picture both do that.
+    /// </remarks>
+    /// <param name="destination">The display buffer.</param>
+    /// <param name="destinationPoint">Where the source area's top left corner goes, in destination coordinates.</param>
+    /// <param name="sprite">The sprite to read.</param>
+    /// <param name="sourceArea">The part of the sprite to draw, in sprite local coordinates.</param>
+    /// <param name="clip">The only region of <paramref name="destination"/> the drawing may touch.</param>
+    public static void BlitSpriteClipped(
+        PixelBuffer destination,
+        Point destinationPoint,
+        Sprite sprite,
+        in Rect sourceArea,
+        in Rect clip)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(sprite);
+
+        Rect area = sourceArea.Intersect(sprite.Image.Bounds);
+        if (area.IsEmpty)
+        {
+            return;
+        }
+
+        Rect visible = new Rect(destinationPoint.X, destinationPoint.Y, area.Width, area.Height)
+            .Clip(clip)
+            .Clip(destination.Bounds);
+
+        if (visible.IsEmpty)
+        {
+            return;
+        }
+
+        Rect source = new(
+            area.X + (visible.X - destinationPoint.X),
+            area.Y + (visible.Y - destinationPoint.Y),
+            visible.Width,
+            visible.Height);
+
+        BlitSprite(destination, new Point(visible.X - source.X, visible.Y - source.Y), sprite, source);
+    }
+
+    /// <summary>
     /// Converts every pixel of <paramref name="target"/> through the recolouring
     /// <paramref name="palette"/>, the equivalent of <c>fheroes2::ApplyPalette( Image &amp;, ... )</c>.
     /// </summary>

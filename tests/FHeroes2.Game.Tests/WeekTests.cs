@@ -36,6 +36,41 @@ public sealed class WeekTests
         Assert.Equal(MonsterType.Ranger, week.Monster);
     }
 
+    [Theory]
+    [InlineData(WeekName.Unnamed, "Unnamed")]
+    [InlineData(WeekName.Squirrel, "Squirrel")]
+    [InlineData(WeekName.Condor, "Condor")]
+    [InlineData(WeekName.Ant, "Ant")]
+    [InlineData(WeekName.Beetle, "Beetle")]
+    // The reference's own string is in capitals (week.cpp:198) and the original game prints it that way.
+    [InlineData(WeekName.Plague, "PLAGUE")]
+    public void ARegularWeekIsNamedWithTheReferencesWord(WeekName type, string name)
+    {
+        Assert.Equal(name, new Week(type).GetName());
+    }
+
+    [Fact]
+    public void AMonstersWeekIsNamedAfterTheCreature()
+    {
+        // Not "Week of the Peasant": the sentence around it says "Week of the %{name}" (game_startgame.cpp:152).
+        Assert.Equal("Peasant", new Week(WeekName.Monsters, MonsterType.Peasant).GetName());
+        Assert.Equal("Bone Dragon", new Week(WeekName.Monsters, MonsterType.BoneDragon).GetName());
+
+        // A monster's week without a monster cannot come out of RandomWeek; the port answers the table's placeholder
+        // the way Monster::GetName() does rather than throwing at a caller that only prints the answer.
+        Assert.Equal("Unknown Monster", new Week(WeekName.Monsters).GetName());
+    }
+
+    [Fact]
+    public void EveryNameOfTheTableIsDistinct()
+    {
+        // 34 rows, and a duplicated word would be a mistyped case label that no other test would catch.
+        string[] names = Enum.GetValues<WeekName>().Select(type => new Week(type).GetName()).ToArray();
+
+        Assert.Equal(Enum.GetValues<WeekName>().Length, names.Length);
+        Assert.Equal(names.Length, names.Distinct().Count());
+    }
+
     [Fact]
     public void TheSameSeedAlwaysGivesTheSameWeek()
     {

@@ -14,9 +14,9 @@ namespace FHeroes2.Game.Kingdom;
 /// <see cref="MonsterType.Unknown"/> — because both underlying values are zero.
 /// </para>
 /// <para>
-/// <c>Week::GetName()</c> (<c>week.cpp:126-206</c>) is the one member left out: it hands the words to the
-/// translation table and, for a monster's week, to <c>Monster::GetName()</c>. The port has neither yet
-/// (ADR-113).
+/// <c>Week::GetName()</c> (<c>week.cpp:126-206</c>) is here as <see cref="GetName"/>: the reference runs every
+/// word through the translation table, the port returns the reference's own English (ADR-171), and a monster's
+/// week answers with the creature's singular name through <see cref="MonsterNames"/>.
 /// </para>
 /// </remarks>
 public readonly struct Week
@@ -38,6 +38,68 @@ public readonly struct Week
 
     /// <summary>The favoured monster, <c>Week::GetMonster()</c>.</summary>
     public MonsterType Monster { get; }
+
+    /// <summary>
+    /// What the week is called, <c>Week::GetName()</c> (<c>week.cpp:126-206</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The words are the reference's own English, without the <c>week|</c> context prefix it hands to gettext, which
+    /// is what <c>Experience</c> already does (ADR-137): the port has no translation layer, and returning a key
+    /// instead of a word would make the one caller — "Astrologers proclaim the Week of the %{name}." — unreadable.
+    /// </para>
+    /// <para>
+    /// Two rows surprise readers and are kept on purpose. A monster's week is <b>not</b> "Week of the Peasant": the
+    /// reference returns the creature's singular name and lets the sentence supply the rest, so that is what
+    /// <see cref="MonsterNames.GetSingular"/> answers. And the plague is <c>"PLAGUE"</c> in capitals, because the
+    /// reference's own string is (<c>week.cpp:198</c>) — the original game prints it that way.
+    /// </para>
+    /// <para>
+    /// A week whose type is somehow outside the enum answers <c>"Unnamed"</c>, matching the reference's
+    /// <c>assert</c>-then-default, since the answer is only ever printed.
+    /// </para>
+    /// </remarks>
+    /// <returns>The name, for example <c>"Squirrel"</c>, <c>"Ant"</c>, <c>"Peasant"</c> or <c>"PLAGUE"</c>.</returns>
+    public string GetName() => Type switch
+    {
+        WeekName.Unnamed => "Unnamed",
+
+        // A regular week of a month.
+        WeekName.Squirrel => "Squirrel",
+        WeekName.Rabbit => "Rabbit",
+        WeekName.Gopher => "Gopher",
+        WeekName.Badger => "Badger",
+        WeekName.Rat => "Rat",
+        WeekName.Eagle => "Eagle",
+        WeekName.Weasel => "Weasel",
+        WeekName.Raven => "Raven",
+        WeekName.Mongoose => "Mongoose",
+        WeekName.Dog => "Dog",
+        WeekName.Aardvark => "Aardvark",
+        WeekName.Lizard => "Lizard",
+        WeekName.Tortoise => "Tortoise",
+        WeekName.Hedgehog => "Hedgehog",
+        WeekName.Condor => "Condor",
+
+        // The first week of a month, which is a month.
+        WeekName.Ant => "Ant",
+        WeekName.Grasshopper => "Grasshopper",
+        WeekName.Dragonfly => "Dragonfly",
+        WeekName.Spider => "Spider",
+        WeekName.Butterfly => "Butterfly",
+        WeekName.Bumblebee => "Bumblebee",
+        WeekName.Locust => "Locust",
+        WeekName.Earthworm => "Earthworm",
+        WeekName.Hornet => "Hornet",
+        WeekName.Beetle => "Beetle",
+
+        // A monster's week: the creature's name, not the phrase around it (week.cpp:200).
+        WeekName.Monsters => MonsterNames.GetSingular(Monster),
+
+        WeekName.Plague => "PLAGUE",
+
+        _ => "Unnamed",
+    };
 
     /// <summary>
     /// Draws the next week, <c>Week::RandomWeek()</c> (<c>week.cpp:185</c>).

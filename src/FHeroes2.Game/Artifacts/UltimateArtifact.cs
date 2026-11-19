@@ -35,6 +35,37 @@ public sealed class UltimateArtifact
     public ArtifactType Artifact { get; private set; } = ArtifactType.Unknown;
 
     /// <summary>
+    /// The name of the artifact, <c>Artifact::GetName()</c> (<c>artifact.cpp:93-96</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference reads <c>fheroes2::getArtifactData( id ).untranslatedName</c>, the first column of the 104-row
+    /// table in <c>artifact_info.cpp:47-150</c>. The port has no such column: <see cref="ArtifactTable"/> keeps the
+    /// numbers only, and <c>ArtifactBag.String()</c> is unported for the same reason — nothing draws artifact names
+    /// yet. The tavern's rumor about the ultimate artifact is the first place that does, so the names it can reach are
+    /// here.
+    /// </para>
+    /// <para>
+    /// That is a closed set: <see cref="Set"/> draws one of the eight ultimates when the map names none, and the map
+    /// editor only offers "random ultimate", so <see cref="ArtifactType.Unknown"/> (a map with no puzzle) and the
+    /// eight are all this property can be asked about. Anything else answers with the reference's own placeholder
+    /// word, <c>"Invalid Artifact"</c>, rather than inventing a name the game would show wrongly.
+    /// </para>
+    /// </remarks>
+    public string Name => Artifact switch
+    {
+        ArtifactType.UltimateBook => "Ultimate Book of Knowledge",
+        ArtifactType.UltimateSword => "Ultimate Sword of Dominion",
+        ArtifactType.UltimateCloak => "Ultimate Cloak of Protection",
+        ArtifactType.UltimateWand => "Ultimate Wand of Magic",
+        ArtifactType.UltimateShield => "Ultimate Shield",
+        ArtifactType.UltimateStaff => "Ultimate Staff",
+        ArtifactType.UltimateCrown => "Ultimate Crown",
+        ArtifactType.GoldenGoose => "Golden Goose",
+        _ => "Invalid Artifact",
+    };
+
+    /// <summary>
     /// The nudge of the puzzle drawing, <c>_offset</c>; each axis is at most two pixels.
     /// </summary>
     public Point Offset { get; private set; }

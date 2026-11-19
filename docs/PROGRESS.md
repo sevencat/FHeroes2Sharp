@@ -5853,3 +5853,416 @@ clamp 与两条拒绝、`inputString` 的负上限、`Recruit` 的空栈、`Leve
 
 **遗留**：`GetObjectsOnTheWay`（要冒险地图对象扫描）与其余英雄相关的 AI 入口；`ai` 的九个 `.cpp` 实现。
 
+### 城堡视图的数据层（2026-11-17）
+
+`buildinginfo.cpp` 的界面那一半之前一直标「未转」，但它有三块与贴图无关：`BuildingInfo` 的四个改写与两段
+文案、`DwellingsBar` 的条目与布局、以及 `getBuildingDescription` 的住所分支要用的怪物名。这一轮把它们落下，
+城堡屏以后只需要接绘制。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Castle/BuildingInfo.cs` | `buildinginfo.cpp:203-315`、`:564-610` | 四个改写（实际住所 → 可升级 → 亡灵酒馆 → 状态）、`Cost`/`Name`/`Description`/`Area`、`GetBuildingDescription` |
+| `Castle/DwellingsBar.cs` | `buildinginfo.h:84-107`、`buildinginfo.cpp:635-717`、`gui/interface_itemsbar.h` | 六个住所、`calculateRoi`/`calculateItemsPos` 的布局、命中、周产、左/右键意图 |
+| `Monsters/MonsterNames.cs` | `monster_info.cpp` 的 `monsterGeneralStats` 名称两列、`Monster::GetMultiName`、`getRandomRaceMonstersName` | 单/复数名 72 条 + 随机城镇的「level N creatures」 |
+
+要点：
+
+* **状态只在两处换成条件文案**：`BuildDisabled` 与 `ShipyardNotAllowed` 走 `GetConditionDescription()`，其余
+  状态照样描述建筑本身，由状态栏说明为什么买不了。参考的 `GetConditionDescription()` 里那五条其余分支因此
+  走不到，端口照抄并在注释里写明——别照着它去猜界面文案。
+* **第一次 `GetActualDwelling` 会被第二次赋值覆盖**：参考先按住所解析、再用 `isBuild ? GetUpgradeBuilding : b`
+  覆盖。两次对「已升级的住所」故意给出不同答案，所以第一句留着并注释，删掉会看不出这层意思。
+* **`%{monster}` 取复数名并小写**：模板里它在 "produces" 之后，`StringReplaceWithLowercase` 的首词分支不会
+  触发，端口直接 `ToLowerInvariant()`；随机城镇的住所没有种族，改报等级。
+* **队长的矩形不按贴图取**：参考用 `getImage( ICN::getCaptainIcnId( race ), … )` 的尺寸，端口没有 ICN 在附近，
+  保留默认 `135x70` 并注释，等城堡屏能问渲染器。
+* **`RenderingOffset` 也重算整栏矩形**：参考的 `setRenderingOffset()` 只重算图标位置，中途移动会让 `getArea()`
+  停在上一个位置。端口两样都重算，避免调用顺序敏感（ADR-165）。
+* **`GetGrowth` 的 landmark 加给「解析后的第一层」**：参考拿 `DWELLING_MONSTER1 == dwType` 比，端口同样比解析
+  后的值。
+
+**测试**：`BuildingInfoTests` 10 条（住所描述、升级、位置、无城堡、缺钱、亡灵酒馆两版、`%{count}`、随机城镇、
+复数名），`DwellingsBarTests` 7 条（六项顺序、布局、命中、空表、水井与地标的周产、三态点击、库存），
+`MonsterNamesTests` 4 条（单复数、不规则、全表覆盖、随机城镇等级）。Game 2591 → **2612**，全解决方案
+3 377 → **3 398** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`buildinginfo.cpp` 的 `BuildingInfo::Redraw`/`Reset`/`QueueEventProcessing`（要贴图与弹窗）；
+`castle_building.cpp` 的 blit 部分；`castle_dialog.cpp`/`castle_town.cpp` 只剩绘制与事件循环（状态行、日期行、
+招募英雄窗口已转）；`castle_mageguild.cpp`/`castle_well.cpp` 只剩绘制循环；`castle_tavern.cpp` 只剩 `TAVWIN`
+的动画与布局；城堡屏本身。城堡目录已无完全未转的文件。
+
+### 传闻池落地（2026-11-19）
+
+上一节只立了传闻池的形状。这一节把三个函数体补齐：`GetCurrentRumor` 接了世界，`ChooseRumorId` 接周种子，
+`GetRegionName` 把地图切三份，另外 `UltimateArtifact` 有了名字，酒馆可以直接从世界造出来。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `World/World.Rumors.cs` | `world.cpp:632-703` | `GetCurrentRumor`、`ChooseRumorId`、`GetRegionName`、`Describe` |
+| `Artifacts/UltimateArtifact.cs` | `artifact.cpp:93-96` | `Name`：八个终极宝物 + `Invalid Artifact` 占位 |
+| `UI/Dialogs/TavernDialog.cs` | `castle_tavern.cpp:39` | 新重载 `Create( World )`，替调用方取本周传闻 |
+
+要点：
+
+* **句子抽成 `Describe` 静态函数**：参考是一个 `switch` 里既选又拼，端口把「拼」单独拿出来，九个分支和自定义
+  回退都能在无地图、无周数的情况下断言，与 `RecruitHeroDialog.Describe` 同一手法。
+* **区域只在 id 为 1 时算**：tile 下标要除地图宽度换成坐标，没载入地图的世界除零；而 id 2..8 根本不需要区域，
+  所以延后计算，顺带让无地图的世界也能回答那七句。
+* **比较是严格的**：`height / 3 > y`，30 格地图的第 10 行已经属中间带，第 20 行属南带；测试把四条边界都钉住了。
+  小地图（3×3）也走同一套 `x / 3`，九个区域一个不少。
+* **名字只覆盖八个终极**：参考读 `getArtifactData( id ).untranslatedName`，那是 104 行的表；端口 `ArtifactTable`
+  只有数值列，`ArtifactBag.String()` 也因「还不画名字」没转。地图只会埋八个终极之一（编辑器只提供「随机终极宝」），
+  所以这九条足够，表外返回参考自己的 `"Invalid Artifact"` 占位，不编造名字。
+* **自定义传闻的语言标签仍是空**：参考带 `getCurrentMapInfo().getSupportedLanguage()`，端口没有「地图语言」这个
+  概念（`MapTextCodec` 解完码就忘了，只留下法文字符修正），因此返回 `null`；`LocalizedString` 已经就位，等地图
+  记住语言后一行接上（ADR-170）。
+* **越界 id 抛异常而不是断言**：参考 `assert` 后直接索引，端口对 `rumorId` 越界与 `totalRumorCount <= 0` 都抛
+  `ArgumentOutOfRangeException`。
+* **酒馆现在能自己取传闻**：`Create( World )` 只是 `Create( world.GetCurrentRumor() )` 的转发，窗口本身仍不读
+  世界——城堡屏接进来时不用改窗口。
+
+**测试**：`RumorPoolTests` 增 31 条（id 范围、同种子稳定、空池被拒、九宫格、四条三等分边界、小地图、两条模板、
+七条固定、自定义回退、越界、一周内稳定），`UltimateArtifactTests` 增 10 条（`Unknown` 占位、八个终极名字、
+表外占位），`TavernDialogTests` 增 1 条（`Create( World )` 的空参数）。Game 2643 → **2684**，UI 193 → **194**，
+全解决方案 3 452 → **3 494** 全绿，`-warnaserror` 0 警告。
+
+### 王国的神器收入与周名（2026-11-19）
+
+上一批把传闻池补齐时发现两处「注释比代码旧」的地方：`Kingdom.GetIncome` 与 `IncomeType` 都还写着「英雄没有
+神器袋」，而 `Hero.BagArtifacts` 其实早就在了。这一批把它们接上，顺手补掉 `Week` 与 `MonsterNames` 各一个文案缺口。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Kingdom/Kingdom.cs` | `kingdom.cpp:607-614` | `GetIncome` 的 `INCOME_ARTIFACTS` 分支：遍历每个英雄的整只袋 |
+| `Kingdom/Week.cs` | `week.cpp:126-206` | `GetName()`：34 个周名词 |
+| `Monsters/MonsterNames.cs` | `monster.cpp` | `GetPluralName( count )` |
+
+要点：
+
+* **遍历整只袋，空格也不跳过**：参考 `for ( const Artifact & artifact : bag )` 走 14 格，空格是 `UNKNOWN`、表里
+  那行是空的，自然加到 0；照做也顺带免掉「魔法书算不算」的问题——它是袋里的一格，不是另一样东西。
+* **只有一格英雄有收入也照算**：`INCOME_ARTIFACTS` 是位掩码里的一位，`GetIncome` 默认的 `All` 会把它与矿井、
+  城镇一起加；测试分别验了「只问神器」「只问城镇」「默认全加」三条路径。
+* **负载神器也照算**：税票 -250 与金袋 +1000 相加是 750，端口不钳到零——钳制是整个王国的账本在入账时做的
+  （`AddFundsResource`），单次求和必须能返回负数。
+* **周名的两处反直觉照抄参考**：怪物周返回的是生物的单数名（句子外层的「Week of the」由调用方给），瘟疫是
+  参考自己的全大写 `PLAGUE`（原版游戏就这么印）。表外（其实到不了）回答 `Unnamed`，与参考的 assert-then-default
+  同效，且只用于打印。
+* **文案不带 `week|` 前缀**：参考把词交给 gettext 时带上下文前缀，端口没有翻译层，返回的是参考的英文原文，
+  与 `Experience` 的处理一致（ADR-137）。
+* **`GetPluralName` 是 `count == 1 ? 单数 : 复数`**：0 也用复数，因为参考就是这么写的，而 `"0 Peasants"`
+  正是对话框要的。
+
+**测试**：`KingdomIncomeTests` 增 4 条（一只英雄的神器、全名册相加、空袋与魔法书为零、位掩码只选中它），
+`WeekTests` 增 8 条（六个代表性词、怪物周取单数名、34 个词两两不同），`MonsterNamesTests` 增 1 条。
+同时更正两处错注释：`KingdomIncomeTests` 里「金鹅是唯一带收入的神器」（无尽的钱袋也带），以及
+`IncomeType`/`GetIncome` 的「英雄还没有神器袋」。Game 2684 → **2697**，全解决方案 3 494 → **3 507** 全绿，
+`-warnaserror` 0 警告。
+
+### 怪物信息屏的排版与绘制（2026-11-19）
+
+`dialog_armyinfo.cpp` 从「只有契约」变成能画出来的窗口。一次拆三件，因为它的三件事各有各的边界：
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ArmyInfoLayout.cs` | `:522-556` 与匿名 namespace | 三个矩形（窗口/阴影/`pos_rt`）与全部偏移 |
+| `UI/Dialogs/ArmyInfoArtwork.cs` | `:523-528` | `VIEWARMY`/`VIEWARME` 的 0 与 7 两帧 |
+| `UI/Dialogs/ArmyInfoDialog.cs` | `:96-284`、`:395-572` | 属性行、描述块、`Draw`、`CreateButtons` |
+| `Game/Kingdom/Speed.cs` 等 | `speed.cpp:84`、`luck.cpp:33`、`morale.cpp:33` | `String`→`GetName` 三张词表 |
+| `Game/Army/Troop.cs` | `army_troop.cpp:113-141` | 四个属性字符串与三个数值 getter |
+| `Game/Monsters/MonsterIcnIds.cs` | `monster_info.cpp:136-144` | `GetSpriteIcn`，66 行 switch |
+
+要点：
+
+* **三个矩形不是两个**：窗口、阴影、`pos_rt`。阴影的锚点是存档里给的（不是 `(0,0)`），所以 `Create` 收
+  `shadowShift` 而不是猜；`pos_rt` 在邪恶界面上是窗口再 `( +9, -1 )`，因为邪恶窗口画在右边九像素。
+* **属性块是三段不是两列**：标签右对齐到冒号列（`dst.x - 3`），冒号画在那里，值从 `dst.x + 6` 起。标签过长
+  时左边界是 `dst.x - 123`，参考会再缩放文字，端口不做这一步并注明。
+* **伤害与生命值是单只的**：参考读 `Monster( troop.GetMonster() ).GetDamageMin()` 而不是
+  `troop.GetDamageMin()`（后者乘了数量）。窗口描述兵种，数量在下面的框里。
+* **描述块两种形状**：≤3 句且每句都装得下 210 像素 → 逐句一行、底部对齐（起始行 `3 - 句数`）；否则拼接换行、
+  同样底部对齐，行数超过 3 时起始行是负数，往上长进名字带——参考就是这样，不截断。
+* **`iCN::VIEWARME` 决定排版**：不是只换图，邪恶界面还要下移 3 像素、`pos_rt` 右移 9。所以
+  `ArmyInfoArtwork.EvilInterface` 是布局的输入。
+* **单位锚点是脚**：`pos_mon` 是脚底，`BlitSprite` 收的是左上角，所以画之前要减掉精灵自己的锚点。
+* **按钮不在 `Draw` 里**：它们是 `ButtonSprite`（悬停要重画），由 `CreateButtons` 定位、调用方循环；顺序
+  upgrade/dismiss/exit 与 `FromButton` 的索引一致。
+* **`icnId` 表不是算术**：前十一只的升级与本体不一一对应（游侠读 `ARCHER2`、十字军读 `PALADIN2`），
+  只能写成 switch；五个随机占位符没有精灵。
+* **`getMonsterDescription` 仍不转**：上一批的结论不变，它是调试转储。
+
+**测试**：新建 `ArmyInfoDialogTests` 14 条（好/邪恶两套布局数字、升级按钮有无、属性行顺序与单只伤害、
+`Blood!`/`Bad` 的两把尺子、描述两形状与底部对齐、空属性、窗口/阴影/名字/数量的像素、空堆叠不画数字、
+翻转、按钮顺序、旧档案被拒），`TroopTests` 增 3 条（属性字符串、速度五档、静态重载的越界值），
+`MonsterIcnIdTests` 增 3 条（12 个升级的特例、`CAVALRYB` 是颜色不是升级、66 只都有精灵、占位符没有）。
+Game 2766 → **2788**，UI 195 → **209**，全解决方案 3 576 → **3 613** 全绿，`-warnaserror` 0 警告。
+
+### 怪物信息屏的三支文案（2026-11-19）
+
+`monster_info.cpp` 一直挂着「剩四个描述函数（要 `Spell.GetName()` 与 `_()`）」。上一批把 `Spell.GetName()` 补上
+之后查清了这件事：本版参考里没有四个描述函数，只有三个面向玩家的，第四支是带英文标签的调试转储。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Monsters/MonsterDescriptions.cs` | `monster_info.cpp:611-716` | `GetAbilityDescription`：33 个分支 |
+| 同上 | `monster_info.cpp:717-746` | `GetWeaknessDescription`：8 个分支 |
+| 同上 | `monster_info.cpp:795-878` | `GetPropertiesDescription`：信息屏的那张表 |
+| 同上 | `monster_info.cpp:573-596` | `ReplaceMassSpells`（私有）+ `ListSpells` |
+| `Monsters/MonsterAbilities.cs` | `ignoreBasicAbilities` 的判定 | `IsBasic`（8 项） |
+
+要点：
+
+* **`%{spell}` 在这里就地替换，`%{count}` 不**: 法术描述里的 `%{count}` 归战斗侧填，能力句里的法术名当场从
+  `SpellText` 取——`"50% immunity to Fireball spell"` 是成品句子。数字同样是成品：`"25% magic resistance"`。
+* **句尾不带句号**：`getMonsterPropertiesDescription` 自己补 `.`，两支单句函数不补。照抄，否则分组行会出现两个点。
+* **隐藏「形状类」能力**：两格、飞行、龙、元素生物这八项在信息屏上一律不显示——玩家在战场上看得见。
+  `IsBasic` 与 `MonsterWeaknesses.IsBasic` 对称，画这条线。
+* **`Elemental` 不是隐藏项，而是改写项**：隐藏时它变成 `"No Morale"`，参考就是这样，那条信息才是有用的。
+* **分组按百分比、组内按法术 id 排序**：参考用 `std::map` + `std::set`，端口用 `SortedDictionary` + `SortedSet`，
+  于是土元素的三条免疫合成一行 `"Immune to Lightning, Elemental Storm."`（连锁闪电因为闪电箭在场被去掉，
+  剩下按 id 排：闪电箭 3 在前、元素风暴 29 在后）。
+* **闪电箭印作 `Lightning`**：全表唯一的改名，`listSpells` 里就这一处特例。
+* **额外伤害说的是总数不是增量**：表里存 100（+100%），句子印 200%。
+* **调试转储不转**：`getMonsterDescription` 印的是 `Name: / Base growth: / Race:` 这类英文标签，给开发者看，
+  不是玩家会读的文案；端口以测试代替。
+
+**测试**：新建 `MonsterDescriptionsTests` 52 条（21 条能力句、8 条隐藏、元素生物的 `No Morale`、6 条施法句、
+3 条法术名替换、6 条弱点句、四个生物的整表快照、全表无遗漏、每行以句号结尾）。Game 2714 → **2766**，
+全解决方案 3 524 → **3 576** 全绿，`-warnaserror` 0 警告。
+
+### 法术的文案两列（2026-11-19）
+
+`spell.cpp` 的 `spells` 表有七列，端口的 `SpellTable` 一直是五列，理由写在注释里：「名字与描述是 gettext 字符串，
+属于翻译层」。但周名与怪物名两批已经确立了做法——返回参考的英文原文——于是这一批把剩下两列补上。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Spells/SpellText.cs` | `spell.cpp:55-150` 的第 0、6 列 | 73 行名字 + 描述，两列一行 |
+| `Spells/Spell.cs` | `spell.cpp:153-161` | `GetName()`/`GetDescription()` 两次查表 |
+
+要点：
+
+* **一行两列，不是两张表**：参考的 `SpellStats` 是一行七个字段，名字与描述在同一行里；拆成两个类会让「这一行的
+  文案」这个概念消失。`Entry` 是个 `record struct`，和 `SpellStats` 里那几列一样按 `SpellType` 下标直接取。
+* **上下文前缀按 gettext 的显示规则去掉**：参考写 `gettext_noop( "spell|Slow" )`，竖线前是给它自己看的上文，
+  玩家读到的是 `Slow`。端口只有两处（Slow、Blind），但少了这一步就会在界面上印出 `spell|Slow`。
+* **参考的拼写赢过枚举名**：id 是 `FireBlast`/`StoneSkin`，词是 `Fireblast`/`Stoneskin`。改词会让界面与原版不一致，
+  改枚举名会让存档里的 id 对不上，所以两边各留原样，注释里点明。
+* **`%{count}` 留在句子里**：`Cure` 的「回 %{count} 点血」、`Blind` 的「反击少 %{count}%」都是模板，数字要等法术
+  自己的代码给——参考也是这样，`GetDescription()` 只返回模板。
+* **六个随机占位与 `Petrify` 也有词**：它们不可施放，但表要能描述任何 id（调试窗口、坏存档），参考同样给了句子。
+* **顺手改掉三处过时注释**：`SpellTable` 与 `Spell` 都还写着「文案属于翻译层」，`SpellInfo` 把
+  `getSpellDescription` 的行号与理由写成「只拼句子」——它其实还要 `HeroBase`、最近的城堡和地图。
+
+**测试**：新建 `SpellTextTests` 17 条（9 条名字含前缀剥离与两处参考拼写、4 条描述、`%{count}` 的去留、73 行齐全、
+73 个名字两两不同、`Spell` 包装层与越界归一）。Game 2697 → **2714**，全解决方案 3 507 → **3 524** 全绿，
+`-warnaserror` 0 警告。
+
+### 建筑队列与淡入（2026-11-17）
+
+`castle_building.cpp` 整份是绘制，但它有三块与 blit 无关：买入一栋建筑后的淡入状态机、按绘制优先级排好的
+矩形队列、以及绘制循环开头的那几个「这栋画不画」的判定。它们决定屏幕上出现什么，落在数据层以后城堡屏接上
+渲染器就只剩 `Blit`。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Castle/FadeBuilding.cs` | `castle.h:446-510`、`castle_building.cpp:479-493` | `StartFadeBuilding`/`StartFadeBoat`/`StopFade`、9 步 alpha 递进、`IsOnlyBoat` |
+| `Castle/BuildingsRenderQueue.cs` | `castle_building.cpp:464-477`、`castle.h:511-522` | `BuildingRenderInfo`（建筑 + 屏幕矩形）、按 `GetDrawingPriorities` 建队列 |
+| `Castle/BuildingsRenderQueue.cs` 的 `CastleBuildingRender` | `castle_building.cpp:74-98`、`:352-400` | `IsBuildingConnectionNeeded`、`IsBuildingFullyBuilt`、`ShouldDrawBuilding` |
+
+要点：
+
+* **帧钟当参数传**：参考的 `updateFadeAlpha()` 先问 `Game::validateAnimationDelay( CASTLE_ITEM_UPDATE_DELAY )`，
+  端口没有帧循环，`Update(bool delayElapsed)` 把这个答案收进来，返回「这一帧 alpha 是否动了」，调用方据此重绘。
+* **9 步与末端两跳**：`alpha < 246` 时加 9，否则直接 255 —— 所以从 0 到 255 是 29 次，不是 28 或 30，测试钉住。
+* **船是「只画船」**：`StartFadeBoat()` 把建筑记成船坞但置 `IsOnlyBoat`，绘制时船坞本身照常不透明、只有船走 alpha。
+* **队列带着屏幕偏移**：参考在构造时就把 `top` 加进每个矩形，绘制代码不再补；端口原样，`Areas` 是屏幕坐标。
+* **连接件只画一次**：野蛮人的法师塔外墙与盗贼公会外墙、亡灵的队长室桥，各自只挂在队列里较后的那栋上；
+  判据是「当前建的正好是最高级法师塔」。
+* **升级替代基础建筑的例外**：升级版已建时基础建筑不画（升级贴图含基础），但升级版**正在淡入**时两者都画。
+
+**测试**：`CastleBuildingRenderTests` 9 条：淡入从 0 到 255 的 29 步与未到期不推进、船的 `IsOnlyBoat`、
+`StopFade`、队列顺序与偏移、未建不画、升级隐藏基础但淡入例外、`IsBuildingFullyBuilt`、
+野蛮人法师塔/盗贼公会与亡灵队长室的连接件。Game 2612 → **2621**，全解决方案 3 398 → **3 407** 全绿，
+`-warnaserror` 0 警告。
+
+### 魔法塔窗口与水井一键招满（2026-11-19）
+
+`castle_mageguild.cpp` 与 `castle_well.cpp` 的主体是绘制循环，但两者各有一块「屏幕上出现什么、点下去买多少」
+的规则：魔法塔每层摆哪几个法术、水井 MAX 按钮怎么分配金币。它们落在数据层与 UI 契约层。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Castle/Castle.MageGuildView.cs` | `castle_mageguild.cpp:119-132` | `GetMageGuildSpellRows()`：五层，每层按 `GetMaxSpellsCount` 补 `SpellType.None` |
+| `UI/Dialogs/MageGuildDialog.cs` | `castle_mageguild.cpp:56-212` | 行偏移 `365 - 90 * i`、`CanSwitchTowns`、`DefaultStatusText` |
+| `Castle/CastleMaxRecruitment.cs` | `castle_well.cpp:66-215` | 强到弱分配、`Refusal` 三态、`Summary` 行、`Cost` |
+
+要点：
+
+* **槽位数与法术问的是两件事**：`GetMaxSpellsCount( level, HasLibraryCapability )` 只看种族（法师城多一格），
+  而 `GetSpells( guildLevel, IsLibraryBuilt, level )` 要种族**且**建了图书馆。看起来像同一个条件，实际不是。
+* **行 0 在底部**：参考把第 `i` 行摆在 `y = 365 - 90 * i`，所以一级法术在最下面、五级在最上面；`Rows[0]` 是
+  一级，屏幕顺序要反着画。
+* **城镇按钮的可用性由调用方给**：参考读 `GetKingdom().GetCastles().size()`，端口 `Castle` 没有王国，构造时
+  传 `castleCount`，`>= 2` 才可切换。
+* **状态栏的两句话**：没有魔法书的英雄看到「法术在这里可以买」，有书的看到「能学的已经写进书里」——因为窗口
+  在打开时就把书填了。
+* **MAX 先买贵的**：从六级住所往一级走，每一步都在「已下单总额」之上再问能付多少，所以最后剩下的钱留给弱兵。
+* **两个军是草稿**：`Create` 会把买到的兵 `JoinTroop` 进传入的城军/英雄军，好让后面的住所看见前面占掉的槽位；
+  调用方要传副本。
+* **只有第一个有库存的住所说话**：规划为空时参考 `break` 在找到的第一个有货住所上，所以「缺钱」与「队伍满」
+  由它一个决定，后面的便宜兵不参与辩解；且缺钱的判断在前。
+* **不付钱、不弹窗**：`Castle` 里没有王国，金币由调用方扣，`RecruitMonster` 由调用方在确认后调。
+
+**测试**：`CastleMageGuildViewTests` 4 条（空塔五行、一级只填底行、法师的图书馆种族加成与已建无关、每行长度），
+`MageGuildDialogTests` 4 条（单城禁用切换、两句话、行来自城镇且向上递减），`CastleMaxRecruitmentTests` 7 条
+（空城、买光、钱限数量、一只都买不起、城军满且无英雄、强到弱顺序、缺钱优先于队伍满）。Game 2621 → **2632**，
+UI 170 → **174**，全解决方案 3 407 → **3 422** 全绿，`-warnaserror` 0 警告。
+
+### 城堡屏契约与招募英雄窗口（2026-11-19）
+
+城堡屏（`castle_dialog.cpp`）与建造窗口（`castle_town.cpp`）的主体是绘制与事件循环，但三处文字与返回值是规则：
+鼠标悬停时的状态行、屏幕顶端的日期行、招募英雄时那句话。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Castle/BuildingInfo.cs`（追加 `GetStatusLine`） | `castle_dialog.cpp:118-131` | 住所显示 `"Recruit {兵种复数小写}"`，其余建筑显示自己的名字 |
+| `UI/Dialogs/CastleDialog.cs` | `castle_dialog.cpp:158-166`、`castle.h:138-149` | 日期行、八种返回值、状态行转交 |
+| `UI/Dialogs/RecruitHeroDialog.cs` | `castle_town.cpp:66-160` | 招募英雄窗口的文案、价格、按钮 |
+
+要点：
+
+* **状态行里兵种是小写的**：参考用 `StringReplaceWithLowercase` 填 `"Recruit %{name}"`，所以是「Recruit peasants」
+  而不是「Recruit Peasants」；这句话以大写字母开头，只有兵种落下。
+* **升级住所报升级后的兵**：判定用的是 `CastleBuildings.IsDwelling`（两个住所掩码的并集），所以 `DwellingUpgrade6`
+  报的是十字军而不是圣骑士。随机城镇没有具体兵种，退化成 `"Recruit level 3 creatures"`。
+* **日期行与日志行不是同一句**：屏幕上是 `"Month: 1, Week: 3, Day: 5"`，`World.DateString()` 是小写的日志形式，
+  两者都保留。
+* **`DoNothing` 也是一种答案**：返回值有八种，前四种是「换一座城/换一个窗口」，所以关闭屏幕与「关闭后去下一座城」
+  必须分开，调用方不能只看「是否关闭」。
+* **魔法书不算宝物**：招募英雄的描述问 `GetCountArtifacts()`，再在英雄有魔法书时减一 —— 书就放在同一个背包里，
+  不减会说「with 1 artifact」而实际上一件宝物都没有。
+* **三档文案不是模板**：`"with 1 artifact."`、`"with %{count} artifacts."`、`"without artifacts."` 是三条独立句子。
+* **名字只有从地图读进来才有**：端口的 `Hero.Name` 由 `LoadFromMP2` 填，新造的英雄名字为空，所以句子抽成
+  `Describe( name, level, race, count )` 静态函数，测试不需要伪造地图数据。
+* **能不能招由调用方判断**：`AllowBuyHero()` 要王国与访客英雄，窗口只收 `canRecruit`。
+
+**测试**：`BuildingInfoTests` 增 4 条（住所状态行、升级住所、其它建筑、随机城镇，共 14 条），`CastleDialogTests`
+4 条（日期行、住所与建筑状态行、八种返回值），`RecruitHeroDialogTests` 9 条（无宝物、单数、复数、魔法书不计、
+书加一件宝物、确认文案、价格、可用状态、按钮）。Game 2632 → **2636**，UI 174 → **187**，全解决方案
+3 422 → **3 439** 全绿，`-warnaserror` 0 警告。
+
+### 传闻池骨架与酒馆窗口（2026-11-19）
+
+酒馆是城堡目录最后一块，而它说的那句话来自世界：`Castle::_openTavern()` 只做一件事——取本周传闻、包进两段
+文字、显示。传闻池（`World::getCurrentRumor()`）本身还没实现，所以这一批先立它的形状，再把窗口转成「收一句
+话」的契约。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `LocalizedString.cs` | `game_string.h:30-50` | `Text` + 可选 `SupportedLanguage`，`ToString()` 返回文本 |
+| `World/World.Rumors.cs` | `world.cpp:632-703` | 池的形状：`StandardRumorCount`、九条文案、九个方向词、`TotalRumorCount`；三个函数体未写 |
+| `UI/Dialogs/TavernDialog.cs` | `castle_tavern.cpp:39-54` | 标题、开场句、空白行、传闻与语言标签、只有 OK |
+
+要点：
+
+* **池子没有上限，九是内置条数**：地图可以带任意多条自己的传闻，id 从 `StandardRumorCount` 往上就是
+  `_customRumors[id - 9]`；`StandardRumorCount` 是 `switch` 的分支数，不是地图的约束。
+* **一周之内传闻不变**：id 由 `Rand::GetWithSeed( 0, total - 1, GetWeekSeed() )` 选出，而 `WeekSeed` 里混了
+  地图种子与周数，所以同一周反复进酒馆听到的是同一句，下周才换。
+* **自定义传闻带语言标签**：内置的九条由界面翻译，语言为空；地图带来的原文用地图的语言，渲染时该用对应的字体。
+  `LocalizedString` 现在就把这个标签带着，等字体层学会切换时窗口不用改。
+* **三个函数体留空**：`GetCurrentRumor`、`ChooseRumorId`、`GetRegionName` 抛 `NotImplementedException`，注释里
+  写明参考的行号和该做什么；`TotalRumorCount`、九条文案、九个方向词已经落地，是渲染与窗口真正会读的部分。
+* **酒馆不依赖未实现的池**：窗口收一句 `LocalizedString`，所以池子晚一点补也不影响窗口，也不会在运行时踩到
+  那个异常。`Create` 拒绝空文本——载入器从不存空传闻，空的说明是 bug 而不是状态。
+* **标题是建筑名**：参考用 `GetStringBuilding( BUILD_TAVERN )`，而酒馆在六个种族里都叫 Tavern；测试对着建筑名表
+  逐个种族验了一遍，免得以后改成常量后与表脱节。
+* **只有 OK 一个按钮**：`Dialog::OK`，没有取消可言——看一眼传闻不需要同不同意。
+
+**测试**：`RumorPoolTests` 7 条（九条、无自定义时为九、两个模板、七条固定文案、九个方向词、无语言标签的打印、
+自定义传闻保留语言），`TavernDialogTests` 6 条（标题与建筑名表一致、开场句、正文两段加空白行、语言标签、只有
+OK、空传闻被拒）。Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452** 全绿，
+`-warnaserror` 0 警告。
+
+### 法师塔窗口的排版与绘制（2026-11-19，ADR-175）
+
+上一批只转了魔法塔的规则（ADR-167）：五行数据与两句状态栏。这一批补上窗口本身 —— 石头底图、公会建筑、五行卷轴、
+底栏两段与三个按钮 —— 顺带补了两个 `ImageOps` 的绘制件。窗口仍不跑事件循环，`Create`/`Draw`/`CreateButtons` 由
+调用方每帧调一次。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Core/Imaging/ImageOps.Sprites.cs`（追加 `GetActiveRoi`） | `engine/image.cpp:2574-2634` | 只读 transform 层的已绘像素包围盒，`0` 与 `>= 6` 算已绘 |
+| `Core/Imaging/ImageOps.cs`（追加 `BlitSpriteClipped`） | `engine/image.cpp` 的 `Blit( in, inPos, inSize, out, outPos )` | 源区**左上角**落到目标点，再裁剪到给定区域 |
+| `UI/Widgets/SpellScrollRow.cs` | `ui_mage_guild.cpp:95-228` | 一行卷轴：`x + 110 * i`、折叠下移 7、图标内缩 3、名字 78 宽 |
+| `UI/Dialogs/MageGuildArtwork.cs` | `castle_mageguild.cpp:32-101` | `STONEBAK(_EVIL)`、`SMALLBAR` 五帧、`TOWNWIND` 两帧、六种族 `MAGEGLD*`、`BUTTON_GUILDWELL_EXIT` |
+| `UI/Dialogs/MageGuildLayout.cs` | `castle_mageguild.cpp:63-101` | 640×480 居中、底栏 `y = 461`、三段分栏与状态栏 ROI |
+| `UI/Dialogs/MageGuildDialog.cs` | `castle_mageguild.cpp:28-212` | 五行锚点、建筑居中与裁剪、底栏两段、三个按钮、状态行 |
+
+要点：
+
+* **`GetActiveROI` 只看 transform 层**。参考的「已绘」判定是 `*inX == 0 || *inX >= minTransformValue`，与图像层
+  的颜色无关（`0` 是拷贝，`1` 是跳过，`2..5` 是阴影/高光变换）。单层精灵返回空矩形，调用方自己兜底。
+* **建筑纵向不按包围盒**。参考 `renderMageGuildBuilding` 的 `outPos.y = offset.y + 290 - sprite.height()`：横向居中
+  用 `area`（`offset.x + 100 - area.x - area.width / 2`），纵向用的是**整张精灵**的高度。照包围盒贴会把建筑整体
+  抬高一大截。
+* **`GetGuildBuildingIcn` 的 `Random` 与 `Wizard` 同图**（`MAGEGLDZ`），`default` 分支也是它；随机种族的紫色重
+  上色是在画的时候做的，且先 `Clone()`，不污染调用方的帧。
+* **底栏左段从源列 1 起**。`SMALLBAR` 第 0 列是黑的，参考两段拷贝的源列分别是 `1` 与 `宽 - 右段宽`；右段留宽
+  见 `BarLeftWidth`/`BarRightWidth`（奇数给右段，因为 `left = width / 2`）。
+* **`BlitSpriteClipped` 不是多余的重载**。原有的四参 `BlitSprite` 把**精灵原点**放在偏移上，再按源区平移；底栏与
+  建筑要的却是「源区左上角落到目标点」。少了这一层，底栏会整体右移一列、建筑会右移半个源区宽（本批就是这么
+  撞上的）。
+* **两个箭头单城时真的 `Disable()`**，不只是换图：`ButtonSprite.Press()` 会拒绝，和参考的 `button.disable()` 一致。
+  状态行也据此判断，所以禁用时悬停在箭头上显示默认句。
+* **五行自下而上**：`y = 365 - 90 * i`，`Rows[0]` 是一级、画在最底下。空行也占位（`Spells` 为空，不画任何卷轴）。
+
+**测试**：`ImageOpsActiveRoiTests` 5 条（包围盒、`0` 也算已绘、单层为空、全跳过为空、阈值可调），
+`ImageOpsBlitClippedTests` 4 条（源角落点、裁剪、全在区外、transform 生效），`MageGuildDialogTests` 29 条
+（原 4 条加布局三段与奇数栏宽、五行锚点、卷轴槽位/命中/当前法术/像素、底栏两段源列、建筑居中与 200 列裁剪、
+整窗像素、按钮顺序与禁用、状态行优先级、`FromButton`、`BuildingFrameIndex`、美术表与缺帧拒绝）。Core 200 →
+**209**，UI 209 → **234**，全解决方案 3 613 → **3 647** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`castle_mageguild.cpp` 的消息循环与 `LocalEvent`（端口由调用方分派）；`SpellsInOneRow::queueEventProcessing`
+的法术说明对话框；`redrawCurrentSpell` 的增量重绘（端口折进 `Draw` 整行重画）；`castle_well.cpp` 的绘制循环。
+
+### 水井窗口的数据层与绘制（2026-11-19，ADR-176）
+
+`castle_well.cpp` 是 `castle` 目录里最后一份只有规则、没有窗口的文件：`CastleMaxRecruitment` 在 ADR-167 转了，
+窗口本身（六格住宅、底栏两段、两个按钮、每格九行统计）一直没动。这一批把它拆成数据、布局、美术、绘制四件，
+并且第一次用上了上一批补的 `BlitSpriteClipped`。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Castle/Castle.WellView.cs` | `castle_well.cpp:405-547` | `CastleWellDwelling` 六行 + `GetWellDwellings()` + `GetWellGrowth()` |
+| `UI/Dialogs/WellLayout.cs` | `castle_well.cpp:61-101` | 640×480 居中、底栏 `y = 461`、两列三行住宅格、每格的七类锚点 |
+| `UI/Dialogs/WellArtwork.cs` | `castle_well.cpp:379-447` | `WELLBKG(_EVIL)`、`SMALLBAR`、`BUTTON_WELL_MAX`、`BUTTON_GUILDWELL_EXIT`、`CSTL*` 的第 19–30 帧 |
+| `UI/Dialogs/WellDialog.cs` | `castle_well.cpp:203-548` | 背景与底栏、标题、九行统计文案、`Available:`、按钮与 tooltip、点击命中 |
+
+要点：
+
+* **一格的坐标是「格原点 + 常量」**：格原点 `(0,1)`、`(314,1)`、`(0,151)`…，图画在 `+ (21,35)`，名字中线
+  `+ 86`、生物名中线 `+ 122`、统计列中线 `+ 269`、`Available` 在 `+ (20,121)`。参考里这七组常量散在 60 行代码里，
+  端口收进 `WellLayout` 的 `Get…` 方法。
+* **住宅图画不是独立档案**：它是种族 `CSTL*`（`ICN::getBuildingIcnId()`）的第 19–30 帧，前五级各两帧、第六级三帧
+  （带二次升级）。`WellArtwork.TryCreate` 要 12 帧，缺一帧就返回 `null`。
+* **参考在同一行里问了两次住宅**：生物、名字、图画用 `GetActualDwelling()`（建了就取升级），而「Growth」那两行
+  用的是**基础**住宅位。只买了升级位的存档因此会显示升级后的生物、却没有成长行 —— 端口保留了这个不一致并写进
+  ADR。
+* **底栏两段 + 一列黑色**：左段从 `SMALLBAR` 第 1 列起（第 0 列全黑），右段从 `宽 - 320 + 退出按钮宽 - 1` 起以保住
+  圆角；窗口最右一列（x = 639）参考手工填黑，因为原图那里是透明的。底栏只到第 476 行，477–479 三行谁都不画。
+* **「跳过一行」用空字符串表示**：`DescribeStats` 返回 8 或 10 条，空串占一行高度，调用方只按
+  `SmallWhite.LineHeight` 往下挪，不必知道缝在哪。这句还顺手钉住了参考的两个怪癖：`Speed:` 冒号后没有空格、
+  伤害只有一条时印单值。
+* **没有裁剪**：参考给标题和 `Available:` 都套了 `fitToOneRow` / ROI 裁剪，端口的 `GlyphText` 没有裁剪，
+  英文串本来就装得下，注释里点了名。
+
+**测试**：`CastleWellViewTests` 6 条（六行恒在、空城基础值、井 +2、魔法泉 +8 只给一级、只有升级位时无成长行、
+库存取自已建住宅），`WellDialogTests` 38 条（布局两段与 719 列、六格锚点、12 个帧号、六个种族归档、缺帧拒绝、
+统计文案、绘制像素含标题遮挡区、`Available` 黄字、按钮与 tooltip、命中只认已建住宅、`Create` 拒绝非六行）。
+Game 2788 → **2794**，UI 234 → **272**，全解决方案 3 647 → **3 691** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`_wellRedrawMonsterAnimation`（生物动画，要战斗动画档案）；`_openWell` 的消息循环；招募动作本身
+（`CastleMaxRecruitment` 与住宅招募对话框由调用方接）；`SMALLBAR` 之外的水井 UI 音效。
+

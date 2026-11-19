@@ -18,9 +18,9 @@ public readonly record struct SpellStats(uint SpellPoints, uint MovePoints, uint
 /// </summary>
 /// <remarks>
 /// <para>
-/// The names and the descriptions are left out: they are gettext strings and belong to the translation
-/// layer. Everything else is here, in <c>SpellType</c> order, so the row of an id is an index and not a
-/// lookup — the reference does the same with a <c>std::array</c>.
+/// The names and the descriptions of the same rows are in <see cref="SpellText"/>, so the numbers stay readable in
+/// tests that do not care about words. Everything else is here, in <c>SpellType</c> order, so the row of an id is an
+/// index and not a lookup — the reference does the same with a <c>std::array</c>.
 /// </para>
 /// <para>
 /// <see cref="SpellType.None"/> has a row of zeros, and so do the six <c>RANDOM*</c> placeholders and

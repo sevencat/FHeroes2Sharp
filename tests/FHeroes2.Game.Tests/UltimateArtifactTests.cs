@@ -30,6 +30,36 @@ public class UltimateArtifactTests : IDisposable
         // The reference refuses every position while the index is negative, tile -1 included.
         Assert.False(artifact.IsAt(-1));
         Assert.False(artifact.IsAt(0));
+
+        // Rumor 0 would read "The ultimate artifact is really the Invalid Artifact." out of the reference's table.
+        Assert.Equal("Invalid Artifact", artifact.Name);
+    }
+
+    [Theory]
+    [InlineData(ArtifactType.UltimateBook, "Ultimate Book of Knowledge")]
+    [InlineData(ArtifactType.UltimateSword, "Ultimate Sword of Dominion")]
+    [InlineData(ArtifactType.UltimateCloak, "Ultimate Cloak of Protection")]
+    [InlineData(ArtifactType.UltimateWand, "Ultimate Wand of Magic")]
+    [InlineData(ArtifactType.UltimateShield, "Ultimate Shield")]
+    [InlineData(ArtifactType.UltimateStaff, "Ultimate Staff")]
+    [InlineData(ArtifactType.UltimateCrown, "Ultimate Crown")]
+    [InlineData(ArtifactType.GoldenGoose, "Golden Goose")]
+    public void TheEightUltimatesAreNamedAsInTheReference(ArtifactType artifact, string name)
+    {
+        var ultimate = new UltimateArtifact();
+        ultimate.Set(7, artifact, MapVersion.SuccessionWars);
+
+        Assert.Equal(name, ultimate.Name);
+    }
+
+    [Fact]
+    public void AnArtifactOutsideTheEightHasNoNameOfItsOwn()
+    {
+        // The 104-row name table of artifact_info.cpp is unported; the tavern only ever asks about the eight.
+        var ultimate = new UltimateArtifact();
+        ultimate.Set(7, ArtifactType.ThunderMace, MapVersion.SuccessionWars);
+
+        Assert.Equal("Invalid Artifact", ultimate.Name);
     }
 
     [Fact]

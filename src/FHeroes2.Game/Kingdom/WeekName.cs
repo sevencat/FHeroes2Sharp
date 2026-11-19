@@ -11,9 +11,8 @@ namespace FHeroes2.Game.Kingdom;
 /// because <c>RandomWeek</c> draws inside the ranges by number (<c>week.cpp:47</c>, <c>week.cpp:62</c>).
 /// </para>
 /// <para>
-/// The names themselves are not here yet: <c>Week::GetName()</c> (<c>week.cpp:126</c>) goes through the
-/// translation table, and a monster's week also needs <c>Monster::GetName()</c>, neither of which the port has
-/// (ADR-113).
+/// The words themselves are in <see cref="Week.GetName"/> (<c>week.cpp:126</c>), not here: the enum gives the marker
+/// the draw returns and the name switch answers with the reference's English word (ADR-171).
 /// </para>
 /// </remarks>
 public enum WeekName

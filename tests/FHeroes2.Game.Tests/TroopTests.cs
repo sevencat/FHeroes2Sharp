@@ -162,4 +162,41 @@ public sealed class TroopTests
         Assert.True(MonsterStatistics.IsValid(MonsterType.Peasant));
         Assert.True(MonsterStatistics.IsValid(MonsterType.Phoenix));
     }
+
+    [Fact]
+    public void TheAttributeStringsDescribeOneCreature()
+    {
+        // The stack's attack and defense are the creature's; only damage and hit points are multiplied by the
+        // count, and the info screen prints the single creature's, so these three are plain digits.
+        var troop = new Troop(MonsterType.Archer, 10);
+
+        Assert.Equal("5", troop.GetAttackString());
+        Assert.Equal("3", troop.GetDefenseString());
+        Assert.Equal("12", troop.GetShotString());
+        Assert.Equal(5, troop.GetAttack());
+        Assert.Equal(3, troop.GetDefense());
+        Assert.Equal(12, troop.GetShots());
+    }
+
+    [Theory]
+    [InlineData(MonsterType.Peasant, "Very Slow (2)")]
+    [InlineData(MonsterType.Archer, "Very Slow (2)")]
+    [InlineData(MonsterType.Cavalry, "Very Fast (6)")]
+    [InlineData(MonsterType.Phoenix, "Ultra Fast (7)")]
+    [InlineData(MonsterType.Titan, "Very Fast (6)")]
+    public void TheSpeedStringIsTheWordAndTheNumber(MonsterType monster, string expected)
+    {
+        Assert.Equal(expected, new Troop(monster, 1).GetSpeedString());
+    }
+
+    [Fact]
+    public void TheSpeedStringOverloadTakesAnyValue()
+    {
+        Assert.Equal("Standing (0)", Troop.GetSpeedString(0));
+        Assert.Equal("Average (4)", Troop.GetSpeedString(4));
+        Assert.Equal("Blazing (8)", Troop.GetSpeedString(8));
+
+        // The reference's default branch, reachable only from a hand-written save.
+        Assert.Equal("Unknown (42)", Troop.GetSpeedString(42));
+    }
 }

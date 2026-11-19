@@ -304,6 +304,117 @@ public static partial class ImageOps
         BlitSprite(destination, Point.Zero, source);
 
     /// <summary>
+    /// The bounding box of the drawn pixels of <paramref name="sprite"/>, the equivalent of
+    /// <c>fheroes2::GetActiveROI( const Image &amp;, uint8_t )</c> (<c>engine/image.cpp:2574</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "Drawn" is read from the transform layer, not from the image layer: a pixel counts when its
+    /// transform value is <c>0</c> (copy) or at least <paramref name="minTransformValue"/>, and the
+    /// values in between are the skip / shadow / light operations that leave the destination alone
+    /// or merely tint it.
+    /// </para>
+    /// <para>
+    /// A sprite without a transform layer returns <see cref="Rect.Empty"/>, exactly like the reference:
+    /// a single layer image has no notion of which of its pixels are transparent, so the caller has to
+    /// fall back to the full bounds.
+    /// </para>
+    /// </remarks>
+    /// <param name="sprite">The sprite to measure.</param>
+    /// <param name="minTransformValue">
+    /// Lowest transform value that still counts as drawn, <c>6</c> by default.
+    /// </param>
+    /// <returns>The box, or <see cref="Rect.Empty"/> when nothing is drawn.</returns>
+    public static Rect GetActiveRoi(Sprite sprite, byte minTransformValue = 6)
+    {
+        ArgumentNullException.ThrowIfNull(sprite);
+
+        if (sprite.Transform is not { } transform || sprite.Image.IsEmpty)
+        {
+            return Rect.Empty;
+        }
+
+        int width = sprite.Width;
+        int height = sprite.Height;
+
+        static bool IsDrawn(byte value, byte minValue) => value == 0 || value >= minValue;
+
+        int top = -1;
+        for (int y = 0; y < height && top < 0; ++y)
+        {
+            int row = y * width;
+            for (int x = 0; x < width; ++x)
+            {
+                if (IsDrawn(transform[row + x], minTransformValue))
+                {
+                    top = y;
+                    break;
+                }
+            }
+        }
+
+        if (top < 0)
+        {
+            return Rect.Empty;
+        }
+
+        int bottom = top;
+        for (int y = height - 1; y > top; --y)
+        {
+            int row = y * width;
+            bool drawn = false;
+            for (int x = 0; x < width; ++x)
+            {
+                if (IsDrawn(transform[row + x], minTransformValue))
+                {
+                    drawn = true;
+                    break;
+                }
+            }
+
+            if (drawn)
+            {
+                bottom = y;
+                break;
+            }
+        }
+
+        int boxHeight = bottom - top + 1;
+
+        int left = 0;
+        bool leftFound = false;
+        for (int x = 0; x < width && !leftFound; ++x)
+        {
+            for (int y = 0; y < boxHeight; ++y)
+            {
+                if (IsDrawn(transform[((top + y) * width) + x], minTransformValue))
+                {
+                    left = x;
+                    leftFound = true;
+                    break;
+                }
+            }
+        }
+
+        int right = left;
+        bool rightFound = false;
+        for (int x = width - 1; x >= left && !rightFound; --x)
+        {
+            for (int y = 0; y < boxHeight; ++y)
+            {
+                if (IsDrawn(transform[((top + y) * width) + x], minTransformValue))
+                {
+                    right = x;
+                    rightFound = true;
+                    break;
+                }
+            }
+        }
+
+        return new Rect(left, top, right - left + 1, boxHeight);
+    }
+
+    /// <summary>
     /// Builds the one pixel outline around the visible pixels of <paramref name="source"/>, the
     /// equivalent of <c>fheroes2::CreateContour( const Image &amp;, uint8_t )</c>
     /// (<c>engine/image.cpp:1490</c>).

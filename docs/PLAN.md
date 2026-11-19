@@ -79,7 +79,7 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `audio` | 1 | 1 | 0 | 0 |
 | `battle` | 18 | 0 | 1 | 17 |
 | `campaign` | 3 | 0 | 0 | 3 |
-| `castle` | 11 | 3 | 5 | 3 |
+| `castle` | 11 | 3 | 8 | 0 |
 | `dialog` | 29 | 2 | 3 | 24 |
 | `editor` | 18 | 1 | 4 | 13 |
 | `game` | 28 | 2 | 4 | 22 |
@@ -603,6 +603,93 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
 `ReEvaluateIfNeeded(Hero, double)`）仍抛异常，注释写明缺的数据。测试 13 条（`AIWorldPathfinderTests`），
 Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
 
+2026-11-17：`castle` 的界面侧开工（ADR-165）：先把 `buildinginfo.cpp` 里与贴图无关的三块落下 ——
+`BuildingInfo`（四个改写：实际住所 → 可升级 → 亡灵酒馆 → 状态；`Cost`/`Name`/`Description`/`Area`；
+`getBuildingDescription` 的住所分支与 `%{count}` 替换）、`DwellingsBar`（六个住所、`ItemsBar` 的
+`calculateRoi`/`calculateItemsPos` 布局、命中、周产含水井与地标、左键三态与右键意图）、`MonsterNames`
+（`monsterGeneralStats` 的名称两列 72 条、`GetMultiName` 的不规则复数、随机城镇的 level 文案）。
+唯一行为偏离是 `RenderingOffset` 连整栏矩形一起重算，避免 setter 顺序敏感；队长矩形仍留默认 `135x70`。
+`castle` 文件统计从 3/5/3 变 3/6/2（`buildinginfo.cpp` 记部分）。测试 21 条，Game 2591 → **2612**，
+全解决方案 3 377 → **3 398** 全绿。
+
+2026-11-17：`castle_building.cpp` 的非绘制部分（ADR-166）：`FadeBuilding`（0 起步、`< 246` 加 9 否则 255、
+船的 `IsOnlyBoat`、`StopFade`，帧钟当 `Update(bool)` 的入参）、`BuildingsRenderQueue`（按
+`GetDrawingPriorities` 建 `BuildingRenderInfo`，构造时把 `top` 加进每个矩形）、`CastleBuildingRender`
+（`IsBuildingConnectionNeeded` 的野蛮人法师塔/盗贼公会与亡灵队长室、`IsBuildingFullyBuilt`、`ShouldDrawBuilding`
+把参考的两支合并成一支，含「升级版正在淡入时基础建筑还画」的例外）。`CastleGetMaxArea`/`getTownIcnId` 要贴图
+尺寸与 ICN 编号，blit 三个函数要 ICN，都没做。`castle` 统计 3/6/2 → 3/7/1。测试 9 条
+（`CastleBuildingRenderTests`），Game 2612 → **2621**，全解决方案 3 398 → **3 407** 全绿。
+
+2026-11-19：`castle_mageguild.cpp` 与 `castle_well.cpp` 的规则部分（ADR-167）：`Castle.GetMageGuildSpellRows`
+（五层，槽位数问 `HasLibraryCapability`、法术问 `IsLibraryBuilt`，行 `0` 是底部的一级）、
+`UI/Dialogs/MageGuildDialog`（行偏移 `365 - 90 * i`、单城禁用城镇切换、两句状态栏）、
+`CastleMaxRecruitment`（从六级住所示弱到一级分配、`Refusal` 三态与三句文案、`Summary` 单复数、草稿军队）。
+两个文件的绘制循环都没转。`castle` 统计按标记重数为 3/5/3（已转 3、部分 5、未转 3；上一轮写的 3/7/1 与标记
+对不上，这里以标记为准）。测试 15 条（`CastleMageGuildViewTests` 4、`MageGuildDialogTests` 4、
+`CastleMaxRecruitmentTests` 7），Game 2621 → **2632**，UI 170 → **174**，全解决方案 3 407 → **3 422** 全绿。
+
+2026-11-19：`castle_dialog.cpp` 与 `castle_town.cpp` 的文字部分（ADR-168）：`BuildingInfo.GetStatusLine`
+（悬停状态行，住所报 `"Recruit {复数小写}"`，随机城镇退化到等级）、`UI/Dialogs/CastleDialog`（屏幕日期行大写
+形式、八种 `Result` 含 `DoNothing`）、`UI/Dialogs/RecruitHeroDialog`（`"%{name} is a level %{value} %{race} "`
+加三档宝物句，魔法书从计数里扣掉，价格取 `PaymentConditions.RecruitHero()`，可用状态由调用方给）。两个文件的
+绘制与事件循环仍未转。`castle` 统计 3/5/3 → 3/7/1（只剩 `castle_tavern.cpp`，它要等 `world.cpp` 的传闻池）。
+测试 17 条（`BuildingInfoTests` 增 4、`CastleDialogTests` 4、`RecruitHeroDialogTests` 9），Game 2632 →
+**2636**，UI 174 → **187**，全解决方案 3 422 → **3 439** 全绿。
+
+2026-11-19：传闻池先立形状（ADR-169）：`LocalizedString`（`text` + 可选语言，`game_string.h:30-50`）、
+`World.Rumors.cs`（`StandardRumorCount` = 9、九条内置文案、九个方向词、`TotalRumorCount`；`GetCurrentRumor`/
+`ChooseRumorId`/`GetRegionName` 三个函数体留空抛出）；`castle_tavern.cpp` 的文字转成
+`UI/Dialogs/TavernDialog`（标题「Tavern」、开场句、空白行、传闻及其语言标签、只有 OK）。`castle` 统计
+3/7/1 → 3/8/0，目录里没有完全未转的文件了。测试 13 条（`RumorPoolTests` 7、`TavernDialogTests` 6），
+Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452** 全绿。
+
+2026-11-19：传闻池补齐（ADR-170）：`GetCurrentRumor` 接周种子与世界，`ChooseRumorId` 走
+`Rand.GetWithSeed( 0, total - 1, WeekSeed )`，`GetRegionName` 把地图切三份（严格比较、先行后列），句子抽成
+静态 `Describe`；`UltimateArtifact.Name` 给出八个终极宝物的名字与参考的 `"Invalid Artifact"` 占位；
+`TavernDialog.Create( World )` 转发。Game 2643 → **2684**，UI 193 → **194**，全解决方案 3 452 → **3 494** 全绿。
+
+2026-11-19：王国的神器收入与周名（ADR-171）：`Kingdom.GetIncome` 补上 `INCOME_ARTIFACTS`（走每个英雄的整只
+神器袋，空格与魔法书都交给表回答 0），`Week.GetName()` 给出 34 个周名词（怪物周取生物单数名、瘟疫是参考自己的
+全大写、表外用 `Unnamed`），`MonsterNames.GetPluralName( count )` 顺手补上。同时更正三处过时注释：`IncomeType`
+与 `GetIncome` 还写着「英雄没有神器袋」，`MonsterNamesTests` 还写着「金鹅是唯一带收入的神器」。`kingdom` 统计
+仍 6/6/2（两处都在 ◐ 的文件里），`monster` 仍 0/2/1。Game 2684 → **2697**，全解决方案 3 494 → **3 507** 全绿。
+
+2026-11-19：法术的文案两列（ADR-172）：`spell.cpp` 的 `spells` 表里名字与描述两列落成 `SpellText`（73 行，
+`spell|` 上下文前缀按 gettext 的显示规则去掉，`FireBlast` 仍拼 `Fireblast`、`StoneSkin` 仍拼 `Stoneskin`），
+`Spell.GetName()`/`GetDescription()` 各是一次查表；`SpellTable` 与 `Spell` 里「文案属于翻译层」的旧说法改成指向
+新表。`spell_info.cpp` 的 `getSpellDescription` 仍留（要 `HeroBase` 与地图）。`spell` 统计仍 1/3/0。Game
+2697 → **2714**，全解决方案 3 507 → **3 524** 全绿。
+
+2026-11-19：怪物信息屏的三支文案（ADR-173）：`MonsterDescriptions` 转出 `getMonsterAbilityDescription`
+（33 个分支，其中五支特例施法句、`%{spell}` 就地替换成 `SpellText` 的名字）、`getMonsterWeaknessDescription`
+与 `getMonsterPropertiesDescription`（按百分比分组合并、`replaceMassSpells` 去重、闪电箭印作 `Lightning`），
+`MonsterAbilities.IsBasic` 补上「形状类能力」那条线。同文件的 `getMonsterDescription` 是英文标签的调试转储，
+明确不转。`monster` 统计仍 0/2/1（`monster_info.cpp` 里还剩战斗侧两张表）。Game 2714 → **2766**，全解决方案
+3 524 → **3 576** 全绿。
+
+2026-11-19：怪物信息屏的排版与绘制（ADR-174）：`dialog_armyinfo.cpp` 拆成三件——`ArmyInfoLayout`（窗口/
+阴影/`pos_rt` 三个矩形加属性块、名字、描述、数量、三个按钮的全部偏移，参考的匿名 namespace 换成常量）、
+`ArmyInfoArtwork`（`VIEWARMY`/`VIEWARME` 的 0 与 7 两帧加三个按钮的两帧）、`ArmyInfoDialog`（属性行文本、
+描述块的两形状、`Draw` 与 `CreateButtons`）。顺带补上它们的前置：`Speed`/`Luck`/`Morale` 的 `String`
+（`GetName`）、`Troop` 的四个属性字符串、`monster_info.cpp` 的 `icnId` 表（`MonsterIcnIds.GetSpriteIcn`，
+66 行 switch）。Game 2766 → **2788**，UI 195 → **209**，全解决方案 3 576 → **3 613** 全绿。
+
+2026-11-19：法师塔窗口的排版与绘制（ADR-175）：`castle_mageguild.cpp` 的窗口拆成四件 —— `MageGuildLayout`
+（640×480 居中、底栏 `y = 461`、三段分栏与状态栏 ROI）、`MageGuildArtwork`（`STONEBAK(_EVIL)`、`SMALLBAR` 五帧、
+`TOWNWIND` 两帧、六种族 `MAGEGLD*`、退出按钮）、`SpellScrollRow`（一行卷轴的 110 步长、折叠下移 7、图标与名字、
+命中与当前法术）、`MageGuildDialog`（五行锚点 `365 - 90 * i`、建筑按已绘包围盒横向居中而按精灵高度站基线、裁剪
+到左侧 200 列、底栏两段源列、三个按钮、状态行）。顺带补 `ImageOps.GetActiveRoi`（只读 transform 层）与
+`ImageOps.BlitSpriteClipped`（源区左上角落到目标点再裁剪）。事件循环与法术说明对话框仍未转。Core 200 →
+**209**，UI 209 → **234**，全解决方案 3 613 → **3 647** 全绿。
+
+2026-11-19：水井窗口的数据层与绘制（ADR-176）：`castle_well.cpp` 拆成四件 —— `CastleWellDwelling` +
+`Castle.GetWellDwellings()`/`GetWellGrowth()`（六行：建没建、库存、周产含井与魔法泉、生物取自已建住宅）、
+`WellLayout`（640×480 居中、底栏 `y = 461`、两列三行住宅格与七类锚点、两段拼接的源列、x = 639 的填黑列）、
+`WellArtwork`（`WELLBKG(_EVIL)`、`SMALLBAR`、MAX 与退出按钮、种族 `CSTL*` 的第 19–30 帧共 12 帧）、
+`WellDialog`（背景与底栏、标题、九行统计文案用空串表示跳行、`Available:` 黄字、按钮与 tooltip、点击命中只认已建
+住宅）。保留了参考的两处不一致（生物取升级住宅而成长行取基础住宅位）。Game 2788 → **2794**，UI 234 → **272**，
+全解决方案 3 647 → **3 691** 全绿。
+
 
 
 ### `engine`（26）
@@ -613,6 +700,7 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   `logging.cpp`→`GameLog`；`pal.cpp`→`PaletteTable`；`rand.cpp`→`Pcg32` + `Rand` 门面（门面在
   ADR-070；`combineSeedWithValueHash` 在 ADR-113）；`timing.cpp`→`FrameTimer`
 * ◐ `image.cpp`（`Blit`/`Copy`/`Fill`/`ApplyTransform`/`Resize`/`CreateContour`/`Dithering` 已转，
+  带源区与裁剪的 `Blit( in, inPos, inSize, out, outPos )`→`ImageOps.BlitSpriteClipped` 与 `GetActiveROI` 在 ADR-175，
   `SubpixelResize` 与重采样分支未）；`screen.cpp`（只转了呈现层：`PresentationViewport` + `SdlPresenter`）；
   `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
   `translations.cpp`（只 `MOFile`→`MoCatalog`，`Translation::` 其余未）；`tools.cpp`（`Trim`/`GetString`
@@ -641,15 +729,20 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
 * ✅ `dialog_box.cpp`→`FrameBox`；`dialog_frameborder.cpp`→`FrameBoxChrome`
 * ◐ `dialog_game_settings.cpp`→`SettingsDialog`（只有 Language 一行）；`dialog_selectscenario.cpp`→
   `ScenarioSelectionDialog`（列表/缩略图子集）；`dialog_language_selection.cpp`→`LanguageSelectionDialog`
+* ◐ `dialog_armyinfo.cpp`→`ArmyInfoDialog`/`ArmyInfoLayout`/`ArmyInfoArtwork`（ADR-174）：`520×256` 窗口、
+  属性块三段布局（标签右对齐到冒号列、值左对齐）、名字居中、描述块两形状（逐句或拼接换行、底部对齐）、
+  数量框与三个按钮的位置与绘制已转；缺输入循环、`Monster` 的动画帧（要 `monster_anim`）与战斗型的
+  `Shots Left`/`Hit Points Left` 两行（`Troop` 还没有战斗状态）
 * ◐ **24 个入口的契约**（ADR-163，只有契约、无实现）：`dialog.h` 的 24 个函数落成 20 个模型，每个带
   `Create(...)` 与结果类型（列表见下），`FromButton` 的索引映射与 `Create` 的参数校验是真行为；`DialogButton`
   补齐参考的 14 个值。`Area`/`Render`/事件与控件层（`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/
   `OptionButtonGroup`/`TextBox`）未转，所以覆盖率不动。模型：`AdventureOptionsDialog`、`FileOptionsDialog`、
   `SelectFileDialog`、`QuickInfoDialog`（七个入口一个类）、`LevelUpDialog`、`GoldOrExperienceDialog`、
   `ArenaDialog`、`SelectCountDialog`、`InputStringDialog`、`ArmySplitDialog`、`RecruitDialog`、
-  `DwellingInfoDialog`、`ArmyInfoDialog`、`ArmyJoinDialog`（两个入口一个类）、`MarketplaceDialog`、
-  `GiftResourcesDialog`、`BuyBoatDialog`、`ThievesGuildDialog`、`GameInfoDialog`、`ArtifactSetDialog`
-* ❌ 上述 24 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`armyinfo`、`artifact`、`audio`、
+  `DwellingInfoDialog`、`ArmyInfoDialog`（排版与绘制已接上，ADR-174）、`ArmyJoinDialog`（两个入口一个类）、
+  `MarketplaceDialog`、`GiftResourcesDialog`、`BuyBoatDialog`、`ThievesGuildDialog`、`GameInfoDialog`、
+  `ArtifactSetDialog`
+* ❌ 上述 24 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`artifact`、`audio`、
   `buyboat`、`chest`、`file`、`gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、
   `interface_settings`、`levelup`、`marketplace`、`quickinfo`、`random_map_generator`、`recruit`、
   `resolution`、`selectcount`、`selectfile`、`selectitems`、`system_options`、`thievesguild`
@@ -777,7 +870,9 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   （`PlaceUltimateArtifact`）已转，只打一场的 2×2 世界（`GenerateBattleOnlyMap`/`SetUniformTerrain`）与
   法文地图的字符修复（`FixFrenchCharactersInStrings`）同批落地；**区域图**已转（`MapRegion`/`MapRegionNode`
   与 `ComputeStaticAnalysis`，ADR-116，`PostLoad` 末尾调用）；静态分析另外两项统计（`WaterPercentage`/
-  `LandRoughness`）同批落地；
+  `LandRoughness`）同批落地；**传闻池**已实现（`World.Rumors.cs`：`StandardRumorCount`、九条内置文案、九个
+  方向词、`TotalRumorCount`，以及 `GetCurrentRumor`/`ChooseRumorId`/`GetRegionName`/`Describe` 与
+  `UltimateArtifact.Name`，ADR-169/170）；
   ◐ `world_loadmap` 搬了瓦片循环、add-on 链、`fixMP2MapTileObjectType`、`MP2::OBJ_HERO` 与
   `MP2::OBJ_JAIL` 的信息块建人（ADR-067/072/073）、`MP2::OBJ_SIGN`/`OBJ_BOTTLE`/`OBJ_EVENT` 的
   对象装载（ADR-074）、`MP2::OBJ_SPHINX` 与无瓦片的每日事件/传闻块（ADR-075）与 `PostLoad` 的
@@ -863,9 +958,25 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   `ActionPreBattle`/`ActionAfterBattle`、`GetICNBuilding`/`GetICNBoat`（ADR-145）；
   剩余缺口写明白：塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、`DrawImageCastle`
   （城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）；
-  ❌ 七个界面与绘制文件：`buildinginfo.cpp`、`castle_building.cpp`、`castle_dialog.cpp`、
-  `castle_mageguild.cpp`、`castle_tavern.cpp`、`castle_town.cpp`、`castle_well.cpp`（合计约 4700 行，
-  要城堡界面、ICN 贴图与本地化文本，端口 UI 层还没有城堡屏）
+  ◐ `buildinginfo.cpp` 的**数据层**已转：`BuildingInfo`（四个改写、状态、成本/名字/描述/矩形、
+  `getBuildingDescription` 的住所分支）、`DwellingsBar`（六项、布局、命中、周产、左右键意图），红黑绘制与
+  招募/购买弹窗未转（ADR-165）；◐ `castle_building.cpp` 的**非绘制部分**已转：`FadeBuilding` 的 9 步淡入
+  （帧钟当参数）、`BuildingsRenderQueue`（绘制优先级 + 屏幕偏移）、`CastleBuildingRender` 的三个判定
+  （连接件、是否建完、这栋画不画，含升级替代基础建筑的淡入例外），blit 未转（ADR-166）；
+  ◐ `castle_mageguild.cpp`/`castle_well.cpp` 的**规则部分**已转：`Castle.GetMageGuildSpellRows` 的五层行
+  （槽位问种族、法术问种族+图书馆）、`UI/Dialogs/MageGuildDialog`（行偏移、城镇切换、两句状态栏）、
+  `CastleMaxRecruitment`（强到弱分配、三态拒绝文案、汇总行），绘制循环未转（ADR-167）；
+  魔法塔的**绘制与布局**在 ADR-175 补齐：`MageGuildLayout`/`MageGuildArtwork`/`SpellScrollRow` 与
+  `MageGuildDialog.Draw`（建筑居中与裁剪、底栏两段、三个按钮），只剩事件循环；
+  `castle_well.cpp` 的**数据与绘制**在 ADR-176 补齐：`CastleWellDwelling`/`GetWellDwellings()`、
+  `WellLayout`/`WellArtwork` 与 `WellDialog`（六格住宅、九行统计、`Available:`、底栏两段与两个按钮），
+  只剩生物动画与消息循环；
+  ◐ `castle_dialog.cpp`/`castle_town.cpp` 的**文字与返回值**已转：`BuildingInfo.GetStatusLine`（住所
+  `"Recruit {复数小写}"`、其余建筑报名字、随机城镇退化到等级）、`UI/Dialogs/CastleDialog`（日期行、八种返回值）、
+  `UI/Dialogs/RecruitHeroDialog`（招募英雄的句子、魔法书不计宝物、价格），绘制与事件循环未转（ADR-168）；
+  ◐ `castle_tavern.cpp` 的**文字**已转：`UI/Dialogs/TavernDialog`（标题、开场句、空白行、传闻及其语言标签，
+  另可从世界直接取本周传闻），动画与布局未转（ADR-169/170）；**castle 目录至此没有完全未转的文件**，剩下的都是 blit 与事件循环，端口 UI 层还没有
+  城堡屏
 * `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
   `AllTroopsAreTheSame`/`AllTroopsAreUndead`/`AreAllTroopsUnique`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
   ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
@@ -876,7 +987,9 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   `IArmyCommander.IsHeroes`，ADR-104）、
   `army_troop.cpp`→`Troop`（数值、血伤造价、种族/亡灵/士气/飞行四条能力查询、`GetStrength*`、
   `IsAllowUpgrade`/`GetUpgrade`/`Upgrade`/`GetUpgradeCost*`/`GetDwelling`，ADR-095/099/100/103/105/108；
-  `UpgradeTroops` 已转，ADR-108）；`Army.Size.cs`/`Army.Split.cs`/`Army.JoinSolution.cs`/
+  `UpgradeTroops` 已转，ADR-108；信息屏的四个属性字符串 `GetAttackString`/`GetDefenseString`/
+  `GetShotString`/`GetSpeedString` 与 `GetAttack`/`GetDefense`/`GetShots`，ADR-174）；`Army.Size.cs`/
+  `Army.Split.cs`/`Army.JoinSolution.cs`/
   `Army.Arrangement.cs` 补齐最后一批规则：九档兵力档位与两条文案表、分兵与合并七件套、
   `GetJoinSolution` 的四种判定、`SetFromTile` 的九种固定守卫与三个 `ArrangeFor*`，ADR-144。
   仍缺：`TroopSizeString`/`String` 的文案、三个绘制函数、士气/幸运修正里的城堡与神器两项、
@@ -884,7 +997,8 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
 * `spell`（4）：✅ `spell_storage.cpp`→`SpellStorage`（去重、书后追加神器上的 `ADD_SPELL`、
   `Remove`/`IsPresent`/`GetSpells`，ADR-102）；◐ `spell.cpp`→`Spell`（73 行数值表、等级、全部特性/指向/
   元素/守卫谓词、`GetStrategicValue`、`SpellPoints(bag)` 的四类神器减耗、`SuitableForSpellBook`/
-  `TotalSpellsPerLevel`/`RandomSpell`，ADR-102/143），只剩名字与描述文案、流序列化；
+  `TotalSpellsPerLevel`/`RandomSpell`，ADR-102/143），名字与描述两列在 `SpellText`
+  （73 行，`Spell.GetName()`/`GetDescription()` 就是两次查表，ADR-172），只剩流序列化；
   ◐ `spell_info.cpp`→`SpellInfo`（六条数值公式与四条地图查询：最近城堡、召唤船位置、可召唤船、
   英雄是否近水，ADR-143），只剩 `getSpellDescription` 的文案拼装；
   ◐ `spell_book.cpp`→`SpellBook`（过滤、翻页、会话起始状态与 `SetFilter` 列表，ADR-143），
@@ -921,14 +1035,16 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   ADR-118），`Kingdom` 有了 `GetRecruits()` 与 `clear` 里的重置，只差参考 `GetRecruits()` 的按需补位
   （要 `Settings`/战役存档/`Players`）
 * `kingdom`（14）：◐ `color.cpp`→`PlayerColor`、`race.cpp`→`MapRace`、`luck.cpp`→`Luck`、
-  `morale.cpp`→`Morale`（两把七档尺子与 `Normalize`，ADR-099）；✅ `profit.cpp`→`ProfitConditions`
+  `morale.cpp`→`Morale`（两把七档尺子、`Normalize` 与 `String`→`GetName`，ADR-099/174，只剩
+  `Description` 那段文案）；✅ `profit.cpp`→`ProfitConditions`
   （矿/建筑/神器三张日收入表，ADR-112）；✅ `payment.cpp`→`PaymentConditions`（五个固定价 + 建筑造价转发）、
   ✅ `resource_trading.cpp`→`ResourceTrading`（七个类别组合的 9 列汇率表，ADR-117）；✅ `puzzle.cpp`+`puzzle.h`→
   `Puzzle`（48 格位集、四条区带的洗牌与「先外框后中心」的揭示顺序，ADR-119；对话框与存档未转）；◐ `week.cpp`+`week.h`→
   `Week`/`WeekName`：34 个周名、周/月两条
-  抽签表与十二种月怪（ADR-113），只差 `Week::GetName()`（要翻译层与怪物名）；◐ `kingdom.cpp`+`kingdom.h`：
+  抽签表与十二种月怪（ADR-113）、`Week::GetName()`（34 个词，怪物周取生物单数名， plague 大写照参考，
+  ADR-171）；◐ `kingdom.cpp`+`kingdom.h`：
   账本（`Treasury` 的 `ref Funds`、`AllowPayment`、`AddFundsResource`/`OddFundsResource`、起始资源表
-  `GetStartingResources`）、日收入 `GetIncome`（矿井与城镇两项已算，神器与技能两项等英雄的神器袋与技能）、
+  `GetStartingResources`）、日收入 `GetIncome`（矿井、城镇、神器三项已算，技能一项等英雄学技能，ADR-171）、
   两张名册（`AddCastle`/`RemoveCastle`/`AddHero`/`RemoveHero`、`IsLoss`/`IsLosingGame`/`HasHeroes`/
   `CanRecruitHeroes`、`LostTownDays`、五个计数）与七槽容器 `Kingdoms`（`GetKingdom`/`Init`/`Clear`/
   `AddCastles`/`AddHeroes`/`GetNotLossColors`）已转（ADR-111/112），世界装载时按文件头的颜色起王国并填名册；
@@ -938,7 +1054,7 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   ADR-120）也已转，石阵分支 `ActionObelisk` 顺带落地（ADR-121）；未转 `ActionNewMonth`（要 `Settings`）、
   电脑难度加成与人类折扣、招募补位（`GetRecruits()` 的刷新）、`GetCountArtifacts`、`LossPostActions`
   （端口改成可选回调，见 ADR-120）；✅ `speed.cpp`→`Speed`（十档尺子、慢/急两步与两法 spell 的
-  `extraValue` 分支，ADR-137）、✅ `experience.cpp`→`Experience`（两条文案；参考走 `_()`，端口返回原文，
+  `extraValue` 分支，ADR-137；`String`→`GetName` 十档英文，ADR-174）、✅ `experience.cpp`→`Experience`（两条文案；参考走 `_()`，端口返回原文，
   ADR-137）；❌ `kingdom_overview`、`view_world`（两者都是渲染 + 对话框）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
   `monster.cpp` 已转 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
@@ -946,14 +1062,18 @@ Game 2578 → **2591**，全解决方案 3 364 → **3 377** 全绿。
   （`DwellingMonsters.GetDwelling`，ADR-108）、随机堆叠数量 `Monster::GetRNDSize`→
   `MonsterStatistics.GetRandomCount`（七级表 + 十六种特例，ADR-137）、`GetMissileICN`/`ICNMonh`
   （`MonsterIcnIds`）、随机分桶 `GetRandomUnitLevel`/`Rand`（`MonsterLevels`，10/15/27/14 四桶共 66 只）、
-  `Monster( const Spell & )`（`MonsterSummons`）与 `isRandomMonster`（ADR-146），只剩文案
-  （`GetName`/`GetMultiName`/`GetPluralName`/`getRandomRaceMonstersName`）；◐ `monster_info.cpp`：
+  `Monster( const Spell & )`（`MonsterSummons`）与 `isRandomMonster`（ADR-146），文案
+  `GetName`/`GetMultiName`/`GetPluralName`/`getRandomRaceMonstersName` 也已在 `MonsterNames`（ADR-171 补了
+  `GetPluralName`）；◐ `monster_info.cpp`：
   通用数值表、战斗数值表、住所映射（`DwellingMonsters`，ADR-095；住所位本身已搬进 `BuildingType`，
   ADR-106）、32 项能力表与载荷（`MonsterAbilities`，ADR-099/100）、两条强度
-  （`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）、`weaknesses` 表（`MonsterWeaknesses`）与
-  `getSpellResistance`（`MonsterSpellResistance`，ADR-146）已转，剩四个描述函数（要 `Spell.GetName()` 与
-  `_()`）与只被战斗侧读的 `icnId`/`sounds` 两张表；❌ `monster_anim`（`RandomMonsterAnimation` 依赖
-  `battle_animation.h`，随战斗批次）
+  （`GetMonsterBaseStrength`/`GetMonsterStrength`，ADR-100）、`weaknesses` 表（`MonsterWeaknesses`）、
+  `getSpellResistance`（`MonsterSpellResistance`，ADR-146）与三支界面文案
+  （`MonsterDescriptions`：能力句、弱点句、`getMonsterPropertiesDescription` 的分组合并，
+  `replaceMassSpells` 一并转，ADR-173）、`icnId` 表（`MonsterIcnIds.GetSpriteIcn`，66 行 switch，
+  ADR-174）已转，只剩只被战斗侧读的 `sounds` 表与英文标签的调试转储 `getMonsterDescription`
+  （不面向玩家，端口以测试代替）；❌ `monster_anim`
+  （`RandomMonsterAnimation` 依赖 `battle_animation.h`，随战斗批次）
 * `resource`（4）：✅ `resource.cpp`→`Funds`/`Resource`/`Cost`；◐ `artifact.cpp`→`ArtifactBag`（平铺 14 格、
   魔法书置顶右移、`Count`/`IsPresent`/`ContainSpell`、两种求和、`getTotalArtifactMultipliedPercent` 两个重载、
   `getArtifactValue`、`GetFirstArtifactWith*` 与两个 `isArtifact*Present`、`assembleArtifactSetIfPossible`、

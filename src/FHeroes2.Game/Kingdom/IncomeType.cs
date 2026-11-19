@@ -6,8 +6,8 @@ namespace FHeroes2.Game.Kingdom;
 /// </summary>
 /// <remarks>
 /// The reference's <c>INCOME_ALL</c> is <c>0xFF</c>, not the union of the five named bits, so that future bits are
-/// already covered by it. Two of the five are unreachable in the port today (see <see cref="Artifacts"/> and
-/// <see cref="HeroSkills"/>), and <see cref="CampaignBonus"/> needs the campaign save.
+/// already covered by it. Two of the five are unreachable in the port today (see <see cref="HeroSkills"/> and
+/// <see cref="CampaignBonus"/>), and both wait on something outside the kingdom: secondary skills and a campaign save.
 /// </remarks>
 [Flags]
 public enum IncomeType
@@ -25,8 +25,8 @@ public enum IncomeType
     /// Income and penalty of the artifacts the heroes carry, <c>INCOME_ARTIFACTS</c>.
     /// </summary>
     /// <remarks>
-    /// Unreachable today: a hero has no artifact bag yet (ADR-112), so this bit adds nothing. The table behind it,
-    /// <see cref="ProfitConditions.FromArtifact"/>, is already ported and tested.
+    /// Live since <see cref="Kingdom.GetIncome"/> learned to walk a hero's bag (ADR-171). The table behind it is
+    /// <see cref="ProfitConditions.FromArtifact"/>.
     /// </remarks>
     Artifacts = 0x04,
 

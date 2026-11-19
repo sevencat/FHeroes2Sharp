@@ -9,7 +9,8 @@ namespace FHeroes2.Game.Kingdom;
 /// negative luck makes their attacks do half damage, and the positive messages differ too. They are
 /// separate types here for the same reason they are separate namespaces in the reference — a
 /// <c>Morale</c> value must never be passed where a <c>Luck</c> value is expected.
-/// <c>Morale::String()</c> and <c>Morale::Description()</c> are translated text and are not ported.
+/// <c>Morale::String()</c> returns the reference's English (<see cref="GetName"/>); <c>Morale::Description()</c>
+/// is a paragraph of translated text and is not ported.
 /// </remarks>
 public static class Morale
 {
@@ -43,4 +44,26 @@ public static class Morale
     /// <param name="morale">The raw sum of the modifiers, which can be outside the scale.</param>
     /// <returns>The value clamped into <see cref="Treason"/>…<see cref="Blood"/>.</returns>
     public static int Normalize(int morale) => Math.Clamp(morale, Treason, Blood);
+
+    /// <summary>
+    /// The name of a morale value, <c>Morale::String()</c> (<c>morale.cpp:33-58</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference's English with the <c>morale|</c> gettext context prefix dropped; the top of the scale is
+    /// <c>"Blood!"</c> with its exclamation mark. <c>"Unknown"</c> for <see cref="Unknown"/> and anything else
+    /// off the scale.
+    /// </remarks>
+    /// <param name="morale">The morale value.</param>
+    /// <returns>The word the info screen prints.</returns>
+    public static string GetName(int morale) => morale switch
+    {
+        Treason => "Treason",
+        Awful => "Awful",
+        Poor => "Poor",
+        Normal => "Normal",
+        Good => "Good",
+        Great => "Great",
+        Blood => "Blood!",
+        _ => "Unknown",
+    };
 }

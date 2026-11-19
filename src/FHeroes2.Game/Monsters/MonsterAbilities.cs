@@ -128,8 +128,9 @@ public enum MonsterAbility : ulong
 /// morale the enemy loses, and <c>ENEMY_HALVING, 10, 0</c> is the chance to halve the enemy stack once.
 /// </para>
 /// <para>
-/// Only <c>getMonsterBaseStrength()</c> reads them so far, and it only looks at <c>SPELL_CASTER</c> — through
-/// <see cref="Spell"/>; the battle engine will read the rest.
+/// Two things read the numbers so far: <c>getMonsterBaseStrength()</c>, which only looks at <c>SPELL_CASTER</c>, and
+/// <see cref="MonsterDescriptions.GetAbilityDescription"/>, which spells every one of them out. The battle engine
+/// will read the rest.
 /// </para>
 /// </remarks>
 /// <param name="Type">The ability.</param>
@@ -411,4 +412,26 @@ public static class MonsterAbilities
     /// <param name="monster">The creature.</param>
     /// <returns><see langword="true"/> when the stack can freeze or strike again from morale.</returns>
     public static bool IsAffectedByMorale(MonsterType monster) => !IsUndead(monster) && !IsElemental(monster);
+
+    /// <summary>
+    /// Whether an ability is one a creature's description leaves out, the <c>ignoreBasicAbilities</c> flag of
+    /// <c>getMonsterAbilityDescription()</c> (<c>monster_info.cpp:611-716</c>).
+    /// </summary>
+    /// <remarks>
+    /// These are the abilities that follow from the creature's shape — its size, its wings, its element — and the info
+    /// screen drops them because the player can see them on the battlefield. <see cref="MonsterAbility.Elemental"/> is
+    /// deliberately not here: hiding it does not silence it, it swaps it for <c>"No Morale"</c>, which is the part
+    /// worth reading.
+    /// </remarks>
+    /// <param name="ability">The ability.</param>
+    /// <returns><see langword="true"/> for the eight entries the description hides.</returns>
+    public static bool IsBasic(MonsterAbility ability) =>
+        ability is MonsterAbility.None
+            or MonsterAbility.DoubleHexSize
+            or MonsterAbility.Flying
+            or MonsterAbility.Dragon
+            or MonsterAbility.EarthCreature
+            or MonsterAbility.AirCreature
+            or MonsterAbility.FireCreature
+            or MonsterAbility.WaterCreature;
 }

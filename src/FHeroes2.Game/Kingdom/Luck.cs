@@ -12,8 +12,8 @@ namespace FHeroes2.Game.Kingdom;
 /// <see cref="Cursed"/>…<see cref="Irish"/>.
 /// </para>
 /// <para>
-/// <c>Luck::String()</c> and <c>Luck::Description()</c> are translated text (<c>translations.cpp</c>) and are
-/// not ported.
+/// <c>Luck::String()</c> returns the reference's English (<see cref="GetName"/>); <c>Luck::Description()</c>
+/// is a paragraph of translated text (<c>translations.cpp</c>) and is not ported.
 /// </para>
 /// </remarks>
 public static class Luck
@@ -48,4 +48,25 @@ public static class Luck
     /// <param name="luck">The raw sum of the modifiers, which can be outside the scale.</param>
     /// <returns>The value clamped into <see cref="Cursed"/>…<see cref="Irish"/>.</returns>
     public static int Normalize(int luck) => Math.Clamp(luck, Cursed, Irish);
+
+    /// <summary>
+    /// The name of a luck value, <c>Luck::String()</c> (<c>luck.cpp:33-58</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference's English with the <c>luck|</c> gettext context prefix dropped, and <c>"Unknown"</c> for
+    /// <see cref="Unknown"/> or anything else off the scale.
+    /// </remarks>
+    /// <param name="luck">The luck value.</param>
+    /// <returns>The word the info screen prints.</returns>
+    public static string GetName(int luck) => luck switch
+    {
+        Cursed => "Cursed",
+        Awful => "Awful",
+        Bad => "Bad",
+        Normal => "Normal",
+        Good => "Good",
+        Great => "Great",
+        Irish => "Irish",
+        _ => "Unknown",
+    };
 }

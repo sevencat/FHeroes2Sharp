@@ -13,9 +13,9 @@ namespace FHeroes2.Game.Kingdom;
 /// with each other.
 /// </para>
 /// <para>
-/// <c>Speed::String()</c> is translated text (<c>translations.cpp</c>) and is not ported; the two spell
-/// adjustments are, including their fallback to a single step when the spell has no
-/// <c>extraValue</c> — the reference checks that value first, so a modified spell changes the step size.
+/// <c>Speed::String()</c> returns the reference's English (<see cref="GetName"/>), and the two spell
+/// adjustments are here, including their fallback to a single step when the spell has no <c>extraValue</c> —
+/// the reference checks that value first, so a modified spell changes the step size.
 /// </para>
 /// </remarks>
 public static class Speed
@@ -49,6 +49,30 @@ public static class Speed
 
     /// <summary><c>Speed::INSTANT</c>.</summary>
     public const uint Instant = 9;
+
+    /// <summary>
+    /// The name of a speed, <c>Speed::String()</c> (<c>speed.cpp:84-112</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference's English with the <c>speed|</c> gettext context prefix dropped, and <c>"Unknown"</c> for a
+    /// value off the scale — the reference's <c>default</c> branch, which a bad save can reach.
+    /// </remarks>
+    /// <param name="speed">The speed.</param>
+    /// <returns>The word the info screen prints.</returns>
+    public static string GetName(uint speed) => speed switch
+    {
+        Standing => "Standing",
+        Crawling => "Crawling",
+        VerySlow => "Very Slow",
+        Slow => "Slow",
+        Average => "Average",
+        Fast => "Fast",
+        VeryFast => "Very Fast",
+        UltraFast => "Ultra Fast",
+        Blazing => "Blazing",
+        Instant => "Instant",
+        _ => "Unknown",
+    };
 
     /// <summary>
     /// The speed after the slow spell, <c>Speed::getSlowSpeedFromSpell()</c> (<c>speed.cpp:114</c>).

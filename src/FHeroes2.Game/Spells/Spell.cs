@@ -30,8 +30,12 @@ namespace FHeroes2.Game.Spells;
 /// <see cref="SuitableForSpellBook"/>, <see cref="WeightForRace"/>).
 /// </para>
 /// <para>
-/// <b>What is not</b>: every method that needs the text layer (<c>GetName</c>, <c>GetDescription</c>) and the
-/// serialize operators, which the port leaves to the batch that ports <c>serialize.cpp</c>.
+/// <b>The text</b> is two lookups into <see cref="SpellText"/> — <see cref="GetName"/> and
+/// <see cref="GetDescription"/> — which return the reference's English and leave the gettext context prefixes out
+/// (ADR-172).
+/// </para>
+/// <para>
+/// <b>What is not</b>: the serialize operators, which the port leaves to the batch that ports <c>serialize.cpp</c>.
 /// </para>
 /// </remarks>
 public readonly record struct Spell
@@ -55,6 +59,23 @@ public readonly record struct Spell
 
     /// <summary>The id of the spell, <c>GetID()</c>.</summary>
     public SpellType Type { get; }
+
+    /// <summary>
+    /// The spell's name, <c>Spell::GetName()</c> (<c>spell.cpp:153</c>).
+    /// </summary>
+    /// <remarks>One lookup into <see cref="SpellText"/>; <c>"Unknown"</c> for <see cref="SpellType.None"/>.</remarks>
+    /// <returns>The name the reference prints.</returns>
+    public string GetName() => SpellText.GetName(Type);
+
+    /// <summary>
+    /// What the spell does, <c>Spell::GetDescription()</c> (<c>spell.cpp:158</c>).
+    /// </summary>
+    /// <remarks>
+    /// The template, not the finished sentence: <c>%{count}</c> is filled in by whoever shows the text, as in the
+    /// reference. See <see cref="SpellText.GetDescription"/>.
+    /// </remarks>
+    /// <returns>The description the reference prints.</returns>
+    public string GetDescription() => SpellText.GetDescription(Type);
 
     /// <summary>
     /// The level of the spell, 1 to 5, or zero when it has none, <c>Spell::Level()</c>

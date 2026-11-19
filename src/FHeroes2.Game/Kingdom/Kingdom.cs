@@ -380,9 +380,14 @@ public sealed class Kingdom
     /// the day the counts start depending on each other.
     /// </para>
     /// <para>
-    /// Four of the reference's five sources are here: mines, and the three things a town pays for. The artifact
-    /// income and the estates skill are not, because a hero carries neither a bag nor skills yet (ADR-112); both
-    /// are zero in this port whatever the bit says, and the port is only exact while that stays true.
+    /// Four of the reference's five sources are here: mines, the three things a town pays for, and the artifacts the
+    /// heroes carry. The fifth, the estates skill (<c>kingdom.cpp:616-622</c>), still has nothing to read: a hero has
+    /// an artifact bag (<see cref="Hero.BagArtifacts"/>) but no secondary skills yet (ADR-112, corrected by ADR-171).
+    /// </para>
+    /// <para>
+    /// The artifact branch walks every hero's whole bag, empty slots included, exactly as the reference does: an empty
+    /// slot is <see cref="ArtifactType.Unknown"/>, whose table row is empty, so it adds nothing. That also keeps the
+    /// spell book — which is a bag slot, not a separate thing — from needing an exception.
     /// </para>
     /// <para>
     /// The reference then adds the computer's difficulty bonus and the human's handicap (<c>kingdom.cpp:623-645</c>);
@@ -429,6 +434,18 @@ public sealed class Kingdom
                 if (castle.IsBuild(BuildingType.Spec) && castle.Race == MapRace.Warlock)
                 {
                     totalIncome += ProfitConditions.FromBuilding(BuildingType.Spec, MapRace.Warlock);
+                }
+            }
+        }
+
+        if ((type & IncomeType.Artifacts) != 0)
+        {
+            // kingdom.cpp:607-614: everything every hero carries, whatever the slot.
+            foreach (Hero hero in _heroes)
+            {
+                foreach (ArtifactType artifact in hero.BagArtifacts.Slots)
+                {
+                    totalIncome += ProfitConditions.FromArtifact(artifact);
                 }
             }
         }

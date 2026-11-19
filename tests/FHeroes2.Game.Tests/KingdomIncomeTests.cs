@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Castle;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Resources;
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -10,7 +11,7 @@ namespace FHeroes2.Game.Tests;
 
 /// <summary>
 /// Covers the daily income: the three tables of <c>profit.cpp</c> (<see cref="ProfitConditions"/>) and the kingdom's
-/// sum over them (<c>kingdom.cpp:564-646</c>).
+/// sum over them (<c>kingdom.cpp:564-646</c>), including the artifacts the heroes carry (ADR-171).
 /// </summary>
 public sealed class KingdomIncomeTests
 {
@@ -55,7 +56,8 @@ public sealed class KingdomIncomeTests
     [Fact]
     public void TheGoldenGoosePaysTenThousand()
     {
-        // profit.cpp:52-96 over artifact_info.cpp's table: the goose is the only income artifact of the game.
+        // profit.cpp:52-96 over artifact_info.cpp's table: the goose is the biggest purse of the game, not the only
+        // one — the endless bags below pay too.
         Assert.Equal(new Funds { Gold = 10000 }, ProfitConditions.FromArtifact(ArtifactType.GoldenGoose));
     }
 
@@ -212,5 +214,70 @@ public sealed class KingdomIncomeTests
         // Captured only: five gold mines and nothing else.
         Funds minesOnly = kingdom.GetIncome(resource => resource == Resource.Gold ? 5u : 0u, IncomeType.Captured);
         Assert.Equal(5000, minesOnly.Gold);
+    }
+
+    [Fact]
+    public void AHeroesArtifactsArePartOfTheDailyIncome()
+    {
+        KingdomState kingdom = new();
+        kingdom.Init(PlayerColor.Blue, GameDifficulty.Normal, isAiControlled: false);
+
+        Hero hero = new(1, MapRace.Knight);
+        Assert.True(hero.BagArtifacts.Push(ArtifactType.EndlessSackGold));
+        Assert.True(hero.BagArtifacts.Push(ArtifactType.TaxLien));
+        kingdom.AddHero(hero);
+
+        // kingdom.cpp:607-614: +1000 for the sack, -250 for the lien.
+        Assert.Equal(new Funds { Gold = 750 }, kingdom.GetIncome(_ => 0, IncomeType.Artifacts));
+    }
+
+    [Fact]
+    public void EveryHeroOfTheKingdomIsCounted()
+    {
+        KingdomState kingdom = new();
+        kingdom.Init(PlayerColor.Blue, GameDifficulty.Normal, isAiControlled: false);
+
+        Hero first = new(1, MapRace.Knight);
+        first.BagArtifacts.Push(ArtifactType.EndlessPurseGold);
+
+        Hero second = new(2, MapRace.Sorceress);
+        second.BagArtifacts.Push(ArtifactType.EndlessCordWood);
+        second.BagArtifacts.Push(ArtifactType.EndlessPouchGems);
+
+        kingdom.AddHero(first);
+        kingdom.AddHero(second);
+
+        Assert.Equal(new Funds { Gold = 500, Wood = 1, Gems = 1 }, kingdom.GetIncome(_ => 0, IncomeType.Artifacts));
+    }
+
+    [Fact]
+    public void AnEmptyBagAndASpellBookPayNothing()
+    {
+        KingdomState kingdom = new();
+        kingdom.Init(PlayerColor.Blue, GameDifficulty.Normal, isAiControlled: false);
+
+        // A fresh hero's bag is fourteen empty slots; the spell book is one of the slots, not a separate thing, and
+        // its row of artifact_info.cpp has no income at all.
+        kingdom.AddHero(new Hero(1, MapRace.Knight));
+
+        Assert.Equal(default, kingdom.GetIncome(_ => 0, IncomeType.Artifacts));
+    }
+
+    [Fact]
+    public void ArtifactsCountOnlyWhenTheBitIsAsked()
+    {
+        KingdomState kingdom = new();
+        kingdom.Init(PlayerColor.Blue, GameDifficulty.Normal, isAiControlled: false);
+
+        Hero hero = new(1, MapRace.Knight);
+        hero.BagArtifacts.Push(ArtifactType.EndlessSackGold);
+        kingdom.AddHero(hero);
+
+        Assert.Equal(default, kingdom.GetIncome(_ => 0, IncomeType.Captured));
+        Assert.Equal(default, kingdom.GetIncome(_ => 0, IncomeType.Castles));
+        Assert.Equal(default, kingdom.GetIncome(_ => 0, IncomeType.HeroSkills));
+
+        // And the default mask sums it with everything else.
+        Assert.Equal(1000, kingdom.GetIncome(_ => 0).Gold);
     }
 }
