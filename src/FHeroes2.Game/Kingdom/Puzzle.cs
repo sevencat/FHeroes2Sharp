@@ -1,3 +1,4 @@
+using FHeroes2.Core.Io;
 using FHeroes2.Core.Random;
 
 namespace FHeroes2.Game.Kingdom;
@@ -19,7 +20,7 @@ namespace FHeroes2.Game.Kingdom;
 /// stack and the save format is not written yet.
 /// </para>
 /// </remarks>
-public sealed class Puzzle
+public sealed partial class Puzzle
 {
     /// <summary>How many tiles the picture has, <c>numOfPuzzleTiles</c> (<c>puzzle.h:29</c>).</summary>
     public const int NumOfPuzzleTiles = 48;

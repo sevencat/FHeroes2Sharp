@@ -39,6 +39,16 @@ public enum HeroModes : uint
     /// <summary>The hero is offered for recruitment in at least one kingdom, <c>Heroes::RECRUIT</c>.</summary>
     Recruit = 0x0000_0040,
 
+    /// <summary>
+    /// The player told the hero to stay put for the rest of the day, <c>Heroes::SLEEPER</c>
+    /// (<c>heroes.h:206</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>MayStillMove( ignorePath, ignoreSleeper )</c> 在 <c>ignoreSleeper</c> 为假时直接回假，于是「还有
+    /// 移动力」与「玩家让他原地待命」是两件事。王国问「还有英雄能动吗」时传的是假，所以这个位必须存在。
+    /// </remarks>
+    Sleeper = 0x0000_0400,
+
     /// <summary>The hero sits in a prison and cannot be hired, <c>Heroes::JAIL</c>.</summary>
     Jail = 0x0000_0080,
 

@@ -68,14 +68,14 @@
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
 快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`、
 `h2d`、`resource` 与 `army` 七行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、
-ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
+ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过；`army` 行又于 2026-11-19 按 ADR-182 重算（1/3/0）。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
 | `engine` | 26 | 8 | 7 | 11 |
 | `agg` | 6 | 6 | 0 | 0 |
 | `ai` | 9 | 0 | 0 | 9 |
-| `army` | 4 | 0 | 2 | 2 |
+| `army` | 4 | 1 | 3 | 0 |
 | `audio` | 1 | 1 | 0 | 0 |
 | `battle` | 18 | 8 | 5 | 5 |
 | `campaign` | 3 | 0 | 0 | 3 |
@@ -93,7 +93,7 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `spell` | 4 | 1 | 3 | 0 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **48** | **74** | **127** |
+| **合计** | **249** | **49** | **75** | **125** |
 
 2026-11-19 重算了四行（都是「下面逐文件清单早就写了，表格没跟上」）：
 
@@ -105,10 +105,14 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
   `System.ResourceLanguage`，列表控件未转）都改记部分。
 * `heroes` 2/5/5 —— `route.cpp`、`skill.cpp` 在 ADR-138/089 之后早该算部分。
 
-合计 41/64/144 → **48/72/129**。
+合计 41/64/144 → **48/74/127**（这一轮改的四处）。
 
 2026-11-19 夜：`game_startgame.cpp`（`StartGame()` 的回合循环、`humanTurn()` 的开头两句）与 `game.cpp`
 （每帧的英雄移动）从未转转为部分（ADR-179），`game` 行 2/4/22 → 2/6/20，合计 **48/74/127**。
+
+2026-11-19 收尾：`army` 目录四个文件全量盘点（ADR-182）—— `army_ui_helper.cpp` 已转，`army_bar.cpp` 从「未转」
+转「部分」（规则、绘制与事件都在，缺的是调用方），`army.cpp`/`army_troop.cpp` 仍是「部分」（缺加成文案与
+`*String`）。`army` 行 0/2/2 → **1/3/0**，合计 **49/75/125**。
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -595,7 +599,8 @@ Game 2279 → **2308**，全解决方案 3036 → **3065** 全绿。
 记在 ADR 里：`GameMode` → `AiTurnOutcome`（只有 `EndTurn`/`QuitGame` 两个值）、`HeroBase&` → `IArmyCommander`、
 `Battle::Actions&` → `List<BattleCommand>`。私有方法一律不声明（三十来个，参数依赖未落地的对象价值表）；
 `AIWorldPathfinderStateRestorer` 不落（要 `AIWorldPathfinder`）。测试 13 条（`AiContractTests`），Game 2565 →
-**2578** 全绿。
+**2578** 全绿。2026-11-19 补：私有半边照 `ai_planner.h:200-281`、`ai_battle.h:97-165` 全部声明，`BattleBegins()`
+与 `ResetTurnCaches()` 等四处带代码；`AIWorldPathfinderStateRestorer` 已能实现并落地（ADR-180）。
 
 2026-11-17：`dialog` 的 24 个入口落成契约（ADR-163）：`dialog.h` 的 `AdventureOptions`…`ArtifactSetAssembled`
 搬进 `UI/Dialogs/` 的 20 个模型（`QuickInfo` 七个入口合一个类、`SelectFileLoad`/`Save` 合一个、`ArmyJoinFree`/
@@ -741,7 +746,7 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
 | `game` 会话层 | 22 个：`game_startgame` 1 735、`game_campaign` 1 710、`game_credits` 817、`game_over` 702、`game_auto_playtest` 698、`game_hotkeys` 597、`game.cpp` 502、`highscores` 476+378 … | 10 141 | 场景循环的宿主，窗口最终要接进这里 |
 | `editor` 窗口 | 13 个：`editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436、`options` 379、`daily_event_spec` 374 … | 7 978 | `EditorScene`/`EditorPanel`/`EditorInterface` 已有骨架 |
 | `gui` 剩余 | 14 个：`ui_keyboard` 1 360、`interface_status` 524、`player_info` 462、`skill_bar` 458、`ui_map_object` 366、`ui_castle` 324、`interface_focus` 287、`ui_campaign` 218 … | 4 604 | 软键盘最重，其余是面板与状态栏 |
-| `engine` 剩余 | 11 个：`image_color_conversion` 1 369、`audio_xmi2mid` 692、`serialize` 687、`system` 615、`smk_decoder` 325、`core` 194、`dir` 190 … | 4 726 | `serialize` 归 M8（存档）；`dir`/`tinyconfig` 明确不移植 |
+| `engine` 剩余 | 10 个：`image_color_conversion` 1 369、`audio_xmi2mid` 692、`system` 615、`smk_decoder` 325、`core` 194、`dir` 190 … | 4 039 | `serialize` 的流层已转（ADR-181）；`dir`/`tinyconfig` 明确不移植 |
 | 城堡屏 / 城镇屏 / 王国屏 | `castle_dialog` 859、`castle_town` 772、`kingdom_overview` 959、`view_world` 795、`castle_building`/`buildinginfo` 的 blit | ≈3 400 | 规则部分都已有，缺绘制与事件循环 |
 | `heroes` 剩余 | `heroes_dialog` 831、`heroes_meeting` 869、`heroes_base` 622、`heroes_spell` 421、`heroes_indicator` 333 | 3 076 | 另加 `heroes_action` 的军队/战斗分支 |
 | 随机地图 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237 | 2 455 | 与编辑器无关，可独立做 |
@@ -772,9 +777,11 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
   接上 `processEvents()`，ADR-177；`HandleEvents` 本体、手柄、双指触摸与 `KeySymGetName` 未转，SDL 事件→场景分派
   落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
   `translations.cpp`（只 `MOFile`→`MoCatalog`，`Translation::` 其余未）；`tools.cpp`（`Trim`/`GetString`
-  这类零散助力，用 BCL 替代）；`zzlib.cpp`（AGG 解压走 `ZLibStream`）
+  这类零散助力，用 BCL 替代）；`zzlib.cpp`→`Compression`（`ZipData`/`UnzipData`、`ZipStreamBuf`/`UnzipStream`
+  与存档块格式，ADR-181）；`serialize.cpp`→`Core/Io` 的四个流类
+  （`StreamBase`/`StreamBuf`/`RoStreamBuf`/`StreamFile`，ADR-181；这一版参考里没有 `ZStreamBuf`）
 * ❌ `audio_xmi2mid.cpp`、`core.cpp`、`dir.cpp`、`image_color_conversion.cpp`、`math_tools.cpp`、
-  `render_processor.cpp`、`serialize.cpp`、`smk_decoder.cpp`、`system.cpp`、`thread.cpp`、`tinyconfig.cpp`
+  `render_processor.cpp`、`smk_decoder.cpp`、`system.cpp`、`thread.cpp`、`tinyconfig.cpp`
 
 ### `agg`（6）
 
@@ -848,7 +855,8 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
 * ✅ `cursor.cpp`→`CursorTheme`/`CursorLayout`；`ui_button.cpp`→`Button`/`ButtonBase`/`ButtonSprite`/
   `ButtonGroup`/`ButtonArtwork`/`DialogButtonTemplate`；`ui_dialog.cpp`→`MessageBox`；
   `ui_window.cpp`→`StandardWindow`；`ui_text.cpp`→`Game.Gui.*` 全套；`ui_tool.cpp`→`MovableSprite`；
-  `ui_scrollbar.cpp`→`ScrollSlider`；`interface_font.cpp`→`CompositeGlyphSource`
+  `ui_scrollbar.cpp`→`ScrollSlider`（贴图生成）+ `ScrollBar`（索引↔像素映射）；`interface_font.cpp`→`CompositeGlyphSource`；
+  `interface_list.h`→`ListBoxBase`/`ListBox<T>`（选择、翻页、滚轮、拖拽滚屏与按键，行绘制留给子类）
 * ◐ `ui_font.cpp`（主体 + 修补 + 派生已转，`generateCP1250GoodButtonFont` 这类代码页补充未）；
   `interface_gamearea.cpp`→`AdventureMapView.Draw`（地形/对象/英雄/怪物/船/雾已转，AUTO 组合与动画未）；
   `interface_radar.cpp`→`Minimap`；`interface_icons.cpp`→`IconBar`/`IconSpriteSet`；
@@ -924,7 +932,7 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
 | 目录 | 已落 | 还欠的实现 | 还欠的测试 |
 | --- | --- | --- | --- |
 | `ai`（ADR-161） | `Game/Ai/` 六个文件：`AiPlanner` 的十五个成员、五种数据结构、九个自由函数、四个入口、四个阈值；签名照抄参考，真行为只有数据默认值/`Reset`/`UpdateOutcome`/单例/常量 | `ai_battle.cpp`（`BattlePlanner` 的决策）、`ai_common.cpp`（九个函数）、`ai_hero_action.cpp`（四个入口）、`ai_planner_hero.cpp`/`_castle`/`_kingdom`/`_internals`；现在除上面几处以外全是 `NotImplementedException` | 每换掉一个 `NotImplementedException` 配一条行为测试。`AiContractTests` 只钉住数据结构、单例、常量与「未移植会抛」，不能替代行为测试 |
-| `dialog`（ADR-163） | 20 个模型 + `DialogButton` 的 14 个位值；`Create` 的参数校验与 `FromButton` 的按钮映射是真行为 | 24 个入口的 `Area`/`Render`/事件；前置是控件层 `DialogElement`/`TextBase`/`Slider`/`Scrollbar`/`OptionButtonGroup`/`TextBox`；另欠 `SelectFile` 的列表、`SelectCount` 的上下控件、各对话框的屏幕偏移 | 模型层已有 25 条（`DialogModelsTests`）。渲染与交互要等控件层，届时按基线图（`tools/Verify*Baseline.ps1`）补像素与点击测试 |
+| `dialog`（ADR-163） | 20 个模型 + `DialogButton` 的 14 个位值；`Create` 的参数校验与 `FromButton` 的按钮映射是真行为 | 24 个入口的 `Area`/`Render`/事件；前置是控件层 `DialogElement`/`TextBase`/`Slider`/`OptionButtonGroup`/`TextBox`（`ScrollBar` 与 `ListBox` 已就位）；另欠 `SelectFile` 的列表接线、`SelectCount` 的上下控件、各对话框的屏幕偏移 | 模型层已有 25 条（`DialogModelsTests`）。渲染与交互要等控件层，届时按基线图（`tools/Verify*Baseline.ps1`）补像素与点击测试 |
 
 这两张表在实现批次完成后删除并把内容并回各自目录的条目；在此之前，`ai` 与 `dialog` 在覆盖率表里继续按「无整篇落地」计。
 
@@ -1198,7 +1206,7 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
   对象的扩展 metadata。下一步是给每日入账与胜负判定找调用方——那需要 `Game::NewDay`/`Game::CheckKingdom*` 那一层的
   会话循环（`Settings` 与 `Players`），或者按第 4 条的依赖顺序往 `kingdom/*`/`castle/*` 里走。
 4. `kingdom/*` → `castle/*` → `army/*` → `battle/*` —— 顺序不能反，`battle` 依赖 `army` 与 `castle`。
-5. 旁支：`engine/serialize.cpp`（存档，M8）、`smk_decoder.cpp`（过场动画）；
+5. 旁支：`engine/serialize.cpp`（存档，M8；流层与压缩块已落，ADR-181）、`smk_decoder.cpp`（过场动画）；
    `h2d_file.cpp` 与 `h2d.cpp` 已转（ADR-141，`AssetProbe h2d` 可对拍真实档），
    `audio_manager.cpp` 的数据层也已转（ADR-140），剩下的是把 `AudioPlayer` 换成
    `IAudioDevice`/`IAudioSource` 的 SDL3_mixer 实现。

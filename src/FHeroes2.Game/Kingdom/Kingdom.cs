@@ -4,6 +4,7 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.System;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.Game.Kingdom;
@@ -29,7 +30,7 @@ namespace FHeroes2.Game.Kingdom;
 /// （<c>Players</c>/<c>Campaign</c>）、胜负判定（<c>LossPostActions</c>，要 <c>Players</c>）。
 /// </para>
 /// </remarks>
-public sealed class Kingdom
+public sealed partial class Kingdom
 {
     /// <summary>
     /// How many heroes a kingdom may have at once, <c>GameStatic::GetKingdomMaxHeroes()</c>.
@@ -450,7 +451,69 @@ public sealed class Kingdom
             }
         }
 
+        if ((type & IncomeType.HeroSkills) != 0)
+        {
+            // kingdom.cpp:604-610 — the Estates skill is paid in gold, one per level, per hero who has it.
+            foreach (Hero hero in _heroes)
+            {
+                totalIncome.Gold += (int)hero.GetSecondarySkillValue(SecondarySkill.Estates);
+            }
+        }
+
         return totalIncome;
+    }
+
+    /// <summary>
+    /// The daily income with the difficulty corrections of the reference, <c>Kingdom::GetIncome( type )</c>
+    /// (<c>kingdom.cpp:564-646</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="GetIncome(Func{int, uint}, IncomeType)"/> answers "how much do my mines, towns, artifacts and skills
+    /// pay" — the five <c>INCOME_*</c> blocks of the reference. This overload is the whole function: it adds the
+    /// campaign awards of a human player (<c>kingdom.cpp:612-621</c>), the computer's difficulty bonus
+    /// (<c>:623-639</c>), and finally the handicap discount (<c>:641-645</c>).
+    /// </para>
+    /// <para>
+    /// The order is not negotiable. The campaign bonus and the handicap are for humans, the difficulty bonus for the
+    /// computer, and the handicap is applied <b>last</b>, on the total the AI bonus already fed into — a player with a
+    /// handicap never loses income the difficulty gave him, because he never gets any.
+    /// </para>
+    /// <para>
+    /// 参考在这里读三个全局（<c>Game::getDifficulty()</c>、战役存档、<c>Players::Get</c>），端口把难度与战役奖励放到
+    /// 参数上；手牌折扣则仍从 <see cref="Players"/> 读——那是玩家表本身，不需要外部再传一次。
+    /// </para>
+    /// </remarks>
+    /// <param name="countCapturedMines">How many mines of one <see cref="Resource"/> constant the color owns.</param>
+    /// <param name="type">Which sources to add up.</param>
+    /// <param name="difficulty">Map difficulty, <c>Game::getDifficulty()</c>.</param>
+    /// <param name="campaignBonus">
+    /// The <c>TYPE_RESOURCE_BONUS</c> awards of the campaign save, <c>CampaignSaveData::getObtainedCampaignAwards()</c>.
+    /// Ignored unless the kingdom is human controlled.
+    /// </param>
+    /// <returns>The daily income after every correction.</returns>
+    public Funds GetIncome(Func<int, uint> countCapturedMines, IncomeType type, GameDifficulty difficulty, Func<Funds>? campaignBonus = null)
+    {
+        Funds totalIncome = GetIncome(countCapturedMines, type);
+
+        if (IsControlHuman && (type & IncomeType.CampaignBonus) != 0 && campaignBonus is not null)
+        {
+            totalIncome += campaignBonus();
+        }
+
+        if (IsControlAi)
+        {
+            totalIncome += GetResourceIncomeBonusForAi(difficulty, _castles, countCapturedMines);
+
+            int goldBonus = (int)(totalIncome.Gold * GetGoldIncomeBonusForAi(difficulty));
+
+            if (goldBonus != 0)
+            {
+                totalIncome.Gold += goldBonus;
+            }
+        }
+
+        return ApplyHandicap(totalIncome, Players.Get(_color)?.Handicap ?? Player.HandicapStatus.None);
     }
 
     /// <summary>

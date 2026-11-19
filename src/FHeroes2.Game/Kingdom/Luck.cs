@@ -69,4 +69,34 @@ public static class Luck
         Irish => "Irish",
         _ => "Unknown",
     };
+
+    /// <summary>
+    /// The paragraph the info screen prints for a luck value, <c>Luck::Description()</c>
+    /// (<c>luck.cpp:60-84</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考用 <c>%{luck-type}</c> 占位，再把 <see cref="GetName"/> 填回去；端口没有翻译层，所以填的是英文名。
+    /// </para>
+    /// <para>
+    /// 三段文案与三个区间一一对应：负数「有一半概率打出半伤」，零「既不会幸运也不会不幸」，正数「有一半概率
+    /// 打出双倍伤害」。<see cref="Unknown"/> 与任何表外值都只有 <c>"Unknown"</c> 一个词。
+    /// </para>
+    /// </remarks>
+    /// <param name="luck">The luck value.</param>
+    /// <returns>The sentence for the info screen.</returns>
+    public static string Description(int luck)
+    {
+        string message = luck switch
+        {
+            Cursed or Awful or Bad =>
+                "%{luck-type} luck sometimes falls on the hero's units in combat, causing their attacks to only do half damage.",
+            Normal => "%{luck-type} luck means the hero's units will never get lucky or unlucky attacks on the enemy.",
+            Good or Great or Irish =>
+                "%{luck-type} luck sometimes lets the hero's units get lucky attacks (double strength) in combat.",
+            _ => "Unknown",
+        };
+
+        return message.Replace("%{luck-type}", GetName(luck));
+    }
 }

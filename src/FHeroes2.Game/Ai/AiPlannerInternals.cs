@@ -11,10 +11,9 @@ namespace FHeroes2.Game.Ai;
 /// hero decisions compare an army's strength against its enemy's, and the four thresholds have to agree.
 /// </para>
 /// <para>
-/// <b>Not ported from the same header:</b> <c>AIWorldPathfinderStateRestorer</c>
-/// (<c>ai_planner_internals.h:32-56</c>). It saves and restores two settings of <c>AIWorldPathfinder</c>, which does
-/// not exist yet (ADR-091 ports the player side only), so the restorer has nothing to restore until that class
-/// lands - it belongs to the AI pathfinder batch.
+/// <b>Also from the same header:</b> <c>AIWorldPathfinderStateRestorer</c> (<c>ai_planner_internals.h:32-56</c>), the
+/// guard that restores two settings of <see cref="AIWorldPathfinder"/>. It lives in its own file because it is a
+/// class, not a constant (ADR-180).
 /// </para>
 /// </remarks>
 public static class AiPlannerInternals

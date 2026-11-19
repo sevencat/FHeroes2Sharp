@@ -296,6 +296,35 @@ public sealed partial class Castle
     /// The level of the mage guild, <c>Castle::GetLevelMageGuild()</c> (<c>castle.cpp:955-969</c>).
     /// </summary>
     /// <returns>1 to 5, or 0 when the town has no mage guild.</returns>
+    /// <summary>
+    /// Teaches a hero every spell of the mage guild, <c>Castle::trainHeroInMageGuild()</c> (<c>castle.cpp</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what a hero standing at the castle gates gets after being placed there by the map — the reference's
+    /// <c>Kingdom::ApplyPlayWithStartingHero()</c> calls it so that a starting hero does not begin the map without the
+    /// spells his own town's guild already knows.
+    /// </para>
+    /// <para>
+    /// No guild, no spells: the reference returns before touching the hero when the guild has no level. The library of
+    /// the wizards widens the guild, so it is passed along.
+    /// </para>
+    /// </remarks>
+    /// <param name="hero">The hero to teach.</param>
+    public void TrainHeroInMageGuild(Hero hero)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+
+        int level = GetLevelMageGuild();
+
+        if (level == 0)
+        {
+            return;
+        }
+
+        _mageGuild.TrainHero(hero, level, HasLibraryCapability && IsLibraryBuilt);
+    }
+
     public int GetLevelMageGuild()
     {
         if (IsBuild(BuildingType.MageGuild5))

@@ -140,4 +140,87 @@ public static class MapRaces
         MapRace.Random => "Random",
         _ => "Neutral"
     };
+
+    /// <summary>
+    /// The two-line name of a race, <c>Race::DoubleLinedString()</c> (<c>race.cpp:60-88</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Name"/> 只差一处：死灵法师写成 <c>"Necro-\nmancer"</c>，好让两行都放得下。城堡界面的种族
+    /// 一栏用的是这个，别拿 <see cref="Name"/> 顶替。
+    /// </remarks>
+    /// <param name="race">The race.</param>
+    /// <returns>The name, with a line break in the necromancer's.</returns>
+    public static string DoubleLinedName(MapRace race) => race switch
+    {
+        MapRace.Knight => "Knight",
+        MapRace.Barbarian => "Barbarian",
+        MapRace.Sorceress => "Sorceress",
+        MapRace.Warlock => "Warlock",
+        MapRace.Wizard => "Wizard",
+        MapRace.Necromancer => "Necro-\nmancer",
+        MapRace.Multiple => "Multi",
+        MapRace.Random => "Random",
+        _ => "Neutral",
+    };
+
+    /// <summary>
+    /// The <c>MINI.PCX</c> frame that shows a race, <c>Race::getRaceIcnIndex()</c> (<c>race.cpp:176-202</c>).
+    /// </summary>
+    /// <remarks>
+    /// 两段帧号：51–58 是「在场玩家」，70–76 是「对手」。随机族固定 58，没有「对手」的那一版。表外值在参考里
+    /// 断言，端口给 58——与随机族同帧，不会画出空图。
+    /// </remarks>
+    /// <param name="race">The race.</param>
+    /// <param name="isActivePlayer">Whether the frame is for the player whose turn it is.</param>
+    /// <returns>The frame index.</returns>
+    public static uint IcnIndex(MapRace race, bool isActivePlayer) => race switch
+    {
+        MapRace.Knight => isActivePlayer ? 51u : 70u,
+        MapRace.Barbarian => isActivePlayer ? 52u : 71u,
+        MapRace.Sorceress => isActivePlayer ? 53u : 72u,
+        MapRace.Warlock => isActivePlayer ? 54u : 73u,
+        MapRace.Wizard => isActivePlayer ? 55u : 74u,
+        MapRace.Necromancer => isActivePlayer ? 56u : 75u,
+        MapRace.Multiple => isActivePlayer ? 57u : 76u,
+        _ => 58u,
+    };
+
+    /// <summary>
+    /// The next race of the six the player can pick, <c>Race::getNextRace()</c> (<c>race.cpp:204-227</c>).
+    /// </summary>
+    /// <remarks>
+    /// 环是 骑士 → 野蛮人 → 女巫 → 术士 → 法师 → 亡灵 → 随机 → 骑士；<see cref="MapRace.Multiple"/> 与
+    /// <see cref="MapRace.None"/> 不在环上，参考断言，端口回 <see cref="MapRace.None"/>。
+    /// </remarks>
+    /// <param name="race">The current race.</param>
+    /// <returns>The race after it, or <see cref="MapRace.None"/>.</returns>
+    public static MapRace Next(MapRace race) => race switch
+    {
+        MapRace.Knight => MapRace.Barbarian,
+        MapRace.Barbarian => MapRace.Sorceress,
+        MapRace.Sorceress => MapRace.Warlock,
+        MapRace.Warlock => MapRace.Wizard,
+        MapRace.Wizard => MapRace.Necromancer,
+        MapRace.Necromancer => MapRace.Random,
+        MapRace.Random => MapRace.Knight,
+        _ => MapRace.None,
+    };
+
+    /// <summary>
+    /// The previous race of the six, <c>Race::getPreviousRace()</c> (<c>race.cpp:229-260</c>).
+    /// </summary>
+    /// <remarks>与 <see cref="Next"/> 反向。注意 <see cref="MapRace.Random"/> 的前一个是亡灵，而不是多族。</remarks>
+    /// <param name="race">The current race.</param>
+    /// <returns>The race before it, or <see cref="MapRace.None"/>.</returns>
+    public static MapRace Previous(MapRace race) => race switch
+    {
+        MapRace.Knight => MapRace.Random,
+        MapRace.Barbarian => MapRace.Knight,
+        MapRace.Sorceress => MapRace.Barbarian,
+        MapRace.Warlock => MapRace.Sorceress,
+        MapRace.Wizard => MapRace.Warlock,
+        MapRace.Necromancer => MapRace.Wizard,
+        MapRace.Random => MapRace.Necromancer,
+        _ => MapRace.None,
+    };
 }

@@ -6807,3 +6807,174 @@ UI 195 → **209**，全解决方案 3 576 → **3 613** 全绿，`-warnaserror`
 `game_hotkeys.cpp` 的热键表、`Game::AutoSave` 与过场动画。`Settings` 与 `Players` 都是进程级静态表，
 因此按 `Settings` 的用例被收进同一条 xunit collection 串行执行。
 
+## ADR-180：AI 层先把形状定死，实现留到最后 ◐
+
+**背景**：ADR-161 给 `FHeroes2.Game.Ai` 立的是「别人要用的那一半」：`KingdomTurn`、`BattleTurn`、`HeroesAction`
+这些入口都在，正文一律 `throw`，私有半边特意没声明，理由是三十来个私有方法的参数形状依赖还没落地的对象价值表。
+先补其它子系统、AI 压到最后，这个划分就露了短板：真到写 `ai_planner_hero.cpp` 那天，要先回头补十几个私有声明，
+而那时的形状只能靠当下的记忆去猜。参考的头文件早把形状写清楚了（`ai_planner.h:200-281`、`ai_battle.h:97-165`），
+不如现在照抄，正文留空。
+
+**决定**：
+
+1. **私有半边照抄声明**。`AiPlanner` 的 `CastleTurn`、`HeroesTurn`、`GetPriorityTarget`、`EvaluateRegionSafety`、
+   `FindCastlesInDanger`…… 26 个成员照 `ai_planner.h:200-281` 的顺序与参数声明；`BattlePlanner` 的
+   `PlanUnitTurn`、`SelectBestSpell`、`SpellDamageValue`、`GetSpellSlowRatio`…… 23 个照 `ai_battle.h:97-165`。
+   正文仍是 `NotImplementedException`，消息里带将来要移植的 `.cpp` 与 ADR 编号。
+2. **状态字段一起补**：`_mapActionObjects`、`_priorityTargets`、`_enemyArmies`、`_tileArmyStrengthValues`、
+   `_regions`、`_budget`（顺序照 `ai_planner.h:265-281`）。参考里这六个是整场游戏有效的缓存，正是「回合开始时清掉」
+   那一段操作的对象。
+3. **只有四处带代码**，理由统一：声明出来的字段必须有读点，否则 `-warnaserror` 下 CS0169/CS0414 会直接打断构建，
+   而这四处的正文本来就是最终形态 —— `IsPriorityTask`/`IsCriticalTask`（header 里就是内联的两三行）、
+   `BattlePlanner.BattleBegins()`（四个计数器归零，`ai_battle.cpp`）、`AiPlanner.ResetTurnCaches()`
+   （`ai_planner_kingdom.cpp:652-659` 的清理块，收成一个方法）、`UpdateKingdomBudget()` 开头的预算清零
+   （`ai_planner_castle.cpp:270-275`）。
+4. **一次战斗内有效的分析数据不声明**：`_commander`、`_myArmyStrength`、`_enemyArmyStrength`、`_defensiveTactics`
+   这些唯一读者是还在 `throw` 的规划方法，声明出来就是死字段，留到 `AnalyzeBattleState` 落地时一起加。
+5. **`AIWorldPathfinderStateRestorer` 直接实现完**。ADR-161 时它还落不了地（要 `AIWorldPathfinder`），ADR-091 之后
+   世界寻路器已经完整（`Reset()`、两个设置器的读写都在），这个守卫的全部内容就是「存两个数、放回去」，没有可留
+   的决策；`Dispose()` 幂等，参考用析构函数天然只跑一次。
+6. **`BattlePlanner.TurnLimitCounters`（internal 只读元组）只为测试存在**：`IsLimitOfTurnsExceeded()` 落地前那四个
+   计数器没有任何读者，而 `battleBegins()` 已经把 50 这个数写进来了，值得钉住。测试项目本来就有
+   `InternalsVisibleTo`。
+
+**后果**：`AiPlanner.cs` 260 → **454** 行、`AiBattlePlanner.cs` 105 → **369** 行、新增
+`AIWorldPathfinderStateRestorer.cs` 54 行；测试 +2（`ABattleStartsWithAFreshTurnLimit`、
+`TheStateRestorerPutsBothTunablesBack`）。Game 2 802 → **2 804**，合计 3 785 → **3 787** 全绿，
+`-warnaserror` 0 警告。
+
+**遗留**：`ai_planner_hero.cpp`/`ai_planner_castle.cpp`/`ai_planner_kingdom.cpp`/`ai_battle.cpp`/`ai_battle_spell.cpp`/
+`ai_common.cpp`/`ai_hero_action.cpp` 七个文件的正文；战斗内的分析字段；若实现里要就地改 `EnemyArmy` 的字段，再放开
+它的设置器。
+
+## ADR-181：存读档的地基是 `Core/Io` 里的流与压缩块 ◐
+
+**背景**：`game_io.cpp` 的存读档全文压在 M8，但它下面有两层不是游戏规则、也没有任何游戏依赖的东西：参考
+`engine/serialize.h`+`.cpp`（687 行）的四个流类，与 `engine/zzlib.cpp`（zlib 包装 + 存档块格式）。这两层不落，
+后面无论是写 `Players` 的序列化、`Heroes`/`Castle` 的序列化还是 AI 的存读，每一处都要先自己搓一个流出来。
+`Core/Io` 目录此前只有 `Crc32`、`LittleEndianReader/Writer` 与 `BinaryFormatException`，正是放它们的地方。
+
+**决定**：
+
+1. **一个抽象基类，不是两个**。参考用虚继承把 `IStreamBase`（读）与 `OStreamBase`（写）拼成 `StreamBase`，只读流
+   因此不提供写侧。C# 没有虚继承，照搬只能得到「两个接口 + 一堆转发」。端口改为：`StreamBase` 负责字节序、
+   字符串、失败旗和全部读写辅助，只向具体流要两个原语 —— `Get8()` 与 `PutRaw()`，外加 `Size`/`Tell`/`Seek`/
+   `Skip`/`GetRaw`。只读的 `RoStreamBuf` 把 `Put8`/`PutRaw` 覆盖成 `NotSupportedException`：写只读流是程序错误，
+   参考那里是编译不过，端口里是运行时立刻炸，比静默丢数据好。
+2. **命名换成动词**。`stream << x` / `stream >> x` 在 C# 里没有对应写法（`<<` 不能重载成接受 `byte`），所以写侧
+   一律 `Write( ... )`（每种类型一个重载，顺序与参考一致），读侧一律 `ReadUInt16()`/`ReadString()` 这种带类型名的。
+   `fail()` 是属性 `Fail`，`setFail()` 是方法 `SetFail()`。
+3. **短读语义各自照抄**：`StreamBuf`（参考 `RWStreamBuf`）读到不够就补零、不置失败；`StreamFile` 读不够返回空数组
+   并置 `Fail`。参考里这两个类本来就分裂，统一成一种反而会让「存档被截断」这件事读不出来。
+4. **字符串是「4 字节长度 + 原始字节」，没有零终止**。参考 `operator<<( StreamBase &, const std::string & )` 先写
+   `size()` 再写字节；`ReadString()` 读到第一个 `\0` 为止（旧版本写进来的名字可能带填充）。编码用
+   `Encoding.Latin1` —— 它把 0~255 一对一映射成字符，正好是「按字节搬运」的原意，不像 UTF-8 那样会因为非法字节
+   改变长度。
+5. **压缩走 `ZLibStream`，不 P/Invoke zlib**。与 ADR-062（PNG 编码器）同一个选择：框架自带的 zlib 就是 zlib，
+   存档里那串字节与 `compress2()` 写出来的是同一种流。压缩级别只映射两档（`Z_BEST_COMPRESSION` →
+   `CompressionLevel.SmallestSize`，`Z_DEFAULT_COMPRESSION` → `Optimal`），参考的 `Z_NO_COMPRESSION` 等档位没人用。
+6. **块格式照 `zipStreamBuf()` 写死**：`rawSize`(4) + `zipSize`(4) + `formatVersion`(2，只有 0) + 两个未用字节 +
+   zlib 流。两个尺寸让读的一侧能一次分配，`UnzipStream()` 因此可以要求「解压出来的长度必须正好等于 rawSize」，
+   而不是像参考那样解完再比。
+7. **不抛异常**：损坏的存档一律返回空数组 / `false`，并 `GameLog.Error`。调用方是对话框，异常会把要显示给玩家的
+   那句话一起带走。
+8. **解压有上限**：`unzipData()` 不知道结果多大时，端口按流式读并卡在 512 MB。参考交给 zlib 的 `Z_MAX` 去管，
+   而存档是可以被玩家改的，这里宁可多写一行。带 `realSize` 的重载不设上限 —— 尺寸是块头里写的，分配前已经知道。
+
+**后果**：新增 `src/FHeroes2.Core/Io/` 五个文件，共 **932** 行 —— `StreamBase.cs` 281、`StreamBuf.cs` 152、
+`RoStreamBuf.cs` 108、`StreamFile.cs` 165、`Compression.cs` 226。测试 +24（`StreamTests` 16 条、`CompressionTests`
+8 条），Core 209 → **233**，合计 3 787 → **3 811** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`game_io.cpp`/`game_loadgame.cpp` 的正文（M8 的主体）；`game_over`/`highscores` 的存档格式；`Players`、
+`Heroes`、`Castle` 等类型各自的 `operator<<`/`operator>>` 移植 —— 这次只给它们准备好了「往哪写」。
+
+
+## ADR-182：army 目录全量移植：小怪物线、两处存档运算符与军队栏 ◐
+
+**背景**：`army/` 的四个 `.cpp` 在此之前是 0 已转 / 2 部分 / 2 未转。`army.cpp` 缺的是两张怪物线与存档运算符，
+`army_troop.cpp` 缺 `operator<<`/`operator>>`，`army_bar.cpp` 与 `army_ui_helper.cpp` 完全没有对应实现。最后这一对
+是「军队」这件事唯一对玩家可见的一面：城堡里、英雄界面上、编辑器里的五个格子。它们不依赖战斗，也不该等
+战斗层，`army` 目录于是可以先收口。
+
+**决定**：
+
+1. **`army_ui_helper.cpp` 只有一个函数，照抄进 `Game/Army/MiniMonsters.cs`**：`drawMiniMonsters()` 的窗口切块、
+   居中、精灵高度偏移一像素、以及三处怪癖全部保留 —— 每个 chunk 按「本行剩余栈数」均分；`first == 0 &&
+   count == 0`（不指定窗口）时**从右往左**画，于是最后一栈落在最右；盗贼公会只显示第一栈时其余栈画 `???`。
+   精灵来源走接口 `IMiniMonsterSprites`，默认实现 `Mons32Sprites` 读 `MONS32.ICN`、帧号 = 怪物 id - 1。
+2. **`army.cpp` 的两张怪物线进 `Game/Army/Army.MonsterLines.cs`**：`DrawSingleDetailedMonsterLine()` 与
+   `DrawMultipleMonsterLines()`。<3 栈一行居中（下移 `offsetY / 2 + 1`、宽 2/3），4 栈以上前两栈一行、其余第二行
+   （第二行两栈时宽 2/3）。这些数字都是参考里的原数，没有重算。
+3. **存档运算符进两个 `Persistence` 分片**：`Troop.Persistence.cs` 写 `(int)Monster` + `Count`，读失败清成
+   `Unknown`/0；`Army.Persistence.cs` 写槽位数 → 每栈 → 阵型布尔 → 颜色。**颜色宽度按存档版本分叉**：
+   `version < Release1_1_09` 读 4 字节整数，之后读 1 字节 —— 这是参考 `army.cpp` 里唯一一处版本判断，也是这一层
+   存在的理由。槽位数与常量不符即 `SetFail()` + 清空，不抛异常。读完后 `Commander` 置空：归属者由外面的装配层
+   重新挂上，存档里没有指挥官的身份。
+4. **`army_bar.cpp` 拆成四个 partial 文件 + 一个几何类**：
+   * `ArmyBar.cs` —— 状态、`SetArmy`、`SetBackground`（迷你 43×43 / 详细 43×53）、两个 `Redraw*`、光标框；
+   * `ArmyBar.Input.cs` —— 参考里全部 `ActionBar*()` 处理（光标文案、左键单击/双击/拖动/右键）；
+   * `ArmyBar.Events.cs` —— `QueueEventProcessing()` 与 `ActionCursorItemIter()` 的分派、`GetItemIndexAt`；
+   * `ArmyBar.Redistribute.cs` —— 参考匿名命名空间里那六条重分配规则；
+   * `ItemsBarLayout.cs` —— `gui/interface_itemsbar.h` 的表格几何（单格尺寸、表尺寸、格间距、渲染偏移、每行格数、
+     `GetItemRect`/`IndexAt`/`RenderArea`）。抽出来的理由是它是纯几何、与「格子里装什么」无关，后面的
+     宝物栏、法术栏、城堡建筑栏都要用它。
+5. **对话框不做阻塞调用**。参考在重分配里 `Dialog::ArmySplitTroop` 拿一个数、在双击里 `Dialog::ArmyInfo` 拿一个
+   动作，端口把两者都变成「问题描述」：`RedistributeArmy()` 返回 `ArmyBarSplit`（来源、目标、同一怪物与否、
+   总数、可分的格数、上限、建议值、是否均分），调用方拿去问玩家，再用 `ArmyBar.ApplySplit()` 执行；
+   双击返回 `ArmyBarEvent.Info`（`ArmyInfoDialog` 模型），答案交给 `ArmyBar.ApplyInfoAnswer()` 消费
+   （`Dismiss` 清空、`Upgrade` 付钱再升级）。
+6. **右键的两个分支按参考分**：`MouseClickRight` 走 `ActionBarRightMouseSingleClick`（只做重分配，不做别的）；
+   按住的那一帧走 `ActionBarRightMouseHold`（解除整栈 / 打开信息窗）。因此「按下右键立刻提示、松开不算」
+   的时序与参考一致，而不是合成一次点击。
+7. **世界的依赖外置成委托**。参考里 `world.GetKingdom( color ).AllowPayment()` 与 `OddFundsResource()` 直接读
+   世界；端口不把世界塞进控件，改由拥有王国的一侧提供 `CanAffordUpgrade`（决定升级按钮是否灰）与
+   `payForUpgrade`（执行扣款）。两者都可以不提供，缺省行为与参考「付得起」的一支相同。
+8. **缺图不停机**。`MiniMonsters` 里参考写的是 `assert( monster != nullptr )`；端口改成 `GameLog.Warn` 后跳过该栈。
+   缺一张 `MONS32` 画面不该把玩家从界面上打下来，也不该让存档一致性检查在测试里炸掉。
+9. **`ImageOps.Borders.cs` 补上 `DrawBorder()`**：参考 `fheroes2::DrawBorder( image, color, thickness )` 是各条
+   栏共用的小工具，端口此前没有；这次顺带落了，`ArmyBar` 的格子框与后面的栏都能用。
+
+**后果**：新增 **11** 个文件、共 **2 091** 行：`Core/Imaging/ImageOps.Borders.cs` 83；`Game/Army/MiniMonsters.cs` 221、
+`Army.MonsterLines.cs` 125、`Army.Persistence.cs` 89、`Troop.Persistence.cs` 62；`UI/Widgets/ArmyBar.cs` 388、
+`ArmyBar.Input.cs` 423、`ArmyBar.Events.cs` 224、`ArmyBar.Redistribute.cs` 223、`ArmyBarSplit.cs` 79、
+`ItemsBarLayout.cs` 174。测试 +33（`ArmyPersistenceTests` 8 条、`MiniMonstersTests` 6 条、`ArmyBarTests` 19 条），
+Game 2 804 → **2 818**、UI 358 → **377**，合计 3 811 → **3 844** 全绿，`-warnaserror` 0 警告。
+`army` 目录改记 1 已转 / 3 部分 / 0 未转（`army_ui_helper.cpp` 已转；`army.cpp`、`army_troop.cpp`、`army_bar.cpp`
+各留一段，见遗留）。
+
+**遗留**：`army.cpp` 的 `GetLuckModificator()`/`GetMoraleModificator()`（要 `Kingdom`/`Castle` 的加成链）与
+`Army::String()`（本地化拼接）；`army_troop.cpp` 的 `GetAttackString()`/`GetSpeedString()`/`GetShotString()` 等
+文字行；`army_bar.cpp` 的调用方 —— 英雄界面、城堡界面与编辑器的那几处 `QueueEventProcessing()` 还没接上；
+存档的整体装配（`game_io.cpp` 的会话层）仍属 M8。
+
+## ADR-183：列表控件只做状态机，贴图与行绘制由调用方给 ◐
+
+**背景**：`kingdom` 目录剩下的两篇都是界面，其中 `kingdom_overview.cpp` 的英雄/城堡两个列表建立在参考的
+`Interface::ListBox<Item>`（`gui/interface_list.h`）之上，而滚动条的索引↔像素映射在 `gui/ui_scrollbar.*` 里。
+这两样是所有「多行可滚」窗口的公共前置（场景选择、法术书、宝物列表、招募、市场都会用到），但仓库里此前
+只有 `ScrollSlider`（贴图拉伸），没有列表。
+
+**决定**：
+
+1. **`ListBox<T>` 按参考拆两层**：`ListBoxBase` 对应 `ListBasic`（非泛型，王国总览要靠它用一个指针在英雄表与
+   城堡表之间切换），`ListBox<T>` 对应 `ListBox<Item>`。`T` 限 `class`，与参考「行以指针交出」一致。
+2. **行内容一律由子类画**：`RedrawItem`/`RedrawBackground`/`ActionCurrentUp`/`ActionCurrentDn`/
+   `ActionListSingleClick`/`DoubleClick`/`PressRight`/`LongPress`/`Cursor` 全是抽象或虚方法，签名照抄参考，
+   但多一个 `PixelBuffer output` —— 端口没有全局 `Display`，帧缓冲从外面传。
+3. **两个步进按钮不取图**：参考的 `SetScrollButtonUp( icn, index1, index2, pos )` 在端口里变成
+   `SetScrollButtonUp( ButtonBase )`。控件层不碰 `ICN::`，调用方（对话框）自己按美术表造 `ButtonSprite`；
+   按钮的按下外观由 `UpdatePressState(events)` 更新，不再在事件里顺手重绘。
+4. **滚动条独立成类**：`ScrollBar` 只管 `Area`/滑块尺寸/`Position`/`min..max` 与五个移动方法，不继承贴图。
+   `ListBox.UpdateScrollBarImage()` 仍用参考的 `ScrollSlider.Create(..., 0-8, 7-15)` 切拉伸，保持与
+   `ui_scrollbar.cpp` 同一份几何。
+5. **整数除法一处不改**：`MoveToIndex` 的截断、`MoveToPosition` 的 `+ length / 2` 与「单档返回 false」全部照抄，
+   因为按下块靠返回值判断是否重画，行命中框也直接由同一套除法得出。
+6. **两处必要的偏离**：`VisibleItemCount` 由 `protected` 放宽为可读（对话框算边框要用）；行区域小于行数时
+   拖动的整除会除零，端口跳过那一段而不是像参考一样崩。
+
+**后果**：新增 `UI/Widgets/ScrollBar.cs`（约 250 行）、`ListBoxBase.cs`（约 45 行）、`ListBox.cs`（约 700 行）；
+测试 +27（`ScrollBarTests` 8、`ListBoxTests` 19），UI 377 → **404**，合计 3 844 → **3 871** 全绿，
+`-warnaserror` 0 警告 0 错误。`gui` 目录的 `ui_scrollbar.cpp` 由「已转」补上另一半，`interface_list.h`
+从「无」改记已转。
+
+**遗留**：`kingdom_overview.cpp` 与 `view_world.cpp` 本身；`ListBox` 在场景选择/法术书/市场等窗口上的接线。

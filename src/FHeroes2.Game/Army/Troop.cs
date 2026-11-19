@@ -30,7 +30,7 @@ namespace FHeroes2.Game.Army;
 /// lives in the castle dialog, not in the troop.
 /// </para>
 /// </remarks>
-public sealed class Troop
+public sealed partial class Troop
 {
     private MonsterType _monster;
 

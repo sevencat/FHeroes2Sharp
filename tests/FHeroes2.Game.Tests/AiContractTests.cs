@@ -154,4 +154,16 @@ public sealed class AiContractTests
     {
         _ = Assert.Throws<NotImplementedException>(() => AiCommon.BuildIfPossible(null!, default));
     }
+
+    [Fact]
+    public void ABattleStartsWithAFreshTurnLimit()
+    {
+        // The one member of the battle planner that is already ported: it clears the counters that
+        // isLimitOfTurnsExceeded() will read, and 50 is the number of the reference (ai_battle.h:139).
+        BattlePlanner planner = BattlePlanner.Instance;
+
+        planner.BattleBegins();
+
+        Assert.Equal((0u, 50u, 0u, 0u), planner.TurnLimitCounters);
+    }
 }

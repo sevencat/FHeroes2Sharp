@@ -6439,3 +6439,137 @@ UI 316 → **350**，全解决方案 3 735 → **3 769** 全绿，`-warnaserror`
 **遗留**：`AI::Planner` 的电脑回合、存读档（`game_io`/`serialize`）、当天事件的对话框、状态栏的国旗与地图名贴图、
 `game_hotkeys.cpp` 的热键表、`Game::AutoSave` 与过场动画。
 
+### AI 层把形状先定死（2026-11-19，ADR-180）
+
+电脑玩家的实现压到最后，但 AI 目录不能一直只有「别人要用的那一半」。这一节把参考 `ai/` 的**全部**成员补成声明：
+私有方法照 `ai_planner.h:200-281`、`ai_battle.h:97-165` 逐个列出并 `throw`，状态字段（回合内的六个缓存）一起补上，
+于是以后移植 `ai_planner_*.cpp` 时只剩填正文。唯一真实现的是一处断言级的工具：`AIWorldPathfinderStateRestorer`
+（世界寻路器在 ADR-091 之后已经完整，它就是「存两个数、放回去」）。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Ai/AiPlanner.cs`（补） | `ai_planner.h:200-281`、`ai_planner_kingdom.cpp:652-659` | 26 个私有成员 + 六个回合内缓存；`IsPriorityTask`/`IsCriticalTask` 与 `ResetTurnCaches` 带代码 |
+| `Game/Ai/AiBattlePlanner.cs`（补） | `ai_battle.h:97-165` | 23 个私有成员、`MaxTurnsWithoutDeaths = 50`、`BattleBegins()` 实现 |
+| `Game/Ai/AIWorldPathfinderStateRestorer.cs`（新） | `ai_planner_internals.h:32-56` | 保存/恢复寻路器的两个设置，`Dispose()` 幂等 |
+
+要点：
+
+* **为什么现在补**：私有方法的样子取决于参考头文件，不取决于实现顺序；等最后写 AI 时再补，形状就得靠当时的记忆猜。
+* **四处带代码是为了字段有读点**：`-warnaserror` 下 CS0169/CS0414 是错误，而这四处的正文本来就是最终形态
+  （两个内联辅助、`battleBegins()` 的归零、回合开始与预算更新的清理块）。
+* **战斗内的分析字段没有声明**：唯一读者是还在 `throw` 的规划方法，声明出来只是死字段，随 `AnalyzeBattleState` 落地。
+* **`TurnLimitCounters` 是 internal 的测试窗口**：`battleBegins()` 写进去的 50 在 `IsLimitOfTurnsExceeded()` 落地前
+  没人读，测试把它钉住。
+
+**测试**：`ABattleStartsWithAFreshTurnLimit`（四个计数器归零、`50` 是参考的值）、
+`TheStateRestorerPutsBothTunablesBack`（`using` 结束后两个设置复原、第二次 `Dispose()` 不回滚）。
+Game 2 802 → **2 804**，合计 3 785 → **3 787** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：七个 `.cpp` 的正文（`ai_planner_hero`/`ai_planner_castle`/`ai_planner_kingdom`/`ai_battle`/
+`ai_battle_spell`/`ai_common`/`ai_hero_action`）；战斗内的分析字段。
+
+### 存读档的地基：流与压缩块（2026-11-19，ADR-181）
+
+存档全文压在 M8，但它最下面那层与游戏规则无关 —— 参考 `engine/serialize`（四个流类）与 `engine/zzlib`（zlib 包装 +
+存档块格式）。这一节把它们搬进 `Core/Io`，以后 `Players`、`Heroes`、`Castle` 的序列化与 AI 的读写都往这上面写。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Core/Io/StreamBase.cs`（新） | `serialize.h`/`serialize.cpp` | 字节序、`ReadString`/`Write(string)`、失败旗、全部定长读写 |
+| `Core/Io/StreamBuf.cs`（新） | `RWStreamBuf` | 可增长内存流，容量 1 KB 起、小写入按半增 |
+| `Core/Io/RoStreamBuf.cs`（新） | `ROStreamBuf` | 只读视图，`GetRawView`/`GetStringView` 零拷贝 |
+| `Core/Io/StreamFile.cs`（新） | `StreamFile` | 文件流，短读置 `Fail` |
+| `Core/Io/Compression.cs`（新） | `zzlib.cpp` | `ZipData`/`UnzipData`、`ZipStreamBuf`/`UnzipStream` 与块格式 |
+
+要点：
+
+* **一个基类而不是两个**：参考靠虚继承拆读侧与写侧，C# 没有，端口只要具体流给两个原语（`Get8`/`PutRaw`），
+  其余都在 `StreamBase` 里写一次；只读流的写方法直接 `NotSupportedException`。
+* **短读语义照抄各自的参考**：`StreamBuf` 补零不置失败，`StreamFile` 置失败 —— 存档被截断必须读得出来。
+* **字符串是「4 字节长度 + 原始字节」**：参考不写零终止，读的时候截到第一个 `\0`；编码取 `Latin1`。
+* **压缩用 `ZLibStream`**（ADR-062 的同一选择）；块头 `rawSize`/`zipSize`/`version`/两个未用字节照 `zipStreamBuf()`。
+* **边角都走「返回空 + 日志」**：损坏的存档不该在加载到一半时抛异常，对话框要拿得到「读失败了」这句话。
+* **解压设 512 MB 上限**（仅未知长度的那支）：存档可被玩家改，参考交给 zlib 的 `Z_MAX`。
+
+**测试**：`StreamTests` 16 条（往返、字节序、字符串、容量增长、负 `Seek`、视图零拷贝与只读、文件短读）、
+`CompressionTests` 8 条（zlib 往返、尺寸不符、块头布局、版本/截断/零长度拒绝）。Core 209 → **233**，
+合计 3 787 → **3 811** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`game_io.cpp`/`game_loadgame.cpp` 的正文；各游戏类型自己的 `operator<<`/`operator>>`。
+
+
+## army 目录：小怪物线、两处存档运算符与军队栏 ✅（2026-11-19）
+
+`army/` 四个 `.cpp` 里最后没有对应实现的两个（`army_bar.cpp`、`army_ui_helper.cpp`）补齐，另外两个缺的那部分
+（`army.cpp` 的怪物线与存档运算符、`army_troop.cpp` 的存档运算符）也补上。ADR-182。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Army/MiniMonsters.cs`（新） | `army_ui_helper.cpp` | `drawMiniMonsters()`、`IMiniMonsterSprites`、`Mons32Sprites` |
+| `Game/Army/Army.MonsterLines.cs`（新） | `army.cpp` `DrawSingleDetailedMonsterLine`/`DrawMultipleMonsterLines` | 一行居中的三栈、两行铺开的多栈 |
+| `Game/Army/Army.Persistence.cs`（新） | `army.cpp` `operator<<`/`>>` | 槽位 → 栈 → 阵型 → 颜色（1.1.09 前后宽度不同） |
+| `Game/Army/Troop.Persistence.cs`（新） | `army_troop.cpp` `operator<<`/`>>` | 怪物 id + 数量，8 字节 |
+| `UI/Widgets/ArmyBar.cs`（新） | `army_bar.cpp:189-315` | 状态、`SetArmy`、迷你/详细背景、`RedrawItem`、光标框 |
+| `UI/Widgets/ArmyBar.Input.cs`（新） | `army_bar.cpp:317-741` | 全部 `ActionBar*()` 处理 |
+| `UI/Widgets/ArmyBar.Events.cs`（新） | `interface_itemsbar.h:425-570` | 事件分派、`GetItemIndexAt`、`ApplyInfoAnswer` |
+| `UI/Widgets/ArmyBar.Redistribute.cs`（新） | `army_bar.cpp:55-186` | 六条重分配规则、`ApplySplit`、快捷键分半 |
+| `UI/Widgets/ArmyBarSplit.cs`（新） | `army_bar.cpp` 的对话框参数 | 「怎么分」的问题描述 |
+| `UI/Widgets/ItemsBarLayout.cs`（新） | `interface_itemsbar.h:100-356` | 表格几何，供后面各条栏复用 |
+| `Core/Imaging/ImageOps.Borders.cs`（新） | `DrawBorder()` | 1 像素/多像素边框 |
+
+要点：
+
+* **三处绘制怪癖原样保留**：chunk 按「本行剩余栈数」均分；`first == 0 && count == 0` 时从右往左画；盗贼公会只
+  显示第一栈时其余栈是 `???`。改掉任何一条都会让截图与原版对不上。
+* **存档颜色的宽度是版本相关的**：`< Release1_1_09` 是 4 字节整数，之后 1 字节。这是 `army.cpp` 里唯一一处
+  版本判断；槽位数与常量不符即 `SetFail()` + 清空，不抛异常，也绝不「凑合读」。
+* **对话框变成「问题 + 执行」两步**：`RedistributeArmy()` 返回 `ArmyBarSplit`，调用方问玩家，再
+  `ApplySplit( split, slots, useFastSplit )`。`ArmyInfo` 同理：双击返回模型，`ApplyInfoAnswer()` 消费答案。
+* **右键两个分支分开**：`MouseClickRight` 只做重分配；按住的那一帧才解除整栈 / 打开信息窗。测试里因此用
+  「按下帧」和「按下+松开帧」两种事件，而不是一次合成点击 —— 合成点击会走成跨栏拖动。
+* **世界不进控件**：升级按钮灰不灰、钱怎么扣，都由 `CanAffordUpgrade` / `payForUpgrade` 两个委托从外面给。
+* **缺图只告警**：参考的 `assert` 在端口里是 `GameLog.Warn` + 跳过，界面不会因为一张 `MONS32` 缺席而崩。
+
+**测试**：`ArmyPersistenceTests` 8 条（8 字节布局、往返、未知怪 id、槽数不符清空、失败流、旧格式颜色）、
+`MiniMonstersTests` 6 条（三栈 chunk、窗口、空军队、缺图、两行、单行）、`ArmyBarTests` 19 条（几何、选中、
+合并、交换、右键解除/信息窗、双击信息窗、快捷键分半、重分配的「问题」与执行、跨栏拖动、只读、无军队、
+背景绘制、选中框、小怪物站位、信息窗答案）。Game 2 804 → **2 818**、UI 358 → **377**，合计 3 811 → **3 844**
+全绿，`-warnaserror` 0 警告。
+
+**遗留**：`army.cpp` 的 `GetLuckModificator`/`GetMoraleModificator`/`Army::String`；`army_troop.cpp` 的三条
+`*String`；英雄/城堡/编辑器三处还没有调用 `ArmyBar.QueueEventProcessing()`；存档装配仍等 `game_io` 那一层。
+
+### 追加：列表与滚动条控件 ✅
+
+`kingdom_overview.cpp` 的两个列表（英雄 / 城堡）是 `kingdom` 目录最后两块界面，它们的前置是参考的
+`Interface::ListBox<Item>`（`gui/interface_list.h`，600 行）与 `fheroes2::Scrollbar`（`gui/ui_scrollbar.*`）。
+本轮先把这两个控件落地，界面本身仍留在「未开始」。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Widgets/ScrollBar.cs` | `gui/ui_scrollbar.{h,cpp}` | `SetRange`、`Forward`/`Backward`、`MoveToIndex`、`MoveToPosition`、`UpdatePosition`、`IsVertical`；槽位 `Area`、滑块贴图 `Slider` 与位置 `Position` |
+| `UI/Widgets/ListBoxBase.cs` | `interface_list.h` 的 `ListBasic` | `CurrentId`/`TopId`/`IsNeedRedraw`/`Redraw`/`QueueEventProcessing` 的非泛型基类 |
+| `UI/Widgets/ListBox.cs` | `interface_list.h` 的 `ListBox<Item>` | 选中与滚动状态机：`SetListContent`/`Reset`/`Verify`/`SetCurrent(Visible)`/`SetTopVisibleItem`/`RemoveSelected`/`GetFromPosition`/`UpdateScrollBarImage`，以及 `QueueEventProcessing` 的 PageUp/PageDown/Home/End/方向键/滚轮/拖动滚屏/长按/单击/双击/右键全部分支 |
+
+要点：
+
+* **索引↔像素的整数截断照抄**：`( index - min ) * room / ( max - min )`，回溯时另加 `length / 2` 让最近的档位
+  胜出。改成四舍五入会让滑块在某些长度上差一像素，行命中框也跟着偏。
+* **`MoveToIndex` 的返回值是「位置变了没有」**，单档范围恒为 `false`（参考在那种情况下把滑块居中后直接返回）。
+  列表的按下块正是靠这个返回值决定要不要重画，所以不能把它简化成 `void`。
+* **按下→拖动的顺序不能换**：先记下拖动起点并 `RegisterDrag()`，再按「超过一行」的位移整行滚动，同时置
+  `_lockClick`；松手时这个标志让列表不再把拖动当成点击。参考的 `_lockClick`/`_dragStartPos` 复位时机也照搬。
+* **行绘制、背景绘制、四个动作全是子类的**：控件层不带贴图表，参考里 `SetScrollButtonUp( icn, ... )` 的取图
+  在端口里变成「调用方造好 `ButtonSprite` 传进来」。
+* **新增一处保护**：行区域小于行数时拖动的整除会除零，参考会崩；端口直接跳过拖动那一小段，布局本身不可能出现
+  这种值。`VisibleItemCount` 由 `protected` 改为可读，因为对话框算边框时要用同一个数。
+
+**测试**：`ScrollBarTests` 8 条（单档居中、起点、三档截断、clamp 与同档不移动、横向、`MoveToPosition` 回算、
+`Forward`/`Backward` 边界、倒序范围抛异常）、`ListBoxTests` 19 条（初始选中与滚动条范围、空内容失效、方向键、
+Home/End、PageDown 末页对齐、关快捷键、滚轮、点击选行、双击、拖动滚屏不误点、`GetFromPosition` 截断、
+`SetTopVisibleItem` clamp、`SetCurrent` 滚入视野、`RemoveSelected` 两种修正、`Redraw` 只画可见行、`Unselect`）。
+UI 测试 377 → **404**，全解决方案 3 844 → **3 871** 全绿，`-warnaserror` 0 警告 0 错误。
+
+**遗留**：`kingdom_overview.cpp`（`KingdomOverviewDialog`：`ICN::OVERVIEW` 6/7/8/10/13/14 + `OVERBACK`、
+收入与资金面板、`KINGDOM_OVERVIEW_CASTLE_SELECTION`）与 `view_world.cpp`（四级缩放视图）仍未开始；
+`view_world` 的 `colorToOffsetICN`/缩放常量与 `kingdom_overview` 的行文本都还没落。

@@ -267,6 +267,36 @@ public sealed class AIWorldPathfinderTests
     }
 
     [Fact]
+    public void TheStateRestorerPutsBothTunablesBack()
+    {
+        AIWorldPathfinder pathfinder = new(LoadMap(4, 4));
+
+        // Whatever the planner left behind before the guarded decision.
+        pathfinder.SetMinimalArmyStrengthAdvantage(1.75);
+        pathfinder.SetSpellPointsReserveRatio(0.25);
+
+        using (new AIWorldPathfinderStateRestorer(pathfinder))
+        {
+            pathfinder.SetMinimalArmyStrengthAdvantage(3.0);
+            pathfinder.SetSpellPointsReserveRatio(0.75);
+
+            Assert.Equal(3.0, pathfinder.MinimalArmyStrengthAdvantage);
+        }
+
+        Assert.Equal(1.75, pathfinder.MinimalArmyStrengthAdvantage);
+        Assert.Equal(0.25, pathfinder.SpellPointsReserveRatio);
+
+        // The second Dispose() of a guard leaves the tunables alone: the reference restores in a destructor, which
+        // runs once, and a using block plus an explicit call would otherwise roll back the values set in between.
+        AIWorldPathfinderStateRestorer restorer = new(pathfinder);
+        restorer.Dispose();
+        pathfinder.SetMinimalArmyStrengthAdvantage(0.5);
+        restorer.Dispose();
+
+        Assert.Equal(0.5, pathfinder.MinimalArmyStrengthAdvantage);
+    }
+
+    [Fact]
     public void TheTunablesRejectValuesOutsideTheirRange()
     {
         AIWorldPathfinder pathfinder = new(LoadMap(4, 4));

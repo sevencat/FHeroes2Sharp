@@ -80,6 +80,23 @@ public interface IArmyCommander
     bool IsHeroes { get; }
 
     /// <summary>
+    /// The commander's race, <c>HeroBase::GetRace()</c> (<c>heroes.h:238</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The army asks it in one place outside combat: the editor's army bar picks the level-one creature of the
+    /// commander's race as the default for an empty slot (<c>army_bar.cpp:452</c>). <see cref="Heroes.Hero"/>
+    /// answers with the race the map gave it; the battle-only captain answers with the race of the town it
+    /// defends.
+    /// </para>
+    /// <para>
+    /// The default implementation returns <see cref="MapRace.None"/> so that a commander without a race needs no
+    /// code, which is also what the reference's "no commander" branch does.
+    /// </para>
+    /// </remarks>
+    MapRace Race => MapRace.None;
+
+    /// <summary>
     /// The town the commander stands in, <c>HeroBase::inCastle()</c> (<c>heroes_base.h:243</c>).
     /// </summary>
     /// <remarks>
