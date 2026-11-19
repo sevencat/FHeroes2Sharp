@@ -1,5 +1,6 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Dialogs;
 
@@ -46,6 +47,12 @@ public sealed class StandardWindow
 
     /// <summary>Distance from the window edge to the tiled interior, <c>backgroundOffset</c>.</summary>
     public const int BackgroundOffset = 22;
+
+    /// <summary>Space between the columns of a symmetric button group, <c>buttonsHorizontalGap</c>.</summary>
+    public const int ButtonsHorizontalGap = 37;
+
+    /// <summary>Space between the rows of a symmetric button group, <c>buttonsVerticalGap</c>.</summary>
+    public const int ButtonsVerticalGap = 10;
 
     private readonly StandardWindowChrome _chrome;
     private readonly bool _hasBackground;
@@ -131,6 +138,256 @@ public sealed class StandardWindow
             size.Height);
 
         return Create(chrome, activeArea, renderBackground);
+    }
+
+    /// <summary>
+    /// Computes the active area of a dialog whose size is driven by a symmetric button group, the
+    /// <c>getSymmetricDialogActiveArea()</c> of <c>ui_window.cpp:50-102</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An even group of at most six buttons is laid out in two columns (three rows for more than six
+    /// buttons), an odd group of at most six in a single column, and the dialog grows to fit it: the
+    /// padding around the buttons differs between the two layouts, and the two column layout also
+    /// reserves the room a cancel button needs under the group.
+    /// </para>
+    /// <para>
+    /// The reference places a single column at the right hand side of the main menu background instead
+    /// of centring it. The port has no main menu yet, so a single column is centred like any other
+    /// dialog; only the placement differs, the size is the one of the reference.
+    /// </para>
+    /// </remarks>
+    /// <param name="buttons">Group whose first button gives the size of every button.</param>
+    /// <param name="isSingleColumn">Whether the group is arranged in one column, <c>isSingleColumn</c>.</param>
+    /// <param name="extraHeight">Room for a header or another element above the buttons, <c>extraHeight</c>.</param>
+    /// <param name="screen">Screen to centre on, <see cref="ScreenBuffer.DefaultSize"/> when omitted.</param>
+    /// <returns>The area the dialog content goes into.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="buttons"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The group has no buttons.</exception>
+    public static Rect ActiveAreaForSymmetricButtons(ButtonGroup buttons, bool isSingleColumn, int extraHeight,
+        Size? screen = null)
+    {
+        ArgumentNullException.ThrowIfNull(buttons);
+
+        if (buttons.Count == 0)
+        {
+            throw new ArgumentException("A dialog cannot be sized around an empty button group.", nameof(buttons));
+        }
+
+        Rect buttonArea = buttons[0].Area;
+        int buttonCount = buttons.Count;
+
+        int widthPadding = isSingleColumn ? 52 : 60;
+        int dialogWidth = widthPadding;
+
+        int heightPadding = isSingleColumn ? 43 : 26;
+
+        // The reference assumes the height of the cancel button under a multi column group as 25 pixels
+        // plus both gaps and the one pixel the border takes.
+        int cancelButtonAreaHeight = isSingleColumn ? 0 : 25 + ButtonsVerticalGap + 10 + 1;
+        int dialogHeight = cancelButtonAreaHeight + heightPadding + extraHeight;
+
+        if (isSingleColumn || (buttonCount % 2 != 0 && buttonCount <= 6))
+        {
+            dialogWidth += buttonArea.Width;
+            dialogHeight += (buttonArea.Height * buttonCount) + ((buttonCount - 1) * ButtonsVerticalGap);
+        }
+        else if (buttonCount == 2)
+        {
+            dialogWidth += (buttonArea.Width * 2) + ButtonsHorizontalGap;
+            dialogHeight += buttonArea.Height;
+        }
+        else if (buttonCount > 6)
+        {
+            int buttonGaps = 2 * ButtonsVerticalGap;
+            dialogWidth += (3 * buttonArea.Width) + ((((buttonCount + 2) / 3) - 1) * buttonGaps);
+            dialogHeight += (buttonArea.Height * 3) + (2 * buttonGaps);
+        }
+        else
+        {
+            int buttonGaps = 2 * ButtonsVerticalGap;
+            dialogWidth += ((buttonCount / 2) * buttonArea.Width) + (((buttonCount / 2) - 1) * buttonGaps);
+            dialogHeight += (buttonArea.Height * 2) + buttonGaps;
+        }
+
+        Size bounds = screen ?? ScreenBuffer.DefaultSize;
+
+        return new Rect((bounds.Width - dialogWidth) / 2, (bounds.Height - dialogHeight) / 2, dialogWidth,
+            dialogHeight);
+    }
+
+    /// <summary>
+    /// Creates a dialog sized around a symmetric button group, the
+    /// <c>StandardWindow( ButtonGroup &amp;, isSingleColumn, extraHeight, output )</c> constructor
+    /// (<c>ui_window.cpp:129-143</c>).
+    /// </summary>
+    /// <param name="chrome">Border and background artwork.</param>
+    /// <param name="buttons">Group the dialog is sized around; <see cref="PlaceSymmetricButtons"/> lays it out.</param>
+    /// <param name="isSingleColumn">Whether the group is arranged in one column.</param>
+    /// <param name="extraHeight">Room for a header or another element above the buttons.</param>
+    /// <param name="screen">Screen to centre on, <see cref="ScreenBuffer.DefaultSize"/> when omitted.</param>
+    /// <returns>The laid out window, with the stone interior like the reference.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="chrome"/> or <paramref name="buttons"/> is
+    /// <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The group has no buttons.</exception>
+    public static StandardWindow CreateForSymmetricButtons(StandardWindowChrome chrome, ButtonGroup buttons,
+        bool isSingleColumn = false, int extraHeight = 0, Size? screen = null) =>
+        Create(chrome, ActiveAreaForSymmetricButtons(buttons, isSingleColumn, extraHeight, screen));
+
+    /// <summary>
+    /// Places the buttons of a symmetric group inside <see cref="ActiveArea"/>, the
+    /// <c>renderSymmetricButtons()</c> of <c>ui_window.cpp:476-538</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The group is read as a grid: one column for an odd count of at most six, two columns for an even
+    /// count, three columns for more than six, exactly like <see cref="ActiveAreaForSymmetricButtons"/>
+    /// sized it. Two column layouts use the doubled vertical gap so the space between the buttons is the
+    /// same in both directions, and a last row that is not full is centred.
+    /// </para>
+    /// <para>
+    /// The reference also draws the buttons; the port only positions them, because the scene draws every
+    /// frame from scratch. <paramref name="offsetY"/> moves the whole group down, which is how the
+    /// reference leaves room for a header above it.
+    /// </para>
+    /// </remarks>
+    /// <param name="buttons">Group to place.</param>
+    /// <param name="offsetY">Vertical offset of the whole group, <c>offsetY</c> of the reference.</param>
+    /// <param name="isSingleColumn">Whether the group is arranged in one column.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="buttons"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The group has no buttons.</exception>
+    public void PlaceSymmetricButtons(ButtonGroup buttons, int offsetY = 0, bool isSingleColumn = false)
+    {
+        ArgumentNullException.ThrowIfNull(buttons);
+
+        if (buttons.Count == 0)
+        {
+            throw new ArgumentException("A dialog cannot be sized around an empty button group.", nameof(buttons));
+        }
+
+        int buttonWidth = buttons[0].Area.Width;
+        int buttonHeight = buttons[0].Area.Height;
+        int buttonCount = buttons.Count;
+
+        int rows;
+        int columns;
+        Point buttonsOffset;
+        int horizontalGap = ButtonsHorizontalGap;
+
+        if (isSingleColumn || (buttonCount % 2 != 0 && buttonCount <= 6))
+        {
+            rows = buttonCount;
+            columns = 1;
+            buttonsOffset = new Point(25, 22);
+        }
+        else if (buttonCount == 2)
+        {
+            rows = 1;
+            columns = 2;
+            buttonsOffset = new Point(30, 15);
+        }
+        else if (buttonCount > 6)
+        {
+            columns = 3;
+            rows = (buttonCount + 2) / 3;
+            buttonsOffset = new Point(30, 15);
+            horizontalGap = 2 * ButtonsVerticalGap;
+        }
+        else
+        {
+            rows = 2;
+            columns = buttonCount / 2;
+            buttonsOffset = new Point(30, 15);
+            horizontalGap = 2 * ButtonsVerticalGap;
+        }
+
+        // The extra height always goes above the buttons.
+        int groupOffsetY = buttonsOffset.Y + offsetY;
+
+        int verticalGap = isSingleColumn ? ButtonsVerticalGap : 2 * ButtonsVerticalGap;
+        int lastRowHorizontalOffset = 0;
+
+        if (columns > 1 && rows > 1)
+        {
+            int missingInLastRow = (columns * rows) - buttonCount;
+            lastRowHorizontalOffset = missingInLastRow * (buttonWidth + horizontalGap) / 2;
+        }
+
+        for (int index = 0; index < buttonCount; ++index)
+        {
+            int row = index / columns;
+            int column = index % columns;
+            int rowOffsetX = row == rows - 1 ? lastRowHorizontalOffset : 0;
+
+            buttons[index].SetPosition(
+                rowOffsetX + ActiveArea.X + (column * buttonWidth) + buttonsOffset.X + (column * horizontalGap),
+                ActiveArea.Y + (row * (buttonHeight + verticalGap)) + groupOffsetY);
+        }
+    }
+
+    /// <summary>
+    /// Returns where an item of the given size has to go inside <see cref="ActiveArea"/>, the
+    /// <c>_getRenderPos()</c> of <c>ui_window.cpp:540-591</c>.
+    /// </summary>
+    /// <param name="offset">Distance from the edge or the centre, <c>offset</c> of the reference.</param>
+    /// <param name="itemSize">Size of the item that is placed.</param>
+    /// <param name="padding">Which edge or corner to align to.</param>
+    /// <returns>The top left corner of the item.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="padding"/> is not a known value.</exception>
+    public Point RenderPosition(Point offset, Size itemSize, WindowPadding padding)
+    {
+        int x = ActiveArea.X;
+        int y = ActiveArea.Y;
+
+        switch (padding)
+        {
+            case WindowPadding.TopLeft:
+            case WindowPadding.CenterLeft:
+            case WindowPadding.BottomLeft:
+                x += offset.X;
+                break;
+
+            case WindowPadding.TopCenter:
+            case WindowPadding.CenterCenter:
+            case WindowPadding.BottomCenter:
+                x += ((ActiveArea.Width - itemSize.Width) / 2) + offset.X;
+                break;
+
+            case WindowPadding.TopRight:
+            case WindowPadding.CenterRight:
+            case WindowPadding.BottomRight:
+                x += ActiveArea.Width - itemSize.Width - offset.X;
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(padding), padding, "Unknown window padding.");
+        }
+
+        switch (padding)
+        {
+            case WindowPadding.TopLeft:
+            case WindowPadding.TopCenter:
+            case WindowPadding.TopRight:
+                y += offset.Y;
+                break;
+
+            case WindowPadding.CenterLeft:
+            case WindowPadding.CenterCenter:
+            case WindowPadding.CenterRight:
+                y += ((ActiveArea.Height - itemSize.Height) / 2) + offset.Y;
+                break;
+
+            case WindowPadding.BottomLeft:
+            case WindowPadding.BottomCenter:
+            case WindowPadding.BottomRight:
+                y += ActiveArea.Height - itemSize.Height - offset.Y;
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(padding), padding, "Unknown window padding.");
+        }
+
+        return new Point(x, y);
     }
 
     /// the tiled interior, the four borders with their dithered seams and, last of all, the shadow.

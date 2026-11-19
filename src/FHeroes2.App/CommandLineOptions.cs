@@ -117,10 +117,17 @@ public sealed class CommandLineOptions
 
     /// <summary>
     /// Opens the View World window as soon as the adventure map is up (<c>--view-world</c>). The window
-    /// normally opens from the adventure options dialog, which the port does not draw yet, so this is
-    /// how its frame is screenshotted and smoke tested.
+    /// normally opens from the World button of the adventure options dialog, so this is how its frame is
+    /// screenshotted and smoke tested without a mouse.
     /// </summary>
     public bool ViewWorld { get; private set; }
+
+    /// <summary>
+    /// Opens the adventure options dialog as soon as the adventure map is up
+    /// (<c>--adventure-options</c>). The dialog normally opens with the V key or the door in the bottom
+    /// border; this is how its frame is screenshotted.
+    /// </summary>
+    public bool AdventureOptions { get; private set; }
 
     /// <summary>
     /// Paints a rectangle of ground as soon as the editor opens (<c>--editor-paint
@@ -338,6 +345,10 @@ public sealed class CommandLineOptions
 
                 case "--view-world":
                     options.ViewWorld = true;
+                    break;
+
+                case "--adventure-options":
+                    options.AdventureOptions = true;
                     break;
 
                 case "--editor-paint":

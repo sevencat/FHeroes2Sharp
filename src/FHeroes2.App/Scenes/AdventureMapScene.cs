@@ -10,6 +10,8 @@ using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Interface;
 
 namespace FHeroes2.App.Scenes;
 
@@ -59,6 +61,8 @@ public sealed class AdventureMapScene : IScene
     private readonly IconSpriteSet? _iconSprites;
     private readonly ButtonsPanel _buttons;
     private readonly ButtonSpriteSet? _buttonSprites;
+    private readonly StatusPanel? _statusPanel;
+    private readonly Rect _statusArea;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
     private readonly Rect _radar;
@@ -68,11 +72,16 @@ public sealed class AdventureMapScene : IScene
     private bool _leftHeld;
     private bool _radarGrabbed;
 
+    private StatusPanelState _statusState = StatusPanelState.Day;
+
     private readonly IViewWorldSpriteSource? _viewWorldSprites;
     private readonly PlayerColor _friends;
 
     private ViewWorldOverlay? _viewWorld;
     private ZoomLevel _viewWorldZoom = ZoomLevel.ZoomLevel2;
+
+    private readonly AdventureOptionsView? _optionsArtwork;
+    private AdventureOptionsOverlay? _options;
 
     private AdventureMapScene(
         ScreenBuffer frame,
@@ -84,6 +93,8 @@ public sealed class AdventureMapScene : IScene
         MapFrame mapFrame,
         IconSpriteSet? iconSprites,
         ButtonSpriteSet? buttonSprites,
+        StatusPanel? statusPanel,
+        AdventureOptionsView? optionsArtwork,
         IViewWorldSpriteSource? viewWorldSprites,
         PlayerColor friends)
     {
@@ -99,11 +110,18 @@ public sealed class AdventureMapScene : IScene
         _iconSprites = iconSprites;
         _buttons = new ButtonsPanel(mapFrame.Panel);
         _buttonSprites = buttonSprites;
+        _statusPanel = statusPanel;
+        _optionsArtwork = optionsArtwork;
         _viewWorldSprites = viewWorldSprites;
         _friends = friends;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
         _radar = mapFrame.Radar;
+
+        // The stone panel hangs under the buttons down to the bottom border, the _statusPanel.SetPosition
+        // of the reference (game_interface.cpp), which leaves 480 - 392 - 16 = 72 pixels, one frame of
+        // STONBACK.ICN.
+        _statusArea = StatusPanel.AreaFor(mapFrame.Panel, _buttons.Area, frame.Size.Height, MapFrame.BorderWidth);
 
         // The status line goes on the bottom border, where the frame art leaves the strip empty; the
         // panel bay above it belongs to the interface buttons of later milestones.
@@ -241,6 +259,8 @@ public sealed class AdventureMapScene : IScene
                 mapFrame,
                 IconSpriteSet.TryCreate(assets),
                 ButtonSpriteSet.TryCreate(assets),
+                StatusPanel.TryCreate(assets),
+                AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
                 observers);
 
@@ -276,6 +296,32 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>Whether the View World window owns the screen and the input.</summary>
     public bool IsViewWorldOpen => _viewWorld is not null;
+
+    /// <summary>The open adventure options dialog, <see langword="null"/> while it is closed.</summary>
+    public AdventureOptionsOverlay? AdventureOptions => _options;
+
+    /// <summary>Whether the adventure options dialog is on screen and owns the input.</summary>
+    public bool IsAdventureOptionsOpen => _options is not null;
+
+    /// <summary>
+    /// Opens the adventure options dialog over the map, <c>Dialog::AdventureOptions()</c>
+    /// (<c>dialog_adventure.cpp:38-121</c>).
+    /// </summary>
+    /// <returns><see langword="false"/> when the dialog is already open or its artwork is missing.</returns>
+    public bool OpenAdventureOptions()
+    {
+        if (_options is not null || _optionsArtwork is null)
+        {
+            return false;
+        }
+
+        _options = new AdventureOptionsOverlay(_optionsArtwork, _frame);
+
+        return true;
+    }
+
+    /// <summary>Closes the adventure options dialog without a result.</summary>
+    public void CloseAdventureOptions() => _options = null;
 
     /// <summary>
     /// Opens the View World window on <paramref name="mode"/>, the body of <c>ViewWorld::ViewWorldWindow()</c>
@@ -448,6 +494,9 @@ public sealed class AdventureMapScene : IScene
         // The three status buttons follow the focus hero, the rest of ButtonsPanel::_setButtonStatus.
         _buttons.Draw(_frame.Pixels, _buttonSprites, CurrentButtonStatus());
 
+        // The stone panel closes the column under the buttons, Interface::StatusPanel::_redraw().
+        DrawStatusPanel();
+
         // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
         // of index 0 of KB.PAL and matches the empty border of the reference.
         _viewportPixels.Clear();
@@ -456,6 +505,13 @@ public sealed class AdventureMapScene : IScene
 
         DrawMinimap();
         DrawStatusBar(state);
+
+        // The options dialog is painted over the map that is already there, the way the reference
+        // draws its blocking dialog straight into the display.
+        if (_options is { } options)
+        {
+            options.Draw();
+        }
     }
 
     /// <summary>The adventure map draws all of its text with the game fonts.</summary>
@@ -513,6 +569,15 @@ public sealed class AdventureMapScene : IScene
 
             if (ClickPanel(cursor))
             {
+                return;
+            }
+
+            // A press on the stone cycles the state, Interface::StatusPanel::QueueEventProcessing(): the date,
+            // then the kingdom, then back again. The army state is not drawn yet, so it is not in the cycle.
+            if (_statusPanel is not null && _statusArea.Contains(cursor))
+            {
+                _statusState = _statusState == StatusPanelState.Day ? StatusPanelState.Funds : StatusPanelState.Day;
+
                 return;
             }
 
@@ -720,6 +785,32 @@ public sealed class AdventureMapScene : IScene
     {
         Point tile = _minimap.TileAt(new Point(cursor.X - _radar.X, cursor.Y - _radar.Y));
         _view.CenterOn(tile.X, tile.Y);
+    }
+
+    /// <summary>
+    /// Paints the stone panel: the date, or the kingdom's counts, <c>Interface::StatusPanel::_redraw()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The panel shows nothing but the stone before the first day of the game, which is the reference's
+    /// <c>world.CountDay() == 0</c> early return. The kingdom counts need a started session; a viewer scene
+    /// (a map without a human player) still has the calendar, so only the funds are left at zero.
+    /// </remarks>
+    private void DrawStatusPanel()
+    {
+        if (_statusPanel is null || _fonts is null)
+        {
+            return;
+        }
+
+        StatusPanelState state = _world.DayCount == 0 ? StatusPanelState.Unknown : _statusState;
+        StatusPanelDate date = new((int)_world.Month, (int)_world.Week, (int)_world.Day);
+
+        StatusPanelKingdom kingdom = _session is { } session
+            ? new StatusPanelKingdom(
+                session.Kingdom.CountCastles(), session.Kingdom.CountTowns(), session.Kingdom.Treasury)
+            : default;
+
+        _statusPanel.Draw(_frame.Pixels, _statusArea, state, date, kingdom, _fonts.Small, _fonts.Normal);
     }
 
     private void DrawMinimap()

@@ -6807,3 +6807,108 @@ Game 测试 2 850 → **2 884**，全解决方案 3 903 → **3 937** 全绿，`
 
 **遗留**：参考开窗前后的淡入淡出没做（端口直接切换）；正式入口（冒险选项对话框）还没转，`V` 与 `--view-world`
 是临时入口；档位只留在场景内存，没有配置文件可写。
+
+### 控件层（第一批）与冒险界面外壳（第一批）✅
+
+PLAN 的「分批落地顺序」前两步一起做：先补控件层欠的三件，再把石头状态面板接到冒险屏上、重拍基线。
+
+**控件层**（`src/FHeroes2.UI`）：
+
+| 新文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Widgets/Slider.cs` | `ui_slider.cpp:1-129` | 槽 + 可拉伸滑块，左右箭头、滚轮、拖动；`SetRange` 每次都从**原始**帧重拉伸，避免二次拉伸把滑块涂糊；禁用时直接返回 `default`（参考没这一层，端口主动加的防护） |
+| `Widgets/OptionItem.cs` | `ui_option_item.cpp:1-144` | 图标 + 上下两行文字，`TWO_ELEMENTS_ROW = 113` / `THREE_ELEMENTS_ROW = 87`，标题基线 `+12`、值基线 `+6`；宽度非正直接抛 `ArgumentOutOfRangeException` |
+| `Dialogs/DialogElement.cs` | `ui_dialog.cpp` 的 `DialogElement` 族 | 基类 + `CustomImageDialogElement`/`ResourceDialogElement`，右键命中返回 `DialogElementResult.Popup`（Header/Body），左键不动作 |
+| `Interface/StatusPanel.cs` | `interface_status.cpp:1-440` | `STONBACK` 拉伸（顶 11 + 中 46 重复 + 尾 61 贴底）、`SUNMOON` 月相、日期两行、城堡/城镇/六资源两行；面板矮于 26 像素抛异常 |
+
+**踩到的两处真问题**（都不是笔误，值得记下来）：
+
+1. **`ImageOps.BlitSprite` 与 `BlitSpriteClipped` 的语义差**。前者把 `sourceRect` 连同 sprite 原点一起算，
+   传 `sourceRect = (0,11,144,46)` 时目标点仍要按 `(0,0)` 对齐，于是中段整体下移 11 行；后者才是参考
+   `fheroes2::Copy( icn, srcX, srcY, display, dstX, dstY, w, h )` 的语义（源矩形左上角落在目标点）。背景三段
+   拼接全部改用 `BlitSpriteClipped`，一处修好两条失败断言（中段错位、月相被顶带挤到 `y+11`）。
+2. **居中文字的空格会骗人**。`DrawDate_WritesBothLinesCentredInThePanel` 原来取面板中线 `x+72` 读像素，
+   但 `Month: 1 Week: 2` 的第九个字符正好是空格，那一列是**背景**。改成「左右各有多少列被字形覆盖」来断言
+   居中（首列 + 末列 + 1 = 144），顺手把「十六个 6 像素格 → 起点 24」也钉住。
+
+**冒险界面外壳**：
+
+* `UI/Interface/InterfaceRedraw.cs`（新）：`interface_base.h:21-46` 的九个 `REDRAW_*` 掩码按位搬过来，
+  `Icons = Heroes | Castles`、`All = 0x1FF` 且不含 `Passabilities`。参考用按位并集是为了省整屏重画，端口目前
+  `DrawFrame` 每帧全量重绘，所以只搬掩码、不搬 `BaseInterface` 那层抽象——等真的做局部重画时两边位已经对得上。
+* `StatusPanel` 补三层：`StatusPanelState`（`Unknown`/`Day`/`Funds`，参考的 `ARMY`/`RESOURCE`/`AITURN` 留给
+  城镇屏与 AI 回合）、`Draw(area, state, date, kingdom, small, normal)` 复刻 `_redraw()` 的按高度分支
+  （单帧居中一个状态、两帧日期 + 王国、三帧两者都放）、`AreaFor(panelBay, buttonsArea, 480, 16)` 给出
+  `(480,392,144,72)`——按钮底到框底正好 72 像素，即一帧 `STONBACK`。资源数字按 `abbreviateNumber` 缩写（金除外）。
+* 接入 `AdventureMapScene`：按钮面板之后画面板；`world.DayCount == 0` 只画石头（参考的 `CountDay() == 0`
+  提前返回）；左键点石头在日期/王国之间切（参考 `QueueEventProcessing`）；王国数据取 `session.Kingdom` 的
+  `CountCastles()`/`CountTowns()`/`Treasury`。
+
+**两张基线重拍**：`adventure-map.png`（Alteris）差异 123 557 像素、`adventure-map-boats.png`（Undeada）差异
+10 296 像素——后者**只**从 `480,392` 起，正是新面板的位置，说明其余像素没动。重拍后两张都 `identical`。
+
+**范围收窄（写在这里备核对）**：`interface_focus.cpp` 不再单独立文件——它整个是 `AdventureMap::SetFocus`/
+`updateFocus`/`ResetFocus`/`GetFocusHeroes`，端口已有等价物（`AdventureSession.FocusHero`/`FocusCastle`/
+`CentreOnFocus*` 与 `Game/System/PlayerFocus.cs`），硬拆只会多一层空壳。`player_info.cpp` 挪到 P6——它是
+`PlayersInfo`，画的是多人设置窗口的玩家行（`NGEXTRA.ICN`）与游戏内玩家列表，不出现在 640×480 冒险屏上，
+依赖 `Players::HumanColors`、`Mp2FileInfo` 与设置窗口本体。
+
+**测试**：UI 432 → **450**（`StatusPanelTests` 10 → 16：`AreaFor` 几何、四个高度分支、资源缩写与金字不缩写、
+两个旧用例按新的居中判据重写；`InterfaceRedrawTests` 12：九个位值 + `Icons` 组合 + `All` 不含
+`Passabilities`）。合计 3 991 → **4 037** 全绿，`-warnaserror` 0 警告，两张冒险地图基线 `identical`。
+
+**遗留**：`StatusPanel` 的 `ARMY`/`RESOURCE`/`AITURN` 三种状态（要 `ArmyTroop`、`RESOURCE.ICN` 索引表与 AI
+回合循环）；状态切换没有参考那层「点击后延迟切回日期」的计时器，端口停在「点了就切」；`TextBox` 与
+`TextDialogElement`/`ArtifactDialogElement`/`SpellDialogElement` 跟着对话框第一批走。
+
+
+### 对话框第一批：地基 + 冒险选项对话框 ✅（`quickinfo` 等未动）
+
+PLAN 第 3 步的第一刀：先把「窗口 + 按钮组」这套地基补上，再让 `dialog_adventure` 真的画出来、能点、
+有基线。剩下四个对话框（`quickinfo`/`selectcount`/`recruit`/`marketplace`）与 `TextBox` 尚未开工。
+
+**地基**（`src/FHeroes2.UI`）：
+
+| 新增 | 参考 | 内容 |
+| --- | --- | --- |
+| `Dialogs/WindowPadding.cs` | `StandardWindow::Padding` | 九宫格对齐枚举，独立成文件（端口枚举都独立） |
+| `StandardWindow.ActiveAreaForSymmetricButtons` | `getSymmetricDialogActiveArea()` (`ui_window.cpp:50-102`) | 由按钮组反推窗口尺寸：偶数 ≤6 两列、`>6` 三列、奇数单列；两列布局额外保留取消按钮的 `25+10+10+1` 像素 |
+| `StandardWindow.CreateForSymmetricButtons` | `StandardWindow( ButtonGroup &, … )` (`129-143`) | 组装窗口 |
+| `StandardWindow.PlaceSymmetricButtons` | `renderSymmetricButtons()` (`476-538`) | 只定位不绘制（端口逐帧全量重画）；末行不满时居中；`offsetY` 给表头留位 |
+| `StandardWindow.RenderPosition` | `_getRenderPos()` (`540-591`) | 公开成方法，供 `renderButton` 的调用方复用 |
+| `ButtonGroup.CreateFromFrames` | `ButtonGroup( icnID )` (`ui_button.cpp:563-570`) | 帧对 = released/pressed；结果值由调用方给（端口 `DialogButton` 是位标志，不是稠密整数） |
+
+**冒险选项对话框**（`UI/Dialogs/AdventureOptionsView.cs` + App 两个文件）：
+
+* 四按钮取 `APANEL.ICN` 的 8 帧。参考用的是 `BUTTONS_ADVENTURE_OPTIONS_DIALOG`（运行时用文字合成），
+  但它的原版资源分支就是拷贝 `APANEL.ICN`（`game_assets.cpp:1585-1592`），端口只读归档，走这个分支。
+* 取消按钮取 `SYSTEM.ICN` 的 **3/4** 帧，不是参考写的 0/1 —— 参考的 `ICN::SYSTEM` 是运行时合成的表，
+  帧序与归档不同；归档里 1/2 是 OKAY、3/4 才是 CANCEL（设置对话框用的同一对）。写代码时先把 0/1 接上，
+  截图里那个位置出现一条紫色横条才发现的，改完才是居中白底的 CANCEL。
+* 位置：`{0,11}` + `BOTTOM_CENTER`，即 `(297,280)`；窗口 active area `(221,167,198,146)`。
+* `SetLeftButton` 的点击规则放在 UI 层（不是 App 层）：按下与松开必须落在同一按钮，四个大按钮由
+  `ButtonGroup` 负责，CANCEL 单独复刻一次。这样这几条规则能在 xunit 里跑，App 只剩转发。
+
+**接入**：`AdventureMapScene` 加 `_optionsArtwork`/`_options` 与 `OpenAdventureOptions()`/
+`CloseAdventureOptions()`，`DrawFrame` 在状态面板之后叠加对话框；`GameHost` 里对话框吃独占输入
+（左键转发、Esc 关闭），`V` 键从「直接开世界视图」改成「开选项对话框」，`World` 按钮再开世界视图；
+`--adventure-options` 供截图。`AdventureOptionsArtwork` 照 `SettingsArtwork` 的样子加载三个 ICN，
+缺资源只警告。
+
+**新基线 `adventure-options.png`**（119 941 字节）：同一张 `Alteris.mp2` + 对话框，布局与参考一致，
+`VerifyAdventureMapBaseline.ps1` 加了 `-AdventureOptions` 开关（默认基线名随之切换）。
+
+**测试**：UI 450 → **476**（`StandardWindowTests` +11：三/两/单列与 `>6` 的尺寸、`extraHeight`、空组异常、
+两列与不满末行的落位、九宫格九种对齐、非法 `Padding`；`ButtonGroupTests` +4：帧对顺序、原点、奇数帧、
+值数量不符；`AdventureOptionsViewTests` +11：布局、按钮值顺序、帧对、缺资源返回 null、绘制像素、五条点击规则）。
+合计 4 037 → **4 063** 全绿，`-warnaserror` 0 警告；`adventure-map.png`、`adventure-map-boats.png`、
+`adventure-options.png` 三条基线全部 `identical`。
+
+**遗留**：
+
+* `quickinfo`/`selectcount`/`recruit`/`marketplace` 还是契约空壳；`TextBox` 与
+  `TextDialogElement`/`ArtifactDialogElement`/`SpellDialogElement` 仍未写。
+* 单列按钮组的**定位**照参考算面积，但位置暂用居中：参考把它放在主菜单背景右侧，端口还没有主菜单场景。
+* 对话框不能拖动、没有 `Dialog::AdventureOptions` 的淡入，也没有键盘焦点（Esc 由 `GameHost` 直接处理）。
+* `Puzzle`/`Info`/`Dig` 三个回答目前只写日志：它们各自需要的谜题地图、游戏信息窗口与挖掘规则都还没有。
+

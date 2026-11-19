@@ -1219,6 +1219,86 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
    `audio_manager.cpp` 的数据层也已转（ADR-140），剩下的是把 `AudioPlayer` 换成
    `IAudioDevice`/`IAudioSource` 的 SDL3_mixer 实现。
 
+## 执行顺序（2026-11-19 排定）
+
+上面三节回答了「还剩什么」，这一节回答「先做哪个」。排序只看一条：**哪一步解锁的下游最多**。
+`DialogElement`/`Slider`/`OptionButtonGroup`/`TextBox` 被 `dialog`（23 个未转）、`editor`（13 个窗口）、
+`castle`（城镇屏）、`battle`（战斗界面）四处同时依赖，所以排在最前；`gui` 的冒险界面外壳是玩家能直接看到的
+第一层，且它提供所有窗口的坐标基准，紧随其后；`AI` 与 `game` 会话层排在战斗之后——否则做出来没有宿主流
+程可跑。
+
+| 序 | 工作包 | 参考文件（行数） | 批数 | 前置 | 退出条件 |
+| --- | --- | --- | --- | --- | --- |
+| **P0** | 对话框控件层 | `ui_slider` 129、`ui_option_item` 144、`ui_text` 里的 `TextBox`、`ui_dialog` 里的 `DialogElement` 族（`TextDialogElement`/`CustomImageDialogElement`/`ArtifactDialogElement`/`ResourceDialogElement`/`SpellDialogElement` 等） | 1–2 | 无（`TextBase`/`Text`/`ScrollBar`/`ScrollSlider`/`Button`/`FrameBox` 已就位） | `Slider` 能拖动/点箭头/滚轮且越界返回 `false`；`OptionItem` 的图标+上下两行文字按 `TWO_ELEMENTS_ROW` 对齐；`DialogElement` 五个派生类能 `Draw`/`ProcessEvents`/`ShowPopup`；测试覆盖越界与点击语义 |
+| **P1** | 冒险界面外壳 | `interface_base` 45、`interface_status` 440、`player_info` 380、`interface_focus` 237、`ui_map_interface` 67、`statusbar` 62 | 1–2 | 无 | `ADVBORD` 640×480 框 + 顶部状态栏（日期/资源/旗帜）+ 底部按钮面板 + 雷达落位；`adventure-map.png` 基线重拍；焦点（悬停/按下）随鼠标走 |
+| **P2** | 对话框第一批 | `dialog_adventure`（世界视图正式入口）、`quickinfo` 967、`selectcount` 652、`recruit` 694、`marketplace` 685 | 2–3 | P0 | `V` 键从 `dialog_adventure` 进世界视图；右击对象出 `quickinfo`；招募/市场能改兵力与资源 |
+| **P3** | 城镇屏 | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit、`ui_castle` 271、`ui_mage_guild` 192 | 2–3 | P0/P1 | 进城镇 → 造建筑 → 招兵 → 出城，M6 验收 |
+| **P4** | 战斗界面与结算 | `battle_interface` 7 538、`battle_dialogs` 1 220、`battle_only` 843、`battle_main` 507、`battle_interface_settings` 334、`battle_action` 余五支、`monster_anim` 190 | 4–5 | P3（`army`/`castle` 已就绪） | 一场战斗从开打到结算 + 战利品；M7 验收 |
+| **P5** | AI | `ai_battle` 2 152、`ai_battle_spell` 984、`ai_hero_action` 2 504、`ai_planner_hero` 3 309、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525、`ai_planner_internals` | 5–6 | P4（战斗决策要能调用战斗接口） | 每个换掉 `NotImplementedException` 的入口配一条行为测试；AI 回合能自己走完 |
+| **P6** | `game` 会话层与存档 | `game_startgame`、`game_init`、`game_io`、`game_over`、`game_highscores`/`highscores`、`game_campaign`、`game_credits`、`game_hotkeys`、`game_video` 等 20 个 | 4–5 | P2/P4 | 重新开始/存档/读档/结束回合/胜负结算闭环；M8 验收 |
+| **P7** | 编辑器窗口 | `editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436 等 13 个 | 3–4 | P0 | 编辑器能改地图规格/事件/城堡详情并保存 |
+| 旁支 | 可随时插队 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237（独立）；`campaign_*` 2 072（等 P6）；`ui_keyboard` 1 360（等 P2）；`smk_decoder` 325；`serialize` 尾巴；`audio_xmi2mid` 692 | 4–5 | — | 各自独立可测 |
+
+**不排进任何包**：`map_format_helper.cpp`/`map_format_info.cpp`（本项目走 MP2）、`dir.cpp`、`tinyconfig.cpp`、
+翻译层（ADR-139）。
+
+### 分批落地顺序（6 步，按此顺序推进）
+
+上表给的是优先级，这一步给的是动手顺序。每步结束都要求「能跑、有测试、有基线」，不允许把半步留到下一步：
+
+1. **控件层收尾**（P0 第一批，已完成）：`Slider`、`OptionItem`、`DialogElement` 基类 +
+   `CustomImageDialogElement`/`ResourceDialogElement`、`StatusPanel`（背景拉伸、日期月相、资源两行）已落，
+   UI 测试 476 条全通过。剩下的 `TextDialogElement`/`ArtifactDialogElement`/`SpellDialogElement` 与 `TextBox` 跟随
+   对话框第一批一起写，因为它们要等到有真实文本与图标来源时才好断言。
+2. **冒险界面外壳**（P1，第一批已完成，见下）：`interface_base` 的掩码 → `interface_status` 的 `_redraw` 状态机 →
+   接进 `AdventureMapScene` → 重拍两张冒险地图基线。退出条件是截图与参考布局一致（框、视口、雷达、按钮面板、
+   状态面板五处落位），现已达到。
+3. **对话框第一批**（P2，进行中）：`dialog_adventure`、`quickinfo`、`selectcount`、`recruit`、`marketplace`。
+   这一步顺带补齐第 1 步欠下的三个 `DialogElement` 派生类与 `TextBox`。地基先落：`StandardWindow` 补上
+   `WindowPadding`、`ActiveAreaForSymmetricButtons`/`CreateForSymmetricButtons`/`PlaceSymmetricButtons`
+   （复刻 `getSymmetricDialogActiveArea` 与 `renderSymmetricButtons`）、`ButtonGroup.CreateFromFrames`
+   （复刻 `ButtonGroup(icnID)`），`dialog_adventure` 已按这批地基做成 `AdventureOptionsView` 并接进冒险屏
+   （V 键、`--adventure-options`、基线 `adventure-options.png`）。剩下的 `quickinfo`/`selectcount`/`recruit`/
+   `marketplace` 与 `TextBox`、三个 `DialogElement` 派生类还没有动。
+4. **城镇屏**（P3）：`castle_dialog`、`castle_town`、`castle_building`、`ui_castle`、`ui_mage_guild`。
+   `StatusPanel` 的 ARMY/RESOURCE 两种状态在这一步补上（需要 `ArmyTroop` 与 `RESOURCE.ICN` 索引表）。
+5. **战斗界面与结算**（P4）：`battle_interface` 与其配套五个文件。
+6. **AI 与会话层**（P5/P6）：两者一起排，因为 AI 回合必须有 `Game::NewDay`/存读档这一层才能跑通。
+
+`ui_keyboard`（P2 之后）、`campaign_*`（P6）、`map_random_generator` 三条旁支不占主线，随时可插队。
+
+#### 第 2 步收口记录（2026-11-19）
+
+* **`interface_base.h`**：九个 `REDRAW_*` 掩码按位搬成 `UI/Interface/InterfaceRedraw.cs`（`Icons` = `Heroes |
+  Castles`，`All` = 0x1FF 不含 `Passabilities`）。`BaseInterface` 那个类不搬：参考之所以按位并集，是为了在
+  「地图只改一格」时省掉整屏重画，而端口只有一个场景，`DrawFrame` 每帧全量重绘（`InvalidateAll`）。掩码先落，
+  等局部重画真的需要时，规则层与界面层已经有同一套位，不用回头改调用方。
+* **`interface_status.cpp`**：`StatusPanel` 补齐 `_redraw()` 的按高度分支——单帧面板居中放一个状态（`STATUS_DAY`
+  日期，`STATUS_FUNDS` 王国），两帧面板放日期 + 王国，三帧面板两者都放；资源数字走 `abbreviateNumber`（金除外）。
+  `AreaFor( panelBay, buttonsArea, 480, 16 )` 给出 `(480,392,144,72)`，与参考 `game_interface.cpp` 里
+  `_statusPanel.SetPosition( buttonsArea.x, buttonsArea.y + buttonsArea.height )` 的结果一致。
+  `STATUS_ARMY`/`STATUS_RESOURCE`/`STATUS_AITURN` 三种绘制需要 `ArmyTroop`、`RESOURCE.ICN` 索引表与 AI 回合循环，
+  按第 4/6 步补。
+* **接入**：`AdventureMapScene` 在按钮面板之后画状态面板；`world.DayCount == 0` 时只画石头（参考的
+  `CountDay() == 0` 提前返回）；左键点石头在日期/王国之间切换（参考 `QueueEventProcessing`），王国数据取
+  `session.Kingdom.CountCastles()/CountTowns()/Treasury`。`adventure-map.png` 与 `adventure-map-boats.png`
+  两张基线已重拍（差异集中在 `480,392` 起的面板区）。
+* **`interface_focus.cpp` 不单独立文件**：它整个是 `AdventureMap::SetFocus`/`updateFocus`/`ResetFocus`/
+  `GetFocusHeroes`，而这些在端口已有等价物——`AdventureSession.FocusHero`/`FocusCastle`/`CentreOnFocus*` 与
+  `Game/System/PlayerFocus.cs`（按 `(kind, idx)` 记光标位置）。参考里剩下的部分（焦点与 `Players` 的交互）属于
+  P6 的会话层窗口管理，硬拆出来只会多一层空壳。
+* **`player_info.cpp` 挪到 P6**：它是 `PlayersInfo`——多人设置窗口的玩家行（`NGEXTRA.ICN` 上的类型图标、职业、
+  难度）与游戏内玩家列表，**不出现在 640×480 冒险屏上**，因此与第 2 步的退出条件（截图一致）无关。它依赖
+  `Players::HumanColors`、`Mp2FileInfo` 与设置窗口本体，跟着 P6 一起做才跑得起来。这是对本表 P1 行的一次
+  范围收窄，写下理由以备核对。
+
+**部分文件里挡路的缺口**（进相应包前先补）：`map_object_info.cpp` 的拾取/右击信息框（P2 前置）、
+`heroes_action.cpp` 的军队/战斗分支（P4 前置）、`interface_gamearea.cpp` 的 AUTO 组合与动画（P1 内）、
+`army.cpp` 的 `GetCurrentUnit`/`GetControl`（P4 前置）。
+
+每批的固定交付物：实现 + 行为测试 + 像素基线（有窗口的）+ 一条 ADR（有新决策时）+ `PROGRESS.md` 小节，
+并按「每个里程碑收尾时重算一次」的规矩重算覆盖表里动过的行。
+
 ## 依赖方向（单向，不允许反向引用）
 
 ```

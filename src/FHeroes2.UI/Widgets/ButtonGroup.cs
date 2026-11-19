@@ -28,9 +28,10 @@ namespace FHeroes2.UI.Widgets;
 /// </para>
 /// <para>
 /// <see cref="CreateStandard"/> ports the constructor that places the standard OK/CANCEL, YES/NO and
-/// single button rows. The constructors that build a group from a list of texts or from a whole ICN
-/// table are not ported yet: they need the text-button factories of <c>ui_button.cpp</c>, which are
-/// only partly here (<see cref="ButtonArtwork"/> covers the sprite side, not the label).
+/// single button rows, and <see cref="CreateFromFrames"/> the one that reads a whole button table of an
+/// ICN. The constructor that builds a group from a list of texts is not ported yet: it needs the
+/// text-button factory of <c>ui_button.cpp</c>, which needs the label side of
+/// <see cref="ButtonTemplateMetrics"/> to be turned into sprites.
 /// </para>
 /// </remarks>
 public sealed class ButtonGroup
@@ -141,6 +142,64 @@ public sealed class ButtonGroup
 
             default:
                 break;
+        }
+
+        return group;
+    }
+
+    /// <summary>
+    /// Builds a group from a button table, the <c>ButtonGroup( const int icnID )</c> constructor
+    /// (<c>ui_button.cpp:563-570</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every button takes two consecutive frames - released, then pressed - so the number of buttons is
+    /// half the frame count. The reference numbers the buttons <c>0, 1, 2, ...</c> and lets the callers
+    /// compare that number against <c>Dialog::WORLD</c> and friends; the port asks for the
+    /// <see cref="DialogButton"/> value of each button instead, because its values are a bit flag set
+    /// and not a dense range of integers.
+    /// </para>
+    /// <para>
+    /// The reason the group exists at all is that a table of buttons of the same size is laid out
+    /// symmetrically by <see cref="Dialogs.StandardWindow.PlaceSymmetricButtons"/>: the adventure
+    /// options dialog is four such buttons.
+    /// </para>
+    /// </remarks>
+    /// <param name="frames">Frames of the table, released and pressed alternating.</param>
+    /// <param name="values">Value of each button, one per frame pair.</param>
+    /// <returns>The group, in frame order.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="frames"/> or <paramref name="values"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="frames"/> does not hold an even number of frames, or <paramref name="values"/>
+    /// does not name one value per button.
+    /// </exception>
+    public static ButtonGroup CreateFromFrames(IReadOnlyList<Sprite> frames, IReadOnlyList<DialogButton> values)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        ArgumentNullException.ThrowIfNull(values);
+
+        if (frames.Count % 2 != 0)
+        {
+            throw new ArgumentException("A button table holds a released and a pressed frame per button.",
+                nameof(frames));
+        }
+
+        int buttonCount = frames.Count / 2;
+
+        if (values.Count != buttonCount)
+        {
+            throw new ArgumentException(
+                $"A table of {frames.Count} frames holds {buttonCount} buttons, not {values.Count}.",
+                nameof(values));
+        }
+
+        ButtonGroup group = new();
+
+        for (int index = 0; index < buttonCount; ++index)
+        {
+            group.CreateButton(0, 0, frames[index * 2], frames[(index * 2) + 1], values[index]);
         }
 
         return group;

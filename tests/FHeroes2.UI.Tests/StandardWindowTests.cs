@@ -1,6 +1,7 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -170,6 +171,156 @@ public sealed class StandardWindowTests
 
         Assert.Throws<ArgumentNullException>(() => window.Draw(null!));
     }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_SizesTheDialogAroundFourButtons()
+    {
+        ButtonGroup buttons = CreateButtonGroup(4);
+
+        // Four buttons make two columns: 60 pixels of horizontal padding, two button widths and one
+        // 20 pixel gap. The cancel button reserves 46 pixels of height under them.
+        Rect area = StandardWindow.ActiveAreaForSymmetricButtons(buttons, false, 0);
+
+        Assert.Equal(new Rect(221, 167, 198, 146), area);
+    }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_GivesAnOddCountOneColumn()
+    {
+        ButtonGroup buttons = CreateButtonGroup(5);
+
+        // Five buttons are laid out in one column, but the padding and the room a cancel button would
+        // need still follow the requested layout: 60 pixels wide, 46 pixels reserved under the group and
+        // 26 pixels above and below, because isSingleColumn is false.
+        Rect area = StandardWindow.ActiveAreaForSymmetricButtons(buttons, false, 0);
+
+        Assert.Equal(new Rect(260, 116, 119, 247), area);
+    }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_GivesMoreThanSixButtonsThreeColumns()
+    {
+        ButtonGroup buttons = CreateButtonGroup(9);
+
+        Rect area = StandardWindow.ActiveAreaForSymmetricButtons(buttons, false, 0);
+
+        Assert.Equal(new Rect(181, 143, 277, 193), area);
+    }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_KeepsTwoButtonsOnOneRow()
+    {
+        ButtonGroup buttons = CreateButtonGroup(2);
+
+        Rect area = StandardWindow.ActiveAreaForSymmetricButtons(buttons, false, 0);
+
+        Assert.Equal(new Rect(212, 190, 215, 99), area);
+    }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_AddsTheExtraHeight()
+    {
+        ButtonGroup buttons = CreateButtonGroup(4);
+
+        Rect area = StandardWindow.ActiveAreaForSymmetricButtons(buttons, false, 30);
+
+        Assert.Equal(146 + 30, area.Height);
+        Assert.Equal(167 - 15, area.Y);
+    }
+
+    [Fact]
+    public void ActiveAreaForSymmetricButtons_RejectsAnEmptyGroup()
+    {
+        Assert.Throws<ArgumentException>(
+            () => StandardWindow.ActiveAreaForSymmetricButtons(new ButtonGroup(), false, 0));
+    }
+
+    [Fact]
+    public void PlaceSymmetricButtons_LaysFourButtonsOutInTwoColumns()
+    {
+        ButtonGroup buttons = CreateButtonGroup(4);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+
+        window.PlaceSymmetricButtons(buttons);
+
+        // The first button starts 30 pixels in and 15 pixels down from the active area.
+        Assert.Equal(new Point(251, 182), TopLeftOf(buttons[0]));
+        Assert.Equal(new Point(330, 182), TopLeftOf(buttons[1]));
+        Assert.Equal(new Point(251, 229), TopLeftOf(buttons[2]));
+        Assert.Equal(new Point(330, 229), TopLeftOf(buttons[3]));
+    }
+
+    [Fact]
+    public void PlaceSymmetricButtons_MovesTheGroupDownByTheOffset()
+    {
+        ButtonGroup buttons = CreateButtonGroup(4);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+
+        window.PlaceSymmetricButtons(buttons, offsetY: 11);
+
+        Assert.Equal(new Point(251, 193), TopLeftOf(buttons[0]));
+        Assert.Equal(new Point(330, 240), TopLeftOf(buttons[3]));
+    }
+
+    [Fact]
+    public void PlaceSymmetricButtons_CentresALastRowThatIsNotFull()
+    {
+        ButtonGroup buttons = CreateButtonGroup(8);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+
+        window.PlaceSymmetricButtons(buttons);
+
+        // Eight buttons make three columns and a last row of two. The pair is shifted by half a button
+        // plus half a gap, which is 39 pixels, and the active area of eight buttons starts at (181,143).
+        Assert.Equal(new Point(211, 158), TopLeftOf(buttons[0]));
+        Assert.Equal(new Point(250, 252), TopLeftOf(buttons[6]));
+        Assert.Equal(new Point(329, 252), TopLeftOf(buttons[7]));
+    }
+
+    [Fact]
+    public void RenderPosition_AlignsToEveryPadding()
+    {
+        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(100, 100, 200, 100));
+        Size item = new(ButtonsWidth, ButtonsHeight);
+
+        Assert.Equal(new Point(120, 107), window.RenderPosition(new Point(20, 7), item, WindowPadding.TopLeft));
+        Assert.Equal(new Point(190, 107), window.RenderPosition(new Point(20, 7), item, WindowPadding.TopCenter));
+        Assert.Equal(new Point(221, 107), window.RenderPosition(new Point(20, 7), item, WindowPadding.TopRight));
+        Assert.Equal(new Point(120, 143), window.RenderPosition(new Point(20, 7), item, WindowPadding.CenterLeft));
+        Assert.Equal(new Point(190, 143), window.RenderPosition(new Point(20, 7), item, WindowPadding.CenterCenter));
+        Assert.Equal(new Point(221, 143), window.RenderPosition(new Point(20, 7), item, WindowPadding.CenterRight));
+        Assert.Equal(new Point(120, 166), window.RenderPosition(new Point(20, 7), item, WindowPadding.BottomLeft));
+        Assert.Equal(new Point(190, 166), window.RenderPosition(new Point(20, 7), item, WindowPadding.BottomCenter));
+        Assert.Equal(new Point(221, 166), window.RenderPosition(new Point(20, 7), item, WindowPadding.BottomRight));
+    }
+
+    [Fact]
+    public void RenderPosition_RejectsAnUnknownPadding()
+    {
+        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(100, 100, 200, 100));
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => window.RenderPosition(new Point(0, 0), new Size(10, 10), (WindowPadding)99));
+    }
+
+    private const int ButtonsWidth = 59;
+    private const int ButtonsHeight = 27;
+
+    private static ButtonGroup CreateButtonGroup(int count)
+    {
+        ButtonGroup group = new();
+
+        for (int index = 0; index < count; ++index)
+        {
+            group.CreateButton(0, 0, CreateSprite(), CreateSprite(), DialogButton.Ok);
+        }
+
+        return group;
+    }
+
+    private static Sprite CreateSprite() => CreateSprites(new Size(ButtonsWidth, ButtonsHeight), Interior)[0];
+
+    private static Point TopLeftOf(ButtonBase button) => new(button.Area.X, button.Area.Y);
 
     private static PixelBuffer CreateCanvas()
     {

@@ -11,9 +11,9 @@ namespace FHeroes2.UI.Dialogs;
 /// spells the same thing out as four <c>if</c> branches in its event loop.
 /// </para>
 /// <para>
-/// <b>Contract only</b> (ADR-163): the model carries the inputs and the answer, and has no layout or rendering yet.
-/// Adding <c>Area</c>/<c>Render</c> when the widget layer lands does not change <see cref="Create"/> or
-/// <see cref="FromButton"/>.
+/// The model stays free of artwork so that the rule layer can decide what the four buttons do without the UI
+/// layer; <see cref="AdventureOptionsView"/> composes the window and the buttons out of archive frames and owns
+/// the layout.
 /// </para>
 /// </remarks>
 public sealed class AdventureOptionsDialog

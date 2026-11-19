@@ -80,6 +80,11 @@ param(
     # Replaces the committed baseline with the frame that was just rendered.
     [switch] $Update,
 
+    # Opens the adventure options dialog over the map (--adventure-options) and uses
+    # adventure-options.png as the default baseline. The dialog is static: stone window, the four
+    # buttons of APANEL.ICN and the cancel button, so its frame is as reproducible as the map.
+    [switch] $AdventureOptions,
+
     # Fails instead of skipping when the game data or the map is missing.
     [switch] $RequireData,
 
@@ -101,7 +106,8 @@ $Baseline = if ($Baseline) {
     [System.IO.Path]::GetFullPath($Baseline)
 }
 else {
-    $name = if ($Culture -eq 'en') { 'adventure-map.png' } else { "adventure-map.$Culture.png" }
+    $prefix = if ($AdventureOptions) { 'adventure-options' } else { 'adventure-map' }
+    $name = if ($Culture -eq 'en') { "$prefix.png" } else { "$prefix.$Culture.png" }
     [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../../tests/baselines/$name"))
 }
 
@@ -179,6 +185,10 @@ $appArguments = @(
     '--smoke-frames', $Frames,
     '--screenshot', $screenshot
 )
+
+if ($AdventureOptions) {
+    $appArguments += '--adventure-options'
+}
 
 Invoke-PixelRender -Executable $appExe -Arguments $appArguments -ScreenshotPath $screenshot
 

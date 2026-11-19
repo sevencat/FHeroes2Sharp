@@ -250,6 +250,54 @@ public sealed class ButtonGroupTests
         events.OnMouseButton(false, MouseButtonType.Left, release);
     }
 
+    [Fact]
+    public void CreateFromFrames_TakesReleasedAndPressedFramesInOrder()
+    {
+        Sprite[] frames =
+        [
+            CreateSprite(20, 10, ReleasedColor),
+            CreateSprite(20, 10, PressedColor),
+            CreateSprite(21, 11, ReleasedColor),
+            CreateSprite(21, 11, PressedColor),
+        ];
+
+        ButtonGroup group = ButtonGroup.CreateFromFrames(frames, [DialogButton.Info, DialogButton.Dig]);
+
+        Assert.Equal(2, group.Count);
+        Assert.Equal(DialogButton.Info, group.ValueOf(0));
+        Assert.Equal(DialogButton.Dig, group.ValueOf(1));
+        Assert.Equal(20, group[0].Area.Width);
+        Assert.Equal(21, group[1].Area.Width);
+    }
+
+    [Fact]
+    public void CreateFromFrames_LeavesTheButtonsAtTheOrigin()
+    {
+        Sprite[] frames = [CreateSprite(20, 10), CreateSprite(20, 10)];
+
+        ButtonGroup group = ButtonGroup.CreateFromFrames(frames, [DialogButton.Ok]);
+
+        Assert.Equal(0, group[0].Area.X);
+        Assert.Equal(0, group[0].Area.Y);
+    }
+
+    [Fact]
+    public void CreateFromFrames_RejectsAnOddFrameCount()
+    {
+        Sprite[] frames = [CreateSprite(20, 10), CreateSprite(20, 10), CreateSprite(20, 10)];
+
+        Assert.Throws<ArgumentException>(() => ButtonGroup.CreateFromFrames(frames, [DialogButton.Ok]));
+    }
+
+    [Fact]
+    public void CreateFromFrames_RejectsAMismatchedValueCount()
+    {
+        Sprite[] frames = [CreateSprite(20, 10), CreateSprite(20, 10)];
+
+        Assert.Throws<ArgumentException>(
+            () => ButtonGroup.CreateFromFrames(frames, [DialogButton.Ok, DialogButton.Cancel]));
+    }
+
     private static ButtonGroup CreateGroup(out ButtonSprite okay, out ButtonSprite cancel)
     {
         ButtonGroup group = new();

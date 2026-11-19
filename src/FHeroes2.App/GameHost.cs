@@ -13,6 +13,7 @@ using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.UI.Dialogs;
 using SDL3;
 
 namespace FHeroes2.App;
@@ -450,6 +451,22 @@ public sealed class GameHost : IDisposable
                 return false;
             }
 
+            // The options dialog is modal: it takes the left button and nothing else reaches the map.
+            if (adventure.AdventureOptions is { } options)
+            {
+                if (button.Button == LeftMouseButton && ToLogical(button.X, button.Y) is { } optionsPoint)
+                {
+                    DialogButton answer = options.SetLeftButton(button.Down, optionsPoint);
+
+                    if (answer != DialogButton.None)
+                    {
+                        ResolveAdventureOptions(adventure, answer);
+                    }
+                }
+
+                return false;
+            }
+
             // The map answers the left button only: the right one opens the info window of the
             // object under the pointer in the reference, which is not implemented yet.
             if (!_syntheticCursor)
@@ -541,18 +558,31 @@ public sealed class GameHost : IDisposable
             return false;
         }
 
+        // The options dialog is modal as well: Escape closes it and the map sees nothing else.
+        if (adventure.IsAdventureOptionsOpen)
+        {
+            if (key.Key == SDL.Keycode.Escape)
+            {
+                adventure.CloseAdventureOptions();
+                GameLog.Info("The adventure options dialog closed.");
+            }
+
+            return false;
+        }
+
         switch (key.Key)
         {
             case SDL.Keycode.Escape:
                 ReturnToMenu();
                 return false;
 
-            // The reference opens the window from the World button of the adventure options dialog,
-            // which the port does not draw yet; V stands in for it until that dialog lands.
+            // V opens the adventure options dialog, the door the reference paints into the bottom
+            // border; the World button of that dialog opens the View World window, and --view-world
+            // opens it directly for captures.
             case SDL.Keycode.V when !key.Repeat:
-                if (adventure.OpenViewWorld(ViewWorldMode.ViewAll))
+                if (adventure.OpenAdventureOptions())
                 {
-                    GameLog.Info("Opened the View World window.");
+                    GameLog.Info("Opened the adventure options dialog.");
                 }
 
                 return false;
@@ -587,6 +617,38 @@ public sealed class GameHost : IDisposable
 
             default:
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// Acts on the answer of the adventure options dialog and closes it, the way the reference returns
+    /// from <c>Dialog::AdventureOptions()</c> and lets its caller open the window the answer names
+    /// (<c>dialog_adventure.cpp:64-115</c>).
+    /// </summary>
+    /// <param name="adventure">Scene the dialog belongs to.</param>
+    /// <param name="answer">Button that was pressed.</param>
+    private static void ResolveAdventureOptions(AdventureMapScene adventure, DialogButton answer)
+    {
+        adventure.CloseAdventureOptions();
+
+        switch (answer)
+        {
+            case DialogButton.World:
+                if (adventure.OpenViewWorld(ViewWorldMode.ViewAll))
+                {
+                    GameLog.Info("Opened the View World window from the adventure options.");
+                }
+
+                break;
+
+            case DialogButton.Cancel:
+                break;
+
+            default:
+                // Puzzle, information and dig need the puzzle window, the puzzle map and the
+                // excavation rules, none of which the port has yet.
+                GameLog.Info($"The adventure options answer '{answer}' has no window in the port yet.");
+                break;
         }
     }
 
@@ -1151,11 +1213,18 @@ public sealed class GameHost : IDisposable
             OpenMapFile(_options.MapFile);
         }
 
-        // The window normally opens from the adventure options dialog, which the port does not draw
-        // yet; --view-world opens it here so its frame can be captured and smoke tested.
+        // The window normally opens from the adventure options dialog; --view-world opens it here so its
+        // frame can be captured and smoke tested.
         if (_options.ViewWorld && _adventure is { } viewWorld && viewWorld.OpenViewWorld(ViewWorldMode.ViewAll))
         {
             GameLog.Info("Opened the View World window from the command line.");
+        }
+
+        // The dialog normally opens from the map's View World door; --adventure-options opens it here so
+        // its frame can be captured.
+        if (_options.AdventureOptions && _adventure is { } optionsMap && optionsMap.OpenAdventureOptions())
+        {
+            GameLog.Info("Opened the adventure options dialog from the command line.");
         }
 
         GameLog.Info(_menu is null

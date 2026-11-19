@@ -10,8 +10,9 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）与八个命令按钮、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）与八个命令按钮、按钮下方的 `STONBACK` 石头状态面板（「Month: 1 Week: 1」/「Day: 1」与 `SUNMOON` 月相，`(480,392,144,72)`）、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 | `adventure-map-boats.png` | 冒险地图的第二个画面（M4，船）：`Undeada.mp2` 以「最靠地图中心的城堡」居中，城堡西南角的海面上停着一条空船 —— 船体取自 `BOAT32` 第 18 帧（`RIGHT`，62×56，比瓦片高 33 像素、向上伸两格），影子取自 `BOATSHAD` 第 18 帧（74×28），瓦片原来的 `OBJNWAT2` 帧被丢掉。`Alteris.mp2` 的视野里一条船都没有，所以船的像素只能靠这张图守住 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png -Update` |
+| `adventure-options.png` | 冒险选项对话框（M4，`--adventure-options`）：同一张 `Alteris.mp2` 上盖一层 `StandardWindow` 石头窗口，窗口由按钮组反推尺寸（`APANEL.ICN` 四个 59×27 按钮排成两列，active area `(221,167,198,146)`），四按钮是 `APANEL.ICN` 的 8 帧（世界/谜题/信息/挖掘，各一对 released/pressed），底部居中是 `SYSTEM.ICN` 第 3/4 帧的 CANCEL（`{0,11}` 上抬 11 像素）。对话框不透明，把地图中间整块盖住，四周的边框、雷达、按钮面板与状态面板都不受影响 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
@@ -26,6 +27,8 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN
 pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update       # 有意改了视觉后重建场景基线
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1           # 冒险地图：0 = 一致
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update   # 有意改了视觉后重建冒险地图基线
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions          # 冒险选项对话框
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update  # 重建对话框基线
 pwsh tools/scripts/VerifyEditorBaseline.ps1                 # 地图编辑器：0 = 一致
 pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update         # 有意改了视觉后重建编辑器基线
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData      # 自建 runner 上把「没数据」当失败
@@ -41,7 +44,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
 `AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
 `diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_adventure-map-boats.png`、
-`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+`diff_adventure-options.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
 打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
 `-RequireData` 才把缺数据当失败。
 
@@ -87,6 +90,11 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 * 外壳（ADR-054）：`ADVBORD.ICN` 第 0 帧整块 blit 到 `0,0`，地图先画进 448×448 的独立 `PixelBuffer`
   再贴到视口 `16,16`；雷达下方的砖纹面板按 `(480,176,72,32)` 平铺同一帧的像素。三者都是静态美术，
   只有位置来自 `MapFrame` 的常量，所以逐帧相同。
+* 状态面板（`480,392,144,72`，`StatusPanel.AreaFor`）：按钮底到框底正好 72 像素，即一帧
+  `STONBACK.ICN`；面板里只有「Month: 1 Week: 1」/「Day: 1」（`SMALFONT` + `FONT`）与 `SUNMOON`
+  月相，日期取自 `World` 的 `Month`/`Week`/`Day`，月相帧由「本月的第几周」决定（`day > 1` 用
+  `((week-1)%4)+1`，否则第 0 帧）。开局第 0 天没有日期可印，面板只留石头，所以也不带时钟。
+  资源态要左键点面板才切过去（参考 `StatusPanel::QueueEventProcessing`），基线里不会出现。
 * 图标条（ADR-055）：`LOCATORS.ICN` 的城堡帧（9…14 城堡、15…20 城镇，都由地图的城堡表决定）与空槽
   帧（1…8 循环）按 `(480,176)`、`(552,176)` 两列各四格摆好，图标内缩 `5,5`。没有悬停、没有高亮标记，
   所以也不带时钟；英雄列全是空槽，因为 MP2 的 tile 里没有英雄身份（见 ADR-055）。
@@ -100,6 +108,19 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   `AdventureMapViewTests` 钉住滚动数学，`ObjectLayerTests` 钉住部件顺序与落位，`HeroLayerTests`
   钉住英雄的三带切分与阴影次序，`MinimapTests` 钉住地面分段与方框几何，`IconBarTests` 钉住图标条的
   几何与 `LOCATORS` 帧表，一起才能把这一屏钉死。
+
+## 冒险选项对话框基线也是逐字节稳定的
+
+`adventure-options.png` 是同一张 `Alteris.mp2` 上盖一层对话框，所以上面那些「不带时钟」的理由全部沿用；
+对话框自己也不带时钟：
+
+* 窗口尺寸由按钮组反推（`StandardWindow.ActiveAreaForSymmetricButtons`，复刻 `getSymmetricDialogActiveArea`），
+  没有随屏幕或文字变化的部分；四个按钮取自 `APANEL.ICN` 的 8 帧，CANCEL 取自 `SYSTEM.ICN` 的 3/4 帧，
+  都是静态美术。
+* 参考用 `ICN::SYSTEM` 的 0/1 帧，那是它运行时用文字合成的表；归档里的 `SYSTEM.ICN` 前两帧是另一组按钮，
+  3/4 才是 CANCEL（与设置对话框同一对），所以端口取 3/4。这是**帧号**上的差异，布局仍按参考。
+* 没有悬停、没有按下态、没有光标：`--cursor 620,100` 落在右侧图标条上，`--freeze-animation` 关掉了地图动画，
+  所以按钮始终是 released 帧。
 
 ## 编辑器基线也是逐字节稳定的
 
@@ -167,8 +188,9 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `settings.zh_CN.png` | 230,299 | `E8CA67D51C2327EFC714CFABC55116205A6B25BD979878E6AD2FEDDFCC057985` |
 | `scenario.png` | 211,122 | `1325565AC990BA21222E5C6DD3E0F1FE15E6649682D633FF8BE88A26E318727B` |
 | `scenario.zh_CN.png` | 211,461 | `E3F1F8261E501955897D05C896EBA28E4EDCF2B05F15F2FC1AC8695A139D2A2F` |
-| `adventure-map.png` | 136,059 | `D473DC562630D12640861B4C2CD53471F29ED5C744113B7EB0F666141AD2F223` |
-| `adventure-map-boats.png` | 128,054 | `35D1ECD81C50ACD7D0219BE6CC7FE86FEE9C48D61D155E55CDA5242731D278F8` |
+| `adventure-map.png` | 120,368 | `897A5D9747AE0DDCD30262300CC4B175AE46E5BC104DD68FBC2232776DD328A1` |
+| `adventure-map-boats.png` | 134,334 | `B2270574025A5739860F40EF9643B714656D6CAC1EDA1921771BF3E5DE8A6BAE` |
+| `adventure-options.png` | 119,941 | `10FF7501123FA825B7AF1A0A661B97D6CCA2211B55D86B755950F6C5F6C6C4EB` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
 
 ## 更新基线的规矩
