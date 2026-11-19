@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.AdventureMap;
@@ -68,6 +69,7 @@ public sealed class AdventureMapView
     private readonly IBoatSpriteSource? _boats;
     private readonly MapFog? _fog;
     private readonly IFogSpriteSource? _fogSprites;
+    private readonly World? _world;
     private readonly Size _viewport;
 
     public AdventureMapView(
@@ -79,7 +81,8 @@ public sealed class AdventureMapView
         IMonsterSpriteSource? monsters = null,
         IBoatSpriteSource? boats = null,
         MapFog? fog = null,
-        IFogSpriteSource? fogSprites = null)
+        IFogSpriteSource? fogSprites = null,
+        World? world = null)
     {
         ArgumentNullException.ThrowIfNull(map);
         ArgumentNullException.ThrowIfNull(tiles);
@@ -92,6 +95,7 @@ public sealed class AdventureMapView
         _boats = boats;
         _fog = fog;
         _fogSprites = fogSprites;
+        _world = world;
         _viewport = viewport;
         Scroll = new Point(0, 0);
     }
@@ -270,6 +274,13 @@ public sealed class AdventureMapView
             return;
         }
 
+        if (_world is { Heroes.Count: > 0 })
+        {
+            DrawWorldHeroes(target, band);
+
+            return;
+        }
+
         foreach (Mp2MapHero hero in VisibleHeroes())
         {
             // A hero under the fog is not drawn at all: the body of MINIHERO reaches over the tile
@@ -284,6 +295,57 @@ public sealed class AdventureMapView
 
             BlitTileSprite(target, _heroes.GetBody(hero.Race), left, top, Point.Zero, band);
             BlitTileSprite(target, _heroes.GetFlag(hero.Color), left, top, Point.Zero, band);
+        }
+    }
+
+    /// <summary>
+    /// 画 <see cref="World"/> 里的英雄，也就是开局之后真正在走的那一批。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 地图里那一批是 <c>Mp2MapHero</c>（存档里的静态记录），<see cref="World"/> 里这一批是
+    /// <see cref="Hero"/>（会走、会死、会换阵营）。两者在开局时一一对应，所以只要世界里已经有英雄就只画
+    /// 世界这一批，否则会画成两个人。
+    /// </para>
+    /// <para>
+    /// 帧与方向：<c>Heroes::GetHeroSpriteIndex()</c> 给出 <c>direction * 9 + frame</c>，端口的
+    /// <see cref="Hero.SpriteIndex"/> 已经是这个值（站立时是 <c>RIGHT</c> 组的第 0 帧，18），走的动画由
+    /// <see cref="Hero.MoveStep"/> 推进。偏移 <see cref="Hero.Offset"/> 是走到两格之间时的那半格。
+    /// </para>
+    /// <para>
+    /// 雾下的英雄不画：参考的 <c>isTileUnderFog()</c> 也一样，理由同地图英雄——身体会伸到上一格，
+    /// 那一格的雾盖不住它。
+    /// </para>
+    /// </remarks>
+    private void DrawWorldHeroes(PixelBuffer target, TileBand band)
+    {
+        IHeroSpriteSource heroes = _heroes!;
+        World world = _world!;
+
+        int tileWidth = _tiles.TileWidth;
+        int tileHeight = _tiles.TileHeight;
+        int width = _map.Width;
+
+        foreach (Hero hero in world.Heroes)
+        {
+            if (hero.MapIndex < 0)
+            {
+                continue;
+            }
+
+            int column = hero.MapIndex % width;
+            int row = hero.MapIndex / width;
+
+            if (IsUnderFog(column, row))
+            {
+                continue;
+            }
+
+            int left = (column * tileWidth) - Scroll.X + hero.Offset.X;
+            int top = (row * tileHeight) - Scroll.Y + hero.Offset.Y;
+
+            BlitTileSprite(target, heroes.GetBody(hero.Race, hero.SpriteIndex), left, top, Point.Zero, band);
+            BlitTileSprite(target, heroes.GetFlag(hero.Color), left, top, Point.Zero, band);
         }
     }
 
@@ -447,10 +509,48 @@ public sealed class AdventureMapView
             return;
         }
 
+        if (_world is { Heroes.Count: > 0 })
+        {
+            DrawWorldHeroShadows(target, shadow);
+
+            return;
+        }
+
         foreach (Mp2MapHero hero in VisibleHeroes())
         {
             int left = (hero.X * _tiles.TileWidth) - Scroll.X + shadow.OffsetX;
             int top = (hero.Y * _tiles.TileHeight) - Scroll.Y + shadow.OffsetY;
+
+            ImageOps.BlitSprite(target, new Point(left, top), shadow);
+        }
+    }
+
+    /// <summary>
+    /// 画世界里那批英雄的影子，与 <see cref="DrawWorldHeroes"/> 配套。
+    /// </summary>
+    /// <remarks>
+    /// 影子跟着 <see cref="Hero.Offset"/> 走：参考里影子是 <c>tileUnfit.shadowImages</c> 的一层，
+    /// 与身体用同一个偏移，否则走到两格中间时影子会落在原地。
+    /// </remarks>
+    private void DrawWorldHeroShadows(PixelBuffer target, Sprite shadow)
+    {
+        World world = _world!;
+        int tileWidth = _tiles.TileWidth;
+        int tileHeight = _tiles.TileHeight;
+        int width = _map.Width;
+
+        foreach (Hero hero in world.Heroes)
+        {
+            if (hero.MapIndex < 0)
+            {
+                continue;
+            }
+
+            int column = hero.MapIndex % width;
+            int row = hero.MapIndex / width;
+
+            int left = (column * tileWidth) - Scroll.X + hero.Offset.X + shadow.OffsetX;
+            int top = (row * tileHeight) - Scroll.Y + hero.Offset.Y + shadow.OffsetY;
 
             ImageOps.BlitSprite(target, new Point(left, top), shadow);
         }

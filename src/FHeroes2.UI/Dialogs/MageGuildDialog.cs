@@ -3,6 +3,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Spells;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
@@ -10,10 +11,17 @@ namespace FHeroes2.UI.Dialogs;
 
 /// <summary>
 /// What a press in the mage guild window means, <c>Castle::MageGuildDialogResult</c>
-/// (<c>castle_mageguild.cpp:180-200</c>).
+/// (<c>castle_mageguild.cpp:180-200</c>), plus the two answers a frame can give the caller.
 /// </summary>
+/// <remarks>
+/// The values are not stored anywhere, so <see cref="None"/> takes the zero value: a default
+/// <see cref="MageGuildFrame"/> is a quiet frame, not an exit.
+/// </remarks>
 public enum MageGuildDialogAction
 {
+    /// <summary>Nothing happened this frame.</summary>
+    None,
+
     /// <summary>The exit button, or the close-window hot key.</summary>
     Exit,
 
@@ -22,7 +30,54 @@ public enum MageGuildDialogAction
 
     /// <summary>The arrow that walks to the next town.</summary>
     NextTown,
+
+    /// <summary>
+    /// A scroll was clicked: the caller shows the description of <see cref="MageGuildFrame.Spell"/>.
+    /// </summary>
+    ShowSpell,
 }
+
+/// <summary>The three buttons of the mage guild window, i.e. its three art frames.</summary>
+public enum MageGuildDialogButton
+{
+    /// <summary>The left arrow, <c>ICN::SMALLBAR</c> frame 1.</summary>
+    PreviousTown,
+
+    /// <summary>The right arrow, <c>ICN::SMALLBAR</c> frame 3.</summary>
+    NextTown,
+
+    /// <summary>The exit button, <c>ICN::BUTTON_GUILDWELL_EXIT</c>.</summary>
+    Exit,
+}
+
+/// <summary>What a right click on one of the three buttons says.</summary>
+/// <param name="Title">The heading of the message box.</param>
+/// <param name="Text">The body of the message box.</param>
+public readonly record struct MageGuildTooltip(string Title, string Text);
+
+/// <summary>
+/// The hot keys of the mage guild window besides the pointer, <c>castle_mageguild.cpp:178-196</c>.
+/// </summary>
+/// <param name="CloseWindow"><c>Game::HotKeyCloseWindow()</c>: Escape or Enter.</param>
+/// <param name="PreviousTown"><c>HotKeyPressEvent( DEFAULT_LEFT )</c>.</param>
+/// <param name="NextTown"><c>HotKeyPressEvent( DEFAULT_RIGHT )</c>.</param>
+public readonly record struct MageGuildHotKeys(
+    bool CloseWindow = false,
+    bool PreviousTown = false,
+    bool NextTown = false);
+
+/// <summary>One frame of the mage guild window.</summary>
+/// <param name="Action">What the caller should do next.</param>
+/// <param name="Spell">The spell of <see cref="MageGuildDialogAction.ShowSpell"/>, or
+/// <see cref="SpellType.None"/>.</param>
+/// <param name="SpellByRightClick">Whether the spell was asked for with the right button, which shows the
+/// description without an OK button (<c>Dialog::ZERO</c>).</param>
+/// <param name="Tooltip">The button a right click landed on, or <see langword="null"/>.</param>
+public readonly record struct MageGuildFrame(
+    MageGuildDialogAction Action,
+    SpellType Spell = SpellType.None,
+    bool SpellByRightClick = false,
+    MageGuildDialogButton? Tooltip = null);
 
 /// <summary>
 /// The window that shows a town's mage guild, <c>Castle::_openMageGuild()</c>
@@ -41,10 +96,10 @@ public enum MageGuildDialogAction
 /// of its own.
 /// </para>
 /// <para>
-/// <b>Not here</b>: the event loop. As with the other windows of the port, <see cref="Create"/>, <see cref="Draw"/>
-/// and <see cref="CreateButtons"/> are called once per frame by the caller, whose loop turns a press into a
-/// <see cref="MageGuildDialogAction"/> with <see cref="FromButton"/> and feeds the pointer to
-/// <see cref="GetStatusText"/>.
+/// The message loop is <see cref="ProcessEvents"/>: one call per frame with the frame's <see cref="LocalEvent"/>
+/// answers what the caller should do next — a town switch, an exit, or the spell whose description to show — and
+/// <see cref="GetStatusText"/> paints the line under the buttons. <see cref="FromButton"/> remains for callers that
+/// drive the buttons themselves.
 /// </para>
 /// </remarks>
 public sealed class MageGuildDialog
@@ -439,4 +494,142 @@ public sealed class MageGuildDialog
         1 => MageGuildDialogAction.NextTown,
         _ => MageGuildDialogAction.Exit,
     };
+
+    /// <summary>What a right click on a button says, <c>castle_mageguild.cpp:198-207</c>.</summary>
+    /// <param name="button">The button under the cursor.</param>
+    /// <returns>The heading and the body of the message.</returns>
+    public static MageGuildTooltip GetTooltip(MageGuildDialogButton button) => button switch
+    {
+        MageGuildDialogButton.PreviousTown => new MageGuildTooltip("Show previous town", "Click to show the previous town."),
+        MageGuildDialogButton.NextTown => new MageGuildTooltip("Show next town", "Click to show the next town."),
+        _ => new MageGuildTooltip("Exit", "Exit Mage Guild"),
+    };
+
+    /// <summary>
+    /// One frame of the reference's message loop, <c>castle_mageguild.cpp:176-210</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The order is the reference's: the exit button first, then the two arrows, then the scroll rows, then the
+    /// right-click tooltips. A disabled arrow takes no input and keeps its plain look, exactly like
+    /// <c>if ( buttonPrevCastle.isEnabled() )</c> guards both the look and the click.
+    /// </para>
+    /// <para>
+    /// <b>Not here</b>: the spell description. <c>SpellsInOneRow::queueEventProcessing()</c> opens it; the port answers
+    /// <see cref="MageGuildDialogAction.ShowSpell"/> with the spell and lets the caller show the dialog. The reference
+    /// gives a right click the message box without a button (<c>Dialog::ZERO</c>) and a left click one with OK, which
+    /// <see cref="MageGuildFrame.SpellByRightClick"/> carries over.
+    /// </para>
+    /// <para>
+    /// The cursor sets the hovered row's <see cref="SpellScrollRow.CurrentIndex"/> even when no button was pressed,
+    /// because <c>queueEventProcessing()</c> does the same on every frame; the <c>||</c> chain of the reference stops
+    /// at the first row that holds the cursor, which leaves the rows below it untouched, so the loop breaks at the
+    /// same row.
+    /// </para>
+    /// <para>
+    /// <b>Holding an arrow repeats it</b>, the third term of the reference's condition
+    /// (<c>le.MouseClickLeft( area() ) || HotKey || timedButton.isDelayPassed()</c>). The two
+    /// <see cref="TimedEventValidator"/>s are the caller's, because they remember when the gesture started; pass
+    /// <see langword="null"/> for an arrow that should only answer clicks and hot keys.
+    /// </para>
+    /// </remarks>
+    /// <param name="events">Input state of the frame.</param>
+    /// <param name="layout">Where the buttons are.</param>
+    /// <param name="buttons">The three buttons of <see cref="CreateButtons"/>: previous, next, exit.</param>
+    /// <param name="rows">The five rows of <see cref="CreateRows"/>, level 0 first.</param>
+    /// <param name="hotKeys">The hot keys pressed this frame.</param>
+    /// <param name="previousTownRepeat">The repeat timer of the previous arrow, or <see langword="null"/>.</param>
+    /// <param name="nextTownRepeat">The repeat timer of the next arrow, or <see langword="null"/>.</param>
+    /// <returns>What the caller should do, plus the tooltip of the frame.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="buttons"/> does not hold exactly three buttons.</exception>
+    public MageGuildFrame ProcessEvents(
+        LocalEvent events,
+        MageGuildLayout layout,
+        IReadOnlyList<ButtonSprite> buttons,
+        IReadOnlyList<SpellScrollRow> rows,
+        MageGuildHotKeys hotKeys = default,
+        TimedEventValidator? previousTownRepeat = null,
+        TimedEventValidator? nextTownRepeat = null)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(buttons);
+        ArgumentNullException.ThrowIfNull(rows);
+
+        if (buttons.Count != 3)
+        {
+            throw new ArgumentException("The mage guild window has three buttons: previous, next and exit.", nameof(buttons));
+        }
+
+        // castle_mageguild.cpp:178-181: the exit click is asked before the exit look is refreshed.
+        if (events.MouseClickLeft(buttons[2].Area) || hotKeys.CloseWindow)
+        {
+            return new MageGuildFrame(MageGuildDialogAction.Exit);
+        }
+
+        buttons[2].UpdatePressState(events);
+
+        if (buttons[0].IsEnabled)
+        {
+            buttons[0].UpdatePressState(events);
+
+            if (events.MouseClickLeft(buttons[0].Area)
+                || hotKeys.PreviousTown
+                || (previousTownRepeat?.IsDelayPassed(buttons[0].IsPressed) ?? false))
+            {
+                return new MageGuildFrame(MageGuildDialogAction.PreviousTown);
+            }
+        }
+
+        if (buttons[1].IsEnabled)
+        {
+            buttons[1].UpdatePressState(events);
+
+            if (events.MouseClickLeft(buttons[1].Area)
+                || hotKeys.NextTown
+                || (nextTownRepeat?.IsDelayPassed(buttons[1].IsPressed) ?? false))
+            {
+                return new MageGuildFrame(MageGuildDialogAction.NextTown);
+            }
+        }
+
+        foreach (SpellScrollRow row in rows)
+        {
+            row.CurrentIndex = row.GetIndexAt(events.CursorPosition);
+
+            if (row.CurrentIndex < 0)
+            {
+                continue;
+            }
+
+            SpellType spell = row.Spells[row.CurrentIndex];
+            bool rightClick = events.IsMouseRightButtonPressed;
+
+            if (spell != SpellType.None && (rightClick || events.MouseClickLeft()))
+            {
+                return new MageGuildFrame(MageGuildDialogAction.ShowSpell, spell, rightClick);
+            }
+
+            break;
+        }
+
+        // An else-if chain in the reference, exit first; the three areas never overlap.
+        if (events.IsMouseRightButtonPressedInArea(buttons[2].Area))
+        {
+            return new MageGuildFrame(MageGuildDialogAction.None, SpellType.None, false, MageGuildDialogButton.Exit);
+        }
+
+        if (events.IsMouseRightButtonPressedInArea(buttons[1].Area))
+        {
+            return new MageGuildFrame(MageGuildDialogAction.None, SpellType.None, false, MageGuildDialogButton.NextTown);
+        }
+
+        if (events.IsMouseRightButtonPressedInArea(buttons[0].Area))
+        {
+            return new MageGuildFrame(MageGuildDialogAction.None, SpellType.None, false, MageGuildDialogButton.PreviousTown);
+        }
+
+        return default;
+    }
 }

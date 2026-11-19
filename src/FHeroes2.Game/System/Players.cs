@@ -113,8 +113,12 @@ public sealed class Players
             {
                 player.Control = PlayerControl.Human;
             }
-            else if ((fileInfo.SharedColors & color) != 0)
+            else if ((fileInfo.HumanPlayers & color) != 0)
             {
+                // players.cpp:330 asks colorsAvailableForHumans, not the overlap of the two tables: a colour
+                // that only a person may play is still a colour a person may be given, and it has to compete
+                // for the single promotion below. Asking for the overlap instead left a single-player map with
+                // a human-only mask without any human slot at all.
                 player.Control = player.Control | PlayerControl.Human;
             }
 

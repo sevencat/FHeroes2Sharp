@@ -1,5 +1,6 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
 
 namespace FHeroes2.UI.Widgets;
 
@@ -25,8 +26,9 @@ namespace FHeroes2.UI.Widgets;
 /// Unlike <see cref="Button"/> - the hover aware sign of the main menu - a dialog button has no
 /// hover look: it is pressed while the left mouse button is held inside it and released otherwise,
 /// which is what <see cref="ButtonGroup"/> drives. The reference also notifies its
-/// <c>ActionObject</c> subscribers on every state change; the port has no observers yet, so the
-/// methods only report the change to their caller.
+/// <c>ActionObject</c> subscribers on every state change; the port has no observers, so the methods
+/// only report the change to their caller. <see cref="TimedEventValidator"/> - the repeat of a held
+/// arrow - takes the held state as an argument for the same reason.
 /// </para>
 /// </remarks>
 public abstract class ButtonBase
@@ -232,6 +234,36 @@ public abstract class ButtonBase
     /// <returns><see langword="true"/> when the state changed.</returns>
     public bool DrawOnState(bool pressed, PixelBuffer target) =>
         pressed ? DrawOnPress(target) : DrawOnRelease(target);
+
+    /// <summary>
+    /// Takes the pressed look from the frame's input, the argument every window of the reference
+    /// computes for <c>drawOnState()</c>: <c>le.isMouseLeftButtonPressedAndHeldInArea( area() )</c>.
+    /// </summary>
+    /// <remarks>
+    /// Only the state is set here; the window draws the buttons itself, so that a window which
+    /// redraws on a timer can decide when the picture is composed (<c>castle_well.cpp:289-296</c>).
+    /// A disabled button is left alone: the reference does not call <c>drawOnState()</c> on one.
+    /// </remarks>
+    /// <param name="events">Input state of the frame.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public void UpdatePressState(LocalEvent events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!IsEnabled)
+        {
+            return;
+        }
+
+        if (events.IsMouseLeftButtonPressedAndHeldInArea(Area))
+        {
+            Press();
+        }
+        else
+        {
+            Release();
+        }
+    }
 
     /// <summary>The sprite drawn while the mouse button is held inside the button.</summary>
     protected abstract Sprite GetPressed();

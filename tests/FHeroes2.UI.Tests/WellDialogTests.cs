@@ -7,6 +7,7 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
@@ -381,6 +382,188 @@ public sealed class WellDialogTests
         Assert.Equal("0", WellDialog.DescribePopulation(0));
         Assert.Equal("12345", WellDialog.DescribePopulation(12345));
     }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheExitButton()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.Exit));
+
+        Assert.Equal(WellDialogAction.Exit, dialog.ProcessEvents(events, layout, buttons).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheCloseHotKey()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+
+        WellDialogFrame frame = dialog.ProcessEvents(
+            new LocalEvent(() => 0),
+            layout,
+            buttons,
+            new WellHotKeys(CloseWindow: true));
+
+        Assert.Equal(WellDialogAction.Exit, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheMaxButton()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.Max));
+
+        Assert.Equal(WellDialogAction.Max, dialog.ProcessEvents(events, layout, buttons).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheBuyAllHotKey()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+
+        WellDialogFrame frame = dialog.ProcessEvents(
+            new LocalEvent(() => 0),
+            layout,
+            buttons,
+            new WellHotKeys(BuyAll: true));
+
+        Assert.Equal(WellDialogAction.Max, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_RecruitsFromTheCellOfABuiltDwelling()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.GetMonsterArea(3)));
+
+        WellDialogFrame frame = dialog.ProcessEvents(events, layout, buttons);
+
+        Assert.Equal(WellDialogAction.Recruit, frame.Action);
+        Assert.Equal(3, frame.DwellingLevel);
+    }
+
+    [Fact]
+    public void ProcessEvents_IgnoresTheCellOfAnUnbuiltDwelling()
+    {
+        WellDialog dialog = WellDialog.Create(
+            [.. Enumerable.Range(1, 6).Select(level => CreateRow(level, built: level != 3))],
+            MapRace.Knight);
+
+        WellArtwork artwork = CreateArtwork();
+        WellLayout layout = dialog.CreateLayout(new Rect(0, 0, 640, 480), artwork);
+        List<ButtonSprite> buttons = [.. WellDialog.CreateButtons(layout, artwork)];
+
+        LocalEvent events = new(() => 0);
+        Click(events, Centre(layout.GetMonsterArea(3)));
+
+        Assert.Equal(WellDialogAction.None, dialog.ProcessEvents(events, layout, buttons).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_ShowsTheDwellingInfoOnARightClick()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        RightClick(events, Centre(layout.GetMonsterArea(5)));
+
+        WellDialogFrame frame = dialog.ProcessEvents(events, layout, buttons);
+
+        Assert.Equal(WellDialogAction.DwellingInfo, frame.Action);
+        Assert.Equal(5, frame.DwellingLevel);
+    }
+
+    [Fact]
+    public void ProcessEvents_RecruitsFromTheDwellingHotKey()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+
+        WellDialogFrame frame = dialog.ProcessEvents(
+            new LocalEvent(() => 0),
+            layout,
+            buttons,
+            new WellHotKeys(Dwelling: 4));
+
+        Assert.Equal(WellDialogAction.Recruit, frame.Action);
+        Assert.Equal(4, frame.DwellingLevel);
+    }
+
+    [Fact]
+    public void ProcessEvents_ReportsTheTooltipOfARightClick()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        RightClick(events, Centre(layout.Exit));
+
+        WellDialogFrame frame = dialog.ProcessEvents(events, layout, buttons);
+
+        Assert.Equal(WellDialogAction.None, frame.Action);
+        Assert.Equal(WellDialogButton.Exit, frame.Tooltip);
+
+        LocalEvent max = new(() => 0);
+        RightClick(max, Centre(layout.Max));
+
+        Assert.Equal(WellDialogButton.Max, dialog.ProcessEvents(max, layout, buttons).Tooltip);
+    }
+
+    [Fact]
+    public void ProcessEvents_LightsTheButtonsUpWhileTheyAreHeld()
+    {
+        (WellDialog dialog, WellLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        events.OnMouseButton(true, MouseButtonType.Left, Centre(layout.Max));
+
+        Assert.Equal(WellDialogAction.None, dialog.ProcessEvents(events, layout, buttons).Action);
+        Assert.True(buttons[0].IsPressed);
+        Assert.False(buttons[1].IsPressed);
+
+        // The cursor slid off the button while it is still down: the look follows, and the release
+        // outside the area is not a click.
+        events.OnMouseMotion(Centre(layout.GetMonsterArea(1)));
+
+        Assert.Equal(WellDialogAction.None, dialog.ProcessEvents(events, layout, buttons).Action);
+        Assert.False(buttons[0].IsPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_RefusesAnythingButTwoButtons()
+    {
+        (WellDialog dialog, WellLayout layout, _) = CreateWindow();
+
+        Assert.Throws<ArgumentException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), layout, Array.Empty<ButtonSprite>()));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(null!, layout, new List<ButtonSprite>()));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), null!, new List<ButtonSprite>()));
+    }
+
+    private static (WellDialog Dialog, WellLayout Layout, List<ButtonSprite> Buttons) CreateWindow()
+    {
+        WellDialog dialog = CreateDialog();
+        WellArtwork artwork = CreateArtwork();
+        WellLayout layout = dialog.CreateLayout(new Rect(0, 0, 640, 480), artwork);
+
+        return (dialog, layout, [.. WellDialog.CreateButtons(layout, artwork)]);
+    }
+
+    private static Point Centre(in Rect area) => new(area.X + (area.Width / 2), area.Y + (area.Height / 2));
+
+    private static void Click(LocalEvent events, Point position)
+    {
+        events.OnMouseButton(true, MouseButtonType.Left, position);
+        events.OnMouseButton(false, MouseButtonType.Left, position);
+    }
+
+    private static void RightClick(LocalEvent events, Point position) =>
+        events.OnMouseButton(true, MouseButtonType.Right, position);
 
     private static BuildingType BaseDwelling(int level) => level switch
     {

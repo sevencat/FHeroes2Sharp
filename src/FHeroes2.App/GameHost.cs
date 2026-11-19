@@ -480,9 +480,11 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
-    /// Handles the keys of the adventure map: the arrow keys scroll by one tile, Home returns to the
-    /// top left corner and Escape goes back to the main menu (the reference opens the system dialog
-    /// there; that dialog belongs to a later milestone).
+    /// Handles the keys of the adventure map: the arrow keys scroll by one tile, <c>TAB</c> takes the next
+    /// hero (with <c>H</c> as an alias) and <c>E</c> ends the turn (the <c>WORLD_NEXT_HERO</c> and
+    /// <c>WORLD_END_TURN</c> hot keys of the reference), Home returns to the top left corner and Escape goes
+    /// back to the main menu (the reference opens the system dialog there; that dialog belongs to a later
+    /// milestone).
     /// </summary>
     private bool HandleAdventureKey(in SDL.KeyboardEvent key, AdventureMapScene adventure)
     {
@@ -490,6 +492,14 @@ public sealed class GameHost : IDisposable
         {
             case SDL.Keycode.Escape:
                 ReturnToMenu();
+                return false;
+
+            case SDL.Keycode.E when !key.Repeat:
+                adventure.EndTurn();
+                return false;
+
+            case SDL.Keycode.Tab or SDL.Keycode.H when !key.Repeat:
+                adventure.NextHero();
                 return false;
 
             case SDL.Keycode.Left:

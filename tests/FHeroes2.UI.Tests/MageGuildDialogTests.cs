@@ -6,6 +6,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Spells;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
@@ -469,6 +470,290 @@ public sealed class MageGuildDialogTests
         // The fake table stops at the fireball icon; Petrification's icon (66) is far past it.
         Assert.NotNull(artwork.GetSpellIcon(SpellType.Fireball));
         Assert.Null(artwork.GetSpellIcon(SpellType.Petrify));
+    }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheExitButton()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.Exit));
+
+        Assert.Equal(MageGuildDialogAction.Exit, dialog.ProcessEvents(events, layout, buttons, rows: []).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheCloseHotKey()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        MageGuildFrame frame = dialog.ProcessEvents(
+            new LocalEvent(() => 0),
+            layout,
+            buttons,
+            rows: [],
+            new MageGuildHotKeys(CloseWindow: true));
+
+        Assert.Equal(MageGuildDialogAction.Exit, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheTownArrows()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        LocalEvent previous = new(() => 0);
+        Click(previous, Centre(layout.PreviousTown));
+
+        Assert.Equal(
+            MageGuildDialogAction.PreviousTown,
+            dialog.ProcessEvents(previous, layout, buttons, rows: []).Action);
+
+        LocalEvent next = new(() => 0);
+        Click(next, Centre(layout.NextTown));
+
+        Assert.Equal(MageGuildDialogAction.NextTown, dialog.ProcessEvents(next, layout, buttons, rows: []).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheArrowHotKeys()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        Assert.Equal(
+            MageGuildDialogAction.PreviousTown,
+            dialog.ProcessEvents(
+                new LocalEvent(() => 0),
+                layout,
+                buttons,
+                rows: [],
+                new MageGuildHotKeys(PreviousTown: true)).Action);
+
+        Assert.Equal(
+            MageGuildDialogAction.NextTown,
+            dialog.ProcessEvents(
+                new LocalEvent(() => 0),
+                layout,
+                buttons,
+                rows: [],
+                new MageGuildHotKeys(NextTown: true)).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_IgnoresADisabledArrow()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) =
+            CreateWindow(canSwitchTowns: false);
+
+        LocalEvent events = new(() => 0);
+        Click(events, Centre(layout.PreviousTown));
+
+        Assert.Equal(MageGuildDialogAction.None, dialog.ProcessEvents(events, layout, buttons, rows: []).Action);
+        Assert.False(buttons[0].IsPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_ShowsTheDescriptionOfAClickedSpell()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, List<SpellScrollRow> rows) =
+            CreateWindow();
+
+        LocalEvent events = new(() => 0);
+        Point slot = Centre(rows[0].Coords[0]);
+        Click(events, slot);
+
+        MageGuildFrame frame = dialog.ProcessEvents(events, layout, buttons, rows);
+
+        Assert.Equal(MageGuildDialogAction.ShowSpell, frame.Action);
+        Assert.Equal(SpellType.Fireball, frame.Spell);
+
+        // The left click shows the description with an OK button.
+        Assert.False(frame.SpellByRightClick);
+
+        // queueEventProcessing() remembers the slot under the pointer even without a click.
+        Assert.Equal(0, rows[0].CurrentIndex);
+    }
+
+    [Fact]
+    public void ProcessEvents_AsksForTheDescriptionWithoutAButtonOnARightClick()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, List<SpellScrollRow> rows) =
+            CreateWindow();
+
+        LocalEvent events = new(() => 0);
+        events.OnMouseButton(true, MouseButtonType.Right, Centre(rows[0].Coords[0]));
+
+        MageGuildFrame frame = dialog.ProcessEvents(events, layout, buttons, rows);
+
+        Assert.Equal(MageGuildDialogAction.ShowSpell, frame.Action);
+        Assert.Equal(SpellType.Fireball, frame.Spell);
+        Assert.True(frame.SpellByRightClick);
+    }
+
+    [Fact]
+    public void ProcessEvents_StopsAtTheRowUnderThePointer()
+    {
+        // The `||` chain of the reference stops at the first row that answers, so the rows below keep
+        // the index they had.
+        MageGuildDialog dialog = MageGuildDialog.Create(
+            [[SpellType.Fireball], [SpellType.Fireball], [], [], []],
+            heroHasSpellBook: true,
+            canSwitchTowns: true,
+            MapRace.Knight,
+            guildLevel: 1);
+
+        MageGuildArtwork artwork = CreateArtwork();
+        MageGuildLayout layout = dialog.CreateLayout(new Rect(0, 0, 640, 480), artwork);
+        List<ButtonSprite> buttons = [.. dialog.CreateButtons(layout, artwork)];
+        IReadOnlyList<SpellScrollRow> rows = dialog.CreateRows(layout, artwork);
+
+        LocalEvent events = new(() => 0);
+        events.OnMouseMotion(Centre(rows[1].Coords[0]));
+
+        Assert.Equal(MageGuildDialogAction.None, dialog.ProcessEvents(events, layout, buttons, rows).Action);
+        Assert.Equal(-1, rows[0].CurrentIndex);
+        Assert.Equal(0, rows[1].CurrentIndex);
+    }
+
+    [Fact]
+    public void ProcessEvents_ReportsTheTooltipOfARightClick()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        LocalEvent exit = new(() => 0);
+        exit.OnMouseButton(true, MouseButtonType.Right, Centre(layout.Exit));
+
+        Assert.Equal(
+            MageGuildDialogButton.Exit,
+            dialog.ProcessEvents(exit, layout, buttons, rows: []).Tooltip);
+
+        LocalEvent previous = new(() => 0);
+        previous.OnMouseButton(true, MouseButtonType.Right, Centre(layout.PreviousTown));
+
+        Assert.Equal(
+            MageGuildDialogButton.PreviousTown,
+            dialog.ProcessEvents(previous, layout, buttons, rows: []).Tooltip);
+    }
+
+    [Fact]
+    public void GetTooltip_SaysWhatTheButtonDoes()
+    {
+        Assert.Equal(
+            new MageGuildTooltip("Exit", "Exit Mage Guild"),
+            MageGuildDialog.GetTooltip(MageGuildDialogButton.Exit));
+        Assert.Equal(
+            new MageGuildTooltip("Show next town", "Click to show the next town."),
+            MageGuildDialog.GetTooltip(MageGuildDialogButton.NextTown));
+        Assert.Equal(
+            new MageGuildTooltip("Show previous town", "Click to show the previous town."),
+            MageGuildDialog.GetTooltip(MageGuildDialogButton.PreviousTown));
+    }
+
+    [Fact]
+    public void ProcessEvents_RefusesAnythingButThreeButtons()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, _, _) = CreateWindow();
+
+        Assert.Throws<ArgumentException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), layout, Array.Empty<ButtonSprite>(), rows: []));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(null!, layout, new List<ButtonSprite>(), rows: []));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), null!, new List<ButtonSprite>(), rows: []));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), layout, new List<ButtonSprite>(), null!));
+    }
+
+    [Fact]
+    public void ProcessEvents_RepeatsTheArrowWhileItIsHeld()
+    {
+        // castle_mageguild.cpp:186: the third term of the condition, timedButtonPrevCastle.isDelayPassed().
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        long now = 0;
+        TimedEventValidator repeat = new(clockMs: () => now);
+        LocalEvent events = new(() => now);
+
+        events.OnMouseButton(true, MouseButtonType.Left, Centre(layout.PreviousTown));
+
+        // Held, but the 500 ms of the first repeat have not passed yet, and no click happened.
+        Assert.Equal(
+            MageGuildDialogAction.None,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], previousTownRepeat: repeat).Action);
+
+        now += 500;
+
+        Assert.Equal(
+            MageGuildDialogAction.PreviousTown,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], previousTownRepeat: repeat).Action);
+
+        // The next repeat comes 100 ms later, faster than a click could be produced.
+        now += 100;
+
+        Assert.Equal(
+            MageGuildDialogAction.PreviousTown,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], previousTownRepeat: repeat).Action);
+
+        now += 99;
+
+        Assert.Equal(
+            MageGuildDialogAction.None,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], previousTownRepeat: repeat).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_RepeatsTheOtherArrowAndIgnoresTheButtonsWithoutATimer()
+    {
+        (MageGuildDialog dialog, MageGuildLayout layout, List<ButtonSprite> buttons, _) = CreateWindow();
+
+        long now = 0;
+        TimedEventValidator nextRepeat = new(clockMs: () => now);
+        LocalEvent events = new(() => now);
+
+        events.OnMouseButton(true, MouseButtonType.Left, Centre(layout.NextTown));
+
+        // The frame that presses the arrow only starts the count.
+        Assert.Equal(
+            MageGuildDialogAction.None,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], nextTownRepeat: nextRepeat).Action);
+
+        now += 500;
+
+        Assert.Equal(
+            MageGuildDialogAction.NextTown,
+            dialog.ProcessEvents(events, layout, buttons, rows: [], nextTownRepeat: nextRepeat).Action);
+
+        // The previous arrow has no timer, so holding it never repeats.
+        LocalEvent previous = new(() => now);
+        previous.OnMouseButton(true, MouseButtonType.Left, Centre(layout.PreviousTown));
+        now += 500;
+
+        Assert.Equal(
+            MageGuildDialogAction.None,
+            dialog.ProcessEvents(previous, layout, buttons, rows: []).Action);
+    }
+
+    private static (MageGuildDialog Dialog, MageGuildLayout Layout, List<ButtonSprite> Buttons, List<SpellScrollRow> Rows)
+        CreateWindow(bool canSwitchTowns = true)
+    {
+        MageGuildDialog dialog = CreateDialog(canSwitchTowns: canSwitchTowns);
+        MageGuildArtwork artwork = CreateArtwork();
+        MageGuildLayout layout = dialog.CreateLayout(new Rect(0, 0, 640, 480), artwork);
+
+        return (
+            dialog,
+            layout,
+            [.. dialog.CreateButtons(layout, artwork)],
+            [.. dialog.CreateRows(layout, artwork)]);
+    }
+
+    private static Point Centre(in Rect area) => new(area.X + (area.Width / 2), area.Y + (area.Height / 2));
+
+    private static void Click(LocalEvent events, Point position)
+    {
+        events.OnMouseButton(true, MouseButtonType.Left, position);
+        events.OnMouseButton(false, MouseButtonType.Left, position);
     }
 
     private static MageGuildDialog CreateDialog(

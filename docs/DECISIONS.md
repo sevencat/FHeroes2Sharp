@@ -6651,3 +6651,159 @@ UI 195 → **209**，全解决方案 3 576 → **3 613** 全绿，`-warnaserror`
 **遗留**：生物动画（`_wellRedrawMonsterAnimation`）；窗口消息循环与 `LocalEvent`；`castle_well.cpp` 的招募调用链；
 `castle` 目录至此六个文件全部 ◐ 或 ✔。
 
+## ADR-177：`LocalEvent` 只转状态机，按钮组用 `ProcessEvents` 接上 ◐
+
+**背景**：ADR-174/175/176 三个窗口（军队信息、魔法塔、水井）都把绘制做完了，却都留了同一句「事件循环未转」。
+`engine/localevent.cpp` 是它们的共同前置：它把 SDL 事件变成「这一帧点了哪个按钮、按了哪个键、滚了多少」。
+但这份文件 77 KB，一半篇幅是 `HandleEvents`（SDK 轮询、`EventEngine`、光标绘制、音频混音）、手柄映射与双指
+触摸手势 —— 那些都要 SDL 设备与渲染循环，与端口「场景推事件、`PixelBuffer` 出图」的分层不合。
+
+**决定**：
+
+1. **只转状态机**。`LocalEvent` 的八个动作状态位、三键的按下/松开位置、滚轮增量、长按、拖拽标志、三个钩子与
+   全部查询都照抄；`HandleEvents` 本体不转，改为 `BeginFrame()` + 四个 `On…` 推送方法（`OnMouseMotion`、
+   `OnMouseButton`、`OnKeyboard`、`OnMouseWheel`）。参考里这些 `on…Event` 是私有成员，端口只能把它们提成
+   public，注释逐个指回 `localevent.cpp` 的行号。
+2. **`BeginFrame` 对应 `HandleEvents` 开头，而不是 `reset()`**。前者清的是四个一次性状态 + 触摸标志，保留「按住
+   的按钮」与「按住的键」；后者清空一切。两个方法都留着：`Reset()` 是参考 `localevent.h:201` 的语义，
+   `ButtonGroup.ProcessEvents` 在热键命中后调它，行为与参考的 `le.reset()` 一致。
+3. **`Key` 枚举逐值照抄**。C# 侧只去掉 `KEY_` 前缀（`KEY_KP_0` → `KeyPad0`，`KEY_0` → `Digit0`），顺序与值不变，
+   `LastKey` 收尾兼作成员计数（测试钉住）。热键表按值索引，重排会静默错位，所以这条写进注释。
+4. **`KeyModifier` 做成 `[Flags]`**。参考是裸 `int32_t` 常量位；端口给枚举是为了让 `getCharacterFromPressedKey`
+   的签名说得清楚，值仍是 1/2/4/8/16。
+5. **`KeyText` 提成公开静态类**。参考的 `getCharacterFromPressedKey`/`InsertKeySym` 在 `localevent.cpp` 的匿名
+   命名空间里，唯一调用方是 `InsertKeySym`；端口公开它们是因为二者是「键 + 修饰位 → 字符」的纯函数，不碰窗口
+   就能测。字母的 26 个 case 折成 `>= Key.A and <= Key.Z` 一段（依赖枚举连续性，注释写明）。
+6. **`InsertKeySym` 钳制光标位置**。参考把 `position` 当 `size_t` 并信任调用方，`pos > size` 时 `insert` 会抛。
+   端口钳到 `[0, Length]`：退化位置只影响这一次按键，不会从文本框里抛异常出来。参考「退格时 `pos >= size`
+   就缩短字符串」的分支原样保留。
+7. **`ButtonGroup.ProcessEvents( LocalEvent, ButtonHotKey? )` 是第三套入口**（前两套是 `SetCursor`/`SetLeftButton`
+   与 `ProcessHotKey`）。它照抄 `ui_button.cpp:598-641` 的三段：先按 `isMouseLeftButtonPressedAndHeldInArea`
+   更新按下外观，再按 `MouseClickLeft( area )` 返回按钮值，最后把热键交给 `ProcessHotKey`。热键命中后调
+   `events.Reset()`，与参考 `le.reset()` 同理（同一个键不该顺手关掉下一个窗口）。
+8. **`hotKey` 用可空表示「这一帧没有热键」**。`ButtonHotKey` 的零值是 `Okay`，不能拿它当「没有」；参考在这里调
+   `Game::HotKeyPressEvent( DEFAULT_OKAY )`，在没有按键时返回 false。少了这层，只有一个 OK 按钮的对话框会在
+   第一帧自己关掉。`ProcessHotKey` 也因此只能在确实有键时调用。
+9. **不转的部分写明**：`HandleEvents`（SDL 轮询、`EventEngine`、光标增量绘制、音频）、手柄、双指触摸、
+   `KeySymGetName`（`SDL_GetKeyName`）、`getKeyName`（按键英文名表）。`IsMouseEventFromTouchpad` 因此恒为 false，
+   状态位与查询都留着，等手势移植后自然接通。
+
+**后果**：新增 `UI/Input/Key.cs`（约 180 行）、`UI/Input/LocalEvent.cs`（约 670 行）、`UI/Input/KeyText.cs`
+（约 270 行），`Widgets/ButtonGroup.cs` 增加约 75 行。新建 `LocalEventTests` 23 条、`KeyTextTests` 16 条，
+`ButtonGroupTests` 加 5 条。UI 272 → **316**，全解决方案 3 691 → **3 735** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`HandleEvents` 与 SDL 侧的翻译层（落在 `App`）；手柄与双指手势；`KeySymGetName`/`getKeyName`；
+把三个窗口（军队信息、魔法塔、水井）的消息循环接到 `LocalEvent` + `ButtonGroup.ProcessEvents`。
+
+## ADR-178：窗口消息循环折成 `ProcessEvents` 的纯函数 ◐
+
+**背景**：ADR-177 把 `LocalEvent` 的状态机立起来后，魔法塔、水井与军队信息这三个窗口各缺最后一块：
+`while ( le.HandleEvents() )` 里那三十行「谁被点了、接下来做什么」。照抄这个循环是做不到的 —— 它夹着 `Display`、
+`ImageRestorer`、`StatusBar`、`Dialog::RecruitMonster` 与 `fheroes2::showStandardTextMessage`，全是场景与模态框的
+东西；而参考的每一轮又必须按固定顺序问一遍那些查询，顺序本身带语义（点击会被第一个问出 `true` 的分支吃掉）。
+
+**决定**：
+
+1. **一帧一次，返回「要做什么」**。`WellDialog.ProcessEvents( LocalEvent, WellLayout, 两个按钮, WellHotKeys )`
+   返回 `WellDialogFrame`，`MageGuildDialog.ProcessEvents( LocalEvent, MageGuildLayout, 三个按钮, 五行, MageGuildHotKeys )`
+   返回 `MageGuildFrame`，`ArmyInfoDialog.ProcessEvents( LocalEvent, 退出按钮, 升级按钮?, 解散按钮?, ArmyInfoHotKeys )`
+   返回 `ArmyInfoFrame`。函数不绘制、不弹窗、不动城堡；参考里的 `break`/`return` 变成同一个返回。
+2. **顺序与短路照抄**。水井：EXIT → MAX → 六格（每格先点击后右击，命中即 `break`）→ 两个 tooltip；魔法塔：
+   EXIT → 上一城 → 下一城 → 五行的 `queueEventProcessing` → tooltip 的 else-if 链；军队信息：升级 → 解散 → 退出 →
+   三个 tooltip 的 else-if 链。参考的 `||` 链在第一个命中的行就停，所以后面的行保留旧的 `CurrentIndex`，端口用
+   `break` 复现；点击被消费这一点也有用例钉住（升级吃掉的点击不会再被退出读到）。
+3. **外包的四件事**。购买计划（`CastleMaxRecruitment`）、招募对话框、法术说明框（`SpellDialogElement`）、军队信息
+   的三个消息框留在调用方；帧只带数据：`WellDialogFrame.DwellingLevel`、`MageGuildFrame.Spell` 与
+   `SpellByRightClick`、`ArmyInfoAction` 与 `ArmyInfoButton`。右击法术在参考里是 `Dialog::ZERO`（没有按钮），左击是
+   `Dialog::OK`，这一位就是那个区别；军队信息的三句文案（升级提问、钱不够、解散提问）作为常量留在
+   `ArmyInfoDialog` 上，免得到处抄。
+4. **热键用参数传入**。端口没有 `Game::HotKeyPressEvent` 的热键表，所以
+   `WellHotKeys( CloseWindow, BuyAll, Dwelling )`、`MageGuildHotKeys( CloseWindow, PreviousTown, NextTown )` 与
+   `ArmyInfoHotKeys( Upgrade, Dismiss, CloseWindow )` 由场景解码；`Dwelling` 是 1..6 的等级而不是建筑位。
+5. **`MageGuildDialogAction` 补两个值并让 `None` 取零**。新增 `None` 与 `ShowSpell`，并把 `None` 放在最前 ——
+   枚举值不落盘，所以顺序不是契约；而 `default(MageGuildFrame)` 必须是「什么也没发生」，不能是「退出」。
+   `ArmyInfoAction` 同样以 `None` 打头。两个 `FromButton` 仍然只回答按钮值，为自行驱动按钮的调用方保留。
+6. **可为空的按钮用可空参数**。军队信息的升级与解散按钮在参考里是 `std::unique_ptr<Button>`，由 flag 与贴图共同
+   决定有没有；端口把 `ArmyInfoDialog.ProcessEvents` 的这两个参数做成 `ButtonSprite?`，`null` 时既不亮也不响应，
+   正好复现 `if ( buttonUpgrade )` 的三处守卫。退出按钮永远存在，所以是必填参数。
+7. **`ButtonBase.UpdatePressState( LocalEvent )`**。四处 `drawOnState( le.isMouseLeftButtonPressedAndHeldInArea(
+   area() ) )` 的实参逻辑提成按钮自己的方法（按住且在区内→按下，否则松开，禁用时不动），按钮组、水井、魔法塔、
+   军队信息共用；它只改状态不绘制，因为水井与军队信息的按钮要等各自的动画计时器到了才重画
+   （`castle_well.cpp:289-296`、`dialog_armyinfo.cpp:696-712`）。
+8. **不转的部分写明**：`StatusBar` 的滚动文字、光标形状（`CursorRestorer`）、`ImageRestorer`、
+   `DrawBattleStats()` 的两块战斗属性与它们的法术 tooltip、无按钮时「等右键松开」的读法。
+9. **按住箭头连发另行补上（`Widgets/TimedEventValidator.cs`）**。参考的 `fheroes2::TimedEventValidator`
+   （`gui/ui_tool.h:227-259`）用 `ActionObject::subscribe` 让按钮的每次状态变化回调 `senderUpdate()` 重置两个
+   `TimeDelay`，`isDelayPassed()` 要求「首按延迟已过 + 间隔延迟已过 + 按钮按住」。端口没有观察者（`ButtonBase`
+   的文档早写明这一点），于是把「这一帧是否按住」作为参数传给 `IsDelayPassed( bool isHeld )`，由计时器自己比较
+   上一帧的状态来复现通知：`press()` 与 `release()` 都会通知，所以「按下」和「松开」两帧都重置两个计时器。首按
+   500 ms、之后每 100 ms，触发时只重置间隔那一只 —— 与参考逐字一致。魔法塔把它接在参考的第三项上
+   （`ProcessEvents( ..., previousTownRepeat, nextTownRepeat )`），为 `null` 时只答点击与热键。
+
+**后果**：`WellDialog.cs` 增加约 110 行，`MageGuildDialog.cs` 增加约 180 行，`ArmyInfoDialog.cs` 增加约 190 行，
+`TimedEventValidator.cs` 新增约 110 行，`ButtonBase.cs` 增加约 30 行、`ButtonGroup.cs` 减少 12 行。
+`WellDialogTests` 加 12 条、`MageGuildDialogTests` 加 12 条、`ArmyInfoDialogTests` 加 12 条、
+`TimedEventValidatorTests` 新增 6 条。UI 316 → **358**，全解决方案 3 735 → **3 777** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`_wellRedrawMonsterAnimation`；法术说明框；军队信息的 `DrawBattleStats()`；把三个窗口接进 `App` 的场景
+循环。`TimedEventValidator` 另外五个用点（`castle_town.cpp`、`castle_dialog.cpp`、`heroes_dialog.cpp`、
+`dialog_marketplace.cpp`、`dialog_recruit.cpp`）要等对应窗口移植时再接。
+
+## ADR-179：冒险模式的回合骨架折成 `AdventureSession` ◐
+
+**背景**：到 ADR-178 为止冒险地图已经能画、能滚、能开图（ADR-131、ADR-169、ADR-170），但它仍然只是个查看器：
+没有玩家、没有日期、英雄不会走。缺的正是 `Interface::AdventureMap::StartGame()` 的那个 `while`
+（`game_startgame.cpp:732-790`）、`humanTurn()` 开头的两句（`:1039-1043`）以及 `game.cpp` 里每帧挪一下英雄的那几行。
+参考把这三样与界面挤在同一个类上 —— 它的事件循环就是界面循环 —— 端口照抄不了：`FHeroes2.Game` 不认识 SDL，
+也不该认识画布。
+
+**决定**：
+
+1. **循环独立成类**。`Game/AdventureSession.cs` 只管「谁在行动、什么时候换人、什么时候换天」：
+   `Start` 开一局并把世界推进到第 1 天，`EndTurn` 换人或换天，`NextHero`/`SetFocus` 管焦点，
+   `SetPath` 是 `MouseLeftClick()` 里 `SetPath( world.getPath( ... ) )` 加 `SetMove( true )` 那一对。
+   参考里这些是 `Interface::AdventureMap` 的成员，端口把它们从界面里拆出来，场景只剩「问会话 + 画」。
+2. **一天的结构照抄**。新的一天发生在所有玩家都行动完之后（`StartGame()` 循环顶部的 `world.NewDay()`），
+   `EndTurn` 只换人；`_acted[]` 记住这一圈谁已经动过，转一圈才清空并推进日期。
+3. **电脑玩家被跳过**。`AI::Planner` 在端口只有契约（ADR-161），电脑回合的全部内容都在
+   `AI::Planner::KingdomTurn()` 里，没有它就没有可执行的动作。跳过至少让日期与收入继续走、人类玩家的城照常可访问；
+   等 AI 落地时把 `EndTurn` 里的那个 `continue` 换成一次 `KingdomTurn()` 就回到了参考的形状。
+4. **回合开始的两件事按参考顺序**：先 `Kingdom.ActionNewDayResourceUpdate`（收入 + 当天事件），再
+   `Kingdom.ActionBeforeTurn`（人类英雄 `calculatePath()`，AI 英雄清路线）。`Hero.CalculatePath` 是那次
+   重算的实现：取旧目的地 → 两次 `IsValidForMovement` 校验（旧路线在中转格重算后就可能失效）→ `SetPath`。
+   焦点在这里跟着回合走，落在当前王国的第一个英雄上（参考的 `_statusPanel.SetHero`）。
+5. **玩家槽位在「开一局」时建，不在「读一张图」时建**。`Settings.Players` 是进程级的静态表
+   （`Hero.GetControl()` 问它，以后的 AI 也会问），而地图文件头说的是「谁可以让人类玩、谁可以让电脑玩」，
+   两张表经常重叠，直接拿 `ComputerPlayers` 当 AI 会把整张图判成电脑。参考的答案在
+   `Players::Init( fi )` + `SetStartGame()`（`players.cpp:299-352`、`:487-508`）：热座时只留 human-only 色，
+   否则把第一个「可以让人类玩」的色提升成唯一的人类。于是有两条规则：
+   `World.Kingdoms.cs` 的 `ComputerColorsOf` 在装载地图时按同一规则算出王国的 AI 色集合（**不写全局表**：
+   两个世界同时装载就会互相覆盖，测试正是这样）；`AdventureSession.Start` 在真正开局时
+   `Players.Init( info )` + `SetStartGame()` 填好全局表。`Start` 因此多收一个 `Mp2FileInfo`。
+   `Players.Init` 里原本问 `SharedColors` 的地方改成问 `HumanPlayers`（`players.cpp:330` 问的是
+   `colorsAvailableForHumans`）：只允许人类的色同样该参与那唯一一次提升，否则单机图没有人能行动。
+6. **英雄得有部队**。`Hero.LoadFromMP2` 现在补 `Army.Reset( true )`（`heroes.cpp:453`），`Army.Color`/`Army.Race`
+   跟着英雄走（`SetColor`、换种族）。理由很实际：`GetMaxMovePoints()` 由部队里最慢的兵决定，空部队的移动力是 0，
+   从地图上读出来的英雄一步也走不了。主技能、初始法术、二级技能、自定义部队仍然没读，文档里写明理由。
+7. **画面这半**：`AdventureMapView` 增加世界英雄的绘制（身体与影子），帧取 `Hero.SpriteIndex`
+   （`direction * 9 + frame`），位置叠加 `Hero.Offset`（走到两格中间的那半步），雾下不画；
+   `IHeroSpriteSource.GetBody( race, frame )` 用默认接口方法实现，测试替身不必跟着改。
+   一旦世界里已经有英雄就只画世界这一批，否则静态英雄表会在同一个格子上画出第二个人。
+8. **场景这半**：`AdventureMapScene` 持有会话，开局时把世界传给视图并以焦点英雄居中；点地形 = 焦点英雄铺路，
+   按钮面板改由 `CurrentButtonStatus()`（`_setButtonStatus` 的四问）决定，状态栏写日期与当前玩家，
+   `EndTurn`/`NextHero` 收口在场景上；`GameHost` 绑 `TAB`/`H`（下一个英雄）与 `E`（结束回合）。
+   没有人类玩家的地图仍然退回查看器，行为与 ADR-169 时一致。
+9. **不转的部分写明**：`Interface::AdventureMap` 的其余分支（城堡与英雄对话框、系统菜单、`ShowControlPanel`）、
+   `AI::Planner`、`Game::LoadGame`/`AutoSave`、过场动画、`StatusPanel` 的旗帜与地图名贴图、`game_hotkeys.cpp`
+   的热键表（端口直接绑键）。
+
+**后果**：`AdventureSession.cs` 新增约 345 行；`Hero.Movement.cs` 约 25 行（`CalculatePath`）、`Kingdom.cs` 约 30 行
+（`ActionBeforeTurn`）、`Hero.cs` 约 20 行（默认部队与部队的色/种族）、`World.Kingdoms.cs` 约 45 行
+（`ComputerColorsOf`）、`Players.cs` 一处判定；`AdventureMapView.cs` 约 100 行（世界英雄与影子）、
+`HeroSpriteSet.cs` 约 10 行；`AdventureMapScene.cs` 约 190 行、`GameHost.cs` 约 10 行。
+新建 `AdventureSessionTests` 6 条、`WorldHeroLayerTests` 2 条。全解决方案 3 777 → **3 785** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`AI::Planner` 的电脑回合、存读档（`game_io`/`serialize`）、当天事件的对话框、状态栏的国旗与地图名贴图、
+`game_hotkeys.cpp` 的热键表、`Game::AutoSave` 与过场动画。`Settings` 与 `Players` 都是进程级静态表，
+因此按 `Settings` 的用例被收进同一条 xunit collection 串行执行。
+

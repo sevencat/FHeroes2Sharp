@@ -1,6 +1,7 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 
 namespace FHeroes2.UI.Widgets;
 
@@ -12,10 +13,10 @@ namespace FHeroes2.UI.Widgets;
 /// <para>
 /// A group pairs buttons with the <see cref="DialogButton"/> value each of them stands for, and
 /// turns the mouse and the two hot keys of the reference into one of those values:
-/// <see cref="DialogButton.None"/> means "nothing happened yet". The input model of the port is the
-/// one of the scenes - a cursor position and the state of the left mouse button arrive as events -
-/// so a dialog drives the group with <see cref="SetCursor"/> and <see cref="SetLeftButton"/> instead
-/// of the reference's <c>LocalEvent</c> polling.
+/// <see cref="DialogButton.None"/> means "nothing happened yet". There are two input models: a
+/// dialog either hands over a <see cref="LocalEvent"/> through <see cref="ProcessEvents"/> - the
+/// reference's <c>processEvents()</c> - or drives the group with <see cref="SetCursor"/> and
+/// <see cref="SetLeftButton"/> when the scene has its own cursor handling.
 /// </para>
 /// <para>
 /// The click rule is the one of <c>LocalEvent::MouseClickLeft( area )</c>: the press must have
@@ -316,6 +317,67 @@ public sealed class ButtonGroup
         }
 
         return DialogButton.None;
+    }
+
+    /// <summary>
+    /// One frame of the reference's <c>ButtonGroup::processEvents()</c>
+    /// (<c>gui/ui_button.cpp:598-641</c>) on top of a <see cref="LocalEvent"/>: updates the pressed
+    /// looks, answers a click, and answers a hot key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the variant a window reaches for when it runs the input state itself: the buttons
+    /// light up while the left button is held inside them, a click whose press and release both
+    /// landed on a button returns that button's value, and a hot key is handed to
+    /// <see cref="ProcessHotKey"/>. The reference calls <c>LocalEvent::Get()</c> here; the port takes
+    /// the instance so a scene can own it.
+    /// </para>
+    /// <para>
+    /// <paramref name="hotKey"/> is <see langword="null"/> when no hot key was pressed this frame. The
+    /// reference asks <c>Game::HotKeyCloseWindow()</c> and <c>Game::HotKeyPressEvent()</c>, both of
+    /// which are false without a key; a null here is the same thing. When a hot key answers, the
+    /// reference clears the event state (<c>le.reset()</c>) so that the same key cannot close the next
+    /// window as well - the port does the same.
+    /// </para>
+    /// <para>
+    /// The other input model of this class (<see cref="SetCursor"/>/<see cref="SetLeftButton"/>) is
+    /// not mixed with this one: a scene uses one or the other.
+    /// </para>
+    /// </remarks>
+    /// <param name="events">Input state of the frame.</param>
+    /// <param name="hotKey">Hot key pressed this frame, or <see langword="null"/>.</param>
+    /// <returns>The value of the clicked or hot keyed button, <see cref="DialogButton.None"/> otherwise.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public DialogButton ProcessEvents(LocalEvent events, ButtonHotKey? hotKey = null)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        foreach (ButtonBase button in _buttons)
+        {
+            button.UpdatePressState(events);
+        }
+
+        for (int index = 0; index < _buttons.Count; ++index)
+        {
+            if (_buttons[index].IsEnabled && events.MouseClickLeft(_buttons[index].Area))
+            {
+                return _values[index];
+            }
+        }
+
+        if (hotKey is not { } pressed)
+        {
+            return DialogButton.None;
+        }
+
+        DialogButton fromHotKey = ProcessHotKey(pressed);
+
+        if (fromHotKey != DialogButton.None)
+        {
+            events.Reset();
+        }
+
+        return fromHotKey;
     }
 
     /// <summary>

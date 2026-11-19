@@ -14,6 +14,20 @@ public interface IHeroSpriteSource
     /// <summary>The body of a hero of <paramref name="race"/>, or <see langword="null"/> when unknown.</summary>
     Sprite? GetBody(MapRace race);
 
+    /// <summary>
+    /// The body of a hero of <paramref name="race"/> in <paramref name="frame"/> of its tile set,
+    /// <c>Heroes::GetHeroSpriteIndex()</c>'s result.
+    /// </summary>
+    /// <remarks>
+    /// Every set holds nine frames per direction and the directions run from <c>TOP</c> clockwise, so a hero
+    /// that faces <c>RIGHT</c> and does not walk is frame <see cref="HeroSpriteSet.StandingFrame"/>. The
+    /// default implementation ignores the frame and falls back to <see cref="GetBody(MapRace)"/>: a source
+    /// that only knows the standing frame — the one the map reader needs — stays valid.
+    /// </remarks>
+    /// <param name="race">Race of the hero.</param>
+    /// <param name="frame">Index of the frame inside the tile set.</param>
+    Sprite? GetBody(MapRace race, int frame) => GetBody(race);
+
     /// <summary>The flag of <paramref name="color"/>, or <see langword="null"/> for no kingdom.</summary>
     Sprite? GetFlag(PlayerColor color);
 
@@ -75,6 +89,10 @@ public sealed class HeroSpriteSet : IHeroSpriteSource
     /// <summary>The body of a hero of <paramref name="race"/>.</summary>
     public Sprite? GetBody(MapRace race) =>
         GetArchiveName(race) is string name ? _cache.GetSprite(name, StandingFrame) : null;
+
+    /// <summary>The body of a hero of <paramref name="race"/> in <paramref name="frame"/>.</summary>
+    public Sprite? GetBody(MapRace race, int frame) =>
+        GetArchiveName(race) is string name ? _cache.GetSprite(name, frame) : null;
 
     /// <summary>The flag of <paramref name="color"/>.</summary>
     public Sprite? GetFlag(PlayerColor color) =>

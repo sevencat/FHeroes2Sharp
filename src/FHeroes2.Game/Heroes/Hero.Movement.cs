@@ -82,6 +82,50 @@ public sealed partial class Hero
     public bool IsMoveEnabled => _modes.HasFlag(HeroModes.MoveEnabled);
 
     /// <summary>
+    /// Rebuilds the route to the destination the hero already has, <c>Heroes::calculatePath()</c>
+    /// (<c>heroes.cpp:2158</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the route is rebuilt rather than kept</b>: what a step costs depends on what the hero can see and
+    /// on the movement points left, and both change between turns. The reference calls this for every hero of a
+    /// human kingdom at the start of its turn (<c>Kingdom::ActionBeforeTurn()</c>, <c>kingdom.cpp:184</c>), so a
+    /// route the player laid out last turn is priced again before it is walked.
+    /// </para>
+    /// <para>
+    /// The destination is read <b>before</b> the route is dropped, which is the reference's order: an empty route
+    /// has no destination of its own, and the hero then keeps the one it was given. Both
+    /// <see cref="HeroPath.IsValidForMovement(int)"/> checks are kept — the second one throws away a route that
+    /// turned out to be unaffordable once priced.
+    /// </para>
+    /// </remarks>
+    /// <param name="world">Map the hero stands on.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    public void CalculatePath(WorldMap world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        int destination = _path.DestinationIndex;
+
+        if (!_path.IsValidForMovement(world.Size))
+        {
+            _path.Reset();
+        }
+
+        if (destination < 0)
+        {
+            return;
+        }
+
+        _path.SetPath(world.GetPath(this, destination));
+
+        if (!_path.IsValidForMovement(world.Size))
+        {
+            _path.Reset();
+        }
+    }
+
+    /// <summary>
     /// Turns the movement flag on or off, <c>SetMove()</c>. Setting it on clears itself when the hero has no
     /// route, so that <see cref="Move"/> and the interface agree on whether there is anything to do.
     /// </summary>

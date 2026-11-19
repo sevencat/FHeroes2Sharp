@@ -4,6 +4,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Monsters;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Tests;
@@ -339,6 +340,247 @@ public sealed class ArmyInfoDialogTests
         Assert.Null(ArmyInfoArtwork.TryCreate(frames));
         Assert.Null(ArmyInfoArtwork.TryCreate(null));
         Assert.NotNull(ArmyInfoArtwork.TryCreate(CreateFrames(8)));
+    }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheExitButton()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.ExitButton));
+
+        ArmyInfoFrame frame = dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]);
+
+        Assert.Equal(ArmyInfoAction.Exit, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_ExitsOnTheCloseHotKey()
+    {
+        (ArmyInfoDialog dialog, _, List<ButtonSprite> buttons) = CreateWindow();
+
+        ArmyInfoFrame frame = dialog.ProcessEvents(
+            new LocalEvent(() => 0),
+            buttons[2],
+            buttons[0],
+            buttons[1],
+            new ArmyInfoHotKeys(CloseWindow: true));
+
+        Assert.Equal(ArmyInfoAction.Exit, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AsksToUpgradeTheTroop()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.UpgradeButton!.Value));
+
+        ArmyInfoFrame frame = dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]);
+
+        Assert.Equal(ArmyInfoAction.Upgrade, frame.Action);
+        Assert.Equal(DialogButton.Upgrade, ArmyInfoDialog.FromButton(0));
+    }
+
+    [Fact]
+    public void ProcessEvents_SaysTheUpgradeIsTooDear()
+    {
+        // Dialog::UPGRADE_DISABLE is Dialog::MAX: the button is shown, but clicking it only says so.
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow(upgradeDisabled: true);
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.UpgradeButton!.Value));
+
+        Assert.True(dialog.IsUpgradeDisabled);
+        Assert.Equal(ArmyInfoAction.UpgradeDisabled, dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheTwoHotKeys()
+    {
+        (ArmyInfoDialog dialog, _, List<ButtonSprite> buttons) = CreateWindow();
+
+        Assert.Equal(
+            ArmyInfoAction.Upgrade,
+            dialog.ProcessEvents(
+                new LocalEvent(() => 0),
+                buttons[2],
+                buttons[0],
+                buttons[1],
+                new ArmyInfoHotKeys(Upgrade: true)).Action);
+
+        Assert.Equal(
+            ArmyInfoAction.Dismiss,
+            dialog.ProcessEvents(
+                new LocalEvent(() => 0),
+                buttons[2],
+                buttons[0],
+                buttons[1],
+                new ArmyInfoHotKeys(Dismiss: true)).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_AsksToDismissTheTroop()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.DismissButton!.Value));
+
+        ArmyInfoFrame frame = dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]);
+
+        Assert.Equal(ArmyInfoAction.Dismiss, frame.Action);
+
+        // The title of the dismiss box is the plural name of a stack of four.
+        Assert.Equal("Archers", dialog.PluralName);
+    }
+
+    [Fact]
+    public void ProcessEvents_AsksTheUpgradeBeforeTheDismissAndTheExit()
+    {
+        // The reference checks the buttons in this order, and each check consumes the click, so a press on the
+        // upgrade button can never be read as a press on the exit button.
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        Click(events, Centre(layout.UpgradeButton!.Value));
+
+        Assert.Equal(
+            ArmyInfoAction.Upgrade,
+            dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]).Action);
+
+        // The release was consumed, so the same frame no longer answers the exit button.
+        Assert.Equal(
+            ArmyInfoAction.None,
+            dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]).Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_IgnoresAButtonTheWindowLeftOut()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+
+        LocalEvent events = new(() => 0);
+        Click(events, Centre(layout.UpgradeButton!.Value));
+
+        // No upgrade button was handed over: the click falls through to the exit check, which does not hold it.
+        ArmyInfoFrame frame = dialog.ProcessEvents(events, buttons[2]);
+
+        Assert.Equal(ArmyInfoAction.None, frame.Action);
+    }
+
+    [Fact]
+    public void ProcessEvents_ReportsTheTooltipOfARightClick()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+
+        LocalEvent exit = new(() => 0);
+        exit.OnMouseButton(true, MouseButtonType.Right, Centre(layout.ExitButton));
+
+        Assert.Equal(
+            ArmyInfoButton.Exit,
+            dialog.ProcessEvents(exit, buttons[2], buttons[0], buttons[1]).Tooltip);
+
+        LocalEvent upgrade = new(() => 0);
+        upgrade.OnMouseButton(true, MouseButtonType.Right, Centre(layout.UpgradeButton!.Value));
+
+        Assert.Equal(
+            ArmyInfoButton.Upgrade,
+            dialog.ProcessEvents(upgrade, buttons[2], buttons[0], buttons[1]).Tooltip);
+
+        LocalEvent dismiss = new(() => 0);
+        dismiss.OnMouseButton(true, MouseButtonType.Right, Centre(layout.DismissButton!.Value));
+
+        Assert.Equal(
+            ArmyInfoButton.Dismiss,
+            dialog.ProcessEvents(dismiss, buttons[2], buttons[0], buttons[1]).Tooltip);
+    }
+
+    [Fact]
+    public void GetTooltip_SaysWhatTheButtonDoes()
+    {
+        Assert.Equal(
+            new ArmyInfoTooltip("Exit", "Exit this menu."),
+            ArmyInfoDialog.GetTooltip(ArmyInfoButton.Exit));
+        Assert.Equal(
+            new ArmyInfoTooltip("Dismiss", "Dismiss this army."),
+            ArmyInfoDialog.GetTooltip(ArmyInfoButton.Dismiss));
+
+        // Only the upgrade box shows the price, via showResourceMessage().
+        Assert.Equal(
+            new ArmyInfoTooltip("Upgrade", "Upgrade your troops.", ShowsUpgradeCost: true),
+            ArmyInfoDialog.GetTooltip(ArmyInfoButton.Upgrade));
+    }
+
+    [Fact]
+    public void ProcessEvents_LightsTheButtonsUpWhileTheyAreHeld()
+    {
+        (ArmyInfoDialog dialog, ArmyInfoLayout layout, List<ButtonSprite> buttons) = CreateWindow();
+        LocalEvent events = new(() => 0);
+
+        events.OnMouseButton(true, MouseButtonType.Left, Centre(layout.ExitButton));
+
+        Assert.Equal(
+            ArmyInfoAction.None,
+            dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]).Action);
+        Assert.True(buttons[2].IsPressed);
+        Assert.False(buttons[0].IsPressed);
+
+        events.OnMouseMotion(new Point(10, 10));
+
+        Assert.Equal(
+            ArmyInfoAction.None,
+            dialog.ProcessEvents(events, buttons[2], buttons[0], buttons[1]).Action);
+        Assert.False(buttons[2].IsPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_RefusesANullExitButton()
+    {
+        (ArmyInfoDialog dialog, _, _) = CreateWindow();
+
+        Assert.Throws<ArgumentNullException>(() => dialog.ProcessEvents(null!, null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            dialog.ProcessEvents(new LocalEvent(() => 0), null!));
+    }
+
+    private static (ArmyInfoDialog Dialog, ArmyInfoLayout Layout, List<ButtonSprite> Buttons) CreateWindow(
+        bool upgradeDisabled = false)
+    {
+        ArmyInfoArtwork artwork = CreateArtwork(
+            upgrade: new Size(30, 20),
+            dismiss: new Size(30, 20),
+            exit: new Size(40, 20));
+
+        DialogButton flags = DialogButton.Ok | DialogButton.Upgrade | DialogButton.Dismiss;
+
+        if (upgradeDisabled)
+        {
+            flags |= DialogButton.Max;
+        }
+
+        ArmyInfoDialog dialog = ArmyInfoDialog.Create(new Troop(MonsterType.Archer, 4), flags);
+
+        ArmyInfoLayout layout = dialog.CreateLayout(
+            new Rect(0, 0, 640, 480),
+            artwork,
+            new Size(40, 20),
+            windowOffsetY: 0,
+            new FakeGlyphSource(NormalLineHeight),
+            new FakeGlyphSource(SmallLineHeight));
+
+        // Upgrade, dismiss, exit: the order of CreateButtons and of FromButton.
+        return (dialog, layout, dialog.CreateButtons(layout, artwork));
+    }
+
+    private static Point Centre(in Rect area) => new(area.X + (area.Width / 2), area.Y + (area.Height / 2));
+
+    private static void Click(LocalEvent events, Point position)
+    {
+        events.OnMouseButton(true, MouseButtonType.Left, position);
+        events.OnMouseButton(false, MouseButtonType.Left, position);
     }
 
     private static ArmyInfoArtwork CreateArtwork(

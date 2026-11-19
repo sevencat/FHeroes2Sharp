@@ -1,6 +1,7 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Tests;
@@ -173,6 +174,80 @@ public sealed class ButtonGroupTests
         Assert.True(button.IsPressed);
         Assert.Equal(PressedColor, target[1, 1]);
         Assert.Equal(PressedColor, target[3, 3]);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheClickedButton()
+    {
+        ButtonGroup group = CreateGroup(out ButtonSprite okay, out _);
+        LocalEvent events = new(() => 0);
+
+        ProcessClick(events, new Point(15, 15), new Point(15, 15));
+
+        Assert.Equal(DialogButton.Ok, group.ProcessEvents(events));
+        Assert.False(okay.IsPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_LightsTheButtonUpWhileItIsHeld()
+    {
+        ButtonGroup group = CreateGroup(out ButtonSprite okay, out _);
+        LocalEvent events = new(() => 0);
+
+        events.OnMouseButton(true, MouseButtonType.Left, new Point(15, 15));
+
+        Assert.Equal(DialogButton.None, group.ProcessEvents(events));
+        Assert.True(okay.IsPressed);
+
+        // The cursor slid off the button while the button is still down: the look follows.
+        events.OnMouseMotion(new Point(100, 100));
+
+        Assert.Equal(DialogButton.None, group.ProcessEvents(events));
+        Assert.False(okay.IsPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_AnswersTheHotKeyAndClearsTheState()
+    {
+        ButtonGroup group = CreateGroup(out _, out _);
+        LocalEvent events = new(() => 0);
+
+        events.OnKeyboard(Key.Escape, KeyModifier.None, KeyboardEventState.Down);
+
+        Assert.Equal(DialogButton.Cancel, group.ProcessEvents(events, ButtonHotKey.Cancel));
+
+        // le.reset() of the reference: the key cannot close the next window as well.
+        Assert.False(events.IsAnyKeyPressed);
+    }
+
+    [Fact]
+    public void ProcessEvents_WithoutAHotKey_DoesNotCloseASingleOkayDialog()
+    {
+        // The reference asks Game::HotKeyPressEvent() which is false without a key; a null hot key is
+        // that same "nothing was pressed".
+        ButtonGroup group = new();
+        group.CreateButton(0, 0, CreateSprite(10, 10), CreateSprite(10, 10), DialogButton.Ok);
+
+        Assert.Equal(DialogButton.None, group.ProcessEvents(new LocalEvent(() => 0)));
+    }
+
+    [Fact]
+    public void ProcessEvents_SkipsADisabledButton()
+    {
+        ButtonGroup group = CreateGroup(out ButtonSprite okay, out _);
+        LocalEvent events = new(() => 0);
+
+        okay.Disable();
+        ProcessClick(events, new Point(15, 15), new Point(15, 15));
+
+        Assert.Equal(DialogButton.None, group.ProcessEvents(events));
+        Assert.False(okay.IsPressed);
+    }
+
+    private static void ProcessClick(LocalEvent events, Point press, Point release)
+    {
+        events.OnMouseButton(true, MouseButtonType.Left, press);
+        events.OnMouseButton(false, MouseButtonType.Left, release);
     }
 
     private static ButtonGroup CreateGroup(out ButtonSprite okay, out ButtonSprite cancel)

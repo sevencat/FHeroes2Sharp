@@ -128,9 +128,10 @@ public sealed partial class Hero
         Race = race;
         PortraitId = id;
 
-        // The reference's Army points back at its commander from the constructor; the port's army has a
-        // nullable commander and this is the one place that fills it in.
+        // The reference's Army points back at its commander from the constructor and takes the colour and the
+        // race from it; the port's army keeps copies, filled here and kept in step by SetColor/LoadFromMP2.
         _army.Commander = this;
+        _army.Race = race;
     }
 
     /// <summary>The id of the hero, <c>GetID()</c> (<c>heroes.h:330</c>).</summary>
@@ -242,8 +243,16 @@ public sealed partial class Hero
     /// Assigns the hero to a kingdom, <c>SetColor()</c>. <see cref="PlayerColor.None"/> makes him available
     /// for hire again.
     /// </summary>
+    /// <remarks>
+    /// The army follows the hero: in the reference <c>Army::GetColor()</c> asks its commander, the port's army
+    /// keeps a copy, so every colour change goes through here to keep the two from disagreeing.
+    /// </remarks>
     /// <param name="color">Color of the kingdom.</param>
-    public void SetColor(PlayerColor color) => Color = color;
+    public void SetColor(PlayerColor color)
+    {
+        Color = color;
+        _army.Color = color;
+    }
 
     /// <summary>Sets mode bits, <c>SetModes()</c> (<c>heroes.h:200</c>).</summary>
     /// <param name="modes">Bits to set.</param>
@@ -312,18 +321,18 @@ public sealed partial class Hero
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>What is here</b>: the mode reset, the jail bit, the position, the color, the race, the custom
-    /// portrait and its validation, the custom name and the patrol role. That is the part of the block
-    /// that only needs the hero — everything else it carries feeds a system the port does not have.
+    /// <b>What is here</b>: the mode reset, the jail bit, the position, the color, the race, the default army
+    /// of the race, the custom portrait and its validation, the custom name and the patrol role. That is the
+    /// part of the block that can be applied without a system the port does not have.
     /// </para>
     /// <para>
-    /// <b>What is missing, and why</b>: the default army, primary skills and initial spell of the race
-    /// (<c>HeroBase::LoadDefaults</c>, <c>_army.Reset</c>), the secondary skills of the race, the custom
-    /// army, the artifacts, the level up from <see cref="Mp2HeroInfo.Experience"/> (the experience itself now
-    /// has a home — <see cref="SetExperience"/> — but replaying the level-ups here would need the map seed and
-    /// the chooser), the spell points and the movement points. Each of them belongs to the army, the skill,
-    /// the artifact, the level up or the movement system; reading them here would only park the values in a
-    /// field nobody reads.
+    /// <b>What is missing, and why</b>: the primary skills and initial spell of the race
+    /// (<c>HeroBase::LoadDefaults</c>), the secondary skills of the race, the custom army, the artifacts, the
+    /// level up from <see cref="Mp2HeroInfo.Experience"/> (the experience itself now has a home —
+    /// <see cref="SetExperience"/> — but replaying the level-ups here would need the map seed and the
+    /// chooser), the spell points and the movement points. Each of them belongs to the skill, the artifact,
+    /// the level up or the movement system; reading them here would only park the values in a field nobody
+    /// reads. The default army is here because the movement points of the hero are derived from it.
     /// </para>
     /// <para>
     /// The <c>assert( _objectTypeUnderHero == OBJ_NONE )</c> at the end of the reference function is not
@@ -356,7 +365,16 @@ public sealed partial class Hero
         {
             SetModes(HeroModes.Custom);
             Race = race;
+            Army.Race = race;
         }
+
+        // The reference gives the hero the army of his race at the starting strength right after the race
+        // change (heroes.cpp:453). Without it Heroes::GetMaxMovePoints() returns zero — an army of no troops
+        // has no slowest troop, and the movement points of a hero are derived from it — so a hero loaded from
+        // the map could not take a single step. The remaining defaults of the reference (primary skills,
+        // initial spell, secondary skills) and the custom army of the block are still not read: they belong to
+        // systems the port has not taken over yet.
+        Army.Reset(true);
 
         if (info.HasCustomPortrait)
         {

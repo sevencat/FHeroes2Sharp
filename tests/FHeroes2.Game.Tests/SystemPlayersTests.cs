@@ -117,7 +117,7 @@ public sealed class PlayersTests
     }
 
     [Fact]
-    public void AHumanOnlySlotIsOnlyHonouredInAHotSeatGame()
+    public void AHumanOnlySlotIsAPlainHumanOnlyInAHotSeatGame()
     {
         Settings settings = FreshSettings();
         settings.SetGameType(GameTypes.Standard);
@@ -128,8 +128,20 @@ public sealed class PlayersTests
             humans: PlayerColor.Blue,
             computers: PlayerColor.Red));
 
-        // The reference gates the human-only colours on TYPE_MULTI, so a single-player game ignores them.
-        Assert.Equal(PlayerControl.Ai, Players.GetPlayerControl(PlayerColor.Blue));
+        // Outside a hot-seat the "human only" marker is ignored, but the colour is still one a person may play,
+        // so it competes for the single promotion like any other (players.cpp:330) and wins it as the first
+        // colour of the map: a single-player game has exactly one slot at the keyboard.
+        Assert.Equal(PlayerControl.Human, Players.GetPlayerControl(PlayerColor.Blue));
+        Assert.Equal(PlayerControl.Ai, Players.GetPlayerControl(PlayerColor.Red));
+
+        settings.SetGameType(GameTypes.HotSeat);
+        players.Init(Map(
+            PlayerColor.Blue | PlayerColor.Red,
+            humans: PlayerColor.Blue,
+            computers: PlayerColor.Red));
+
+        // In a hot-seat game the same colour is human outright and the shared slot below would keep the choice.
+        Assert.Equal(PlayerControl.Human, Players.GetPlayerControl(PlayerColor.Blue));
         Assert.Equal(PlayerControl.Ai, Players.GetPlayerControl(PlayerColor.Red));
     }
 

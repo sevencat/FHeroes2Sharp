@@ -77,15 +77,15 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `ai` | 9 | 0 | 0 | 9 |
 | `army` | 4 | 0 | 2 | 2 |
 | `audio` | 1 | 1 | 0 | 0 |
-| `battle` | 18 | 0 | 1 | 17 |
+| `battle` | 18 | 8 | 5 | 5 |
 | `campaign` | 3 | 0 | 0 | 3 |
 | `castle` | 11 | 3 | 8 | 0 |
-| `dialog` | 29 | 2 | 3 | 24 |
+| `dialog` | 29 | 2 | 4 | 23 |
 | `editor` | 18 | 1 | 4 | 13 |
-| `game` | 28 | 2 | 4 | 22 |
-| `gui` | 33 | 8 | 10 | 15 |
+| `game` | 28 | 2 | 6 | 20 |
+| `gui` | 33 | 7 | 12 | 14 |
 | `h2d` | 1 | 1 | 0 | 0 |
-| `heroes` | 12 | 2 | 4 | 6 |
+| `heroes` | 12 | 2 | 5 | 5 |
 | `kingdom` | 14 | 6 | 6 | 2 |
 | `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
@@ -93,7 +93,22 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过。
 | `spell` | 4 | 1 | 3 | 0 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **41** | **64** | **144** |
+| **合计** | **249** | **48** | **74** | **127** |
+
+2026-11-19 重算了四行（都是「下面逐文件清单早就写了，表格没跟上」）：
+
+* `battle` 8/5/5 —— `battle_animation`、`battle_command`、`battle_pathfinding`、`battle_troop`、`battle_grave`、
+  `battle_bridge`、`battle_catapult`、`battle_tower` 八个在 ADR-148/154/155/156/157 里已经是 ✔，表里还记着 0。
+* `dialog` 2/4/23 —— `dialog_armyinfo.cpp` 在 ADR-174 已转部分（排版、绘制、消息循环）。
+* `gui` 7/12/14 —— ✅ 里的 `interface_font.cpp` 在参考树里根本不存在（那是 `ui_font.cpp` 的一部分），删掉；
+  `ui_mage_guild.cpp`（ADR-175/178 转了 `SpellsInOneRow`、行偏移与绘制）与 `ui_language.cpp`（CRC32 指纹表在
+  `System.ResourceLanguage`，列表控件未转）都改记部分。
+* `heroes` 2/5/5 —— `route.cpp`、`skill.cpp` 在 ADR-138/089 之后早该算部分。
+
+合计 41/64/144 → **48/72/129**。
+
+2026-11-19 夜：`game_startgame.cpp`（`StartGame()` 的回合循环、`humanTurn()` 的开头两句）与 `game.cpp`
+（每帧的英雄移动）从未转转为部分（ADR-179），`game` 行 2/4/22 → 2/6/20，合计 **48/74/127**。
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -690,7 +705,58 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 住宅）。保留了参考的两处不一致（生物取升级住宅而成长行取基础住宅位）。Game 2788 → **2794**，UI 234 → **272**，
 全解决方案 3 647 → **3 691** 全绿。
 
+2026-11-19：输入状态机与按钮组的事件驱动（ADR-177）：`engine/localevent.cpp` 只转状态机那一半 ——
+`UI/Input/Key.cs`（`Key` 枚举逐值照抄 + `KeyModifier` 位）、`UI/Input/LocalEvent.cs`（八个动作状态位、三键位置、
+滚轮、850 ms 长按、拖拽、三个钩子与全部查询，`BeginFrame` 对应 `HandleEvents` 开头的清理）、
+`UI/Input/KeyText.cs`（`getCharacterFromPressedKey` 与 `InsertKeySym`，Shift/Caps 互消、小键盘 Num Lock），
+`ButtonGroup.ProcessEvents( LocalEvent, ButtonHotKey? )` 接上参考的 `processEvents()`（按下外观、点击、热键后
+`reset`）。`HandleEvents` 本体、手柄、双指触摸、`KeySymGetName` 仍未转。UI 272 → **316**，全解决方案 3 691 →
+**3 735** 全绿。
 
+2026-11-19：三个窗口的消息循环（ADR-178）：`WellDialog.ProcessEvents`、`MageGuildDialog.ProcessEvents` 与
+`ArmyInfoDialog.ProcessEvents` 把参考的 `while ( le.HandleEvents() )` 折成「一帧一次、返回要做什么」的纯函数
+（`WellDialogFrame`/`MageGuildFrame`/`ArmyInfoFrame`），顺序与短路照抄（EXIT → MAX/箭头 → 六格或五行 → tooltip；
+升级 → 解散 → 退出 → 三个 tooltip），点击的消费语义不变；购买、招募、法术说明框与军队信息的三个消息框留给调用方。
+热键以 `WellHotKeys`/`MageGuildHotKeys`/`ArmyInfoHotKeys` 传入；`MageGuildDialogAction` 补 `None`/`ShowSpell`，
+`ArmyInfoAction` 以 `None` 打头；可选的升级/解散按钮用 `ButtonSprite?` 复现 `std::unique_ptr` 的守卫；
+`ButtonBase.UpdatePressState` 把「按住且在区内」的实参逻辑提成按钮方法，`ButtonGroup.ProcessEvents` 也改用它。
+同批补上 `Widgets/TimedEventValidator`（参考 `gui/ui_tool.h:227-259`，首按 500 ms + 之后每 100 ms 的连发）并接进
+魔法塔的两支箭头：参考用 `ActionObject` 订阅回调重置计时器，端口把「这一帧是否按住」作为参数传入，由计时器自己
+检测状态变化；两个参数可空，不传就只答点击与热键。UI 316 → **358**，全解决方案 3 735 → **3 777** 全绿。
+
+
+
+### 剩余工作量（按行数，2026-11-19）
+
+文件计数不适合估工作量：`dialog` 那 23 个未转文件合计 10 404 行，而 `battle_interface.cpp` 一个就 7 538 行，比
+`army` 整个目录还大。这一节按参考 `.cpp` 的行数排一遍，口径只数「整文件未转」与「部分文件里点明的缺口」，排除
+ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_format_info.cpp` 853 走 MP2 用不到，`dir.cpp`、
+`tinyconfig.cpp` 与翻译层按 ADR-139 不移植）。
+
+| 工作包 | 参考（行数） | 规模 | 前置 / 备注 |
+| --- | --- | --- | --- |
+| 战斗界面与结算 | `battle_interface` 7 538、`battle_dialogs` 1 220、`battle_only` 843、`battle_main` 507、`battle_interface_settings` 334、`battle_action` 剩五支 ≈1 200、`battle_arena.Turns`/`battle_board`/`battle_army` 的尾巴 | ≈12 000 | 单位、寻路、桥/塔/投石车/墓与动作循环已就绪，缺的是「画」与「结算」 |
+| AI | 9 个 `.cpp`：`ai_planner_hero` 3 309、`ai_hero_action` 2 504、`ai_battle` 2 152、`ai_battle_spell` 984、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525 … | 11 230 | 契约已落（ADR-161），要完整战力、英雄动作与战斗决策 |
+| 对话框实现 | 23 个：`selectitems` 2 220、`quickinfo` 967、`selectfile` 753、`recruit` 694、`marketplace` 685、`selectcount` 652、`thievesguild` 486、`hotkeys` 484 … | 10 404 | 全部卡在同一层：`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/`OptionButtonGroup`/`TextBox` |
+| `game` 会话层 | 22 个：`game_startgame` 1 735、`game_campaign` 1 710、`game_credits` 817、`game_over` 702、`game_auto_playtest` 698、`game_hotkeys` 597、`game.cpp` 502、`highscores` 476+378 … | 10 141 | 场景循环的宿主，窗口最终要接进这里 |
+| `editor` 窗口 | 13 个：`editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436、`options` 379、`daily_event_spec` 374 … | 7 978 | `EditorScene`/`EditorPanel`/`EditorInterface` 已有骨架 |
+| `gui` 剩余 | 14 个：`ui_keyboard` 1 360、`interface_status` 524、`player_info` 462、`skill_bar` 458、`ui_map_object` 366、`ui_castle` 324、`interface_focus` 287、`ui_campaign` 218 … | 4 604 | 软键盘最重，其余是面板与状态栏 |
+| `engine` 剩余 | 11 个：`image_color_conversion` 1 369、`audio_xmi2mid` 692、`serialize` 687、`system` 615、`smk_decoder` 325、`core` 194、`dir` 190 … | 4 726 | `serialize` 归 M8（存档）；`dir`/`tinyconfig` 明确不移植 |
+| 城堡屏 / 城镇屏 / 王国屏 | `castle_dialog` 859、`castle_town` 772、`kingdom_overview` 959、`view_world` 795、`castle_building`/`buildinginfo` 的 blit | ≈3 400 | 规则部分都已有，缺绘制与事件循环 |
+| `heroes` 剩余 | `heroes_dialog` 831、`heroes_meeting` 869、`heroes_base` 622、`heroes_spell` 421、`heroes_indicator` 333 | 3 076 | 另加 `heroes_action` 的军队/战斗分支 |
+| 随机地图 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237 | 2 455 | 与编辑器无关，可独立做 |
+| `campaign` | `campaign_data` 971、`campaign_scenariodata` 831、`campaign_savedata` 270 | 2 072 | 要战役数据与对话框 |
+| `army` 的两个界面文件 | `army_bar` 741、`army_ui_helper` 123 | 864 | `Army`/`Troop` 规则已全 |
+| `monster_anim` | — | 190 | 随战斗批次一起做 |
+
+合计 **≈ 7.5 万行**，是 249 个参考 `.cpp`（≈18.3 万行）的四成。近期批量每批 800~1 500 行（ADR-174~178 是「一个
+窗口 + 测试」一批），按这个速度还要 **60~70 批**；「对话框控件层」与「战斗界面」两块各自就要吃掉十批以上。
+
+还有一类不计入上表的缺口 —— 部分文件里没转的那几支，往往比一个整文件还大：`map_object_info.cpp` 的拾取与信息框
+（文件 6 295 行，表已全、缺的几支是拾取、宝物说明与右击）、`game_assets.cpp` 的 `getXxx` 族（5 920 行）、
+`ui_font.cpp` 的代码页补充（7 263 行里剩一小段）、`interface_gamearea` 的 AUTO 组合与动画、`statusbar` 的滚动文字、
+`spell_book`/`spell_info`/`artifact` 的文案、`heroes_action.cpp` 的军队/战斗分支、`army.cpp` 的 `GetCurrentUnit`/
+`GetControl`/序列化。
 
 ### `engine`（26）
 
@@ -702,7 +768,9 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 * ◐ `image.cpp`（`Blit`/`Copy`/`Fill`/`ApplyTransform`/`Resize`/`CreateContour`/`Dithering` 已转，
   带源区与裁剪的 `Blit( in, inPos, inSize, out, outPos )`→`ImageOps.BlitSpriteClipped` 与 `GetActiveROI` 在 ADR-175，
   `SubpixelResize` 与重采样分支未）；`screen.cpp`（只转了呈现层：`PresentationViewport` + `SdlPresenter`）；
-  `localevent.cpp`（SDL 事件→场景分派，落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
+  `localevent.cpp`（**状态机**已转：`UI/Input/Key`、`UI/Input/LocalEvent`、`UI/Input/KeyText`，`ButtonGroup.ProcessEvents`
+  接上 `processEvents()`，ADR-177；`HandleEvents` 本体、手柄、双指触摸与 `KeySymGetName` 未转，SDL 事件→场景分派
+  落在 `App/GameHost`）；`audio.cpp`（`AudioPlayer`）；
   `translations.cpp`（只 `MOFile`→`MoCatalog`，`Translation::` 其余未）；`tools.cpp`（`Trim`/`GetString`
   这类零散助力，用 BCL 替代）；`zzlib.cpp`（AGG 解压走 `ZLibStream`）
 * ❌ `audio_xmi2mid.cpp`、`core.cpp`、`dir.cpp`、`image_color_conversion.cpp`、`math_tools.cpp`、
@@ -731,8 +799,9 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   `ScenarioSelectionDialog`（列表/缩略图子集）；`dialog_language_selection.cpp`→`LanguageSelectionDialog`
 * ◐ `dialog_armyinfo.cpp`→`ArmyInfoDialog`/`ArmyInfoLayout`/`ArmyInfoArtwork`（ADR-174）：`520×256` 窗口、
   属性块三段布局（标签右对齐到冒号列、值左对齐）、名字居中、描述块两形状（逐句或拼接换行、底部对齐）、
-  数量框与三个按钮的位置与绘制已转；缺输入循环、`Monster` 的动画帧（要 `monster_anim`）与战斗型的
-  `Shots Left`/`Hit Points Left` 两行（`Troop` 还没有战斗状态）
+  数量框与三个按钮的位置与绘制已转；**消息循环**在 ADR-178 补齐（`ProcessEvents`：升级/解散/退出 +
+  三个 tooltip，消息框与重画计时器留给调用方）；缺 `Monster` 的动画帧（要 `monster_anim`）、战斗型的
+  `Shots Left`/`Hit Points Left` 两行与 `DrawBattleStats()` 的法术 tooltip（`Troop` 还没有战斗状态）
 * ◐ **24 个入口的契约**（ADR-163，只有契约、无实现）：`dialog.h` 的 24 个函数落成 20 个模型，每个带
   `Create(...)` 与结果类型（列表见下），`FromButton` 的索引映射与 `Create` 的参数校验是真行为；`DialogButton`
   补齐参考的 14 个值。`Area`/`Render`/事件与控件层（`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/
@@ -764,11 +833,15 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   `generateGradientFont` 已转，其余大量 `getXxx` 未）；`game_scenarioinfo.cpp`→`ScenarioSelectionDialog`；
   `game_newgame.cpp`→`GameHost` 的 NEW GAME 流程；`game_static.cpp`→`Factions`/`FactionProperties`/
   `SecondarySkillTable`（只有 `factionProperties` 六行与 `GetFactionProperties`/`GetSecondarySkillValuesPerLevel`/
-  `getSecondarySkillsForWitchsHut` 三支，护城河、城墙、绿洲、中立怪、漩涡、雾距离未转）
-* ❌ 其余 22：`difficulty`、`fheroes2`、`game_auto_playtest`、`game_campaign`、`game_credits`、
+  `getSecondarySkillsForWitchsHut` 三支，护城河、城墙、绿洲、中立怪、漩涡、雾距离未转）；
+  `game_startgame.cpp`→`AdventureSession`（`StartGame()` 的回合循环、`humanTurn()` 开头的收入与路线、
+  TAB/结束回合；`AdventureMap` 的绘制与输入接在 `AdventureMapScene`/`GameHost`）；`game.cpp`→
+  `Hero.Move`/`AdventureMapScene.Update`（每帧的英雄移动、日期推进、`CheckGameOver`；过场动画、
+  `Game::Init` 的资源装载、自动存档与 `ShowControlPanel` 未转）
+* ❌ 其余 20：`difficulty`、`fheroes2`、`game_auto_playtest`、`game_campaign`、`game_credits`、
   `game_exit`、`game_highscores`、`game_hotkeys`、`game_init`、`game_interface`、`game_intro`、
   `game_invalid_assets`、`game_io`、`game_loadgame`、`game_mainmenu_ui`、`game_over`、
-  `game_startgame`、`game_string`、`game_tools`、`game_video`、`game`、`highscores`
+  `game_string`、`game_tools`、`game_video`、`highscores`
 
 ### `gui`（33）
 
@@ -967,10 +1040,11 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   （槽位问种族、法术问种族+图书馆）、`UI/Dialogs/MageGuildDialog`（行偏移、城镇切换、两句状态栏）、
   `CastleMaxRecruitment`（强到弱分配、三态拒绝文案、汇总行），绘制循环未转（ADR-167）；
   魔法塔的**绘制与布局**在 ADR-175 补齐：`MageGuildLayout`/`MageGuildArtwork`/`SpellScrollRow` 与
-  `MageGuildDialog.Draw`（建筑居中与裁剪、底栏两段、三个按钮），只剩事件循环；
+  `MageGuildDialog.Draw`（建筑居中与裁剪、底栏两段、三个按钮）；**消息循环**在 ADR-178 补齐
+  （`ProcessEvents`：EXIT/两城/五行法术/tooltip，两支箭头按住连发经 `Widgets/TimedEventValidator`）；法术说明框未转；
   `castle_well.cpp` 的**数据与绘制**在 ADR-176 补齐：`CastleWellDwelling`/`GetWellDwellings()`、
-  `WellLayout`/`WellArtwork` 与 `WellDialog`（六格住宅、九行统计、`Available:`、底栏两段与两个按钮），
-  只剩生物动画与消息循环；
+  `WellLayout`/`WellArtwork` 与 `WellDialog`（六格住宅、九行统计、`Available:`、底栏两段与两个按钮）；
+  **消息循环**在 ADR-178 补齐（`ProcessEvents`：EXIT/MAX/六格/tooltip），只剩生物动画；
   ◐ `castle_dialog.cpp`/`castle_town.cpp` 的**文字与返回值**已转：`BuildingInfo.GetStatusLine`（住所
   `"Recruit {复数小写}"`、其余建筑报名字、随机城镇退化到等级）、`UI/Dialogs/CastleDialog`（日期行、八种返回值）、
   `UI/Dialogs/RecruitHeroDialog`（招募英雄的句子、魔法书不计宝物、价格），绘制与事件循环未转（ADR-168）；

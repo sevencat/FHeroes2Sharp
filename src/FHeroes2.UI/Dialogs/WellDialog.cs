@@ -6,6 +6,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Dialogs;
@@ -24,6 +25,53 @@ public enum WellDialogButton
 /// <param name="Title">The heading of the message box.</param>
 /// <param name="Text">The body of the message box.</param>
 public readonly record struct WellTooltip(string Title, string Text);
+
+/// <summary>
+/// What a frame of the well window asks the caller to do, the body of the <c>while</c> loop in
+/// <c>Castle::_openWell()</c> (<c>castle_well.cpp:246-300</c>).
+/// </summary>
+public enum WellDialogAction
+{
+    /// <summary>Nothing happened: holds the zero value, so a default frame is a quiet frame.</summary>
+    None,
+
+    /// <summary>The EXIT button, or the close-window hot key.</summary>
+    Exit,
+
+    /// <summary>The MAX button, or its hot key: the caller plans and shows the purchase.</summary>
+    Max,
+
+    /// <summary>A dwelling was clicked, or its hot key: the caller opens the recruit dialog.</summary>
+    Recruit,
+
+    /// <summary>A right click on a dwelling: the caller shows <see cref="WellDialog.DescribeDwelling"/>.</summary>
+    DwellingInfo,
+}
+
+/// <summary>
+/// The hot keys the well window listens to besides the pointer, the three
+/// <c>Game::HotKey…</c> lookups of the reference loop.
+/// </summary>
+/// <remarks>
+/// The port has no hot key table yet, so the scene decodes the frame's key press into these three
+/// answers and hands them over.
+/// </remarks>
+/// <param name="CloseWindow"><c>Game::HotKeyCloseWindow()</c>: Escape or Enter.</param>
+/// <param name="BuyAll"><c>Game::HotKeyPressEvent( TOWN_WELL_BUY_ALL )</c>.</param>
+/// <param name="Dwelling">The pressed dwelling hot key as a level, one to six, or zero.</param>
+public readonly record struct WellHotKeys(bool CloseWindow = false, bool BuyAll = false, int Dwelling = 0);
+
+/// <summary>
+/// One frame of the well window: what it asks for, and what a right click on a button said.
+/// </summary>
+/// <param name="Action">What the caller should do next.</param>
+/// <param name="DwellingLevel">The level of <see cref="WellDialogAction.Recruit"/> or
+/// <see cref="WellDialogAction.DwellingInfo"/>, zero otherwise.</param>
+/// <param name="Tooltip">The button a right click landed on, or <see langword="null"/>.</param>
+public readonly record struct WellDialogFrame(
+    WellDialogAction Action,
+    int DwellingLevel = 0,
+    WellDialogButton? Tooltip = null);
 
 /// <summary>
 /// The three faces of the text of the well window, the <c>FontType</c> combinations of
@@ -46,11 +94,16 @@ public sealed record WellFonts(IGlyphSource SmallWhite, IGlyphSource NormalWhite
 /// <see cref="DrawAvailable"/> repaints the one line that a recruitment changes.
 /// </para>
 /// <para>
+/// The message loop is <see cref="ProcessEvents"/>: one call per frame with the frame's
+/// <see cref="LocalEvent"/> answers what the caller should do next, in the order of the reference. The recruitment
+/// itself stays outside — <see cref="CastleMaxRecruitment"/> and the dwelling recruit dialog are the caller's
+/// business.
+/// </para>
+/// <para>
 /// Not ported: the animated creature sprites between the cells (<c>_wellRedrawMonsterAnimation</c>, which needs the
-/// battle animation archives), the message loop, and the recruitment itself — <see cref="CastleMaxRecruitment"/> and
-/// the dwelling recruit dialog are the caller's business. The reference also clips the title and shortens
-/// "Available:" to fit its column; with the English strings both are already inside their boxes, and
-/// <see cref="GlyphText"/> has no clip, so the port draws them as they are.
+/// battle animation archives). The reference also clips the title and shortens "Available:" to fit its column; with
+/// the English strings both are already inside their boxes, and <see cref="GlyphText"/> has no clip, so the port draws
+/// them as they are.
 /// </para>
 /// </remarks>
 public sealed class WellDialog
@@ -309,6 +362,100 @@ public sealed class WellDialog
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// One frame of the reference's message loop, <c>castle_well.cpp:246-300</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The order of the reference is kept, because the branches consume the click: the two buttons first, then the six
+    /// dwellings from the first level to the sixth, then the two right-click tooltips. A click belongs to exactly one
+    /// of them — <see cref="LocalEvent.MouseClickLeft(Rect)"/> eats the release — so a dwelling click that follows a
+    /// button click can never fire in the same frame.
+    /// </para>
+    /// <para>
+    /// The reference walks the dwellings with a <c>break</c> after the first hit, so a frame answers at most one
+    /// dwelling even if the cells overlapped. Only a built dwelling is a target, like
+    /// <see cref="GetDwellingAt"/>.
+    /// </para>
+    /// <para>
+    /// <b>Not here</b>: the purchase. The MAX branch of the reference calls <c>_recruitCastleMax</c> and its own
+    /// confirmation dialog; the port answers <see cref="WellDialogAction.Max"/> and lets the caller plan with
+    /// <see cref="CastleMaxRecruitment"/>. A <see cref="WellDialogAction.Recruit"/> is answered without opening the
+    /// recruit dialog either.
+    /// </para>
+    /// </remarks>
+    /// <param name="events">Input state of the frame.</param>
+    /// <param name="layout">Where the buttons and the cells are.</param>
+    /// <param name="buttons">The two buttons of <see cref="CreateButtons"/>, MAX first.</param>
+    /// <param name="hotKeys">The hot keys pressed this frame.</param>
+    /// <returns>What the caller should do, plus the tooltip of the frame.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/>, <paramref name="layout"/> or
+    /// <paramref name="buttons"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="buttons"/> does not hold exactly two buttons.</exception>
+    public WellDialogFrame ProcessEvents(
+        LocalEvent events,
+        WellLayout layout,
+        IReadOnlyList<ButtonSprite> buttons,
+        WellHotKeys hotKeys = default)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(buttons);
+
+        if (buttons.Count != 2)
+        {
+            throw new ArgumentException("The well window has two buttons: MAX and EXIT.", nameof(buttons));
+        }
+
+        // drawOnState( isMouseLeftButtonPressedAndHeldInArea( area() ) ) of both buttons, castle_well.cpp:247-250.
+        buttons[0].UpdatePressState(events);
+        buttons[1].UpdatePressState(events);
+
+        if (events.MouseClickLeft(buttons[1].Area) || hotKeys.CloseWindow)
+        {
+            return new WellDialogFrame(WellDialogAction.Exit);
+        }
+
+        if (events.MouseClickLeft(buttons[0].Area) || hotKeys.BuyAll)
+        {
+            return new WellDialogFrame(WellDialogAction.Max);
+        }
+
+        foreach (CastleWellDwelling dwelling in _dwellings)
+        {
+            if (!dwelling.IsBuilt)
+            {
+                continue;
+            }
+
+            Rect area = layout.GetMonsterArea(dwelling.Level);
+
+            if (events.MouseClickLeft(area) || hotKeys.Dwelling == dwelling.Level)
+            {
+                return new WellDialogFrame(WellDialogAction.Recruit, dwelling.Level);
+            }
+
+            if (events.IsMouseRightButtonPressedInArea(area))
+            {
+                return new WellDialogFrame(WellDialogAction.DwellingInfo, dwelling.Level);
+            }
+        }
+
+        // The two right-click tooltips come last in the reference and are not an else-if chain, but the
+        // two areas are disjoint, so the first hit is the only hit.
+        if (events.IsMouseRightButtonPressedInArea(buttons[1].Area))
+        {
+            return new WellDialogFrame(WellDialogAction.None, 0, WellDialogButton.Exit);
+        }
+
+        if (events.IsMouseRightButtonPressedInArea(buttons[0].Area))
+        {
+            return new WellDialogFrame(WellDialogAction.None, 0, WellDialogButton.Max);
+        }
+
+        return default;
     }
 
     /// <summary>The population of a dwelling as the window prints it.</summary>

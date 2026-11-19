@@ -794,6 +794,40 @@ public sealed class Kingdom
     }
 
     /// <summary>
+    /// What the kingdom does when its turn begins, <c>Kingdom::ActionBeforeTurn()</c> (<c>kingdom.cpp:184</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只有一件事：人类的英雄重算路线（<see cref="Hero.CalculatePath"/>），电脑的英雄清空路线。前者是因为
+    /// 视线和移动力都变了，上一回合点出来的路线要重新定价；后者是因为电脑每回合自己规划
+    /// （<c>AI::Planner</c>，端口的 <c>Game/Ai</c> 只有契约），留着旧路线只会误导它。
+    /// </para>
+    /// <para>
+    /// 端口的王国不认识世界，所以世界提到参数上——与 <see cref="ActionNewDay"/> 一个路子。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">Map the kingdom plays on.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    public void ActionBeforeTurn(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        bool human = IsControlHuman;
+
+        foreach (Hero hero in _heroes)
+        {
+            if (human)
+            {
+                hero.CalculatePath(world);
+            }
+            else
+            {
+                hero.Path.Reset();
+            }
+        }
+    }
+
+    /// <summary>
     /// The kingdom's part of a new day, <c>Kingdom::ActionNewDay()</c> (<c>kingdom.cpp:197</c>).
     /// </summary>
     /// <remarks>
