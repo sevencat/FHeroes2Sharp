@@ -747,7 +747,7 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
 | `editor` 窗口 | 13 个：`editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436、`options` 379、`daily_event_spec` 374 … | 7 978 | `EditorScene`/`EditorPanel`/`EditorInterface` 已有骨架 |
 | `gui` 剩余 | 14 个：`ui_keyboard` 1 360、`interface_status` 524、`player_info` 462、`skill_bar` 458、`ui_map_object` 366、`ui_castle` 324、`interface_focus` 287、`ui_campaign` 218 … | 4 604 | 软键盘最重，其余是面板与状态栏 |
 | `engine` 剩余 | 10 个：`image_color_conversion` 1 369、`audio_xmi2mid` 692、`system` 615、`smk_decoder` 325、`core` 194、`dir` 190 … | 4 039 | `serialize` 的流层已转（ADR-181）；`dir`/`tinyconfig` 明确不移植 |
-| 城堡屏 / 城镇屏 / 王国屏 | `castle_dialog` 859、`castle_town` 772、`kingdom_overview` 959、`view_world` 795、`castle_building`/`buildinginfo` 的 blit | ≈3 400 | 规则部分都已有，缺绘制与事件循环 |
+| 城堡屏 / 城镇屏 / 王国屏 | `castle_dialog` 859、`castle_town` 772、`kingdom_overview` 959、`view_world` 795、`castle_building`/`buildinginfo` 的 blit | ≈3 400 | 规则部分都已有，缺绘制与事件循环；`view_world` 的缩放模型、分块缓存、像素层、雷达、窗口本体与缓存构建器已转（ADR-184~188），只剩 App 侧接入；`kingdom_overview` 未动 |
 | `heroes` 剩余 | `heroes_dialog` 831、`heroes_meeting` 869、`heroes_base` 622、`heroes_spell` 421、`heroes_indicator` 333 | 3 076 | 另加 `heroes_action` 的军队/战斗分支 |
 | 随机地图 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237 | 2 455 | 与编辑器无关，可独立做 |
 | `campaign` | `campaign_data` 971、`campaign_scenariodata` 831、`campaign_savedata` 270 | 2 072 | 要战役数据与对话框 |
@@ -1137,7 +1137,15 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
   电脑难度加成与人类折扣、招募补位（`GetRecruits()` 的刷新）、`GetCountArtifacts`、`LossPostActions`
   （端口改成可选回调，见 ADR-120）；✅ `speed.cpp`→`Speed`（十档尺子、慢/急两步与两法 spell 的
   `extraValue` 分支，ADR-137；`String`→`GetName` 十档英文，ADR-174）、✅ `experience.cpp`→`Experience`（两条文案；参考走 `_()`，端口返回原文，
-  ADR-137）；❌ `kingdom_overview`、`view_world`（两者都是渲染 + 对话框）
+  ADR-137）；◐ `view_world`：四张缩放表（tile 尺寸 / 地形 / 字母 / 旗帜）、`computeROI`、上下档位查询、
+  颜色与资源偏移、`ViewWorldZoom`（八种档位的可见矩形 + 换档重夹中心）已转（`Game.Kingdom.ViewWorld`，ADR-184），
+  `CacheForMapWithResources`（按 18×18 格重画 + `Resize` 四档）、`DrawWorld`（黑边填充）与
+  `DrawObjectsIcons`（城镇旗 / 英雄与宝物图标 / 资源与矿图标带字母）也已转（`ViewWorldMapCache`、
+  `ViewWorldRenderer`，ADR-185），窗口里的雷达（按模式着色、可见框、点击移动）也单独转了
+  （`ViewWorldRadar`，ADR-186），  窗口本体的布局/输入/侧栏/按钮也已转（`ViewWorldWindow`，ADR-187），缓存的生产构建器也接了
+  （`ViewWorldMapBuilder`，ADR-188）；模态覆盖层、主机输入分流、`Escape` 关闭、档位写回与临时入口（`V` 键 /
+  `--view-world`）也已接上（`ViewWorldOverlay`，ADR-189），缺淡入淡出与正式入口（冒险选项对话框）；❌ `kingdom_overview`（要 `ArtifactsBar`/`SecondarySkillsBar`/`PrimarySkillsBar`/
+  `DwellingsBar` 与 `Interface::redrawHeroesIcon`，都没转）
 * `monster`（3）：◐ `monster.h` 的 `MonsterType` id 枚举已转（`Game.Monsters.MonsterType`，73 项），
   `monster.cpp` 已转 ID、`MINIMON` 帧号、`GetMonsterStrength`、升级关系（`MonsterUpgrades` 的
   `GetUpgrade`/`GetDowngrade`/`IsAllowUpgrade`/`GetUpgradeCost`，ADR-105）、住所反查

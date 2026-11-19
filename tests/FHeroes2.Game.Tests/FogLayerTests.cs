@@ -18,6 +18,9 @@ public sealed class FogLayerTests
     private const int MapSize = 5;
     private const int Center = MapSize / 2;
 
+    /// <summary>One frame of <c>OBJNTOWN</c>, any will do: the test only follows the pixels it paints.</summary>
+    private const int TownFrame = 189;
+
     [Fact]
     public void Draw_CoversEveryFoggedTileWithTheWholeTileOfItsCheckerboard()
     {
@@ -113,7 +116,7 @@ public sealed class FogLayerTests
     }
 
     [Fact]
-    public void Draw_KeepsTheTownPartsAboveTheFog()
+    public void Draw_HidesTheTownUnderTheFogByDefault()
     {
         using AssetBundle? assets = GameData.TryOpen();
         if (assets is null)
@@ -124,25 +127,37 @@ public sealed class FogLayerTests
         ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
         Assert.NotNull(objects);
 
-        const int frame = 189;
-        Sprite town = Assert.IsType<Sprite>(objects.GetSprite(Mp2ObjectIcnType.ObjnTown, frame));
+        MapFog fog = new(MapSize, MapSize);
+        fog.UpdateDirections(PlayerColor.Blue);
+
+        // The only difference between the two maps is the castle, and with the fog on and no
+        // LEVEL_TOWNS both have to look the same: nothing of a town may show through the fog.
+        PixelBuffer withTown = Render(TownMap(), fog, new FlatFogSprites(), heroSprites: null, objects);
+        PixelBuffer withoutTown = Render(SyntheticMap.Create(MapSize, MapSize), fog, new FlatFogSprites(), heroSprites: null, objects);
+
+        AssertSamePixels(withoutTown, withTown, "the town was drawn under the fog");
+    }
+
+    [Fact]
+    public void Draw_KeepsTheTownPartsAboveTheFogWhenTownsAreAsked()
+    {
+        using AssetBundle? assets = GameData.TryOpen();
+        if (assets is null)
+        {
+            return;
+        }
+
+        ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
+        Assert.NotNull(objects);
+
+        Sprite town = Assert.IsType<Sprite>(objects.GetSprite(Mp2ObjectIcnType.ObjnTown, TownFrame));
 
         MapFog fog = new(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
-        Mp2Map map = SyntheticMap.Create(
-            MapSize,
-            MapSize,
-            index => index == (Center * MapSize) + Center
-                ? SyntheticMap.BlankTile() with
-                {
-                    ObjectName1 = (byte)((int)Mp2ObjectIcnType.ObjnTown << 2),
-                    BottomIcnImageIndex = frame,
-                    ObjectType = Mp2ObjectType.Castle,
-                }
-                : SyntheticMap.BlankTile());
+        Mp2Map map = TownMap();
 
-        PixelBuffer fogged = Render(map, fog, new FlatFogSprites(), heroSprites: null, objects);
+        PixelBuffer fogged = Render(map, fog, new FlatFogSprites(), heroSprites: null, objects, drawTownsOverFog: true);
         PixelBuffer bare = Render(map, null, new FlatFogSprites(), heroSprites: null, objects);
 
         // The map only differs from the fog free one where the fog was painted, so the fog pass has to
@@ -194,6 +209,21 @@ public sealed class FogLayerTests
         Assert.True(Differs(bare, fogged), "the fog did not change the map at all");
     }
 
+    /// <summary>A map whose centre tile holds a town, the only object of the map.</summary>
+    /// <returns>The map.</returns>
+    private static Mp2Map TownMap() =>
+        SyntheticMap.Create(
+            MapSize,
+            MapSize,
+            index => index == (Center * MapSize) + Center
+                ? SyntheticMap.BlankTile() with
+                {
+                    ObjectName1 = (byte)((int)Mp2ObjectIcnType.ObjnTown << 2),
+                    BottomIcnImageIndex = TownFrame,
+                    ObjectType = Mp2ObjectType.Castle,
+                }
+                : SyntheticMap.BlankTile());
+
     private static Mp2TileInfo HeroTile(int spriteIndex) =>
         SyntheticMap.BlankTile() with
         {
@@ -207,7 +237,8 @@ public sealed class FogLayerTests
         MapFog? fog,
         IFogSpriteSource? fogSprites,
         HeroSpriteSet? heroSprites,
-        ObjectSpriteSet? objectSprites)
+        ObjectSpriteSet? objectSprites,
+        bool drawTownsOverFog = false)
     {
         AdventureMapView view = new(
             map,
@@ -221,7 +252,7 @@ public sealed class FogLayerTests
             fog is null ? null : fogSprites);
 
         PixelBuffer target = new(view.Viewport.Width, view.Viewport.Height);
-        view.Draw(target);
+        view.Draw(target, drawTownsOverFog);
         return target;
     }
 

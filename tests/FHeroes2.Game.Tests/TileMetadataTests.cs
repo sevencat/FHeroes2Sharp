@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
 using Xunit;
@@ -193,6 +194,60 @@ public sealed class TileMetadataTests
         tile.ResetObjectMetadata();
 
         Assert.All(tile.Metadata, lane => Assert.Equal(0u, lane));
+    }
+
+    [Theory]
+    [InlineData(Mp2ObjectType.Sawmill, Resource.Wood, 2u)]
+    [InlineData(Mp2ObjectType.AlchemistLab, Resource.Mercury, 1u)]
+    public void APayingObjectTakesItsIncomeFromItsType(Mp2ObjectType type, int resource, uint perDay)
+    {
+        Tile tile = LoadedTile(type, Mp2ObjectIcnType.Unknown, 0);
+
+        Assert.Equal((uint)resource, tile.Metadata[0]);
+        Assert.Equal(perDay, tile.Metadata[1]);
+    }
+
+    [Theory]
+    [InlineData(0, Resource.Ore, 2u)]
+    [InlineData(1, Resource.Sulfur, 1u)]
+    [InlineData(2, Resource.Crystal, 1u)]
+    [InlineData(3, Resource.Gems, 1u)]
+    [InlineData(4, Resource.Gold, 1000u)]
+    public void AMineTakesItsIncomeFromTheExtraOverlayFrame(int frame, int resource, uint perDay)
+    {
+        Tile tile = LoadedTile(Mp2ObjectType.Mine, Mp2ObjectIcnType.ExtraOvr, frame);
+
+        Assert.Equal((uint)resource, tile.Metadata[0]);
+        Assert.Equal(perDay, tile.Metadata[1]);
+    }
+
+    /// <summary>
+    /// Loads a 36 x 36 map with one object on tile (3, 3), so the income lanes are filled by the loader
+    /// and not by a test that writes them itself.
+    /// </summary>
+    /// <param name="type">Object type on the tile.</param>
+    /// <param name="topIcn">ICN of the top part, <see cref="Mp2ObjectIcnType.Unknown"/> for none.</param>
+    /// <param name="topIndex">Sprite index of the top part.</param>
+    /// <returns>The tile of the loaded world.</returns>
+    private static Tile LoadedTile(Mp2ObjectType type, Mp2ObjectIcnType topIcn, int topIndex)
+    {
+        const int x = 3;
+        const int y = 3;
+
+        Mp2Map map = Mp2Map.CreateBlank(36, MapGrounds.GrassStartImageIndex);
+        map.SetTileAt(map.TileIndex(x, y), map.Tile(x, y) with
+        {
+            ObjectName1 = (byte)((int)Mp2ObjectIcnType.MtnMult << 2),
+            BottomIcnImageIndex = 0,
+            ObjectType = type,
+            ObjectName2 = (byte)((int)topIcn << 2),
+            TopIcnImageIndex = (byte)topIndex,
+        });
+
+        var world = new World();
+        world.LoadMap(map);
+
+        return world.GetTile(x, y);
     }
 
     private static Tile MakeTile(Mp2ObjectType type, out World world)

@@ -185,13 +185,19 @@ public sealed class AdventureMapView
     /// Draws the visible part of the map into <paramref name="target"/>; the caller is expected to
     /// have cleared or otherwise prepared the pixels the map does not cover.
     /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="drawTownsOverFog">
+    /// Whether castles are painted on top of the fog they stand in, the <c>LEVEL_TOWNS</c> bit of the reference.
+    /// The adventure map leaves it off; only the View Towns and View All spells turn it on
+    /// (<c>view_world.cpp:234-236</c>).
+    /// </param>
     /// <remarks>
     /// The passes are per layer over the whole viewport, not per tile, which is what the reference
     /// does (<c>Interface::GameArea::Redraw()</c>): a sprite that reaches over a tile border is not
     /// covered by the terrain of the next tile, and an object of one layer is drawn above an object
     /// of an earlier pass even when that object sits on the next tile.
     /// </remarks>
-    public void Draw(PixelBuffer target)
+    public void Draw(PixelBuffer target, bool drawTownsOverFog = false)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -200,7 +206,7 @@ public sealed class AdventureMapView
 
         // The fog of war is the very last pass of the reference as well: it hides the terrain and
         // everything that stands on it, and only the castles are painted over it afterwards.
-        DrawFog(target);
+        DrawFog(target, drawTownsOverFog);
     }
 
     /// <summary>
@@ -768,13 +774,23 @@ public sealed class AdventureMapView
     /// Draws the fog of war over the visible tiles, the port of <c>Maps::drawFog</c> and of the pass
     /// that re-draws the castles after it.
     /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="drawTownsOverFog">
+    /// Whether the castles of fogged tiles are painted on top of the fog as well, the <c>LEVEL_TOWNS</c>
+    /// bit of the reference.
+    /// </param>
     /// <remarks>
+    /// <para>
     /// A tile is either covered by one of the four <c>CLOF32</c> whole tiles or receives one
-    /// <c>CLOP32</c> piece, the boundary to the part of the tile that is already discovered. Castles
-    /// are the one thing the fog never hides: the reference draws <c>OBJNTWBA</c> and <c>OBJNTOWN</c>
-    /// again on every fogged tile, so the outline of a town is visible before it is scouted.
+    /// <c>CLOP32</c> piece, the boundary to the part of the tile that is already discovered.
+    /// </para>
+    /// <para>
+    /// <b>城镇默认不透过迷雾画</b>：参考只在 <c>LEVEL_TOWNS</c> 打开时才把 <c>OBJNTWBA</c> 与
+    /// <c>OBJNTOWN</c> 补在迷雾上，而那个位只有「看全图/看城镇」两个法术会用
+    /// （<c>interface_gamearea.h:57</c>）；冒险地图上没侦察过的城镇本来就该被迷雾盖住。
+    /// </para>
     /// </remarks>
-    private void DrawFog(PixelBuffer target)
+    private void DrawFog(PixelBuffer target, bool drawTownsOverFog)
     {
         if (_fog is null || _fogSprites is null)
         {
@@ -790,6 +806,11 @@ public sealed class AdventureMapView
             }
 
             DrawFogTile(target, direction, column, row, left, top);
+
+            if (!drawTownsOverFog)
+            {
+                continue;
+            }
 
             DrawObjectParts(target, tile, Mp2ObjectIcnType.ObjnTwba, left, top);
             if (IsCastle(tile.ObjectType))

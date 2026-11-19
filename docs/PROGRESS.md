@@ -6572,4 +6572,238 @@ UI 测试 377 → **404**，全解决方案 3 844 → **3 871** 全绿，`-warna
 
 **遗留**：`kingdom_overview.cpp`（`KingdomOverviewDialog`：`ICN::OVERVIEW` 6/7/8/10/13/14 + `OVERBACK`、
 收入与资金面板、`KINGDOM_OVERVIEW_CASTLE_SELECTION`）与 `view_world.cpp`（四级缩放视图）仍未开始；
-`view_world` 的 `colorToOffsetICN`/缩放常量与 `kingdom_overview` 的行文本都还没落。
+`kingdom_overview` 的行文本还没落。
+
+### 追加：世界视图的档位与可见区 ✅
+
+`kingdom` 目录最后两篇都是渲染 + 事件循环。`view_world.cpp` 里有一半是纯模型：四张缩放表、`computeROI`、
+上下档位查询、颜色/资源偏移，以及 `ViewWorld::ZoomROIs`（每档的可见矩形 + 换档时重夹中心）。这一半不需要
+贴图表，本轮先落地；像素层（按 18×18 格重画再 `Resize` 的四张缓存图、图标/旗子/资源字母、光标）留给下一轮。
+
+| 端口（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/ViewWorld.cs` 的 `ViewWorldMode` | `view_world.h:37-48` | 七种显示模式：只显示已探明、宝物、矿、资源、英雄、城镇、全部 |
+| 同文件的 `ZoomLevel` | `screen.h` 的 `enum class ZoomLevel` | 四档：1:4 / 1:6 / 1:12 / 1:32（1:1 与冒险地图同尺度） |
+| 同文件的 `ViewWorldZoomLevels` | `view_world.cpp:72-187` | `TileSize`、`TerrainIcn`、`LetterIcn`、`FlagIcn`、`ComputeRoi`、`Next`、`Previous`、`ColorToOffsetIcn`、`ResourceToOffsetIcn` |
+| 同文件的 `ViewWorldZoom` | `ViewWorld::ZoomROIs`（`view_world.cpp:508-587`） | `ZoomIn`/`ZoomOut`（含循环）、`ChangeCenter`（两轴夹取）、`RoiInPixels`、`RoiInTiles` |
+
+要点：
+
+* **`computeROI` 的两步除法照抄**：先 `窗口宽 * 32 / 缩放`，再 `中心 - 宽/2`。换成浮点或先减半，四档的
+  左边界会各差一像素，`RoiInTiles` 的取整也跟着偏一格。
+* **三级视图没有 1:1 档**：参考靠调用方保证 `ZoomLevel3` 只在开放调试档时出现，越界就是数组越界；端口在
+  构造时校验 `(int)zoomLevel < zoomLevelCount` 并抛 `ArgumentOutOfRangeException`。
+* **`ChangeCenter` 是「先算再比」**：两轴各自夹取（地图比窗口小时用 `( size - 1 ) / 2` 定死正中），
+  夹完与当前中心相同就返回 `false` 且**不**重算四档矩形。减一是参考的写法——偶数尺寸下比 `size / 2`
+  少半格，地图被顶向左上，不能「顺手修正」。
+* **换档的顺序决定贴边行为**：`_changeZoom` 先写档位、再按**新**档位的矩形重夹中心。所以从 1:32 退到 1:12
+  时贴边的中心会被推回窗口内（本轮的用例正是这一条），放大时则原样不动。
+* **`Next`/`Previous` 不对称**：三级模式下 `Previous( ZoomLevel3 )` 仍然退到二级（参考的 `if` 链最后一条），
+  而 `Next( ZoomLevel2 )` 在三级模式下原地不动（除非循环）。端口照抄，没有「顺手修对称」。
+* **两个偏移函数只认单值**：颜色传组合（`Blue | Green`）落 `UnknownIndex`；资源同理，传 `Wood | Ore` 也是
+  `Unknown`。参考里 `PlayerColor::NONE` 与已废弃的 `UNUSED` 共用第六格，端口没有 `Unused`，于是只留 `None`。
+
+**测试**：`ViewWorldZoomTests` 32 条（四档 `ComputeRoi` 逐值、四张表、构造夹中心、小地图定死正中、
+`RoiInTiles` 取整、放大三档与循环、缩小到底与循环、缩小时重夹中心、小地图换档不动、`ChangeCenter` 三态、
+颜色/资源七个值 + 组合拒绝、参数校验、四级视图能到 1:1）。Game 测试 2 818 → **2 850**，全解决方案
+3 871 → **3 903** 全绿，`-warnaserror` 0 警告 0 错误。
+
+**遗留**：`view_world` 的像素层与窗口（`CacheForMapWithResources` 的 18×18 分块重画、`DrawWorld` 的黑边填充、
+`DrawObjectsIcons` 的旗/图标/资源字母、`renderCursor` 的四种光标、`ViewWorldWindow` 的事件循环）；
+`kingdom_overview.cpp` 整体，其中 `ArtifactsBar`/`SecondarySkillsBar`/`PrimarySkillsBar`/`DwellingsBar` 与
+`Interface::redrawHeroesIcon` 都是它缺的前置。
+
+### 追加：世界视图的分块缓存与像素层 ✅
+
+模型层落地后，本轮把 `view_world.cpp` 剩下的绘制部分转过来：18×18 格分块重画再缩到四档、窗口内的黑边填充、
+城堡旗 / 英雄与宝物图标 / 资源与矿图标带字母。参考里的两块全局依赖（`Assets`、`Interface::GameArea`）分别
+换成 `IViewWorldSpriteSource` 与显式传入的 `PixelBuffer` + 可见矩形，端口不引入全局单例。
+
+| 端口（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/ViewWorldMapCache.cs` | `CacheForMapWithResources`（`view_world.cpp:189-268`） | `ViewWorldDrawLayers`、`ViewWorldBlockDrawer` 委托、18×18 分块（576 像素）逐块重画后 `Blit`/`Resize` 到每档 |
+| `Game/Kingdom/IViewWorldSpriteSource.cs` | `Assets::GetICN` 调用点 | `IViewWorldSpriteSource` 与其 `IcnSpriteCache` 实现，把「按 ICN 取精灵」从全局抽成注入 |
+| `Game/Kingdom/ViewWorldRenderer.cs` | `DrawWorld`（`:270-315`）、`DrawObjectsIcons`（`:317-460`）、`GetSpriteResource`（`:462-480`） | 可见区贴图 + 四向黑边、七种模式的对象图标、侧栏整图来源 |
+
+要点：
+
+* **临时图只有一张**：`CacheForMapWithResources` 复用同一块 576×576 缓冲，画块前必须 `Clear()`；漏掉就会把上一块
+  的像素带到下一块（用例 `ABlockDoesNotLeakIntoTheNextOne` 正是钉这一条）。
+* **1:1 档不缩放**：调试档（1:32）的 `tileSize` 是 32，块与目标同尺寸，直接贴；其余三档走最近邻 `Resize`。
+* **四向黑边是「贴完之后补」**：先按 `offsetPixelsX/Y`（`tileSize * roi.X / 32`）算出贴图位置，再拿四块黑矩形
+  盖住地图没铺满的地方。参考用 `assert` 假定整块在屏内，端口改成与 `display.Bounds` 求交、空区域直接跳过——
+  窄屏下算出的右黑条宽度会是负数。
+* **雷达区与窗口外一律不碰**：黑边只铺 `border + 可见区` 的范围（宽 = `display.Width - 3 * border - radar`），
+  其余像素保持调用方预填的值。
+* **对象类型要抹掉动作位再比**：参考 `switch` 走 `MP2::OBJ_*`，那是动作值（`OBJ_CASTLE` = 206）；端口的瓦片
+  两种值都可能存（地图文件读到的、以及 `ReplaceRandomCastleObjectId` / `tileRemoval` 写入的非动作值 35/23），
+  所以先 `Mp2ObjectTypes.NonActionType(...)` 再比，否则城门类型为 35 的城镇不画旗。
+* **城镇只认城门格**：旗子分支先用 `world.GetCastleEntrance(tile.GetCenter(world))` 反查城镇，端口的
+  `IsValidCastleEntrance` 只认非动作值 `Castle`，与参考的 `OBJ_CASTLE` 判定不同——这条按端口现状保留，
+  没有在渲染器里另开一条查询路径。
+* **图层开关跟模式走**：全图模式关迷雾、城镇模式强制开城镇、英雄与路线恒关；`ViewWorldDrawLayers` 只记录
+  参考里那三个 `drawingFlags`，`Routes` 恒 `false`（参考也没打开）。
+* **图标走两趟**：每格先按「透过英雄」的类型画底下的对象，再按「含动作位」的缓存值画英雄本身，顺序与参考一致，
+  英雄会盖住脚下的资源/矿。
+
+**测试**：`ViewWorldMapCacheTests` 11 条（18 倍数与档位校验、四档尺寸、1:1 档、每块中心遍历、逐档缩放、
+跨块不串、图层开关、未缓存档位拒绝）；`ViewWorldRendererTests` 23 条（14 行侧栏映射、档位数不匹配、小图居中
+与被黑边包住、大图裁到可见片、英雄颜色偏移、迷雾遮挡两模式、矿/资源/宝物图标与字母、城镇两枚中立旗的落点）。
+Game 测试 2 850 → **2 884**，全解决方案 3 903 → **3 937** 全绿，`-warnaserror` 0 警告 0 错误。
+
+**遗留**：`renderCursor` 的四种模式光标、`ViewWorldWindow` 的事件循环（换档/换模式/滚动的按键与鼠标），
+以及 `kingdom_overview.cpp` 整体。
+
+### 追加：世界视图的雷达（按模式着色 + 可见框 + 点击移动） ✅
+
+`view_world.cpp` 本身只画地图与侧栏，窗口里那块 144×144 的雷达来自 `interface_radar.cpp`——参考在世界视图里
+另建一个 `Radar(RadarType::ViewWorld)`，ROI 固定为整图。端口没有「同一份雷达的第二种实例」，所以这一步转的是
+它的**着色与交互**，地图数据改从 `World` 取而不是 `Mp2Map`。
+
+| 端口（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/ViewWorldRadar.cs` | `Radar::RedrawObjects`（`:283-419`）、`RedrawForViewWorld`（`:253-267`）、`QueueEventProcessingForWorldView`（`:501-534`） | 七种模式的整图着色、面板缩放、可见框、点击把视图中心移到该格 |
+
+要点：
+
+* **着色先看城镇表**：`world.Castles.Get(x, y)` 知道城镇精灵覆盖的每一格，所以城镇的 5×5 占地都算城镇色，
+  而不是只有城门一格；这一步在道路/地面之前，否则城镇会被压成草地色。
+* **可见格依次是**：城镇 → 道路 → 地面（山与树再加 3 个色阶）；**不可见格**只有城镇模式会画（城镇即使被
+  迷雾盖住也算已探明），其余模式留黑。
+* **英雄与矿一组**：`revealOnlyVisible || revealHeroes` 时才透过英雄取脚下的类型，其余模式要看英雄本身；
+  矿、灯塔、炼金实验室、锯木场都按占领色画，多格对象若存的是非动作类型，颜色要到 `Tile.GetIndexOfMainTile`
+  指的主格上取。
+* **宝物与资源是灰色**（`COLOR_GRAY` = 0x10），端口原先的 `Minimap` 没有这个常量，顺手补上。
+* **面板缩放与可见框复用 `Minimap`**：把 `CursorArea`（裁到世界再按 `144 / 地图宽` 缩放）、`DrawCursorFrame`
+  （六像素留一的点状边框）和 `ScaleColors`（最近邻缩到面板）抽成静态，`Minimap` 的实例方法改成转调，行为不变；
+  世界视图的雷达与冒险地图的雷达因此画的是同一种框。
+* **点击换算**：面板点 → 格（`point * 世界宽 / 144`）→ 像素中心（`tile * 32 - 16`）→ `ViewWorldZoom.ChangeCenter`。
+  参考在调用前拿「像素上左角」比「tile 上左角」，量纲不同永远不等，端口省掉这一比，是否需要重画由
+  `ChangeCenter` 的返回值回答。
+
+**测试**：`ViewWorldRadarTests` 16 条（每格 4 像素、全图/仅可见两档的迷雾、揭开单格、山与树加深三阶、
+矿的占领色与迷雾遮挡、宝物与资源灰、英雄色与英雄模式、城镇模式透过迷雾、整图可见时无框、框随可见区缩放、
+绘制原点与框、点击移动与重复点击返回 `false`）。Game 2 884 → **2 900**，合计 3 937 → **3 953** 全绿。
+
+**遗留**：`ViewWorldWindow` 外壳（淡入淡出、缩放/退出按钮、侧栏整图、拖动与滚轮缩放、退出记档位）与它在
+冒险地图场景里的入口；雷达本身已经可以直接嵌进去。
+
+### 追加：世界视图的窗口（布局 + 输入 + 窗口装饰） ✅
+
+`ViewWorldWindow()` 在参考里是一个 200 行的模态循环：淡出、建雷达、算初始中心、建缓存、画地图与侧栏、进出
+事件循环、淡入、还原。端口把它拆成两半——**窗口管状态与几何，App 管循环**。
+
+| 端口（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/ViewWorldWindow.cs` | `ViewWorldWindow`（`:589-795`）、`drawViewWorldSprite`（`:482-505`） | 淡出区、雷达/按钮/侧栏的位置、初始视图、拖动/滚轮/按钮/雷达点击的换算、侧栏与按钮的绘制、退出档位 |
+
+要点：
+
+* **初始视图**（`:633-642`）：先落在冒险地图的中心 `roi * 32 + (窗口 + 32) / 2`；当前档位下整图放得进窗口时
+  改用地中心。这一步不能省——夹取虽然会给出同一个结果，但那是副作用的巧合。
+* **拖动**（`:734-745`）：按下记 `(鼠标, 中心)`，移动时按 `(新 - 旧) * 32 / 缩放` 反向推中心；鼠标离开窗口或松开
+  就结束拖动（参考在同一帧里清 `isDrag`）。中心没动时 `ChangeCenter` 返回 `false`，调用方据此跳过重画。
+* **缩放**：滚轮走 `ZoomIn/Out(cycle: false)`（到头不动），按钮走 `ZoomOut(cycle: true)`（最远一档回到最近一档）。
+  这与参考的两处调用一一对应。
+* **按钮位置来自精灵尺寸**（参考的 `Button::area()` 就是精灵尺寸），所以构造要拿 `IViewWorldSpriteSource`；
+  缺图时按钮区为空、点击落空，不抛异常。
+* **侧栏**（`drawViewWorldSprite`）：先贴精灵前 275 行，**高于 480 的屏幕**再重复 `STONBACK`/`STONBAKE` 的第
+  11 行起的 46 行（`repeatHeight / 46` 次 + 余数），最后贴精灵剩下的部分。`repeatHeight` 把下边框扣掉，
+  负值按 0 处理（小面板在大屏上不会出现，但端口不做断言）。
+* **淡出区**（`:600-608`）：显示接口时是 `(16, 16, 宽-48-144, 高-32)`，隐藏接口时是整屏。模型只给矩形，
+  过渡帧由 App 做。
+* **退出**：`Close()` 返回当前档位，对应 `conf.SetViewWorldZoomLevel(...)`。
+* **等级夹取**：设置里记的档位可能比当前表大（编辑器档位写进过配置），端口的 `ViewWorldZoom` 会抛，所以窗口
+  先夹到最后一档再建视图。
+
+**测试**：`ViewWorldWindowTests` 21 条（雷达在右上、两个按钮的位置与缺图时不可点、淡出区两档、初始视图两种、
+拖动/无按下/离开窗口/窗口外按下、滚轮不循环、按钮循环、雷达点击、点击窗外、退出返回档位并清拖动、档位夹取、
+高屏侧栏的石头填充、按钮按下的换图、雷达贴到自己角上、null 精灵源被拒）。Game 2 900 → **2 921**，
+合计 3 953 → **3 974** 全绿。
+
+**遗留**：`ViewWorldMapCache` 的**生产用分块绘制器**（四档地形 + 迷雾 + 城镇/英雄图标，参考的
+`CacheForMapWithResources` 内部那层）还没有，所以窗口还没有接进 App；它一旦落地，窗口只需被创建、
+转发事件、把 `Zoom` 换档后的画面重画一次即可。
+
+### 追加：世界视图的分块绘制器（缓存真正能出图） ✅
+
+前几轮把世界视图的缩放模型、分块缓存、像素层、雷达与窗口都转了，但缓存一直靠测试里的假绘制器——因为参考的
+`CacheForMapWithResources` 要「把冒险地图的 18×18 格渲染进 576×576，再缩到每一档」。这一步现在补上了。
+
+| 端口（新/改） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/ViewWorldMapBuilder.cs`（新） | `CacheForMapWithResources`（`view_world.cpp:189-268`）+ 它用的 `GameArea` | 建 576×576 视图、逐块移中心、把 `ViewWorldDrawLayers` 翻译成渲染开关、交给 `ViewWorldMapCache` 缩档 |
+| `AdventureMap/AdventureMapView.cs`（改） | `LEVEL_TOWNS`（`interface_gamearea.h:57`） | `Draw(target, drawTownsOverFog)`：默认不再把城镇透过迷雾画，只有「看城镇/看全图」法术要求时才画 |
+
+要点：
+
+* **四位开关照抄**：`ViewWorldDrawLayers.ForMode` 已经是 `(Fog, Towns, Heroes, Routes)`，这里只负责翻译成
+  「传不传 `World.Fog`」「`Draw` 的第二个参数」。全图模式把迷雾传 `null`，于是整张图都画出来。
+* **英雄永远不画**：参考在非 `SAVE_WORLD_MAP` 的构建里把 `LEVEL_HEROES` 异或掉，英雄改由
+  `DrawObjectsIcons` 贴图标；视图固定 `heroes: null`。
+* **每次构建新建视图**：端口没有全局 `GameArea`，所以一个缓存配一个 576×576 的 `AdventureMapView`，构建完
+  跟着缓存一起丢；冒险地图的 ROI 与中心不会被世界视图改掉。
+* **块中心 = 左上 + 288**：`ViewWorldMapCache` 传的是块中心的像素坐标，`ScrollTo(中心 - 288)` 正好落在块的
+  左上角；标准地图（36/72/108/144）的最后一个块中心是 `地图宽 - 288`，刚好是最大滚动值，不会被夹。
+* **顺带修一个保真度问题**：端口原先的迷雾通道**无条件**把 `OBJNTWBA`/`OBJNTOWN` 补在迷雾上，等于冒险
+  地图上也把没侦察过的城镇显形。参考只在 `LEVEL_TOWNS` 打开时这么做，而那个位只有两个法术会设。现在默认
+  不画，冒险地图恢复成「迷雾盖住城镇」，`ViewTowns` 模式才透出来。
+
+**测试**：`ViewWorldMapBuilderTests` 8 条（每档尺寸、四个角的颜色证明每块都画对位置、英雄被排除、
+全图模式无迷雾而其余模式有、视图 576×576、模式决定层位、边长不是 18 倍数的图被拒），另加
+`FogLayerTests.Draw_HidesTheTownUnderTheFogByDefault`（同一张图有城/无城在默认渲染下逐像素相同），
+原来的城镇测试改名并显式传 `drawTownsOverFog: true`。Game 2 921 → **2 930**，合计 3 974 → **3 983** 全绿，
+`-warnaserror` 0 警告。
+
+**遗留**：App 侧还没有把世界视图接到界面上——`GameHost`/`AdventureMapScene` 没有任何模态对话框设施，也没
+淡入淡出的过渡；要接的话先得有一层「覆盖在冒险地图上的模态场景」，再谈打开入口（参考的入口是冒险选项
+对话框里的世界地图按钮）。
+
+### 追加：世界视图接进 App —— 模态覆盖层、命令行开关，以及真实地图暴露的两处数据缺口 ✅
+
+上一轮结尾留的「App 侧还没有把世界视图接到界面上」这一步做完了。参考的 `ViewWorldWindow()` 是阻塞事件循环
+（`view_world.cpp:589-795`），端口的 App 是「主机收事件、场景收调用」，所以模态由三层拼起来：
+
+| 端口（新/改） | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/ViewWorldOverlay.cs`（新） | `ViewWorldWindow()` 循环里除绘制外的全部（`view_world.cpp:700-795`） | 把鼠标按下/松开/移动/滚轮翻译成窗口调用：拖地图、点缩放杆、点雷达、点 EXIT；`Close()` 把档位交回去 |
+| `App/Scenes/AdventureMapScene.cs`（改） | 建缓存 + `CacheForMapWithResources` | `OpenViewWorld(mode)`（建缓存 → `DrawObjectsIcons` → 建窗口）、`CloseViewWorld()` 返回写回的档位、`Draw()` 里窗口存在时只画窗口 |
+| `App/GameHost.cs`（改） | 事件循环 | 窗口打开时鼠标移动/离开、滚轮、左键、`Escape` 都改投给窗口，其它键忽略 |
+| `App/CommandLineOptions.cs`（改） | — | `--view-world`：开图后立刻弹窗，给截图/冒烟用 |
+
+要点：
+
+* **拦截点按事件类型分开**：`WindowMouseMotion` 走 `DragTo`（不再动冒险地图光标）、`WindowMouseLeave` 结束拖拽、
+  滚轮走 `Wheel`（不是滚地图）、`MouseButtonDown/Up` 只喂左键并看返回值决定关闭；键盘在
+  `HandleAdventureKey` 最前面拦截，`Escape` 关闭、其余返回 `false`——参考的循环也只认 `Exit`/`Escape`/滚轮/左键。
+* **点击语义照抄 `MouseClickLeft`**：按下与松开都落在同一个按钮里才算点击，所以 `ViewWorldOverlay` 按下记位置、
+  松开再比一次；地图拖拽从按下就开始，中心由 `ViewWorldWindow.DragTo` 推。
+* **档位写回**：`CloseViewWorld()` 把窗口的 `Close()` 结果存回场景的 `_viewWorldZoom`（参考
+  `conf.SetViewWorldZoomLevel`），下次开窗就用这个档；端口还没有配置文件对象，先留在内存里。
+* **临时入口**：参考从冒险选项对话框的「世界地图」按钮进，那个对话框没转，所以先用 `V` 键（`!key.Repeat`）与
+  `--view-world` 顶上，两处注释都写明了来由。
+
+**真实地图（`Beltway.mp2`）一冒烟就暴露出两处数据缺口，都不是渲染器写错，而是端口「按格读 MP2」与参考
+「按对象信息给整个对象写元数据」的差异**：
+
+1. **矿场/锯木厂/炼金实验室的产出从来没被写进 `metadata[0]/[1]`**。参考在 `map_object_info.cpp:4256-4277`（矿场按
+   `EXTRAOVR` 车架号）、`:4403`（锯木厂 = 木头 2）、`:4423`（炼金实验室 = 水银 1）写好；MP2 文件没有元数据块，
+   `metadata[0]` 只是 `quantity >> 3`，于是 `GetDailyIncomeObjectResources` 读到 `funds` 里 0 项、`Debug.Assert` 直接崩。
+   修复放在装图路径上（`Tile.Init` → `InitIncomeObjectMetadata`），按对象类型/车架号照参考填同一张表（矿场
+   矿石 2、硫磺/水晶/宝石 1、金 1000）。
+2. **多格对象的邻格没有资源覆盖图**。矿井的五个邻格也是 `OBJ_MINE`、资源堆/树桩的邻格也是 `OBJ_RESOURCE`，但只有
+   带车/带资源的那一格有 `EXTRAOVR`/`OBJNRsrc` 精灵。参考给整个对象的所有格子写同一份元数据，所以每格都取到
+   一份资源；端口按格读，邻格读到空 `Funds`，`view_world.cpp:432/448` 的 `assert( GetValidItemsCount() == 1 )`
+   在端口就是崩溃（或画出五份重复图标）。两处断言改成「不是恰好一项就跳过」——没有资源的那格不画图标。
+
+**测试**：`TileMetadataTests` 加 7 条（锯木厂/炼金实验室的收入、矿井五个车架号各一条，走的是真的
+`Mp2Map` → `World.LoadMap` 装图路径，不是手写元数据），`ViewWorldRendererTests` 加 1 条（矿场与资源堆在
+`metadata` 全零时不请求任何精灵，代替原来的断言）。Game 2 930 → **2 938**，合计 3 983 → **3 991** 全绿，
+`-warnaserror` 0 警告。
+
+**冒烟**：`--map Beltway.mp2 --view-world --screenshot artifacts/viewworld.png --screenshot-frame 40` 正常退出，
+截图里 72×72 全图按默认档铺满窗口，侧栏是 `View All` 与四档图例、EXIT，城镇旗与英雄图标都在；
+四处 `GetValidItemsCount` 断言不再触发。
+
+**遗留**：参考开窗前后的淡入淡出没做（端口直接切换）；正式入口（冒险选项对话框）还没转，`V` 与 `--view-world`
+是临时入口；档位只留在场景内存，没有配置文件可写。

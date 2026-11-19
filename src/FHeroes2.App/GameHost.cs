@@ -12,6 +12,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Kingdom;
 using SDL3;
 
 namespace FHeroes2.App;
@@ -234,7 +235,18 @@ public sealed class GameHost : IDisposable
                         }
                         else if (_adventure is { } moving)
                         {
-                            moving.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                            Point? cursor = ToLogical(evt.Motion.X, evt.Motion.Y);
+
+                            // The View World window drags its map with the same left button, so the
+                            // pointer goes to the window while it is open.
+                            if (moving.ViewWorld is { } viewWorld)
+                            {
+                                viewWorld.DragTo(cursor);
+                            }
+                            else
+                            {
+                                moving.SetCursor(cursor);
+                            }
                         }
                         else
                         {
@@ -249,6 +261,7 @@ public sealed class GameHost : IDisposable
                     {
                         _editor?.SetCursor(null);
                         _adventure?.SetCursor(null);
+                        _adventure?.ViewWorld?.DragTo(null);
                         _menu?.SetCursor(null);
                     }
 
@@ -278,7 +291,16 @@ public sealed class GameHost : IDisposable
                             }
                             else if (_adventure is { } scrolled)
                             {
-                                scrolled.ScrollByWheel(0, -notches);
+                                // The wheel zooms the View World window instead of scrolling the map
+                                // behind it; away from the user is zoom in, like isMouseWheelUp().
+                                if (scrolled.ViewWorld is { } zooming)
+                                {
+                                    zooming.Wheel(notches);
+                                }
+                                else
+                                {
+                                    scrolled.ScrollByWheel(0, -notches);
+                                }
                             }
                             else
                             {
@@ -412,6 +434,22 @@ public sealed class GameHost : IDisposable
 
         if (_adventure is { } adventure)
         {
+            if (adventure.ViewWorld is { } viewWorld)
+            {
+                // The window answers the left button only: exit, zoom, the radar and the drag of the
+                // map itself, view_world.cpp:723-762.
+                if (button.Button == LeftMouseButton
+                    && ToLogical(button.X, button.Y) is { } point
+                    && viewWorld.SetLeftButton(button.Down, point))
+                {
+                    ZoomLevel? level = adventure.CloseViewWorld();
+
+                    GameLog.Info($"The View World window closed at zoom level {level}.");
+                }
+
+                return false;
+            }
+
             // The map answers the left button only: the right one opens the info window of the
             // object under the pointer in the reference, which is not implemented yet.
             if (!_syntheticCursor)
@@ -488,10 +526,35 @@ public sealed class GameHost : IDisposable
     /// </summary>
     private bool HandleAdventureKey(in SDL.KeyboardEvent key, AdventureMapScene adventure)
     {
+        // The View World window is modal and takes the whole keyboard: Escape closes it, everything
+        // else is ignored, which is the entire key handling of the reference's loop
+        // (view_world.cpp:723) plus its close hot key.
+        if (adventure.IsViewWorldOpen)
+        {
+            if (key.Key == SDL.Keycode.Escape)
+            {
+                ZoomLevel? level = adventure.CloseViewWorld();
+
+                GameLog.Info($"The View World window closed at zoom level {level}.");
+            }
+
+            return false;
+        }
+
         switch (key.Key)
         {
             case SDL.Keycode.Escape:
                 ReturnToMenu();
+                return false;
+
+            // The reference opens the window from the World button of the adventure options dialog,
+            // which the port does not draw yet; V stands in for it until that dialog lands.
+            case SDL.Keycode.V when !key.Repeat:
+                if (adventure.OpenViewWorld(ViewWorldMode.ViewAll))
+                {
+                    GameLog.Info("Opened the View World window.");
+                }
+
                 return false;
 
             case SDL.Keycode.E when !key.Repeat:
@@ -1086,6 +1149,13 @@ public sealed class GameHost : IDisposable
         if (!string.IsNullOrWhiteSpace(_options.MapFile))
         {
             OpenMapFile(_options.MapFile);
+        }
+
+        // The window normally opens from the adventure options dialog, which the port does not draw
+        // yet; --view-world opens it here so its frame can be captured and smoke tested.
+        if (_options.ViewWorld && _adventure is { } viewWorld && viewWorld.OpenViewWorld(ViewWorldMode.ViewAll))
+        {
+            GameLog.Info("Opened the View World window from the command line.");
         }
 
         GameLog.Info(_menu is null

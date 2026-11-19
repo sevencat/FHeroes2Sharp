@@ -6978,3 +6978,182 @@ Game 2 804 → **2 818**、UI 358 → **377**，合计 3 811 → **3 844** 全�
 从「无」改记已转。
 
 **遗留**：`kingdom_overview.cpp` 与 `view_world.cpp` 本身；`ListBox` 在场景选择/法术书/市场等窗口上的接线。
+
+## ADR-184：世界视图先落档位模型，地图尺寸由调用方给 ◐
+
+**背景**：`view_world.cpp`（795 行）是「世界视图」窗口：把整张地图按 1:4、1:6、1:12 各缓存一份（另加 1:1 调试档），
+再按当前档位与中心从缓存里裁一块贴到屏幕上。它同时依赖 `ICN::MISC4/6/12`、`LETTER*`、`VWFLAG*` 六套图和
+`Interface::GameArea` 的分块重画，整篇一次落不了；但其中「档位表 + 可见矩形 + 夹中心」是纯算术，且是所有
+后续窗口（小地图点击、缩放按钮、光标定位）都要用的坐标系。
+
+**决定**：
+
+1. **拆成 `ViewWorldZoomLevels`（静态表与纯函数）+ `ViewWorldZoom`（有状态：档位 + 中心 + 每档矩形）**，
+   对应参考的匿名常量、`computeROI`、`getNextZoomLevel`/`getPreviousZoomLevel` 与 `ZoomROIs`。
+2. **地图尺寸走参数**：`ViewWorldZoom` 的构造要 `mapWidthInTiles`/`mapHeightInTiles`（参考读 `world.w()/h()`），
+   与 ADR-111 一致；`tileWidthPx = 32` 仍是常量（`ui_constants.h` 的值）。
+3. **三级视图的起始档位要校验**：参考只在开放调试档时才传 `ZoomLevel3`，三级数组里它越界；端口在构造时抛
+   `ArgumentOutOfRangeException`，把参考的「调用方约定」变成显式契约。
+4. **整数截断与 `( size - 1 ) / 2` 一处不改**：`computeROI` 的两步除法、`ChangeCenter` 的减一、`RoiInTiles`
+   的 `+ 16` 全部照抄。这三处任意一处「修正」都会让四档的像素边界互相错开一格。
+5. **状态变化才重算**：`ChangeCenter` 夹出来的中心与当前相同就返回 `false` 且不刷四档矩形；`ChangeZoom`
+   先换档位再夹中心，复现「缩小时贴边中心被推回」。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ViewWorld.cs`（约 340 行）与 `ViewWorldZoomTests` 32 条；
+Game 2 818 → **2 850**，合计 3 871 → **3 903** 全绿，`-warnaserror` 0 警告 0 错误。`kingdom/view_world.cpp`
+在 PLAN 里由 ❌ 改记 ◐（模型已转，像素层未转）。
+
+**遗留**：`CacheForMapWithResources`（18×18 分块重画 + `Resize` 四份缓存）、`DrawWorld` 的黑边填充、
+`DrawObjectsIcons`（`renderCastleFlags`/`renderIcon`/`renderResourceIcon`）、`renderAI`/`renderCursor`、
+`ViewWorldWindow` 的事件循环与小地图联动。
+
+## ADR-185：世界视图的像素层靠注入绘图回调与精灵源，不引全局 ◐
+
+**背景**：ADR-184 只转了 `view_world.cpp` 的坐标系。剩下的绘制部分有三处硬依赖：`CacheForMapWithResources` 里调
+`Interface::GameArea::Redraw`（需要整个冒险地图的绘制管线）、`Assets::GetICN`（端口是 `IcnSpriteCache`）、以及
+`DrawWorld` 里直接读 `Display` 与 `GetGameArea().GetROI()`。端口没有全局 `Display`/`GameArea`，硬拷贝会把单例
+带进 `FHeroes2.Game`。
+
+**决定**：
+
+1. **分块重画做成回调**：`ViewWorldMapCache` 收一个 `ViewWorldBlockDrawer(PixelBuffer block, Point centre, ViewWorldDrawLayers layers)`
+   委托。谁调谁来画一块 576×576 的地图（冒险地图渲染器或测试里的假画手），缓存的职责只剩「逐块重画 → 缩到四档」。
+2. **精灵来源做成接口**：新增 `IViewWorldSpriteSource`（`GetSprite(IcnType, int)`），实现 `IcnViewWorldSpriteSource`
+   包一个 `IcnSpriteCache`；测试用返回 2×2 纯色图标的假实现，断言的是「要了哪张图、第几帧」。
+3. **屏幕是参数**：`DrawWorld(zoom, cache, display, visibleRoi, borderWidthPx, radarWidthPx)`，黑边宽度与雷达宽度
+   默认取 `ui_constants.h` 的 16 / 144，但可覆盖；雷达区与窗口外一律不写。
+4. **黑边不 assert，先求交**：参考假定整块贴图在屏内（`assert`），端口的 `FillBlack` 与 `display.Bounds` 求交，
+   空区域直接返回，窄屏下右黑条算成负数也不会越界。
+5. **对象类型先抹动作位再比**：参考 `switch` 用的是 `MP2::OBJ_*`（带动作位，`OBJ_CASTLE` = 206）；端口瓦片里
+   两种值都能出现，统一 `Mp2ObjectTypes.NonActionType(...)` 后再比，避免「城门类型 35 的城镇不画旗」。
+6. **城镇旗子仍只认城门格**：`GetCastleEntrance(tile.GetCenter(world))` 原样保留。端口的 `IsValidCastleEntrance`
+   只认非动作值 `Castle`（与参考的 `OBJ_CASTLE` 判定相反），这是既有行为，不在渲染器里绕开；要改应改判定本身。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ViewWorldMapCache.cs`（179 行）、`IViewWorldSpriteSource.cs`（46 行）、
+`ViewWorldRenderer.cs`（375 行），测试 `ViewWorldMapCacheTests` 11 条 + `ViewWorldRendererTests` 23 条。Game
+2 850 → **2 884**，合计 3 903 → **3 937** 全绿，`-warnaserror` 0 警告 0 错误。
+
+**遗留**：`renderCursor` 的四种光标、`ViewWorldWindow` 的事件循环（换档/换模式/滚动），以及
+`kingdom_overview.cpp` 整体。
+
+## ADR-186：世界视图的雷达单独立类，缩放与边框复用冒险地图雷达的静态件 ◐
+
+**背景**：`ViewWorldWindow` 的雷达在参考里是 `Radar` 的第二个实例（`RadarType::ViewWorld`），ROI 固定为整图，
+但构造函数、`Build()` 与绘制都吃 `Mp2Map`。端口的 `Minimap` 是 `Game.AdventureMap` 里从 `Mp2Map` 建的一次性
+面板（`ColorAt` 只读），既拿不到 `World` 的占领色/迷雾，也没有「按模式换一套颜色」的入口。
+
+**决定**：
+
+1. **单独立 `ViewWorldRadar`**（`Game/Kingdom`），构造只收 `World`。它持有「每格一个调色板索引」的数组与
+   144×144 面板；`RedrawObjects(friends, mode)` 每次从头着色并重缩面板，语义等同参考的
+   `RedrawObjects( Players::FriendColors(), mode )`。
+2. **不复制 `Minimap` 的构建逻辑，只复制规则**：地面/王国/道路色与 `COLOR_GRAY` 仍是 `Minimap` 的公开常量，
+   山的加深色阶也照它的 `HillShadeOffset`。
+3. **缩放、边框、可见框抽成 `Minimap` 的静态方法**（`ScaleColors`、`DrawCursorFrame`、`CursorArea(roi, w, h)`），
+   实例方法转调同一份实现。理由：两处雷达要用同一种点状边框与同一种「裁到世界再缩放」的取整；参考里它们就是
+   同一个函数，端口只是被两个类共享。
+4. **点击换算放在雷达里**：`CenterOn(zoom, panelPoint)` 把面板点换算成格、再换算成像素中心调
+   `ViewWorldZoom.ChangeCenter`，返回值即「视图是否真的动了」。参考在此前用不同量纲比较过一次上左角，端口不照抄。
+5. **城镇用 `world.Castles.Get(x, y)` 而不是城门判定**：参考的 `world.getCastle( point )` 命中的是城镇精灵
+   覆盖的任意一格，端口 `AllCastles` 的占地表与之对应；`GetCastleEntrance` 只认城门格，用在雷达上会把 5×5
+   的占地涂成草地色。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ViewWorldRadar.cs`（约 270 行）与 `ViewWorldRadarTests` 16 条；
+`Minimap` 多了三个静态方法（`GrayColor` 常量、`ScaleColors`、`DrawCursorFrame`、`CursorArea` 重载），
+实例行为不变，原有 404 + 2 900 条测试全绿。Game 2 884 → **2 900**，合计 3 937 → **3 953**。
+
+**遗留**：`ViewWorldWindow` 外壳（淡入淡出、缩放/退出按钮、侧栏整图、拖动与滚轮、退出记档位）与其在冒险地图
+场景里的入口。雷达已可直接嵌入。
+
+## ADR-187：世界视图窗口拆成「模型 + 调用方循环」，缓存由调用方建 ◐
+
+**背景**：参考的 `ViewWorld::ViewWorldWindow()` 是一个 200 行的模态循环，里面混着淡入淡出、`Display` 的整屏
+操作、`LocalEvent` 轮询、`Assets` 取图与 `Interface::GameArea` 的读写。端口的 App 层（`AdventureMapScene`）
+已经是「场景收事件、`IScene` 分发」的结构，UI 层的对话框按 ADR-163 只是模型。
+
+**决定**：
+
+1. **`ViewWorldWindow`（`Game/Kingdom`）只做状态与几何**：淡出矩形、雷达/缩放按钮/退出按钮/侧栏的位置、初始
+   视图（含「整图放得下就居中」）、拖动/滚轮/按钮/雷达点击的换算，以及侧栏与两个按钮的 `PixelBuffer` 绘制。
+   它不轮询事件、不淡入淡出、不持有 `Display`。
+2. **缓存不在窗口里建**：参考的 `CacheForMapWithResources` 需要一层四档地形渲染器（MISC4/6/12 + 迷雾 +
+   城镇/英雄图标），端口还没有；窗口因此**接收**已建好的 `ViewWorldMapCache`，`DrawWorld` 只负责贴图。
+   这条边界让窗口现在就能测，也让配色渲染器可以单独落地。
+3. **按钮区来自精灵尺寸**：参考 `Button::area()` 就是精灵的宽高，端口的窗口在构造时用
+   `IViewWorldSpriteSource` 读出两张按钮图的尺寸；取不到就是空矩形，点击自然落空——比参考的断言宽松，比崩溃好。
+4. **雷达只在开窗时重新着色**：`DrawRadar(display, renderMapObjects)` 的参数对应参考
+   `RedrawForViewWorld( roi, mode, renderMapObjects )`：`true` 整图重着色（开窗一次），`false` 只重画光标框。
+5. **档位夹取**：`ViewWorldZoom` 的构造对「档位 ≥ 档位数」抛异常（照抄参考的 `assert`），而设置文件里可能存着
+   编辑器用过的第 4 档；窗口在构造前把它夹到最后一档，调用方不必先判断。
+6. **`Close()` 就是持久化点**：它返回 `Zoom.ZoomLevel`，对应参考的 `conf.SetViewWorldZoomLevel(...)`；端口没有
+   `Settings` 的等价项，写回留给 App（`IScene` 或 `GameHost` 的配置存储）。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ViewWorldWindow.cs`（约 430 行）与 `ViewWorldWindowTests` 21 条；
+Game 2 900 → **2 921**，合计 3 953 → **3 974** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：`CacheForMapWithResources` 的分块绘制器（四档地形 + 迷雾 + 图标）与冒险地图场景里的入口按钮，
+两者都还没有；窗口本身已经可以被这些代码直接驱动。
+
+## ADR-188：世界视图的缓存由「一个 576×576 的冒险地图视图」逐块渲染，城镇默认不透过迷雾 ◐
+
+**背景**：`ViewWorldMapCache` 早已转好（18 格一块、缩到三档、贴到缓存图），但它要一个
+`ViewWorldBlockDrawer`——参考里那是「把 `Interface::GameArea` 的 ROI 临时改成 576×576、逐块设中心、`Redraw`」。
+端口直到现在只有测试里的假绘制器，所以世界视图还不能真正出图。
+
+**决定**：
+
+1. **`ViewWorldMapBuilder`（`Game/Kingdom`）**：持 `Mp2Map` + `TerrainTileSet` + `World` + 四个精灵源，
+   `CreateView(mode)` 返回一个 576×576 的 `AdventureMapView`，`Build(mode, levels)` 把闭包
+   `(block, center, layers) => { view.ScrollTo(center - 288); view.Draw(block, layers.Towns); }` 交给缓存。
+   **一个缓存配一个新视图**，构建完即弃：端口没有全局地图区域，也就不存在「世界视图改掉冒险地图 ROI」的风险。
+2. **英雄不进缓存**：参考把 `LEVEL_HEROES` 异或掉、改由 `DrawObjectsIcons` 贴图标，所以视图固定 `heroes: null`。
+3. **迷雾随模式**：`layers.Fog` 决定传不传 `World.Fog`（全图模式传 `null`）。
+4. **`AdventureMapView.Draw(target, drawTownsOverFog)`**：把参考的 `LEVEL_TOWNS` 显式化，**默认关闭**。
+   端口原先的迷雾通道无条件把 `OBJNTWBA`/`OBJNTOWN` 补在迷雾上，等于冒险地图也把未侦察的城镇显形；
+   参考里那个位只有「看城镇」「看全图」两个法术会设，冒险地图的主重绘从来不带。这是一次保真度修复，
+   顺带让 `ViewTowns` 模式有了实现途径。
+5. **不预校验地图边长**：`ViewWorldMapCache` 已经对「不是 18 的倍数」抛 `ArgumentException`，构建器不重复。
+
+**后果**：新增 `src/FHeroes2.Game/Kingdom/ViewWorldMapBuilder.cs`（约 150 行）与 `ViewWorldMapBuilderTests` 8 条；
+`AdventureMapView.Draw` 多一个参数（默认值保持「不画迷雾里的城镇」），`FogLayerTests` 拆成默认/显式两条。
+Game 2 921 → **2 930**，合计 3 974 → **3 983** 全绿，`-warnaserror` 0 警告。
+
+**遗留**：App 侧没有任何模态对话框设施，也没有淡入淡出，所以世界视图还没接到界面上；接入需要先有
+「覆盖冒险地图的模态场景」这一层，再谈打开入口（参考从冒险选项对话框的世界地图按钮进）。
+
+## ADR-189：世界视图的模态由「覆盖层 + 主机分流」拼成；产出型对象的收入在装图时写进元数据 ◐
+
+**背景**：世界视图的模型、缓存、绘制、雷达与窗口都转好了，但它们只被测试驱动，界面上没有入口。参考的
+`ViewWorldWindow()` 是**阻塞**循环（`view_world.cpp:589-795`），端口的 App 是「主机收 SDL 事件、场景收调用」，
+没有嵌套循环；同时真实地图第一次冒烟就崩在两个 `GetValidItemsCount() == 1` 断言上。
+
+**决定**：
+
+1. **不引入嵌套循环**：`ViewWorldOverlay`（`App/Scenes`）只做循环里的两件事——把事件翻译成窗口调用、把窗口画满
+   屏幕。开关（建缓存、写回档位）留给 `AdventureMapScene`，因为开窗要重建一张缓存，那属于场景的状态。
+2. **主机按事件类型分流，不按「是否有对话框」分流**：`GameHost` 在世界视图打开时把鼠标移动/离开、滚轮、左键喂给
+   覆盖层，键盘在 `HandleAdventureKey` 最前面拦截（`Escape` 关闭，其余忽略）。参考的循环也只认左键、滚轮、
+   `Exit`/`Escape`；把拦截写进已经存在的几个 `if` 里，比给 App 造一套通用模态栈便宜。
+3. **点击按「按下与松开同在一个按钮」判定**：照抄 `MouseClickLeft` 的语义，覆盖层记住按下位置再在松开时比较；
+   地图拖拽则从按下就开始，中心由 `ViewWorldWindow.DragTo` 推。这样「按下 EXIT 再拖出去松开」不会误关。
+4. **档位写回场景字段**：`CloseViewWorld()` 返回 `ZoomLevel?`，场景把它存进 `_viewWorldZoom`（参考的
+   `conf.SetViewWorldZoomLevel`）。端口没有 `Settings`/配置文件对象，所以只留在内存里，下次开窗沿用。
+5. **入口临时化**：参考从冒险选项对话框的「世界地图」按钮进，那个对话框没转；先用 `V` 键与 `--view-world`
+   命令行开关顶上，两处代码注释写明是临时入口，等对话框落地再撤。
+6. **收入元数据在装图时补**：`Tile.Init` 末尾调 `InitIncomeObjectMetadata`，按对象类型与 `EXTRAOVR` 车架号照参考
+   (`map_object_info.cpp:4256-4277/4403/4423`) 填 `metadata[0]`（资源位标志）与 `metadata[1]`（每日产量）。MP2 文件
+   没有元数据块，`metadata[0]` 只是 `quantity >> 3`，把对象信息里的事实放在装图路径上是唯一不散落的地方。
+7. **多格对象「没有资源就不画」**：参考给整个对象的所有格子写同一份元数据；端口按格读 MP2，矿井邻格与资源堆邻格
+   读到空 `Funds`。渲染器把 `assert( GetValidItemsCount() == 1 )` 换成「不是恰好一项就跳过」，宁可少画一个邻格图标，
+   也不崩、也不画五份。
+
+**后果**：新增 `src/FHeroes2.App/Scenes/ViewWorldOverlay.cs`（约 155 行）；`AdventureMapScene` 加
+`OpenViewWorld`/`CloseViewWorld`（后者返回档位）；`GameHost` 加四处分流与 `V` 键；`CommandLineOptions` 加
+`--view-world`；`Tile` 加 `InitIncomeObjectMetadata`/`SetIncomeMetadata`；`ViewWorldRenderer` 两处断言改守卫。
+`TileMetadataTests` +7（装图路径的收入表），`ViewWorldRendererTests` +1（`metadata` 全零不请求精灵）。
+Game 2 930 → **2 938**，合计 3 983 → **3 991** 全绿，`-warnaserror` 0 警告。App 层没有自动化测试，用
+`--view-world` 冒烟截图（`artifacts/viewworld.png`）验证。
+
+**遗留**：淡入淡出没做；正式入口（冒险选项对话框）未转；档位没有落地到配置；`OBJ_RESOURCE` 的多格邻格在参考里也会
+各画一次图标（因为元数据被复制），端口现在只画带精灵的那一格——若要完全对齐，得在装图时把整组对象的元数据分发到
+全部格子，这需要先有「对象 → 格子」的映射，暂不做。

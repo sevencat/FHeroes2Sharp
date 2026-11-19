@@ -55,6 +55,9 @@ public sealed class Minimap
     /// <summary>Palette index of a road, <c>COLOR_ROAD</c>.</summary>
     public const byte RoadColor = 0x7A;
 
+    /// <summary>Palette index of an artifact or a resource pile, <c>COLOR_GRAY</c>.</summary>
+    public const byte GrayColor = 0x10;
+
     /// <summary>Palette index of the blue kingdom, <c>COLOR_BLUE</c>.</summary>
     public const byte BlueColor = 0x47;
 
@@ -144,7 +147,7 @@ public sealed class Minimap
         }
 
         double zoom = (double)PanelSize / map.Width;
-        PixelBuffer image = Scale(colors, map.Width, map.Height, zoom);
+        PixelBuffer image = ScaleColors(colors, map.Width, map.Height);
         return new Minimap(map.Width, map.Height, zoom, colors, image);
     }
 
@@ -221,24 +224,40 @@ public sealed class Minimap
     /// relative to the top left corner of the panel. Empty when the viewport shows the whole map, which
     /// is when the reference hides the cursor instead of drawing a frame around everything.
     /// </summary>
-    public Rect CursorArea(in Rect visibleTiles)
+    public Rect CursorArea(in Rect visibleTiles) => CursorArea(visibleTiles, Width, Height);
+
+    /// <summary>
+    /// The rectangle that marks <paramref name="visibleTiles"/> on a panel of any map size,
+    /// <c>Radar::RedrawCursor</c>.
+    /// </summary>
+    /// <param name="visibleTiles">The tiles the window shows, relative to the top left of the map.</param>
+    /// <param name="mapWidth">Width of the map in tiles.</param>
+    /// <param name="mapHeight">Height of the map in tiles.</param>
+    /// <returns>The frame in panel pixels, or an empty rectangle when the whole map is visible.</returns>
+    /// <remarks>
+    /// 世界视图的雷达和冒险地图的雷达画的是同一个框，但前者的地图尺寸不在 <see cref="Minimap"/> 实例里
+    /// （面板由 <see cref="FHeroes2.Game.Kingdom.ViewWorldRadar"/> 自己着色），所以把「裁到世界再缩放」
+    /// 这一步抽成静态的。
+    /// </remarks>
+    public static Rect CursorArea(in Rect visibleTiles, int mapWidth, int mapHeight)
     {
-        if (visibleTiles.Width >= Width && visibleTiles.Height >= Height)
+        if (visibleTiles.Width >= mapWidth && visibleTiles.Height >= mapHeight)
         {
             return default;
         }
 
         // The reference clips the region of interest to the world before it scales it.
-        Rect clamped = visibleTiles.Clip(new Rect(0, 0, Width, Height));
+        Rect clamped = visibleTiles.Clip(new Rect(0, 0, mapWidth, mapHeight));
         if (clamped.IsEmpty)
         {
             return default;
         }
 
-        int left = ScaleCoordinate(clamped.X);
-        int top = ScaleCoordinate(clamped.Y);
-        int right = ScaleCoordinate(clamped.Right);
-        int bottom = ScaleCoordinate(clamped.Bottom);
+        double zoom = (double)PanelSize / mapWidth;
+        int left = (int)(clamped.X * zoom);
+        int top = (int)(clamped.Y * zoom);
+        int right = (int)(clamped.Right * zoom);
+        int bottom = (int)(clamped.Bottom * zoom);
 
         // A viewport of a single tile can round down to zero pixels; the reference clamps the same way.
         return new Rect(left, top, Math.Max(right - left, 1), Math.Max(bottom - top, 1));
@@ -266,7 +285,17 @@ public sealed class Minimap
             return;
         }
 
-        Rect area = new(origin.X + cursor.X, origin.Y + cursor.Y, cursor.Width, cursor.Height);
+        DrawCursorFrame(target, new Rect(origin.X + cursor.X, origin.Y + cursor.Y, cursor.Width, cursor.Height));
+    }
+
+    /// <summary>
+    /// Paints the dotted frame of <paramref name="area"/> into <paramref name="target"/>,
+    /// <c>fheroes2::DrawBorder</c> with the six pixel step of the radar cursor.
+    /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="area">The frame in the coordinates of <paramref name="target"/>.</param>
+    public static void DrawCursorFrame(PixelBuffer target, in Rect area)
+    {
         if (area.Width < 2 || area.Height < 2)
         {
             return;
@@ -308,11 +337,17 @@ public sealed class Minimap
         }
     }
 
-    /// <summary>Maps a tile coordinate onto the panel, `tile * area.width / world.width` of the reference.</summary>
-    private int ScaleCoordinate(int tile) => (int)(tile * Zoom);
-
-    private static PixelBuffer Scale(byte[] colors, int width, int height, double zoom)
+    /// <summary>
+    /// Scales a grid of tile colours onto the <see cref="PanelSize"/> square panel, nearest neighbour,
+    /// the pixel loop of <c>Radar::RedrawObjects</c>.
+    /// </summary>
+    /// <param name="colors">One palette index per tile, row major.</param>
+    /// <param name="width">Width of the grid in tiles.</param>
+    /// <param name="height">Height of the grid in tiles.</param>
+    /// <returns>The panel.</returns>
+    public static PixelBuffer ScaleColors(byte[] colors, int width, int height)
     {
+        double zoom = (double)PanelSize / width;
         PixelBuffer image = new(PanelSize, PanelSize);
         for (int y = 0; y < PanelSize; ++y)
         {

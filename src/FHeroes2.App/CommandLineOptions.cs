@@ -14,6 +14,7 @@ namespace FHeroes2.App;
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
+///                 [--view-world]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
 ///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
@@ -113,6 +114,13 @@ public sealed class CommandLineOptions
     /// installed map collection: the frame only depends on the file that is passed in.
     /// </summary>
     public string? MapFile { get; private set; }
+
+    /// <summary>
+    /// Opens the View World window as soon as the adventure map is up (<c>--view-world</c>). The window
+    /// normally opens from the adventure options dialog, which the port does not draw yet, so this is
+    /// how its frame is screenshotted and smoke tested.
+    /// </summary>
+    public bool ViewWorld { get; private set; }
 
     /// <summary>
     /// Paints a rectangle of ground as soon as the editor opens (<c>--editor-paint
@@ -328,6 +336,10 @@ public sealed class CommandLineOptions
                     options.MapFile = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--view-world":
+                    options.ViewWorld = true;
+                    break;
+
                 case "--editor-paint":
                     options.EditorPaint = ParseEditorPaint(RequireValue(arguments, ref i, argument), argument);
                     break;
@@ -416,6 +428,7 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");
         Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
+        Console.WriteLine("  --view-world        Opens the View World window as soon as the map is up.");
         Console.WriteLine("  --editor-paint <x,y,w,h,ground>  Paints that rectangle of tiles when the editor");
         Console.WriteLine("                      opens, e.g. '50,50,6,4,Snow' (ground name or 1..9).");
         Console.WriteLine("  --editor-save <file>  Saves the map to that file when the editor opens; combine with");

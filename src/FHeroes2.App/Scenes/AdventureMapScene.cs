@@ -9,6 +9,7 @@ using FHeroes2.Core.Io;
 using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Kingdom;
 
 namespace FHeroes2.App.Scenes;
 
@@ -67,6 +68,12 @@ public sealed class AdventureMapScene : IScene
     private bool _leftHeld;
     private bool _radarGrabbed;
 
+    private readonly IViewWorldSpriteSource? _viewWorldSprites;
+    private readonly PlayerColor _friends;
+
+    private ViewWorldOverlay? _viewWorld;
+    private ZoomLevel _viewWorldZoom = ZoomLevel.ZoomLevel2;
+
     private AdventureMapScene(
         ScreenBuffer frame,
         GameFonts? fonts,
@@ -76,7 +83,9 @@ public sealed class AdventureMapScene : IScene
         Minimap minimap,
         MapFrame mapFrame,
         IconSpriteSet? iconSprites,
-        ButtonSpriteSet? buttonSprites)
+        ButtonSpriteSet? buttonSprites,
+        IViewWorldSpriteSource? viewWorldSprites,
+        PlayerColor friends)
     {
         _frame = frame;
         _fonts = fonts;
@@ -90,6 +99,8 @@ public sealed class AdventureMapScene : IScene
         _iconSprites = iconSprites;
         _buttons = new ButtonsPanel(mapFrame.Panel);
         _buttonSprites = buttonSprites;
+        _viewWorldSprites = viewWorldSprites;
+        _friends = friends;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
         _radar = mapFrame.Radar;
@@ -229,7 +240,9 @@ public sealed class AdventureMapScene : IScene
                 minimap,
                 mapFrame,
                 IconSpriteSet.TryCreate(assets),
-                ButtonSpriteSet.TryCreate(assets));
+                ButtonSpriteSet.TryCreate(assets),
+                assets is null ? null : new IcnViewWorldSpriteSource(assets),
+                observers);
 
             // With a started game the map opens on the acting hero instead of the middle castle.
             scene.CentreOnFocusHero();
@@ -256,6 +269,80 @@ public sealed class AdventureMapScene : IScene
             GameLog.Error($"The map '{mapInfo.FilePath}' could not be opened", exception);
             return null;
         }
+    }
+
+    /// <summary>The open View World window, <see langword="null"/> while the adventure map is on screen.</summary>
+    public ViewWorldOverlay? ViewWorld => _viewWorld;
+
+    /// <summary>Whether the View World window owns the screen and the input.</summary>
+    public bool IsViewWorldOpen => _viewWorld is not null;
+
+    /// <summary>
+    /// Opens the View World window on <paramref name="mode"/>, the body of <c>ViewWorld::ViewWorldWindow()</c>
+    /// (<c>view_world.cpp:589-700</c>) up to its event loop.
+    /// </summary>
+    /// <param name="mode">Which objects to reveal.</param>
+    /// <returns><see langword="false"/> when the window is already open or its artwork is missing.</returns>
+    /// <remarks>
+    /// <para>
+    /// 参考在淡出之后才建缓存（`CacheForMapWithResources`），本方法照这个顺序做三件事：用
+    /// <see cref="ViewWorldMapBuilder"/> 把整张图渲染成每档一张、把图标盖上去（`DrawObjectsIcons`）、再把
+    /// 结果交给 <see cref="ViewWorldWindow"/>。
+    /// </para>
+    /// <para>
+    /// 缓存只对这个模式有效（图标与迷雾都按模式烘进去），所以模式一变就要重开，跟参考一致。
+    /// </para>
+    /// </remarks>
+    public bool OpenViewWorld(ViewWorldMode mode)
+    {
+        if (_viewWorld is not null || _viewWorldSprites is null)
+        {
+            return false;
+        }
+
+        ViewWorldMapCache cache = new ViewWorldMapBuilder(
+            _view.Map,
+            _view.Tiles,
+            _world,
+            _view.Objects,
+            _view.Monsters,
+            _view.Boats,
+            _view.FogSprites).Build(mode);
+
+        ViewWorldRenderer.DrawObjectsIcons(_friends, mode, cache, _world, _viewWorldSprites);
+
+        var window = new ViewWorldWindow(
+            _world,
+            mode,
+            _friends,
+            _viewWorldZoom,
+            _viewport,
+            _view.VisibleTileArea,
+            cache,
+            _frame.Size.Width,
+            _frame.Size.Height,
+            _viewWorldSprites);
+
+        _viewWorld = new ViewWorldOverlay(window, _frame);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Closes the View World window and remembers the zoom level it was left at, the
+    /// <c>conf.SetViewWorldZoomLevel( ... )</c> of <c>view_world.cpp:771-772</c>.
+    /// </summary>
+    public ZoomLevel? CloseViewWorld()
+    {
+        if (_viewWorld is null)
+        {
+            return null;
+        }
+
+        _viewWorldZoom = _viewWorld.Close();
+        _viewWorld = null;
+
+        return _viewWorldZoom;
     }
 
     /// <summary>Advances the edge scroll of the mouse and the walk animation of the heroes.</summary>
@@ -337,6 +424,15 @@ public sealed class AdventureMapScene : IScene
     /// </summary>
     public void DrawFrame(in DiagnosticsState state)
     {
+        // The View World window owns the whole display, the way the reference draws it straight into
+        // the screen buffer and covers the adventure map with its side panel.
+        if (_viewWorld is { } viewWorld)
+        {
+            viewWorld.Draw();
+
+            return;
+        }
+
         // The frame is painted first and the map on top of it: ADVBORD already holds the border, the
         // radar bay and the panel bay, so the only work left is to put the map between them.
         // The map is written straight into the indexed pixels, which cannot report the change, so
