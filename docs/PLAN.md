@@ -731,31 +731,33 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 
 
 
-### 剩余工作量（按行数，2026-11-19）
+### 剩余工作量（按行数，2026-11-21 重算）
 
-文件计数不适合估工作量：`dialog` 那 23 个未转文件合计 10 404 行，而 `battle_interface.cpp` 一个就 7 538 行，比
-`army` 整个目录还大。这一节按参考 `.cpp` 的行数排一遍，口径只数「整文件未转」与「部分文件里点明的缺口」，排除
-ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_format_info.cpp` 853 走 MP2 用不到，`dir.cpp`、
-`tinyconfig.cpp` 与翻译层按 ADR-139 不移植）。
+这一节按参考 `.cpp` 的行数排一遍（2026-11-21 按 checkout `6c51acfdc` 重算：`src` 下 257 个 `.cpp` / 152 384 行，
+端口 `src` 548 个 `.cs` / 107 209 行，另 tests 316 个 / 52 895 行）。口径只数「整文件未转」与「部分文件里点明的
+缺口」，排除 ADR 写明不移植的（`tools` 1 228、`map_format_helper.cpp` + `map_format_info.cpp` 1 377、`dir.cpp`、
+`tinyconfig.cpp`、翻译层按 ADR-139）。旧表的数字取自更晚的 checkout，逐文件高 15~25%（`battle_interface` 7 538 vs
+6 144、`selectitems` 2 220 vs 1 777），本轮全部换成本地实测值。
 
-| 工作包 | 参考（行数） | 规模 | 前置 / 备注 |
+| 工作包 | 参考（行数，实测） | 规模 | 前置 / 备注 |
 | --- | --- | --- | --- |
-| 战斗界面与结算 | `battle_interface` 7 538、`battle_dialogs` 1 220、`battle_only` 843、`battle_main` 507、`battle_interface_settings` 334、`battle_action` 剩五支 ≈1 200、`battle_arena.Turns`/`battle_board`/`battle_army` 的尾巴 | ≈12 000 | 单位、寻路、桥/塔/投石车/墓与动作循环已就绪，缺的是「画」与「结算」 |
-| AI | 9 个 `.cpp`：`ai_planner_hero` 3 309、`ai_hero_action` 2 504、`ai_battle` 2 152、`ai_battle_spell` 984、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525 … | 11 230 | 契约已落（ADR-161），要完整战力、英雄动作与战斗决策 |
-| 对话框实现 | 23 个：`selectitems` 2 220、`quickinfo` 967、`selectfile` 753、`recruit` 694、`marketplace` 685、`selectcount` 652、`thievesguild` 486、`hotkeys` 484 … | 10 404 | 全部卡在同一层：`DialogElement`/`TextBase`/`Slider`/`Scrollbar`/`OptionButtonGroup`/`TextBox` |
-| `game` 会话层 | 22 个：`game_startgame` 1 735、`game_campaign` 1 710、`game_credits` 817、`game_over` 702、`game_auto_playtest` 698、`game_hotkeys` 597、`game.cpp` 502、`highscores` 476+378 … | 10 141 | 场景循环的宿主，窗口最终要接进这里 |
-| `editor` 窗口 | 13 个：`editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436、`options` 379、`daily_event_spec` 374 … | 7 978 | `EditorScene`/`EditorPanel`/`EditorInterface` 已有骨架 |
-| `gui` 剩余 | 14 个：`ui_keyboard` 1 360、`interface_status` 524、`player_info` 462、`skill_bar` 458、`ui_map_object` 366、`ui_castle` 324、`interface_focus` 287、`ui_campaign` 218 … | 4 604 | 软键盘最重，其余是面板与状态栏 |
-| `engine` 剩余 | 10 个：`image_color_conversion` 1 369、`audio_xmi2mid` 692、`system` 615、`smk_decoder` 325、`core` 194、`dir` 190 … | 4 039 | `serialize` 的流层已转（ADR-181）；`dir`/`tinyconfig` 明确不移植 |
-| 城堡屏 / 城镇屏 / 王国屏 | `castle_dialog` 859、`castle_town` 772、`kingdom_overview` 959、`view_world` 795、`castle_building`/`buildinginfo` 的 blit | ≈3 400 | 规则部分都已有，缺绘制与事件循环；`view_world` 的缩放模型、分块缓存、像素层、雷达、窗口本体与缓存构建器已转（ADR-184~188），只剩 App 侧接入；`kingdom_overview` 未动 |
-| `heroes` 剩余 | `heroes_dialog` 831、`heroes_meeting` 869、`heroes_base` 622、`heroes_spell` 421、`heroes_indicator` 333 | 3 076 | 另加 `heroes_action` 的军队/战斗分支 |
-| 随机地图 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237 | 2 455 | 与编辑器无关，可独立做 |
-| `campaign` | `campaign_data` 971、`campaign_scenariodata` 831、`campaign_savedata` 270 | 2 072 | 要战役数据与对话框 |
-| `army` 的两个界面文件 | `army_bar` 741、`army_ui_helper` 123 | 864 | `Army`/`Troop` 规则已全 |
-| `monster_anim` | — | 190 | 随战斗批次一起做 |
+| 战斗界面与结算 | `battle_interface` 6 144、`battle_dialogs` 993、`battle_only` 681、`battle_interface_settings` 283、`battle_bridge` 98、`battle_grave` 109、`battle_action` 余支 ≈1 200 | ≈9 500 | 单位、寻路、桥/塔/投石车/墓与动作循环已就绪，缺的是「画」与「结算」 |
+| AI | `ai` 目录 9 019 全是契约：`ai_planner_hero` 3 309、`ai_hero_action` 2 504、`ai_battle` 2 152、`ai_battle_spell` 984、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525 … | 9 019 | ADR-161 的契约已落，九个文件都要实现，没有可复用的半成品 |
+| 编辑器窗口 | 16 个 9 799：`editor_interface` 3 015、`editor_map_specs_window` 2 005、`editor_castle_details_window` 883、`editor_event_details_window` 394 … | 9 799 | 旁支，不进 M 主线；`EditorScene`/`EditorPanel` 只有骨架 |
+| `game` 会话层 | 21 个 7 262：`game_campaign` 1 409、`game_credits` 655、`game_over` 566、`game_auto_playtest` 556、`game_newgame` 532、`game_hotkeys` 530、`game_scenarioinfo` 421 … | 7 262 | 场景循环的宿主，窗口最终要接进这里 |
+| `gui` 冒险界面外壳 | 14 个 4 385：`ui_keyboard` 1 146、`interface_events` 535、`interface_icons` 433、`skill_bar` 394、`player_info` 380、`ui_map_object` 316、`ui_castle` 271、`interface_buttons` 249、`interface_focus` 237 … | 4 385 | `MapFrame`/`StatusPanel`/`ButtonsPanel`/`Radar` 已落；缺的是这些面板本体与事件细化 |
+| 设置窗口 | 7 个 1 907：`dialog_hotkeys` 384、`dialog_system_options` 379、`dialog_resolution` 274、`dialog_graphics_settings` 252、`dialog_interface_settings` 221、`dialog_audio` 212、`dialog_random_map_generator` 205 | 1 907 | **不卡 `OptionButtonGroup`**：当前参考改用 `drawOption` 网格（`ui_option_item.cpp`），端口的 `OptionItem` 已在；每个窗口是一次网格绘制 + 点击映射 |
+| `dialog_selectitems` | 1 777 | 1 777 | 卡 `TextBox` 与滚动列表 |
+| `maps` 剩余 | `maps_tiles_render` 1 118、随机地图三件 2 121 | 3 239 | 地形绘制端口还没有等价物；随机地图是旁支 |
+| 城堡屏 | `castle_dialog` 859（其中布局与资源面板已落，剩 ≈600）、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel` 已落；缺建筑 blit 与事件循环，**六个已落窗口仍没有入口** |
+| `heroes` 剩余 | `heroes_meeting` 695、`heroes_spell` 333、`heroes_indicator` 269、`direction` 186 | 1 483 | 会面窗口依赖已落的 `ArmyInfo` |
+| `campaign` | 3 个 1 874 | 1 874 | 旁支，等 P6 |
+| `engine` 剩余 | `image_color_conversion` 1 362、`audio` 867（播放层）、`audio_xmi2mid` 579、`system` 495、`smk_decoder` 264 … | ≈3 700 | 除 `smk`/`xmi2mid` 外多为平台层 |
+| `monster_anim` | 164 | 164 | 随战斗批次一起做 |
 
-合计 **≈ 7.5 万行**，是 249 个参考 `.cpp`（≈18.3 万行）的四成。近期批量每批 800~1 500 行（ADR-174~178 是「一个
-窗口 + 测试」一批），按这个速度还要 **60~70 批**；「对话框控件层」与「战斗界面」两块各自就要吃掉十批以上。
+合计 **≈ 5.3 万行**：旁支（编辑器 9 799 + campaign 1 874 + 随机地图 2 121 + `ui_keyboard` 1 146）约 1.5 万，
+主线约 3.8 万，占参考 `src` 15.2 万行的四分之一。每批 800~1 500 行，还要 **30~40 批**；战斗 9 500 与 AI 9 019
+两块各吃掉 6~8 批，城堡屏 + 设置窗口 + `selectitems` 合计约 5 400 行，是三批之内能看见玩法闭环的部分。
 
 还有一类不计入上表的缺口 —— 部分文件里没转的那几支，往往比一个整文件还大：`map_object_info.cpp` 的拾取与信息框
 （文件 6 295 行，表已全、缺的几支是拾取、宝物说明与右击）、`game_assets.cpp` 的 `getXxx` 族（5 920 行）、
@@ -818,9 +820,38 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
   `DwellingInfoDialog`、`ArmyInfoDialog`（排版与绘制已接上，ADR-174）、`ArmyJoinDialog`（两个入口一个类）、
   `MarketplaceDialog`、`GiftResourcesDialog`、`BuyBoatDialog`、`ThievesGuildDialog`、`GameInfoDialog`、
   `ArtifactSetDialog`
+* ◐ `dialog_quickinfo.cpp`→`StandardPopupWindow` + `QuickInfoText`：右键提示框的**外层**已转——
+  `QWIKINFO.ICN` 158×94 的挂位（tile 右下角为中心 + 夹取）与居中折行文字，`getQuickInfoText()` 只接了
+  不依赖世界状态的三支（地面/道路/海岸、资源堆、`MP2::StringObject()` 对象名），已接进 `GameHost` 的右键
+  分发与 `--quick-info` 走查（基线 `quick-info.png`）。缺的是需要 `world`/`kingdom` 状态的那些支：雾、
+  守卫与怪物数量、矿的附加行、神殿/住所/关卡/帐篷/知识树/访问物、`showGroundInfo()` 的挖掘行
+* ✅ `dialog_marketplace.cpp`→`MarketplaceDialog` + `MarketplaceView`（模型 + 视图）：参考那个模态循环的
+  状态全在模型里——两边选中的资源、`max_sell`/`max_buy`、滑块位置、`firstExchange`，`Trade()` 直接改
+  财库；滑块只存 index，两个计数由它导出；`ExchangeRateTextFor` 提成静态纯函数好测九座市场那支。
+  视图那一半：`MarketplaceLayout` 摆位、`MarketplaceArtwork`（`TRADPOST` 十九帧 + `MARKETPLACE_ICON` +
+  `RESOURCE` 七帧 + 三个按钮）、`MarketplaceView.Draw`/`ProcessEvents`（两组 34×34 格子、交易条、
+  `Scrollbar` 拖拽与滚轮、左右箭头与 Max/Min、税率图标、成交），`ResourceIconIndex` 给
+  `RESOURCE.ICN` 的序号表。弹出来的两个子窗口见下两行
+* ✅ `ui_dialog.cpp` 的元素行 + `showKingdomIncome()`→`MessageBox` 扩展 + `KingdomIncome`：
+  `MessageBox.Create` 收一个 `DialogElement` 列表，按 `( max(行宽, 元素宽) + 10 ) × (个数 + 1) ≤ 244`
+  打包成行、行间 10 px、元素在行内底对齐居中、行高计入框高，`ProcessEvents` 把元素的
+  `DialogElementResult`（重画标记与弹窗请求）交回调用方；`KingdomIncome` 按金、木、水银、矿、硫磺、
+  水晶、宝石的顺序出元素并跳过零收入，图标取 `ResourceIconIndex.Of` 帧。缺消息框的按钮层
+  （`Dialog::OK`/`YES_NO`），所以城镇那支带 OK 的收入窗还起不来；`Resource::getDescription()` 也没有，
+  右键图标只有标题
+* ✅ `Dialog::MakeGiftResource()`→`GiftWindowView` + `GiftWindowLayout` + `GiftWindowArtwork`：
+  320×234 活动区，三段标题 + 收件人方框块（按对话宽 320 居中）+ 两行七格资源（40 px 步距、小号白字计数）
+  + OKAY/CANCEL；点方框切换收件人并清空计划、点计划行请 `SelectCount`（`max = (财库+计划)/mul`，
+  金步长 100）由 `ApplySelection` 回填（计划 +差额、财库 −差额×人数），OKAY 无收件人或无计划时禁用。
+  缺：写世界那步（`world.AddEventDate`、`kingdom.OddFundsResource`）仍归调用方，赠予窗口也还没接进场
+* ✅ `dialog_recruit.cpp`→`RecruitDialog` + `RecruitWindowView` + `RecruitWindowLayout` + `RecruitWindowArtwork`：
+  299×272 窗口每帧整窗重画（标题、库存句、怪物精灵、计数框、`Cost per troop:` 合成框、UP/DOWN、MAX/MIN 共位、
+  换兵箭头、OKAY/CANCEL），`ProcessEvents` 按参考的 `else-if` 链转发（换兵、怪物信息、键入、计数框、
+  滚轮与 UP/DOWN 连按、MAX/MIN、两键、四处 tooltip）。缺：热键（`DEFAULT_*`）、`ArmyInfo()` 的窗口内容
+  （归 `dialog_armyinfo`）、扣款归调用方
 * ❌ 上述 24 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`artifact`、`audio`、
   `buyboat`、`chest`、`file`、`gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、
-  `interface_settings`、`levelup`、`marketplace`、`quickinfo`、`random_map_generator`、`recruit`、
+  `interface_settings`、`levelup`、`random_map_generator`、
   `resolution`、`selectcount`、`selectfile`、`selectitems`、`system_options`、`thievesguild`
 
 ### `editor`（18）
@@ -1229,22 +1260,31 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
 
 | 序 | 工作包 | 参考文件（行数） | 批数 | 前置 | 退出条件 |
 | --- | --- | --- | --- | --- | --- |
-| **P0** | 对话框控件层 | `ui_slider` 129、`ui_option_item` 144、`ui_text` 里的 `TextBox`、`ui_dialog` 里的 `DialogElement` 族（`TextDialogElement`/`CustomImageDialogElement`/`ArtifactDialogElement`/`ResourceDialogElement`/`SpellDialogElement` 等） | 1–2 | 无（`TextBase`/`Text`/`ScrollBar`/`ScrollSlider`/`Button`/`FrameBox` 已就位） | `Slider` 能拖动/点箭头/滚轮且越界返回 `false`；`OptionItem` 的图标+上下两行文字按 `TWO_ELEMENTS_ROW` 对齐；`DialogElement` 五个派生类能 `Draw`/`ProcessEvents`/`ShowPopup`；测试覆盖越界与点击语义 |
-| **P1** | 冒险界面外壳 | `interface_base` 45、`interface_status` 440、`player_info` 380、`interface_focus` 237、`ui_map_interface` 67、`statusbar` 62 | 1–2 | 无 | `ADVBORD` 640×480 框 + 顶部状态栏（日期/资源/旗帜）+ 底部按钮面板 + 雷达落位；`adventure-map.png` 基线重拍；焦点（悬停/按下）随鼠标走 |
-| **P2** | 对话框第一批 | `dialog_adventure`（世界视图正式入口）、`quickinfo` 967、`selectcount` 652、`recruit` 694、`marketplace` 685 | 2–3 | P0 | `V` 键从 `dialog_adventure` 进世界视图；右击对象出 `quickinfo`；招募/市场能改兵力与资源 |
-| **P3** | 城镇屏 | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit、`ui_castle` 271、`ui_mage_guild` 192 | 2–3 | P0/P1 | 进城镇 → 造建筑 → 招兵 → 出城，M6 验收 |
-| **P4** | 战斗界面与结算 | `battle_interface` 7 538、`battle_dialogs` 1 220、`battle_only` 843、`battle_main` 507、`battle_interface_settings` 334、`battle_action` 余五支、`monster_anim` 190 | 4–5 | P3（`army`/`castle` 已就绪） | 一场战斗从开打到结算 + 战利品；M7 验收 |
-| **P5** | AI | `ai_battle` 2 152、`ai_battle_spell` 984、`ai_hero_action` 2 504、`ai_planner_hero` 3 309、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525、`ai_planner_internals` | 5–6 | P4（战斗决策要能调用战斗接口） | 每个换掉 `NotImplementedException` 的入口配一条行为测试；AI 回合能自己走完 |
-| **P6** | `game` 会话层与存档 | `game_startgame`、`game_init`、`game_io`、`game_over`、`game_highscores`/`highscores`、`game_campaign`、`game_credits`、`game_hotkeys`、`game_video` 等 20 个 | 4–5 | P2/P4 | 重新开始/存档/读档/结束回合/胜负结算闭环；M8 验收 |
-| **P7** | 编辑器窗口 | `editor_map_specs_window` 2 518、`editor_castle_details_window` 1 065、`event_details` 504、`save_map` 487、`sphinx` 471、`spell_selection` 436 等 13 个 | 3–4 | P0 | 编辑器能改地图规格/事件/城堡详情并保存 |
-| 旁支 | 可随时插队 | `map_random_generator` 982 + `_helper` 1 236 + `_info` 237（独立）；`campaign_*` 2 072（等 P6）；`ui_keyboard` 1 360（等 P2）；`smk_decoder` 325；`serialize` 尾巴；`audio_xmi2mid` 692 | 4–5 | — | 各自独立可测 |
+| **P0** | 城堡屏入口（进行中：布局与资源面板已落） | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | 2–3 | 无：`Castle`/`Kingdom`/`BuildingInfo`/`FadeBuilding` 与六个子窗口（招募、水井、魔法塔、军队信息、市场、城建）都已落，只缺入口 | 冒险屏点城堡 → 城镇屏 → 六个窗口能开、能回、能改数据 → 出城；`castle-dialog.png` 基线；M6 验收 |
+| **P1** | 设置窗口网格 | 7 个 1 907 | 1–2 | 无：`OptionItem` 已在（`drawOption` 网格） | 每个窗口一组网格 + 点击映射，改动落到 `Settings`；`SettingsDialog` 的 chevron 替身换成同一套网格 |
+| **P2** | `TextBox` + `dialog_selectitems` | 1 777 | 1–2 | P1 | 选件窗口能滚动、能过滤、能返回选择；`InputString` 的文本框一并落 |
+| **P3** | 冒险界面外壳补全 | `interface_events` 535、`interface_icons` 433、`skill_bar` 394、`ui_map_object` 316、`ui_castle` 271、`interface_buttons` 249、`interface_focus` 237 | 2–3 | P0（`ui_castle` 与城镇屏共用命中表） | 焦点/悬停/按钮面板/英雄栏与参考一致；`adventure-map.png` 重拍 |
+| **P4** | 战斗界面与结算 | `battle_interface` 6 144、`battle_dialogs` 993、`battle_only` 681、`battle_interface_settings` 283、`battle_action` 余五支、`monster_anim` 164 | 6–8 | P0（`army`/`castle` 已就绪） | 一场战斗从开打到结算 + 战利品；M7 验收 |
+| **P5** | AI | `ai` 九个文件 9 019 | 6–8 | P4（战斗决策要能调用战斗接口） | 每个换掉 `NotImplementedException` 的入口配一条行为测试；AI 回合能自己走完 |
+| **P6** | `game` 会话层与存档 | 21 个 7 262：`game_campaign`、`game_io`、`game_over`、`game_highscores`、`game_hotkeys`、`game_video`、`player_info`、`game_init` … | 5–6 | P3/P4 | 重新开始/存档/读档/结束回合/胜负结算闭环；M8 验收 |
+| 旁支 | 可随时插队 | 编辑器 9 799、`campaign` 1 874、随机地图 2 121、`ui_keyboard` 1 146、`smk_decoder` 264、`audio_xmi2mid` 579 | 8–10 | — | 各自独立可测；不计入 M 主线完成度 |
 
 **不排进任何包**：`map_format_helper.cpp`/`map_format_info.cpp`（本项目走 MP2）、`dir.cpp`、`tinyconfig.cpp`、
-翻译层（ADR-139）。
+翻译层（ADR-139）、`tools` 8 个（有 `AssetProbe` 对拍）。
+
+排序只看一条：**哪个动作能最先接出让玩家跑起来的闭环**。城堡屏排最前，因为六个窗口都已落却都没有入口，
+它一到位，「进城镇 → 招募/水井/魔法塔 → 出城」就是完整可玩的一段；设置窗口与 `selectitems` 次之，它们是把
+对话框这一层真正收尾；冒险外壳补全排在其后，因为它不再挡任何东西。战斗与 AI 仍留最后，但进包前先清掉
+`monster_anim` 与 `battle_action` 的五个分支，否则那个批次会一拖再拖。
 
 ### 分批落地顺序（6 步，按此顺序推进）
 
 上表给的是优先级，这一步给的是动手顺序。每步结束都要求「能跑、有测试、有基线」，不允许把半步留到下一步：
+
+> **2026-11-21 重排**：原来 1–3 步（控件层、冒险外壳、对话框第一批）已完成其中大部分，剩下的小项（`TextBox`、
+> 招募热键、设置窗口）归入上表 P1/P2。新的动手顺序是：**城堡屏入口（P0）→ 设置窗口网格（P1）→ `TextBox` +
+> `selectitems`（P2）→ 冒险外壳补全（P3）→ 战斗（P4）→ AI 与会话层（P5/P6）**。下面 1–3 步的文字保留为已完成
+> 部分的记录，第 4 步按新口径重写，第 5–6 步内容不变。
 
 1. **控件层收尾**（P0 第一批，已完成）：`Slider`、`OptionItem`、`DialogElement` 基类 +
    `CustomImageDialogElement`/`ResourceDialogElement`、`StatusPanel`（背景拉伸、日期月相、资源两行）已落，
@@ -1258,10 +1298,32 @@ ADR 里写明不适用或不移植的（`map_format_helper.cpp` 2 085 + `map_for
    `WindowPadding`、`ActiveAreaForSymmetricButtons`/`CreateForSymmetricButtons`/`PlaceSymmetricButtons`
    （复刻 `getSymmetricDialogActiveArea` 与 `renderSymmetricButtons`）、`ButtonGroup.CreateFromFrames`
    （复刻 `ButtonGroup(icnID)`），`dialog_adventure` 已按这批地基做成 `AdventureOptionsView` 并接进冒险屏
-   （V 键、`--adventure-options`、基线 `adventure-options.png`）。剩下的 `quickinfo`/`selectcount`/`recruit`/
-   `marketplace` 与 `TextBox`、三个 `DialogElement` 派生类还没有动。
-4. **城镇屏**（P3）：`castle_dialog`、`castle_town`、`castle_building`、`ui_castle`、`ui_mage_guild`。
-   `StatusPanel` 的 ARMY/RESOURCE 两种状态在这一步补上（需要 `ArmyTroop` 与 `RESOURCE.ICN` 索引表）。
+   （V 键、`--adventure-options`、基线 `adventure-options.png`）。`dialog_selectcount` 也做成了
+   `ValueSelectionElement`（`TOWNWIND.ICN` 4-8 的数字块）+ `SelectCountView`（`FrameBox` + 标题 + 数字 + OK/CANCEL），
+   交互与夹取都按参考，但还没有 App 入口：它在参考里的三个调用方（招募、市场、分兵）都还没移植，
+   所以只有 23 条 xunit 与「按下 → 松开」的离屏走查，没有截图。`dialog_quickinfo` 的外层同样落了：
+   `StandardPopupWindow`（`QWIKINFO.ICN` 158×94、挂在 tile 右下角、文字 126 宽居中折行）+
+   `QuickInfoText`（只接地面/道路/海岸、资源堆与对象名三支），已接进 `GameHost` 的右键分发、
+   `AdventureMapScene.SetRightButton` 与 `--quick-info` 走查，基线 `quick-info.png`；其余分支要等
+   `kingdom`/`world` 的雾与访问状态。`dialog_marketplace` 按 `SelectCount` 的路子先拆了模型：
+   `MarketplaceDialog` 现在持有参考循环里的全部状态（两边资源、`max_sell`/`max_buy`、滑块位置、
+   `firstExchange`）、全部字符串与 `Trade()`，22 条 xunit 覆盖率表算术、金币乘/除法、夹取、赠予按钮与
+   四条税率句子；绘制那一半（`TRADPOST` 十九帧、`MARKETPLACE_ICON`、`RESOURCE` 图标、`Scrollbar`）
+   随后也落了（`MarketplaceView` + `MarketplaceLayout` + `MarketplaceArtwork`，30 条 xunit 与一组像素
+   断言）。市集的两个子窗口也补了：`GiftWindowView`/`GiftWindowLayout`/`GiftWindowArtwork`（收件人方框、两行资源、
+   OK/CANCEL，计数请求交回调用方）与 `KingdomIncome`（元素行）。第 1 步欠下的三个 `DialogElement` 派生类现在
+   也齐了——`TextDialogElement`、`ArtifactDialogElement`、`SpellDialogElement`。`dialog_recruit` 也按同一分工
+   拆了：`RecruitDialog` 从 ADR-163 的契约（`Create`/`Choose`/`Result`）长成完整状态机（`Maximum`/`Count`/
+   `Payment`/MAX-MIN 两键/升级链左右箭头/数字键入）；视图那一半（`RecruitWindowView` + `RecruitWindowLayout` +
+   `RecruitWindowArtwork`）也已落，每帧整窗重画、`ProcessEvents` 照参考的 `else-if` 链转发，27 条 xunit。
+   这一步的招募子项只欠热键（`DEFAULT_UP/DOWN/LEFT/RIGHT/OKAY/CANCEL`）与 `ArmyInfo()` 的窗口内容。剩下的
+   `Dialog::InputString` 的文本框（`TextInput`）还没有动。
+4. **城堡屏入口**（P0，进行中）：`castle_dialog`、`castle_town`、`castle_building`、`ui_castle`、`ui_mage_guild`。
+   分两批：先 `CastleDialogLayout` + 静态绘制（`TOWNBKG` 背景、日期行、状态行、左右切城箭头、EXIT、建筑区命中表），
+   再把六个已落窗口接进事件循环并补 `castle-dialog.png` 基线。**第一批已全部落**（`CastleDialogLayout`、
+   `ResourcePanel`、`CastleScreenPainter`，39 条测试）；第二步只剩事件循环（切城、EXIT、点建筑、点资源面板）、
+   城名与状态栏文字、玩家配色与淡入混合。
+   `StatusPanel` 的 ARMY/RESOURCE 两种状态也在这一步补上（需要 `ArmyTroop` 与 `RESOURCE.ICN` 索引表）。
 5. **战斗界面与结算**（P4）：`battle_interface` 与其配套五个文件。
 6. **AI 与会话层**（P5/P6）：两者一起排，因为 AI 回合必须有 `Game::NewDay`/存读档这一层才能跑通。
 

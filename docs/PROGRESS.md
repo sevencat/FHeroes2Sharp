@@ -6912,3 +6912,392 @@ PLAN 第 3 步的第一刀：先把「窗口 + 按钮组」这套地基补上，
 * 对话框不能拖动、没有 `Dialog::AdventureOptions` 的淡入，也没有键盘焦点（Esc 由 `GameHost` 直接处理）。
 * `Puzzle`/`Info`/`Dig` 三个回答目前只写日志：它们各自需要的谜题地图、游戏信息窗口与挖掘规则都还没有。
 
+
+### `dialog_selectcount`：数字选择块 + OK/CANCEL 窗口 ✅（无 App 入口）
+
+PLAN 第 3 步的第二刀。参考的 `Dialog::SelectCount()` 被招募、市场、分兵、赠礼四类窗口共用，是这批对话框里
+复用面最广的一个；端口先把它做成可绘制、可点击的两层，等调用方移植时直接接。
+
+**新增**：
+
+| 文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `src/FHeroes2.UI/Widgets/ValueSelectionElement.cs` | `fheroes2::ValueSelectionDialogElement`（`ui_dialog.cpp:937-1024`） | `TOWNWIND.ICN` 帧 4（68×19 输入框）+ 5/6、7/8（20×10 上下箭头，ICN 锚点 3,2）；6 px 横向与 5 px 纵向间隔，整块 94×25，输入框按 `(25-19)/2` 垂直居中；白色数字用注入的 `IGlyphSource` 居中；按下与松开都在同一箭头才生效（`isMouseLeftButtonPressedAndHeldInArea`），到 `[min,max]` 停住 |
+| `src/FHeroes2.UI/Dialogs/SelectCountView.cs` | `Dialog::SelectCount()`（`dialog_selectcount.cpp:79-131`） | `FrameBox`（`BUYBUILD.ICN`）包数字块：标题按 244 px 折行、行高乘行数得 `headerHeight`，框高 = `headerHeight + 10 + 30`，数字块在 `(框.x+38, 框.y+headerHeight+10)`，OK/CANCEL 由 `ButtonGroup.CreateStandard` 贴底；OK 写 `Result`、CANCEL 留空 |
+
+**与参考的差异**（都写在 XML 注释里）：
+
+* 参考的箭头按住会每 150 ms 自动重复（`TimedEventValidator`）。端口 widget 层没有帧时钟，一次按下只走一步，
+  需要重复的调用方在自己的循环里驱动。
+* 未搬调用方的 `topUiElement`/`bottomUiElement`（参考给招募、市场这类窗口留的上下插槽），端口暂无调用方。
+* 未搬 MAX/MIN 快捷按钮：`BUTTON_SMALL_MAX_GOOD` 在原版资源下是 `RECRUIT.ICN` 帧 4 裁 (5,0,60,25)，但
+  `MIN` 那一半是参考启动时用 `makeButtonSprites()` 现做的，归档里没有对应美术，端口也没有文字按钮生成器。
+
+**测试**：新增 23 条（`ValueSelectionElementTests` 13：94×25 布局、输入框与箭头落位、初值夹取、
+`SetValue` 夹取、上/下箭头步进、边界停住、松手在区外不生效、点输入框不生效、参数校验、绘制；
+`SelectCountViewTests` 10：框宽与最小高、数字块落位、步长取自对话框、缺帧返回 null、空参数异常、
+OK 写回、CANCEL 留空、箭头加一后 OK、点标题区无反应、绘制冒烟）。UI 476 → **499**。
+
+**为什么没有截图**：参考里 `SelectCount` 没有独立入口，只从招募/市场/分兵里弹出；端口这三处都还是契约空壳，
+所以这一刀只有离屏「按下 → 松开」的走查（`SetLeftButton` 序列）与绘制冒烟，没有基线图。等 `dialog_recruit`
+或 `ArmyBar` 的 `ArmyBarAddTroop` 接上就能补一张。
+
+**遗留**：MAX/MIN 按钮与文字按钮生成器（`makeButtonSprites`）、上/下可选插槽、按住重复。
+
+
+### `dialog_quickinfo`：右键提示框（外层）✅
+
+PLAN 第 3 步的第三刀。参考的 `Dialog::QuickInfo()` 是 967 行的大 switch，每个分支都要世界状态；但它的
+**窗口本身**（`Interface::displayStandardPopupWindow()`）与「光标 → tile → 文字」这条链路不依赖世界，
+所以先把这两层做实，接上冒险屏的真实右键。
+
+**新增**：
+
+| 文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `src/FHeroes2.UI/Dialogs/StandardPopupWindow.cs` | `Interface::displayStandardPopupWindow()`（`ui_map_interface.cpp:56-81`）+ `getPopupWindowPosition()`（同文件） | 单张 `QWIKINFO.ICN` 158×94；文字区宽 = 框宽 − 2×16 = 126、左边距 22、垂直 −6 后在框内按 `行高×行数` 居中；挂位按光标所在 tile 的右下角为中心（`((local − 16) / 32) × 32 + 32 − 框宽/2`），再夹取到界面区；框大于界面区返回 `null`；`Draw` 走 `ImageOps.BlitSprite` + `GlyphText.DrawMultiline( center: true )` |
+| `src/FHeroes2.UI/Dialogs/QuickInfoText.cs` | `getQuickInfoText()`（`dialog_quickinfo.cpp:455-595`）+ `showGroundInfo()` | 不依赖世界状态的三支：`OBJ_NONE`/`OBJ_EVENT`/`OBJ_COAST` → 海岸名 / `Road` / `Ground.ToString()`；`OBJ_RESOURCE` → 主部件 `OBJNRSRC.ICN` 帧号经 `Mp2ObjectData.ResourceFromSpriteIndex` 反查资源名并首字母大写；其余 → `Mp2ObjectName.Of()`（等于参考的 `default` 支） |
+| `src/FHeroes2.App/Scenes/QuickInfoArtwork.cs` | `Assets::getImage( ICN::QWIKINFO )` | 取 `QWIKINFO.ICN` 第 0 帧；缺档或解析失败只 `GameLog.Warn` 并返回 `null`，场景退化成不弹框 |
+
+**修改**：`AdventureMapScene` 加 `_quickInfoFrame`/`_quickInfo` 与 `SetRightButton( bool down )`（按下时按光标
+所在 tile 建框、松开或光标不在视口时清空），`DrawFrame` 末尾叠加框（最上层 tooltip）；`GameHost` 把右键
+转发给 `SetRightButton`（`Interface::MouseRightClick` 的入口），并加 `--quick-info` 走查——配合 `--cursor`
+把「光标 → tile → 文本」打进日志，用于没有鼠标时截基线；`CommandLineOptions` 新增 `QuickInfo`；
+`VerifyAdventureMapBaseline.ps1` 加 `-QuickInfo`（默认光标 `620,100` 在图标条上，会自动挪到 `250,190`
+的一座矿上，基线名前缀 `quick-info`）。
+
+**新基线 `quick-info.png`**（640×480，117 869 字节，sha256 `9F1E0EDA…B82E58A`）：`Alteris.mp2` + 木框
+「Mine」。走查确认过的 tile→文本：`200,300 => Beach`、`250,190 => Mine`、`300,320 => Monster`、
+`150,330 => Water`、`400,340 => Monster`、`260,150 => Mine`。
+
+**与参考的差异**（都写在 XML 注释里）：
+
+* 未搬 `CursorRestorer` / `ImageRestorer`：参考用它们省掉重绘，端口每帧整屏重画，没有要还原的东西。
+* 参考在「按住右键」期间显示，端口由调用方持有生命周期（`SetRightButton` 建/清），UI 层不碰事件循环。
+* `getQuickInfoText()` 的其余分支都要世界状态：雾（`Uncharted Territory` 常量已留，由调用方传文）、
+  `isCaptureObjectProtected()` 与 "guarded by"、怪物数量、矿/神殿/住所/关卡/帐篷/知识树/访问物的附加行、
+  `showGroundInfo()` 的挖掘行与寻路惩罚。
+
+**测试**：新增 15 条（`StandardPopupWindowTests` 10：右下角挂出且中心等于 tile 角 `(112,112)`、左上/右下
+夹取、文本区 126 宽与 `−6 + (94−15)/2`、折行后框高随行数增长、框超界面返回 `null`、三参数 null 校验、
+绘制冒烟、`Draw(null)` 异常；`QuickInfoTextTests` 5：裸地、`Road` 位、`Coast`、资源堆帧号反查、其他对象名）。
+UI 499 → **514**，合计 4 086 → **4 101** 全绿，`dotnet build` 0 警告；`quick-info.png`、`adventure-map.png`、
+`adventure-options.png` 三条基线 `identical`。
+
+**遗留**：上面列的世界状态分支；提示框不跟随光标移动刷新（参考在按住期间重定位，端口要等下一次按下）。
+
+
+### `dialog_marketplace`：交易模型 ✅
+
+PLAN 第 3 步的第四刀，P2「市场能改资源」的前半。参考的 `Dialog::Marketplace()` 是一个 300 行的模态循环，
+状态（两边选中的资源、`max_sell`/`max_buy`、`count_sell`/`count_buy`、`firstExchange`）全在栈上，交易直接写进
+`kingdom`。照 `SelectCountDialog` / `SelectCountView` 的路子先拆模型，本轮只落模型这一半。
+
+**重写** `src/FHeroes2.UI/Dialogs/MarketplaceDialog.cs`（原来只有 `Create` 与 `Kingdom`/`IsFromTradingPost`）：
+
+* 市场数：交易站恒为 `tradingPostValue = 3`，否则 `kingdom.CountMarketplaces()`；税率为 0 时一律不换。
+* `SelectFrom` / `SelectTo`：`max_sell = 财库(resourceFrom)`，`max_buy` 只在税率非零时重算
+  （`GOLD == to ? max_sell*rate : max_sell/rate`，无符号除法丢余数）——参考就是这样，选同一资源两次会留下旧的
+  `max_buy`，但交易区已隐藏，读不到。
+* 滑块：只存 `SliderIndex`，`[0, SliderMaxIndex]` 夹取，`SliderMaxIndex = GOLD == to ? max_sell : max_buy`；
+  `CountSell`/`CountBuy` 由它导出（金币目标乘、其余除），两个计数不会漂移。`IncreaseTrade`/`DecreaseTrade`
+  对应参考的左右箭头与 Max/Min，到边界返回 false。
+* `IsTradeAreaVisible` 精确复刻 `disable || from == to || ( GOLD != to && 0 == max_buy )`；
+  `CanTrade` 再加上两个计数非零；`Trade()` 走 `OddFundsResource` + `AddFundsResource`，清空选择、把
+  `firstExchange` 置 false。
+* 全部字符串：两条店铺句子、`-N (M)` / `+N (M)`、`I can offer you …` 两支、税率窗口四支
+  （交易站恒说「相当于 3 个市场」，1 座、≥ 9 座各有专句）。税率句子提成静态
+  `ExchangeRateTextFor(bool, int)`，否则九座市场那句要造九个城镇才测得到。
+* 赠予按钮只建模不实现：`IsGiftEnabled` = 「≥ 2 个在玩的玩家」，`Create` 加 `activePlayers`（默认 1）。
+
+**新增** `src/FHeroes2.Game/Resources/ResourceText.cs`：`Resource::String()` 的七个名字 + `Unknown`，
+是两条交易句子与税率句子的依赖；`Resource::getDescription()` 仍缺（只有资源对话框要）。
+
+**测试**：新增 22 条 `MarketplaceDialogTests`——三市场汇率（木→金 50、木→矿 5）、金币目标乘法与滑块即售出量、
+资源目标整除与滑块上限、夹取、箭头到界、交易区三种隐藏条件、金币/资源两笔真实转账、`Trade()` 的空交易与重复
+交易、`ClearSelection`、赠予开关、四条税率句子、`Create` 参数校验。
+
+**发现的一处参考怪癖**（已按原样保留并在测试里钉住）：交易区因为「财库被清空」而隐藏时，`firstExchange` 仍在，
+但参考的首句条件还要求 `from == to || max_buy == 0`，此时两者都不成立，于是显示「You have received quite a
+bargain」却没有成交过。端口照抄，`EmptyTreasury_HidesTheTradeArea` 断言的就是这句。
+
+**下一刀要用的摆位**（`pos_rt` = `FrameBox` 的文字区，`box.Area`，244 宽，`FrameBox` 高 297 + 按钮）：
+两组 34×34 格子从 `(x, y+190)` 与 `(x+136, y+190)` 起，步进 37、金币居中；`"Your Resources"` /
+`"Available Trades"` 在格子上方 15 px 居中于 108 宽；税率图标中心在 `(x + width/2, 金币格 y)`，下面
+`x N`；交易条帧 1 在 `(x + (width-bar)/2 - 2, y+128)`，滑块区 `(x + (width-bar)/2 + 22, y+131, 187, 11)`；
+左/右箭头 `(x+11, y+129)`、`(x+220, y+129)`；交易按钮 `(x + (width-w)/2, y+150)`，赠予按钮
+`(x-68 + (width-w)/2, y+height-h)`；交易区里两边资源图标偏离中心 ±70、底边 y+115，`TRADPOST` 帧 0 在
+`(x + (width-w)/2, y+90)`，Max/Min 在中心 −5 的 `y+80` / `y+103`，`"Qty to trade"` 在 `y+115`。
+
+**指标**：UI 514 → **536**，合计 4 101 → **4 123** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+本轮没有画面改动，三条冒险地图基线不受影响（未重跑）。
+
+**遗留**：`TradeWindowGUI` 的绘制与命中（`TRADPOST`/`TRADPOSE` 帧 0-14、`MARKETPLACE_ICON`、
+`RESOURCE.ICN` 图标序号表 `getIconIcnIndex`、`Scrollbar` + `generateScrollbarSlider`、小号黄字缺失——
+端口只有 `Small`/`Normal`/`Yellow`，参考 Max/Min 用的 `smallYellow` 要用 `Yellow` 或小号白字替代并在注释里写明）；
+赠予窗口与右键收入窗。
+
+
+### `dialog_marketplace`：窗口视图 ✅
+
+同一天的第三刀，把上一节留给下一刀的 `TradeWindowGUI` 落下来。模型没动，新增四个文件：
+
+* `src/FHeroes2.Game/Resources/ResourceIconIndex.cs`：`Resource::getIconIcnIndex()` 的七格表
+  （`Wood` 0 … `Gold` 6）与反查 `Between`，`RESOURCE.ICN` 的帧号就是格子序号。
+* `src/FHeroes2.UI/Dialogs/MarketplaceLayout.cs`：`_pos_rt` 上的全部摆位。`Area` 244×337、
+  `FromCell`/`ToCell` 步进 37、`TradeBar`/`SliderArea`/`FromTo`/`TradeIcon`/`LeftArrow`/`RightArrow`、
+  `MaxLabel`/`MinLabel`/`QuantityLabel`、`SellText`/`BuyText` 的居中，全部按参考的整数算术；
+  `SliderWidth = 187` 是槽长，不是拇指长。
+* `src/FHeroes2.UI/Dialogs/MarketplaceArtwork.cs`：`TRADPOST` 十九帧的命名常量
+  （0 箭头、1 交易条、2 滑块源图、3/4 与 5/6 两个箭头、7-13 格子、14 光标，15-18 是 `TRADPOSE` 多出来的）、
+  `MARKETPLACE_ICON` 的税率图标、`RESOURCE.ICN` 的七帧与三个按钮的两个状态，缺件一律 `null`。
+* `src/FHeroes2.UI/Dialogs/MarketplaceView.cs`：`Draw` 整窗重画、`ProcessEvents` 转发点击。
+
+**绘制顺序**（参考的构造绘制 + 每次重绘的合并）：`FrameBox` → 标题 → 七格（左行财库、右行
+`1/rate` 或财库）→ 两条标题 → 税率图标与 `x N` → 两个光标 → 交易区（条、拇指、两边资源图标、帧 0、
+Max/Min/`Qty to trade`、`-N (M)` / `+N (M)`）→ 店铺句子 → 交易按钮与左右箭头 → 赠予/退出。交易区
+不显示时那一层整块跳过，跟参考的 `showTradeArea()` 分支一致。
+
+**事件**：退出按钮、赠予按钮（`IsGiftEnabled` 才响应，禁用时过 `PAL::DARKENING`，所以像素不是原色）、
+税率图标（要句子）、交易按钮（`CanTrade` 才成交）、滑块拖拽（`MoveToPosition` → `SetSliderIndex`）、
+滚轮（在滑块区里上下各一步）、Max/Min（参考的 Min 是一不是零）、左右箭头（点一下一步，按住走
+`TimedEventValidator` 的重复）、左行格子（左键选中、右键要收入窗）、右行格子（选中）。
+
+**一处结构改动**：上一轮把这些状态同步写在 `Draw` 里，`ProcessEvents` 也调一遍，视图自己叫 `Sync`。
+这一轮提成公开的 `Refresh()`，并在注释里写明「只改 `Dialog` 不画不处理事件时要自己调一次」——
+读取 `TradeButton.IsVisible`、`Slider.MaxIndex` 这些 widget 自己的标志位之前必须先刷新。另外滑块的
+槽位（`SliderArea`）只依赖美术，构造时就定下来，否则交易区还没显示时读 `Slider.Area` 拿到的是空矩形，
+滚轮与拖拽的量程判定会全部落空。
+
+**差异**（都写进类注释）：Max/Min 参考用 `smallYellow`，端口只有一套小号白字，先借
+`MarketplaceFonts.SmallWhite`；退出按钮的两个精灵由调用方给（参考启动时从按钮字体合成）；参考用
+`ImageRestorer` 擦掉旧交易区，端口每帧整窗重画，不需要还原器。
+
+**测试**：新增 30 条 `MarketplaceViewTests`——摆位（格子、标题、交易区锚点、按钮、箭头）、`TryCreate`
+的缺件与空参、绘制像素（框、格子、光标、交易条、滑块、帧 0、资源图标、三个按钮、交易区隐藏时无按钮、
+一人时赠予按钮是压暗色）、点击（左行选中、右行选中、右键收入窗、退出、赠予的一人/两人、税率、成交、
+无数量不成交、Max/Min、左右箭头）、拖拽与滚轮、`x 3` 与 `x 9+` 的分支、数额行位置。
+
+**指标**：UI 536 → **566**，合计 4 123 → **4 153** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+本轮只加窗口，没有接进 App，故不重跑截图基线。
+
+**遗留**：赠予窗口 `Dialog::MakeGiftResource()` 与右键收入窗 `showKingdomIncome()` 仍未搬（视图只把
+`MarketplaceAction.Gift` / `.ResourceIncome` 交回调用方）；小号黄字缺失（Max/Min 借用白字，已在注释
+标注）；`TRADPOSE` 的 15-18 帧（邪恶界面）常量已留但未用到，因为邪恶界面的美术选择还没接。
+
+
+### 消息框接上对话框元素 + 收入窗 ✅
+
+上一节把 `ResourceIncome` 交回调用方，这一节补上它要弹的那个窗。元素层本身在 `11e6a51` 就落了
+（`DialogElement`/`TextDialogElement`/`CustomImageDialogElement`/`ResourceDialogElement`/
+`DialogElementResult`），缺的是**消息框不会排版元素**，所以这一段只做两件事。
+
+* `MessageBox`：`Create` 多一个可选的 `elements`，按 `ui_dialog.cpp:113-210` 打包成行——
+  `( max(行宽, 元素宽) + 10 ) × (行内个数 + 1) ≤ 244` 就并入当前行，否则起新行；行间 10 px；
+  元素在行内底对齐、水平居中于自己的槽位；正文与第一行之间再加 10 px；行高计入框高。
+  新增 `ElementAreas`（每个元素落在哪）与 `ProcessEvents(LocalEvent)`：把每帧输入转发给元素，把
+  `DialogElementResult.RequiresRedraw` 或起来、`Popup` 取第一个非空的交回调用方——参考在元素里直接
+  `showStandardTextMessage`，端口保持「元素问、调用方弹」的分工。
+* `KingdomIncome`：`showKingdomIncome()` 的框。标题 `Kingdom Income`、正文
+  `Kingdom Income per day.`，元素取 `getResourceDialogElements()` 的顺序（金、木、水银、矿、硫磺、
+  水晶、宝石）并跳过收入为零的资源；图标按 `ResourceIconIndex.Of` 取帧，数量交给
+  `ResourceDialogElement` 自己用 `SmallWhite` 量，所以这里不再传字体；右键图标要的弹窗头是
+  `ResourceText.Of`，正文留空（`Resource::getDescription()` 未搬，注释里写明了）。
+
+**一个坑**：`ResourceDialogElement` 的构造函数会用 `FHeroes2.Game.Gui.Text` 量数量，需要真实档案，
+所以 UI 测试只能覆盖「收入为零 → 无元素」这条路径，非零数量的排版由元素层自己的测试与游戏侧数据兜底。
+
+**测试**：`MessageBoxTests` 新增 4 条（两行打包的坐标与框高、行内底对齐与居中、元素画在排好的位置、
+空元素拒绝）；新增 `KingdomIncomeTests` 6 条（金在前的顺序、零收入跳过、零收入框高 70、可传译文、
+美术帧不足、空参）。
+
+**指标**：UI 566 → **576**，合计 4 153 → **4 163** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：消息框的按钮层（`Dialog::OK`/`YES_NO` 的 `ButtonGroup`）仍未做，所以城镇里那个「点 OK」的
+收入窗还起不来；`KingdomIncome` 也还没接到任何场景（市集视图尚未进 App）；`Resource::getDescription()`
+仍缺，右键只有标题。
+
+
+### 赠予资源窗口 ✅
+
+市集那节留下的第二个子窗口。参考 `Dialog::MakeGiftResource()` 是一个模态循环，端口照「模型 / 视图」的老
+分工，这一节只做**视图**（模型 `GiftResourcesDialog` 仍是契约），拆成三块：
+
+* `GiftWindowLayout`：`StandardWindow(320, 234)` 的活动区，三段标题偏移 7/57/127，收件人行 +28，两行资源
+  +80/+150；收件人方框块按**对话宽 320** 居中（参考用的就是 `giftDialogSize.width`，不是活动区宽），
+  资源行按 `(320 - (格宽 + 240)) / 2` 起排、每格 40 px，两个按钮贴活动区左下/右下各 10 px。
+* `GiftWindowArtwork`：`TRADPOST.ICN` 7-13（与市集同一批格子）、`CELLWIN.ICN` 43-48 加勾号帧 2、
+  `BUTTON_SMALL_OKAY/CANCEL_GOOD|EVIL` 的 0/1 帧；帧数不够返回 `null`（参考会越界读）。
+* `GiftWindowView`：状态就是参考的三个局部量（财库 `funds1`、计划赠礼 `funds2`、收件人掩码）。点方框 →
+  切换收件人、清空计划、重新读财库（多人分摊，参考 `:300-306`）；点计划行的格子 → 返回
+  `GiftWindowAction.RequestCount`（`max = (财库+计划)/mul`，金步长 100、其余 1），收件人为 0 时返回
+  "First select recipients!"、`max == 0` 时返回 "You cannot select X!"；调用方拿到数字后喂
+  `ApplySelection`（计划 +差额、财库 −差额×人数）；OKAY 在「有收件人且有计划」前禁用（过
+  `PAL::DARKENING`，测试里第一版就是漏了这点才拿到 76 而不是 71 的像素）。
+
+**没搬的**：写世界那一步（`world.AddEventDate()` 与 `kingdom.OddFundsResource()`）留在调用方，因为要
+`World`/`Kingdom`；光标恢复器与逐事件 `render()` 不需要（场景每帧重画）。
+
+**测试**：新增 `GiftWindowTests` 16 条——活动区与四个位置的坐标、空收件人列表、发件人/重复色被拒、
+美术缺失返回 null、切换收件人连带清空、`ApplySelection` 按人数扣款、`MaximumFor` 分摊、步长、点方框、
+无收件人的提示、数量请求的四个参数、没钱时的提示、OKAY 从禁用到可用、CANCEL、以及绘制（方框/勾号/
+两行计数/按钮）。
+
+**指标**：UI 576 → **592**，合计 4 163 → **4 179** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：视图还没接进场（市集视图同样没进 App）；模型侧的 `Confirm`（写 `EventDate`）未做；消息框按钮层
+仍缺，所以参考里那两句提示语还得由调用方用 `Dialog::OK` 弹。
+
+
+### `DialogElement` 五个派生类补齐 ✅
+
+第 1 步欠下的两个派生类，`ui_dialog.cpp` 里各自只有二十来行，但都卡着「文本从哪来」，所以一直没动。
+这一节把它们落进 `DialogElement.cs`（与另外三个同族），顺手确认了两件本来以为缺的 Game API 其实早有：
+`Spell.IndexSprite()` 与 `Spell.SpellPoints()`/`SpellPoints( ArtifactBag? )` 都在 `Spell.cs:445`/`:355`/`:374`
+（我一开始按印象加了同名方法，编译撞了 `CS0111` 才发现，已删掉自己那份）。
+
+* `ArtifactDialogElement`：`RESOURCE.ICN` 第 7 帧画框、`ARTIFACT.ICN` 的 64×64 帧缩进 6 px 盖上，元素大小取框；
+  右键弹「名称 + 说明」。器物的文本表（`Artifact::GetName()`/`GetDescription()`）还没建，所以两串文本由调用方
+  传入——和 `ResourceDialogElement` 的处理一致。
+* `SpellDialogElement`：图标 + `名称 [耗蓝]`（耗蓝为 0 时不显示括号），图标在标签更窄时水平居中、标签落在图标
+  下方 2 px，元素宽取两者较宽者。耗蓝由调用方用 `Spell.SpellPoints( bag )` 算好传入（参考里是
+  `spellPoints( hero )`，只读英雄的背包）。字体以 `IGlyphSource` 传入而不是走 `Game.Gui.Text`，这样 UI 测试
+  不必打开真实档案就能量标签。右键弹 `GetName()`/`GetDescription()`，描述里的 `%{count}` 保持模板——填充它要
+  `updateSpellDescription` 的伤害/复活表，仍未搬。
+
+**测试**：`DialogElementTests` 8 → 16 条（框大小与内缩 6 px 的像素、右键弹窗、左键无效、标签宽度决定元素宽、
+无耗蓝不带括号、图标相对标签居中、名片式右键内容、空精灵/空字体被拒）。
+
+**指标**：UI 592 → **600**，合计 4 179 → **4 187** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：`ArtifactDialogElement` 的文本表；`updateSpellDescription` 的 `%{count}` 填充；消息框按钮层
+（`Dialog::OK`/`YES_NO`）；`recruit` 与 `Dialog::InputString` 的 `TextInput` 仍未动。
+
+
+### 招募窗口的模型 ✅
+
+`dialog_recruit.cpp` 的 694 行里，一半是绘制、另一半是一个把「生物 / 上限 / 数量 / 键入缓冲」放在局部变量里的
+模态循环。这一节按 `MarketplaceDialog` 的老分工只搬后一半，直接长进既有的 `RecruitDialog`——它原来是 ADR-163
+的契约壳（`Create`/`Choose`/`Result`），现在多了 `Maximum`/`Count`/`Payment`/`Remaining` 与全部按钮状态。
+
+* **上限**：`CalculateMax()` 逐只累加问 `kingdom.AllowPayment( cost * ( max + 1 ) )`，再被 `available` 封顶；
+  开窗即 `Count = Maximum`。没有王国的那条 `Create` 重载（契约测试用的那个）把库存当上限，`Funds`/`Remaining`
+  读零，注释里写明了。
+* **MAX/MIN 两键**：`SwitchMaxMinButtons` 的状态机照抄，包括那个**怪癖**——只有「至少一个键可用」时才改键的
+  状态，中间段（2 到 max-1）只清标签不动键；所以从上限往下按一格后 MAX 仍是灰的，要一直减到 1 才会换成
+  「Min」并把 MAX 点亮。测试把这个行为钉死了，注释也写明是特地保留而不是漏改。
+* **键入**：`processIntegerValueTyping( 0, max, buf )` 的移植——数字累积、超上限的字符被丢且缓冲区不变（这样
+  `5` 后按 `0` 不会读成 `0`）、退格是单独一个 `ClearTyped()` 且语义是 `clamp( 0, 0, max ) = 0`。
+* **升级链**：从 `monster0` 一路 `GetDowngrade` 建链，左箭头下一档、右箭头上一档，两端回绕；换兵后重算上限并
+  跳回 `max`。`CanSwitchMonster` 同时要 `allowDowngradedMonster` 与「该生物确有降级」两个条件。
+
+**一处自我纠正**：第一版我把新类写进了新文件 `RecruitDialog.cs` 并覆盖——那个文件早就有 ADR-163 的契约类，
+`git status` 里那行 `M` 提醒了我。已 `git checkout` 恢复，改成在契约类上扩写（`Create( monster, available,
+kingdom, allowDowngraded )` 新重载 + 老重载保留），`DialogModelsTests` 一条没改。
+
+**测试**：新增 `RecruitDialogTests` 21 条——开窗即上限与 MAX 灰、库存封顶、买不起全灰、单价×数量与余额、
+增减速的两端、中间段键位怪癖、MIN/MAX 跳转、`SetCount` 夹取、数字累积与超限丢弃、`5`+`0` 不成 `0`、退格清零、
+非数字抛错、升级链双向回绕（游侠↔弓箭手）、换兵重算上限、无降级生物不出箭头、调用方关箭头、标题与库存句、
+`Selected`、窗口不花钱、无王国时库存即上限、非法参数。
+
+**指标**：UI 600 → **621**，合计 4 187 → **4 208** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：招募窗口的绘制与事件循环（`RecruitWindowView` 那一层）；`ArmyInfo()` 的怪物信息框；扣款仍归调用方；
+`Dialog::InputString` 的 `TextInput` 还没动。
+
+
+### 招募窗口的绘制与点击 ✅
+
+`dialog_recruit.cpp` 的另一半：`RecruitWindowView`（每帧整窗重画 + `ProcessEvents`）、`RecruitWindowLayout`（坐标）、
+`RecruitWindowArtwork`（切图）。三个文件的分工和市集那次一致，模型仍只在 `RecruitDialog` 里。
+
+* **重画**：参考在开窗时把 `background` 备份一份，之后用 `ImageRestorer` 只还原被改过的几块；端口没有还原器，
+  `Draw` 每帧把整窗重画一遍（`StandardWindow` 的框 + 标题 + 库存句 + 精灵 + 计数框 + 价格框 + UP/DOWN +
+  MAX/MIN + 换兵箭头 + OKAY/CANCEL），阴影 `(-5, 5)`。可见结果相同，也少了一整类「哪块脏了」的状态。
+* **事件**：`ProcessEvents` 照参考 `Action()` 的 `else-if` 链原序转发，因为顺序本身有语义——同一帧里键入的数字
+  要先于点击被吃掉，MAX 要先于 MIN，两个键要先于 tooltip。换兵箭头只在 `CanSwitchMonster` 为真时参与判定，
+  换完由模型自己重算上限并跳回 `max`。
+* **右键是「按住」**：参考在 `isMouseRightButtonPressed` 为真时就建提示框/信息框，不等松开。测试一开始发的是
+  「按下 + 松开」的完整点击，四条 tooltip 与怪物信息全返回 `None`，加了一个只发按下的 `RightClick` 才对齐。
+* **计数框有两个坐标**：显示用的切图源是 `RECRBKG` 的 `(134, 159)`，而 numpad 的点击矩形是
+  `pos + (118, 143, 68, 19)`，两者不是同一个点；`RecruitWindowLayout` 把 `CountBoxArea` 与
+  `CountBoxPosition` 分开暴露，注释里标了行号。第一版按切图坐标断言点击区，数值对不上才发现。
+* **开窗时 MAX 是灰的**：`ShowsMaxButton` 在 `Count == Maximum` 时取「共位画 MIN」，标签仍是 "Max"。
+  第一版测试按「默认画 MAX」断言，红了一次；现在钉的是「两键共位、当前可用的是 MIN、标签为 Max」，
+  以及 tooltip 说的是当前那个可用键。
+
+**测试**：新增 `RecruitWindowTests` 27 条——布局坐标、切图来源与尺寸、`TryCreate` 的参数校验、计数与价格行的
+文字、OKAY/CANCEL 的绘制与返回值、换兵箭头的显隐、滚轮与 UP/DOWN 的增减、计数框点击请求 `SelectCount`、
+键入数字与退格、MAX/MIN 共位与标签、空财库时两键与 OK 全灰、四条 tooltip、怪物左/右键的两个 action、
+窗口本身不扣款。
+
+**指标**：UI 621 → **648**，合计 4 208 → **4 235** 全绿，`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：热键（`DEFAULT_UP/DOWN/LEFT/RIGHT/OKAY/CANCEL`）未接；`ArmyInfo` 的 action 已返回，窗口内容归
+`dialog_armyinfo`；扣款与写世界仍归调用方；窗口还没接进场景。
+
+
+### 计划重排与口径校正 ✅（2026-11-21）
+
+按 checkout `6c51acfdc` 重新核了一遍：`src` 下 257 个 `.cpp` / 152 384 行，端口 `src` 548 个 `.cs` / 107 209 行，
+完全没碰的 100 个文件 / 46 829 行；扣掉不移植（`tools`、`map_format_info`、`tinyconfig`）与「已有实现但注释
+没写文件名」的七处（`audio`、`logging`、`timing`、`image_palette`、`dialog_game_settings`、
+`dialog_frameborder`、`game_mainmenu`）之后约 **85 个 / 4.3 万行**。
+
+三处校正：
+
+* 旧表按更晚的 checkout 统计，逐文件高 15~25%（`battle_interface` 7 538 vs 6 144、`selectitems` 2 220 vs
+  1 777）。剩余工作量表换成本地实测值，合计从 7.5 万降到 **5.3 万**，批数从 60~70 降到 **30~40**。
+* `dialog` 不再是「23 个未转 / 10 404 行」：只剩 8 个 / 3 400 行。七个设置窗口并不卡 `OptionButtonGroup`
+  ——当前参考已改用 `drawOption` 网格，端口的 `OptionItem` 早就在，缺的是每个窗口的网格与点击映射。
+* 顺序改为「先接线」：**城堡屏（P0）→ 设置窗口（P1）→ `TextBox` + `selectitems`（P2）→ 冒险外壳补全（P3）
+  → 战斗（P4）→ AI（P5）→ 会话层（P6）**；编辑器、campaign、随机地图、软键盘列旁支，不计入 M 主线。
+
+### 城堡屏第一批：坐标表与资源面板 ✅
+
+* `CastleDialogLayout`：整屏 640×480 的底部三段状态栏（两端各让 16 像素）、旗帜、英雄像、两排军队条原点、
+  EXIT 位置、城名牌居中、资源面板命中区（到 EXIT 上沿再上收 3）。只管坐标：状态栏宽度与旗帜尺寸由调用方把帧
+  尺寸传进来，EXIT 矩形按帧算，所以不猜素材尺寸。
+* `ResourcePanel`：`ui_castle.cpp:242-301` 的四行七格。行偏移刻意不均匀（`{ 0, maxH+fontH+2,
+  (maxH+fontH)*2-1, (maxH+fontH)*3+1 }`）；图标底对齐、数字在小号白字行高之下 1 像素处居中；金子是唯一既
+  不底对齐也不在列内的——整块居中画在第四行顶、数字在 `行顶 + 图标高 + 1`。面板先填黑，最后把 EXIT 帧 0
+  盖在 `+1,+166`。
+
+写测试时先按「金子也底对齐、也落在左列」断言，红了两次才注意到参考里那两处特例，现在测试专钉这两条。
+
+**测试**：`ResourcePanelTests` 10 条 + `CastleDialogLayoutTests` 9 条，覆盖面积/行偏移（含不均匀的 1 像素差）、
+两列与金子的图标位置、数字位置、填黑、七个图标与三个数字的像素落点、EXIT 帧偏移、屏幕原点平移、
+图标数量校验、状态栏过窄与空旗帜的拒绝、军队条原点、城名牌居中。
+
+**指标**：UI 648 → **667**，合计 4 235 → **4 254** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：建筑区（`redrawCastleBuildings`、`drawCastleDialogBuilding`、连接与淡入）与事件循环（切城、EXIT、
+点建筑、点资源面板）是下一批；状态栏滚动文字随冒险外壳一起做。
+
+### 城堡屏第二批：背景与建筑绘制 ✅
+
+`castle_building.cpp` 的绘制主干一次搬完：`redrawCastleBuildings`、`redrawCastleBuilding`、
+`redrawCastleBuildingExtended`、`redrawBuildingConnection`，加上 `ui_castle.cpp` 的 `drawCastleDialogBuilding`
+与 `getTownIcnId`。
+
+* **背景是 `TOWNBKG` 不是 `CSTL`**：一开始以为城镇背景来自 `CSTL*`，那是建筑图集（水井的住宅帧在里面）。
+  参考的 `getTownIcnId` 返回六张 `TOWNBKG0..5`，背景帧本身就是整屏底图。
+* **淡入分支要改写**：参考把画面留在显示缓冲里，淡入时只重画脏块，没有变化就直接 `return`；端口每帧都从背景
+  重建，照抄会丢建筑。现在淡入时整座城照样画，只有 alpha 不参与混合（端口没有游戏调色板，`AlphaBlit` 落不了）。
+* **三处「同一张图被两个建筑共用」**：骑士的城堡旗由右塔代画（右塔与城堡都完工时，城堡帧 0 跳过、右塔后补
+  旗帧）；雕像与水晶园在女巫城合成 `TWNSEXT1`（谁先建成谁负责，绘制时优先级的交换照参考）；野蛮人与女巫的
+  队长宿舍左半挂在右半的框上，骑士左农场同理——用右半帧的 `OffsetX` 减去左半帧宽算位置。
+* **连接件有前置条件**：野蛮人的 `TWNBEXT2` 要法师塔与 `SPEC` 都完工、`TWNBEXT3` 要怪物 3 级与盗贼行会
+  都完工；死灵船长桥要船长宿舍与城堡都完工。`IsBuildingConnectionNeeded` 已经给出「哪些建筑有连接件」，这里
+  补的是「连接件能不能画」。
+* **动画帧是 `getAnimatedIcnIndex` 的返回值**：`0` 表示没动画（不画），非 `0` 才是帧号；河流与海湾是
+  `1 + index % 5`，与建筑的动画帧来源不同，分开算。
+
+**测试**：`CastleScreenPainterTests` 20 条（Theory 展开后）——六族背景与六族海湾的映射、无背景种族被拒、
+无档案时画面不动、背景像素落点、整体平移、裁剪（井的非透明像素被 200 像素带切掉）、负帧号与 alpha 0 的短路。
+
+**指标**：UI 667 → **687**，合计 4 254 → **4 274** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：玩家配色（六张旗帜类 ICN 按玩家色换调色板，`getModifiedByColorImage`）与 `AlphaBlit` 的淡入混合；
+城名牌 `TOWNNAME` 与状态栏文字；事件循环与六个窗口的接线。
+

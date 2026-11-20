@@ -85,6 +85,12 @@ param(
     # buttons of APANEL.ICN and the cancel button, so its frame is as reproducible as the map.
     [switch] $AdventureOptions,
 
+    # Holds the right button on the tile under -Cursor (--quick-info) and uses quick-info.png as the
+    # default baseline. The popup is placed by the cursor and its text comes from the map, so the
+    # frame is as reproducible as the map. The default cursor sits on a mine of the Alteris view,
+    # which exercises the object branch of the text.
+    [switch] $QuickInfo,
+
     # Fails instead of skipping when the game data or the map is missing.
     [switch] $RequireData,
 
@@ -106,9 +112,17 @@ $Baseline = if ($Baseline) {
     [System.IO.Path]::GetFullPath($Baseline)
 }
 else {
-    $prefix = if ($AdventureOptions) { 'adventure-options' } else { 'adventure-map' }
+    $prefix = if ($QuickInfo) { 'quick-info' }
+    elseif ($AdventureOptions) { 'adventure-options' }
+    else { 'adventure-map' }
     $name = if ($Culture -eq 'en') { "$prefix.png" } else { "$prefix.$Culture.png" }
     [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../../tests/baselines/$name"))
+}
+
+if ($QuickInfo -and $Cursor -eq '620,100') {
+    # The popup only opens over the terrain, so the default cursor of the map baseline would show
+    # nothing. 250,190 is a mine in the Alteris view.
+    $Cursor = '250,190'
 }
 
 $WorkDirectory = [System.IO.Path]::GetFullPath($WorkDirectory)
@@ -188,6 +202,10 @@ $appArguments = @(
 
 if ($AdventureOptions) {
     $appArguments += '--adventure-options'
+}
+
+if ($QuickInfo) {
+    $appArguments += '--quick-info'
 }
 
 Invoke-PixelRender -Executable $appExe -Arguments $appArguments -ScreenshotPath $screenshot

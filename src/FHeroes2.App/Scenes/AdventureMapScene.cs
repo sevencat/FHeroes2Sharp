@@ -83,6 +83,9 @@ public sealed class AdventureMapScene : IScene
     private readonly AdventureOptionsView? _optionsArtwork;
     private AdventureOptionsOverlay? _options;
 
+    private readonly Sprite? _quickInfoFrame;
+    private StandardPopupWindow? _quickInfo;
+
     private AdventureMapScene(
         ScreenBuffer frame,
         GameFonts? fonts,
@@ -96,6 +99,7 @@ public sealed class AdventureMapScene : IScene
         StatusPanel? statusPanel,
         AdventureOptionsView? optionsArtwork,
         IViewWorldSpriteSource? viewWorldSprites,
+        Sprite? quickInfoFrame,
         PlayerColor friends)
     {
         _frame = frame;
@@ -113,6 +117,7 @@ public sealed class AdventureMapScene : IScene
         _statusPanel = statusPanel;
         _optionsArtwork = optionsArtwork;
         _viewWorldSprites = viewWorldSprites;
+        _quickInfoFrame = quickInfoFrame;
         _friends = friends;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
@@ -262,6 +267,7 @@ public sealed class AdventureMapScene : IScene
                 StatusPanel.TryCreate(assets),
                 AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
+                QuickInfoArtwork.TryCreate(assets),
                 observers);
 
             // With a started game the map opens on the acting hero instead of the middle castle.
@@ -512,6 +518,10 @@ public sealed class AdventureMapScene : IScene
         {
             options.Draw();
         }
+
+        // The right button popup goes last: it is a tooltip over everything, including the terrain it
+        // names, Interface::displayStandardPopupWindow() drawing straight into the display.
+        _quickInfo?.Draw(_frame.Pixels);
     }
 
     /// <summary>The adventure map draws all of its text with the game fonts.</summary>
@@ -597,6 +607,50 @@ public sealed class AdventureMapScene : IScene
         }
 
         _mouse.SetLeftButton(down);
+    }
+
+    /// <summary>
+    /// The open right button popup, <see langword="null"/> while nothing is held, the
+    /// <c>displayStandardPopupWindow()</c> of <c>MouseRightClick</c>.
+    /// </summary>
+    public StandardPopupWindow? QuickInfo => _quickInfo;
+
+    /// <summary>
+    /// Records the right button: a press opens the quick info of the tile under the cursor, a release
+    /// closes it.
+    /// </summary>
+    /// <remarks>
+    /// The reference shows the popup while the button is held (<c>MouseRightClick</c> opens it,
+    /// <c>MouseRightButtonRelease</c> closes it), so the pane never blocks the map. A popup on the panel,
+    /// on the radar or outside the viewport is not shown: the reference only opens it over the terrain.
+    /// </remarks>
+    /// <param name="down">Whether the right button is now held.</param>
+    public void SetRightButton(bool down)
+    {
+        _quickInfo = null;
+
+        if (!down
+            || _quickInfoFrame is null
+            || _fonts is null
+            || _mouse.Cursor is not { } cursor
+            || !_viewport.Contains(cursor))
+        {
+            return;
+        }
+
+        Point tile = _view.TileAt(cursor);
+
+        if (tile.X < 0 || tile.Y < 0 || tile.X >= _world.Width || tile.Y >= _world.Height)
+        {
+            return;
+        }
+
+        _quickInfo = StandardPopupWindow.TryCreate(
+            _quickInfoFrame,
+            _fonts.Small,
+            QuickInfoText.ForTile(_world.GetTile(tile.X, tile.Y)),
+            cursor,
+            new Rect(new Point(0, 0), _frame.Size));
     }
 
     /// <summary>

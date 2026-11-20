@@ -1,5 +1,7 @@
+using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Spells;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
@@ -17,6 +19,42 @@ namespace FHeroes2.UI.Tests;
 /// </remarks>
 public sealed class DialogElementTests
 {
+    private const byte FrameColor = 7;
+    private const byte IconColor = 9;
+    private const byte TextColor = 60;
+
+    private static readonly IGlyphSource SmallFont = new BlockFont(11, 5, TextColor);
+
+    /// <summary>A font whose glyphs are solid five pixel blocks, with the metrics of <c>FontType::smallWhite()</c>.</summary>
+    private sealed class BlockFont : IGlyphSource
+    {
+        private readonly Sprite _glyph;
+
+        public BlockFont(int lineHeight, int advance, byte color)
+        {
+            LineHeight = lineHeight;
+            SpaceWidth = advance;
+
+            PixelBuffer image = new(advance, lineHeight);
+            image.Fill(color);
+            _glyph = new Sprite(image, 0, 0);
+        }
+
+        public int LineHeight { get; }
+
+        public int SpaceWidth { get; }
+
+        public bool IsAvailable(char character) => true;
+
+        public int GetAdvance(char character) => SpaceWidth;
+
+        public bool TryGetGlyph(char character, out Sprite glyph)
+        {
+            glyph = _glyph;
+            return true;
+        }
+    }
+
     [Fact]
     public void CustomImage_IsAsBigAsTheImageAndCopiesItWithoutItsOffset()
     {
@@ -109,6 +147,129 @@ public sealed class DialogElementTests
         DialogElementResult result = element.ProcessEvents(events, new Point(100, 100));
 
         Assert.Null(result.Popup);
+    }
+
+    [Fact]
+    public void Artifact_IsTheSizeOfItsFrameAndPutsTheIconSixPixelsInside()
+    {
+        Sprite frame = new(82, 82);
+        frame.Image.Fill(FrameColor);
+
+        Sprite icon = new(64, 64);
+        icon.Image.Fill(IconColor);
+
+        var element = new ArtifactDialogElement(frame, icon, "Sword of Judgement", "It judges.");
+
+        Assert.Equal(new Size(82, 82), element.Area);
+
+        PixelBuffer output = new(120, 120);
+
+        element.Draw(output, new Point(10, 20));
+
+        Assert.Equal(FrameColor, output[10, 20]);
+        Assert.Equal(IconColor, output[10 + 6, 20 + 6]);
+        Assert.Equal(IconColor, output[10 + 6 + 63, 20 + 6 + 63]);
+
+        // The icon stops six pixels short of the frame on both sides.
+        Assert.Equal(FrameColor, output[10 + 80, 20 + 80]);
+    }
+
+    [Fact]
+    public void ArtifactRightClick_AsksForTheNameAndTheDescription()
+    {
+        var element = new ArtifactDialogElement(new Sprite(82, 82), new Sprite(64, 64), "Sword of Judgement",
+            "It judges.");
+
+        LocalEvent events = new(() => 0);
+        events.OnMouseMotion(new Point(40, 40));
+        events.OnMouseButton(true, MouseButtonType.Right, new Point(40, 40));
+
+        DialogElementResult result = element.ProcessEvents(events, new Point(10, 20));
+
+        Assert.NotNull(result.Popup);
+        Assert.Equal("Sword of Judgement", result.Popup!.Value.Header);
+        Assert.Equal("It judges.", result.Popup.Value.Body);
+        Assert.False(result.RequiresRedraw);
+    }
+
+    [Fact]
+    public void ArtifactLeftClick_DoesNothing()
+    {
+        var element = new ArtifactDialogElement(new Sprite(82, 82), new Sprite(64, 64), "Sword of Judgement",
+            "It judges.");
+
+        LocalEvent events = new(() => 0);
+        events.OnMouseMotion(new Point(40, 40));
+        events.OnMouseButton(true, MouseButtonType.Left, new Point(40, 40));
+
+        Assert.Null(element.ProcessEvents(events, new Point(10, 20)).Popup);
+    }
+
+    [Fact]
+    public void Spell_IsAsWideAsTheLabelAndAddsItsHeightUnderTheIcon()
+    {
+        Spell spell = new(SpellType.Bless);
+        var element = new SpellDialogElement(new Sprite(23, 18), spell, 6, SmallFont);
+
+        // Nine characters of a five pixel font: "Bless [6]" without the quotes.
+        Assert.Equal($"{spell.GetName()} [6]", element.Label);
+        Assert.Equal(new Size(45, 18 + 2 + 11), element.Area);
+    }
+
+    [Fact]
+    public void Spell_WiderThanItsIconKeepsTheIconWider()
+    {
+        Spell spell = new(SpellType.Bless);
+        var element = new SpellDialogElement(new Sprite(80, 18), spell, 0, SmallFont);
+
+        // A free spell hides the brackets, and the icon is wider than the name, so the icon sets the width.
+        Assert.Equal(spell.GetName(), element.Label);
+        Assert.Equal(new Size(80, 18 + 2 + 11), element.Area);
+    }
+
+    [Fact]
+    public void Spell_DrawsTheIconCentredOverTheLabel()
+    {
+        Sprite icon = new(23, 18);
+        icon.Image.Fill(IconColor);
+
+        var element = new SpellDialogElement(icon, new Spell(SpellType.Bless), 6, SmallFont);
+
+        PixelBuffer output = new(80, 60);
+        element.Draw(output, new Point(5, 5));
+
+        // The 45 pixel label is the widest part, so the 23 pixel icon starts eleven pixels into it.
+        Assert.Equal(IconColor, output[5 + 11, 5]);
+        Assert.Equal(0, output[5 + 10, 5]);
+
+        // The label sits two pixels under the icon.
+        Assert.Equal(TextColor, output[5, 5 + 18 + 2]);
+    }
+
+    [Fact]
+    public void SpellRightClick_AsksForTheNameAndTheDescription()
+    {
+        Spell spell = new(SpellType.Bless);
+        var element = new SpellDialogElement(new Sprite(23, 18), spell, 6, SmallFont);
+
+        LocalEvent events = new(() => 0);
+        events.OnMouseMotion(new Point(10, 10));
+        events.OnMouseButton(true, MouseButtonType.Right, new Point(10, 10));
+
+        DialogElementResult result = element.ProcessEvents(events, new Point(5, 5));
+
+        Assert.NotNull(result.Popup);
+        Assert.Equal(spell.GetName(), result.Popup!.Value.Header);
+        Assert.Equal(spell.GetDescription(), result.Popup.Value.Body);
+    }
+
+    [Fact]
+    public void Spell_RejectsMissingSpritesAndFonts()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new SpellDialogElement(null!, new Spell(SpellType.Bless), 6, SmallFont));
+        Assert.Throws<ArgumentNullException>(() =>
+            new SpellDialogElement(new Sprite(23, 18), new Spell(SpellType.Bless), 6, null!));
     }
 
     [Theory]

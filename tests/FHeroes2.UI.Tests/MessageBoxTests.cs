@@ -10,6 +10,7 @@ public sealed class MessageBoxTests
     private const byte HeaderColor = 200;
     private const byte BodyColor = 100;
     private const byte ChromeColor = 7;
+    private const byte ElementColor = 50;
 
     [Fact]
     public void Create_MeasuresTheTextLikeGetDialogHeight()
@@ -108,6 +109,84 @@ public sealed class MessageBoxTests
         Assert.Equal(BodyColor, target[x, box.Area.Y + MessageBox.TextOffsetY]);
     }
 
+    [Fact]
+    public void Create_PacksElementsIntoRowsOfTheAreaWidth()
+    {
+        // 100 pixel wide elements: two fit ((100 + 10) * 2 = 220 <= 244), the third does not (330), so the box is
+        // 50 pixels of text + two rows of 40 with the 10 pixel gap each + one more gap below the body = 160.
+        MessageBox box = MessageBox.Create(
+            "AB",
+            "CD",
+            CreateChrome(),
+            new FakeGlyphSource(HeaderColor),
+            new FakeGlyphSource(BodyColor),
+            [new FakeDialogElement(100, 40), new FakeDialogElement(100, 40), new FakeDialogElement(100, 40)]);
+
+        Assert.Equal(160, box.Area.Height);
+        Assert.Equal(3, box.ElementAreas.Count);
+
+        // Row one: 44 free pixels split into three 14 pixel gaps, so the first element starts at 14 and the second one
+        // element plus a gap further; the lone element of row two gets the whole 144 pixels split in two, i.e. 72 a
+        // side, and starts one gap plus one row below the first.
+        Assert.Equal(new Rect(box.Area.X + 14, box.Area.Y + 70, 100, 40), box.ElementAreas[0]);
+        Assert.Equal(new Rect(box.Area.X + 128, box.Area.Y + 70, 100, 40), box.ElementAreas[1]);
+        Assert.Equal(new Rect(box.Area.X + 72, box.Area.Y + 120, 100, 40), box.ElementAreas[2]);
+    }
+
+    [Fact]
+    public void Create_BottomAlignsNarrowElementsInsideTheirRow()
+    {
+        // A 40 pixel tall row holds a 100x40 and a 100x20 element; the short one sits at the bottom of the row and
+        // is centred inside its own slot rather than the row.
+        MessageBox box = MessageBox.Create(
+            string.Empty,
+            "CD",
+            CreateChrome(),
+            new FakeGlyphSource(HeaderColor),
+            new FakeGlyphSource(BodyColor),
+            [new FakeDialogElement(100, 40), new FakeDialogElement(50, 20)]);
+
+        // Row width stays 100, so the second slot starts at 14 + 100 + 14 and the 50 pixel element is centred in it;
+        // the row starts at the 25 pixel text block plus two gaps and is 40 tall, so the short element starts 20 lower.
+        Assert.Equal(new Rect(box.Area.X + 153, box.Area.Y + 65, 50, 20), box.ElementAreas[1]);
+    }
+
+    [Fact]
+    public void Draw_DrawsTheElementsWhereItPlacedThem()
+    {
+        MessageBox box = MessageBox.Create(
+            string.Empty,
+            "CD",
+            CreateChrome(),
+            new FakeGlyphSource(HeaderColor),
+            new FakeGlyphSource(BodyColor),
+            [new FakeDialogElement(100, 40, ElementColor)]);
+
+        PixelBuffer target = new(640, 480);
+        target.Fill(0);
+
+        box.Draw(target);
+
+        Rect rect = box.ElementAreas[0];
+
+        Assert.Equal(ElementColor, target[rect.X, rect.Y]);
+        Assert.Equal(ElementColor, target[rect.X + rect.Width - 1, rect.Y + rect.Height - 1]);
+        Assert.NotEqual(ElementColor, target[rect.X - 1, rect.Y]);
+        Assert.NotEqual(ElementColor, target[rect.X + rect.Width, rect.Y + rect.Height - 1]);
+    }
+
+    [Fact]
+    public void Create_RejectsNullElements()
+    {
+        Assert.Throws<ArgumentException>(() => MessageBox.Create(
+            "AB",
+            "CD",
+            CreateChrome(),
+            new FakeGlyphSource(HeaderColor),
+            new FakeGlyphSource(BodyColor),
+            [null!]));
+    }
+
     private static FrameBoxChrome CreateChrome()
     {
         // Only the geometry of BUYBUILD.ICN matters here, so every piece is a flat colour.
@@ -126,6 +205,29 @@ public sealed class MessageBoxTests
         }
 
         return FrameBoxChrome.TryCreate(pieces)!;
+    }
+
+    /// <summary>An element of a fixed size that paints every pixel of its area with one colour.</summary>
+    private sealed class FakeDialogElement : DialogElement
+    {
+        private readonly byte _color;
+
+        public FakeDialogElement(int width, int height, byte color = ElementColor)
+        {
+            Area = new Size(width, height);
+            _color = color;
+        }
+
+        public override void Draw(PixelBuffer target, Point offset)
+        {
+            for (int y = 0; y < Area.Height; ++y)
+            {
+                for (int x = 0; x < Area.Width; ++x)
+                {
+                    target[offset.X + x, offset.Y + y] = _color;
+                }
+            }
+        }
     }
 
     /// <summary>

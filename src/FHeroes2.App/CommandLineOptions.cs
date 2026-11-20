@@ -130,6 +130,13 @@ public sealed class CommandLineOptions
     public bool AdventureOptions { get; private set; }
 
     /// <summary>
+    /// Holds the right button on the tile under <c>--cursor</c> as soon as the adventure map is up
+    /// (<c>--quick-info</c>). The popup only exists while the button is held, so this is how its frame is
+    /// screenshotted and how the tile to text path is smoke tested without a mouse.
+    /// </summary>
+    public bool QuickInfo { get; private set; }
+
+    /// <summary>
     /// Paints a rectangle of ground as soon as the editor opens (<c>--editor-paint
     /// &lt;x,y,width,height,ground&gt;</c>). It exists because a brush stroke otherwise needs a real
     /// mouse: a screenshot cannot show that changing a tile changes the frame, and the adventure map
@@ -349,6 +356,10 @@ public sealed class CommandLineOptions
 
                 case "--adventure-options":
                     options.AdventureOptions = true;
+                    break;
+
+                case "--quick-info":
+                    options.QuickInfo = true;
                     break;
 
                 case "--editor-paint":

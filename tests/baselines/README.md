@@ -13,6 +13,7 @@
 | `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）与八个命令按钮、按钮下方的 `STONBACK` 石头状态面板（「Month: 1 Week: 1」/「Day: 1」与 `SUNMOON` 月相，`(480,392,144,72)`）、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
 | `adventure-map-boats.png` | 冒险地图的第二个画面（M4，船）：`Undeada.mp2` 以「最靠地图中心的城堡」居中，城堡西南角的海面上停着一条空船 —— 船体取自 `BOAT32` 第 18 帧（`RIGHT`，62×56，比瓦片高 33 像素、向上伸两格），影子取自 `BOATSHAD` 第 18 帧（74×28），瓦片原来的 `OBJNWAT2` 帧被丢掉。`Alteris.mp2` 的视野里一条船都没有，所以船的像素只能靠这张图守住 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png -Update` |
 | `adventure-options.png` | 冒险选项对话框（M4，`--adventure-options`）：同一张 `Alteris.mp2` 上盖一层 `StandardWindow` 石头窗口，窗口由按钮组反推尺寸（`APANEL.ICN` 四个 59×27 按钮排成两列，active area `(221,167,198,146)`），四按钮是 `APANEL.ICN` 的 8 帧（世界/谜题/信息/挖掘，各一对 released/pressed），底部居中是 `SYSTEM.ICN` 第 3/4 帧的 CANCEL（`{0,11}` 上抬 11 像素）。对话框不透明，把地图中间整块盖住，四周的边框、雷达、按钮面板与状态面板都不受影响 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update` |
+| `quick-info.png` | 冒险地图的右键提示框（M4，`--quick-info --cursor 250,190`）：光标停在一座矿上，`QWIKINFO.ICN` 的 158×94 木框挂在该 tile 的右下角，框内是 `smallWhite` 居中的对象名「Mine」。框只在地形上出现，`-QuickInfo` 把默认光标从 `620,100`（图标条上）挪到 `250,190`；文本来自地图数据，框位置来自光标，所以帧是稳定的 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
@@ -44,7 +45,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
 `AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
 `diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_adventure-map-boats.png`、
-`diff_adventure-options.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+`diff_adventure-options.png`、`diff_quick-info.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
 打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
 `-RequireData` 才把缺数据当失败。
 

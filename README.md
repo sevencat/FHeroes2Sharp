@@ -204,6 +204,9 @@ dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 230,210 --sc
 # 右键提示框只存在于按住期间，所以抓图要人造光标 + --right-button
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 520,230 --right-button --screenshot tip.png
 
+# 冒险地图的右键提示框（QWIKINFO 木框）同理，--quick-info 会把光标所在格的说明打进日志
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --map "F:\game\fh2\maps\Alteris.mp2" --cursor 250,190 --quick-info --smoke-frames 40 --screenshot quick-info.png
+
 # --left-click 在人造光标处点一下左键：用来验证「点招牌 → 进编辑器」这条只有鼠标能走的路径
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --cursor 565,380 --left-click --smoke-frames 20 --screenshot editor-from-menu.png
 

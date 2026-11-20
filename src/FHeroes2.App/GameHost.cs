@@ -467,8 +467,8 @@ public sealed class GameHost : IDisposable
                 return false;
             }
 
-            // The map answers the left button only: the right one opens the info window of the
-            // object under the pointer in the reference, which is not implemented yet.
+            // The left button walks the hero, the right one shows the quick info of the tile under the
+            // pointer for as long as it is held (Interface::MouseRightClick).
             if (!_syntheticCursor)
             {
                 adventure.SetCursor(ToLogical(button.X, button.Y));
@@ -477,6 +477,10 @@ public sealed class GameHost : IDisposable
             if (button.Button == LeftMouseButton)
             {
                 adventure.SetLeftButton(button.Down);
+            }
+            else if (button.Button == RightMouseButton)
+            {
+                adventure.SetRightButton(button.Down);
             }
 
             return false;
@@ -1225,6 +1229,17 @@ public sealed class GameHost : IDisposable
         if (_options.AdventureOptions && _adventure is { } optionsMap && optionsMap.OpenAdventureOptions())
         {
             GameLog.Info("Opened the adventure options dialog from the command line.");
+        }
+
+        // The popup lives only while the right button is held; --quick-info holds it on the tile under
+        // --cursor so the frame can be captured.
+        if (_options.QuickInfo && _adventure is { } infoMap && _options.Cursor is { } infoCursor)
+        {
+            infoMap.SetCursor(infoCursor);
+            infoMap.SetRightButton(true);
+            GameLog.Info(infoMap.QuickInfo is { } info
+                ? $"Quick info of the tile under the cursor: '{info.Text}'."
+                : "The quick info of the tile under the cursor is empty.");
         }
 
         GameLog.Info(_menu is null

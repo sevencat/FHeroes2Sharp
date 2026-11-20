@@ -22,8 +22,8 @@ namespace FHeroes2.Game.Kingdom;
 /// those two numbers is the reference's, not a rounded exponential.
 /// </para>
 /// <para>
-/// This class is the whole of <c>resource_trading.cpp</c>: the seven tables and one switch. The marketplace dialog
-/// that shows them is part of `castle_marketplace.cpp`, which is not translated yet.
+/// This class is the whole of <c>resource_trading.cpp</c>: the seven tables and one switch. The window that shows them
+/// is <see cref="FHeroes2.UI.Dialogs.MarketplaceDialog"/>.
 /// </para>
 /// </remarks>
 public static class ResourceTrading
