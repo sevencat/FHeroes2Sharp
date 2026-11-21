@@ -32,6 +32,7 @@ public static class Assets
     private static readonly Dictionary<(string FileName, int FrameId), Sprite?> Images = new();
     private static readonly Dictionary<string, IcnSpriteFile?> BaseFiles = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<(string FileName, int FrameId), Sprite?> BaseImages = new();
+    private static readonly Dictionary<string, Sprite?[]?> SyntheticFiles = new(StringComparer.OrdinalIgnoreCase);
 
     private static AssetBundle? _current;
 
@@ -56,6 +57,7 @@ public static class Assets
                 Images.Clear();
                 BaseFiles.Clear();
                 BaseImages.Clear();
+                SyntheticFiles.Clear();
             }
         }
     }
@@ -97,7 +99,11 @@ public static class Assets
     /// <param name="fileName">Archive entry name, for example <c>CELLWIN.ICN</c>.</param>
     /// <param name="frameId">Zero based frame number.</param>
     /// <returns>The frame, or <see langword="null"/> when the file or the frame is absent.</returns>
-    /// <remarks>参考：<c>src/fheroes2/game/game_assets.cpp:5817</c> Assets::getImage（越界返回 <c>errorImage</c>，见类注释的差异）。</remarks>
+    /// <remarks>
+    /// 参考：<c>src/fheroes2/game/game_assets.cpp:5817</c> Assets::getImage（越界返回 <c>errorImage</c>，见类注释的差异）。
+    /// 归档之前先问 <see cref="GetSynthetic"/>：<c>EMPTY_*_BUTTON</c> 这类表是 <c>generateDefaultImages()</c>
+    /// 现场拼的，没有归档条目，但调用方照样按文件名取。
+    /// </remarks>
     public static Sprite? GetImage(string fileName, int frameId)
     {
         ArgumentException.ThrowIfNullOrEmpty(fileName);
@@ -114,8 +120,10 @@ public static class Assets
                 return cached;
             }
 
-            IcnSpriteFile? file = GetIcn(fileName);
-            Sprite? sprite = file is not null && frameId < file.Count ? file.Sprites[frameId] : null;
+            Sprite? sprite = GetSynthetic(fileName) is { } synthetic
+                ? frameId < synthetic.Length ? synthetic[frameId] : null
+                : GetArchiveFrame(fileName, frameId);
+
             Images[(fileName, frameId)] = sprite;
             return sprite;
         }
@@ -137,8 +145,38 @@ public static class Assets
 
         lock (SyncRoot)
         {
-            return GetIcn(fileName)?.Count ?? 0;
+            return GetSynthetic(fileName)?.Length ?? GetIcn(fileName)?.Count ?? 0;
         }
+    }
+
+    /// <summary>
+    /// The frames of an ICN the engine assembles itself, or <see langword="null"/> when
+    /// <paramref name="fileName"/> is an ordinary archive entry.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>generateDefaultImages()</c>（<c>game_assets.cpp:749</c>）在 <c>loadICN()</c> 里先造图、再造不出来的
+    /// 时候才读归档；本项目的「造图」集中在 <see cref="Gui.EmptyButtons"/>。结果按文件名缓存，失败也记成
+    /// <see langword="null"/>，免得每次取图都重算一遍。
+    /// </remarks>
+    private static Sprite?[]? GetSynthetic(string fileName)
+    {
+        if (SyntheticFiles.TryGetValue(fileName, out Sprite?[]? cached))
+        {
+            return cached;
+        }
+
+        Sprite?[]? frames = Gui.EmptyButtons.Build(fileName);
+        SyntheticFiles[fileName] = frames;
+
+        return frames;
+    }
+
+    /// <summary>One frame straight out of the archives, the body of <see cref="GetImage"/> before the synthetic tables.</summary>
+    private static Sprite? GetArchiveFrame(string fileName, int frameId)
+    {
+        IcnSpriteFile? file = GetIcn(fileName);
+
+        return file is not null && frameId < file.Count ? file.Sprites[frameId] : null;
     }
 
     /// <summary>

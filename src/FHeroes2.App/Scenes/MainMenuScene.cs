@@ -344,11 +344,19 @@ public sealed class MainMenuScene : IScene
     /// Builds the editor button, the <c>EDITOR_DEFAULT</c> entry of <c>Game::MainMenu()</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <c>case ICN::BTNSHNGL</c> of <c>game_assets.cpp</c> appends three frames to the table it has just
     /// read: the original <c>BTNSHNGL.ICN</c> stops at frame 19, so the editor look always comes from
     /// <c>resurrection.h2d</c>. The anchors are stored in the archive, which is why the button lands on
     /// the easel of the street scene without a single coordinate here. An asset pack that already
     /// carries the frames (a table longer than 22 sprites) is used as it is.
+    /// </para>
+    /// <para>
+    /// The reference only adds the button to the interactive list when it thinks Price of Loyalty is
+    /// installed (<c>conf.isPriceOfLoyaltySupported()</c>, <c>game_mainmenu.cpp:340</c>). The port has no
+    /// such option at start up, so the entry stays available on every installation; the button itself is
+    /// still the reference artwork, never a hand drawn rectangle.
+    /// </para>
     /// </remarks>
     /// <param name="signs">The loaded <c>BTNSHNGL.ICN</c>.</param>
     /// <returns>The button, or <see langword="null"/> when neither the table nor the archive has it.</returns>
@@ -381,9 +389,11 @@ public sealed class MainMenuScene : IScene
     /// </summary>
     /// <remarks>
     /// The reference blits <c>main_menu_editor_icon.image</c> into its cached copy of the background,
-    /// at the anchor stored in the archive. Here the background sprite belongs to the ICN cache, so a
-    /// clone is painted instead of the cached sprite and the scene owns the result; leaving the cache
-    /// alone keeps a second menu creation from stacking the easel twice.
+    /// at the anchor stored in the archive, and only when a Price of Loyalty resource is present
+    /// (<c>game_assets.cpp:3463</c>). The port skips that gate for the same reason as
+    /// <see cref="CreateEditorButton"/> and paints whenever the archive has the icon. The background
+    /// sprite itself belongs to the ICN cache, so a clone is painted and the scene owns the result;
+    /// leaving the cache alone keeps a second menu creation from stacking the easel twice.
     /// </remarks>
     /// <param name="artwork">Sprite 0 of <c>HEROES.ICN</c>.</param>
     /// <returns>The scene to draw, with the easel when the archive has it.</returns>

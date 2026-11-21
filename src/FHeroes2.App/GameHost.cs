@@ -16,6 +16,7 @@ using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Widgets;
 using SDL3;
 
 using GameAssets = FHeroes2.Game.Assets;
@@ -58,6 +59,7 @@ public sealed class GameHost : IDisposable
     private CastleScene? _castle;
     private EditorScene? _editor;
     private EditorMainMenuScene? _editorMenu;
+    private SystemInfoRenderer? _systemInfo;
     private bool _supportsCjk;
     private bool _sdlInitialised;
     private bool _ttfInitialised;
@@ -117,6 +119,13 @@ public sealed class GameHost : IDisposable
             _presenter.SetPalette(_palette);
 
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
+
+            if (_options.SystemInfo)
+            {
+                _systemInfo = new SystemInfoRenderer();
+                GameLog.Info("System info overlay enabled: clock and FPS in the bottom left corner.");
+            }
+
             CreateTextRenderer();
             CreateScenes();
             StartAudio();
@@ -1361,6 +1370,11 @@ public sealed class GameHost : IDisposable
         }
 
         _scene.DrawFrame(state);
+
+        // The reference paints the readout over the finished frame and then draws that frame
+        // (ui_tool.cpp:288 SystemInfoRenderer::preRender / postRender).
+        _systemInfo?.Draw(_frame.Bounds, _frame.Pixels);
+
         _presenter.Upload(_frame);
 
         _presenter.BeginLogicalFrame();
@@ -1685,7 +1699,16 @@ public sealed class GameHost : IDisposable
             return;
         }
 
-        string path = H2DResources.GetDefaultPath(dataDirectory);
+        string? path = H2DResources.FindArchive(dataDirectory);
+
+        if (path is null)
+        {
+            H2DResources.Current = null;
+            GameLog.Warn(
+                $"'{H2DResources.FileName}' was not found next to '{dataDirectory}'; " +
+                "the artwork it adds stays unavailable.");
+            return;
+        }
 
         try
         {

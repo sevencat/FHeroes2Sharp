@@ -11,6 +11,8 @@ public sealed class H2DResourcesTests : IDisposable
 {
     private readonly List<string> _temporaryFiles = [];
 
+    private readonly List<string> _temporaryDirectories = [];
+
     public void Dispose()
     {
         H2DResources.Current = null;
@@ -18,6 +20,14 @@ public sealed class H2DResourcesTests : IDisposable
         foreach (string path in _temporaryFiles)
         {
             File.Delete(path);
+        }
+
+        foreach (string path in _temporaryDirectories)
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, true);
+            }
         }
     }
 
@@ -96,6 +106,61 @@ public sealed class H2DResourcesTests : IDisposable
         string path = H2DResources.GetDefaultPath("data");
 
         Assert.Equal(Path.Combine("data", "files", "data", H2DResources.FileName), path);
+    }
+
+    [Fact]
+    public void FindArchive_LooksUnderFilesData()
+    {
+        string root = CreateDirectory();
+        string expected = WriteArchiveUnder(root);
+
+        Assert.Equal(expected, H2DResources.FindArchive(root));
+    }
+
+    [Fact]
+    public void FindArchive_WalksUpFromTheDataFolder()
+    {
+        // The archives may sit in 'Data' while 'files/data' belongs to the installation root.
+        string root = CreateDirectory();
+        string dataFolder = Path.Combine(root, "Data");
+        Directory.CreateDirectory(dataFolder);
+        string expected = WriteArchiveUnder(root);
+
+        Assert.Equal(expected, H2DResources.FindArchive(dataFolder));
+    }
+
+    [Fact]
+    public void FindArchive_AnswersNullWhenTheArchiveIsMissing()
+    {
+        Assert.Null(H2DResources.FindArchive(null));
+        Assert.Null(H2DResources.FindArchive("   "));
+        Assert.Null(H2DResources.FindArchive(CreateDirectory()));
+    }
+
+    /// <summary>Makes a throwaway directory that is removed by <see cref="Dispose"/>.</summary>
+    private string CreateDirectory()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"fheroes2-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        _temporaryDirectories.Add(path);
+        return path;
+    }
+
+    /// <summary>Writes the full archive under <c>files/data</c> of <paramref name="root"/>.</summary>
+    private static string WriteArchiveUnder(string root)
+    {
+        string directory = Path.Combine(root, "files", "data");
+        Directory.CreateDirectory(directory);
+
+        H2DWriter writer = new();
+        foreach (string name in H2DResources.SampleFileNames)
+        {
+            writer.Add(name, [7]);
+        }
+
+        string path = Path.Combine(directory, H2DResources.FileName);
+        Assert.True(writer.Write(path));
+        return path;
     }
 
     /// <summary>Writes an archive whose entries hold one byte each, so only the record table matters.</summary>

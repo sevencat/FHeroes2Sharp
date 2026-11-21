@@ -13,6 +13,7 @@ namespace FHeroes2.App;
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics|editor] [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
+///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
@@ -87,6 +88,15 @@ public sealed class CommandLineOptions
     /// needs a real mouse.
     /// </summary>
     public bool OpenSettings { get; private set; }
+
+    /// <summary>
+    /// Paints the clock and FPS readout in the bottom left corner (<c>--system-info</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>fheroes2::SystemInfoRenderer</c>，由 <c>Settings::isSystemInfoEnabled()</c> 开关
+    /// （<c>src/fheroes2/game/game.cpp</c> 的主循环）。端口还没有设置窗口去存这个开关，先用命令行。
+    /// </remarks>
+    public bool SystemInfo { get; private set; }
 
     /// <summary>
     /// Opens the scenario selection window of the main menu at start up (<c>--open-scenario</c>).
@@ -366,6 +376,10 @@ public sealed class CommandLineOptions
                     options.FreezeAnimation = true;
                     break;
 
+                case "--system-info":
+                    options.SystemInfo = true;
+                    break;
+
                 case "--open-settings":
                     options.OpenSettings = true;
                     break;
@@ -525,6 +539,7 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames, then exits.");
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
+        Console.WriteLine("  --system-info       Paints the clock and FPS in the bottom left corner (the reference's F1 overlay).");
         Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");
         Console.WriteLine("  --open-scenario     Opens the scenario selection of the main menu (New Game).");
         Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");

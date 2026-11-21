@@ -30,7 +30,7 @@
 | S11 | `ai` | 9 | 完成（2026-11-21） |
 | S12 | `gui` | 9 | 完成（端口自建界面架构，2026-11-21） |
 | S13 | `dialog` | 6 | 完成（2026-11-21） |
-| S14 | `game` | 6 | 完成（主循环/菜单/视频为界面层，2026-11-21） |
+| S14 | `game` | 6 | 完成（主循环/菜单/视频为界面层；主菜单编辑器招牌已接 `resurrection.h2d`，2026-11-21） |
 | S15 | `campaign` | 1 | 完成（2026-11-21） |
 | S16 | `editor` | 5 | 完成（模型层；主菜单已改按参考移植，其余窗口暂为端口自建，2026-11-21） |
 
@@ -596,7 +596,82 @@
 `Editor main menu ready: EDITOR.ICN 640x480, window 184x465 at (432, 24), 20 button frames ...`
 与 `Opened the editor main menu.`
 
+## 2026-11-21 M2 追加 `game_mainmenu.cpp`（编辑器招牌改按参考取材）
+
+主菜单右下角那个招牌以前是端口自己画的（棕色牌子 + `地图编辑器` 文字，`EditorFallbackArea`），
+参考不是这么做的。原因在资源：`BTNSHNGL.ICN` 只有 20 帧（0..19），编辑器按钮的第 20、21、22 帧
+**不在任何 ICN 里**，`case ICN::BTNSHNGL`（`game_assets.cpp:3471-3479`）在加载时从
+`resurrection.h2d` 追加三张 `main_menu_editor_{released,highlighted,pressed}_button.image`；
+`case ICN::HEROES`（同文件 3464-3467）再把 `main_menu_editor_icon.image`（109x147，锚点
+531,333）画进街景底图，就是那个画架。
+
+按参考补齐：
+
+* `GameHost.LoadH2DResources()`：启动时打开 `resurrection.h2d` 并发布 `H2DResources.Current`，
+  退出时随宿主释放。参考的 `H2DInitializer` 把它当硬依赖（缺了就抛），端口降级为一条警告。
+* `H2DResources.FindArchive()`：先探 `<data>/files/data/resurrection.h2d`，再探父目录的同一路径。
+  必须这样是因为本机装法里 AGG 在 `Data\` 而 `files\` 在安装根目录，`MoCatalog.FindCatalog`
+  找 `files/lang` 时也是这么退一级的。
+* `MainMenuScene.CreateEditorButton()`：表长 > 22 就直接用表里的三帧；表长恰好 20 时从 h2d 取三张
+  图拼按钮。锚点随图存，所以按钮自己就落在画架上（535,360，87x64），命中区/悬停/按下状态不用改。
+* `MainMenuScene.CreateStreetScene()`：把画架图标按存档锚点贴进**克隆**的底图。参考是贴在它自己
+  缓存的底图上，端口底图归 ICN 缓存，贴克隆才不会在第二次进主菜单时叠两遍。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 没有 `resurrection.h2d` 就启动失败 | 打警告后继续跑，编辑器招牌回落到自绘的那块牌子 |
+| 图标贴在全局底图缓存上 | 贴进 `Clone()`，场景自己持有 |
+| 只有 `isPriceOfLoyaltySupported()` 为真才把编辑器按钮加进交互表、才贴画架（`game_mainmenu.cpp:340`、`game_assets.cpp:3463`） | 端口启动时没设这个选项，所以任何安装都保留编辑器入口；按钮图形本身一律取参考美术，不再画矩形 |
+
+测试：`H2DResourcesTests` 加三例（在 `<data>/files/data` 找到、从 `Data\` 往上一级找到、都没有时为 null），
+全量 4 604 绿（Core 236 + Assets 416 + UI 881 + Game 3 071），构建 0 错误 0 警告。
+
+冒烟：`--scene menu` 日志出现 `'resurrection.h2d' loaded (68 entries).` 与
+`editor sign from resurrection.h2d`；`--cursor 580,390` 截图里画架画布点亮（highlighted 帧）且状态栏出
+`创建新地图或修改已有地图。`；`--cursor 565,380 --left-click` 仍进编辑器主菜单。
+
 ## 目录批次收官
 
 S1~S16 全部走完一遍：`campaign` 与 `editor` 之后没有再剩下未开过的目录。后续按 PLAN 第 6 条进入第二阶段：
 逐函数核对（以 `docs/planv4.md` 的目录顺序为序）＋ 按目录补齐行为测试。
+
+## 2026-11-21 `ui_button.cpp` 与 `EMPTY_*_BUTTON`（S12/S16 自建按钮美术换成参考移植）
+
+S12 那轮把 `gui/` 归成「端口自建界面架构」，其中按钮美术是端口自己拼的：`TextButtonArtwork` 在
+`SYSTEM.ICN` 的空白帧上按文字长度拉宽、自己算文字位置。参考不是这么做的，`ui_button.cpp` 有一整套
+自由函数，底图则是 `game_assets.cpp` 现场合成的 `EMPTY_*_BUTTON` 表。这一轮把这条链换成移植：
+
+* `FHeroes2.UI/Widgets/ButtonFactory.cs`：`getCustomNormalButton()`（两个重载）、`getTextAdaptedSprite()`、
+  `makeButtonSprites()`、`makeSymmetricBackgroundSprites()`、`renderTextOnButton()`。几何照抄：
+  宽 `clamp(文字宽 + 10, 16, 200)`、高 `clamp(文字高, 25, 200)`，释放态文字偏移 `(7, 5)`、按下态 `(6, 6)` 且整帧再下移一像素。
+  偏色时按下态透明角用背景像素补齐、并把 `transform` 清零（`addButtonShine()` 之后才允许原样贴）。
+* `FHeroes2.Game/Gui/EmptyButtons.cs`：`generateDefaultImages()` 的四张表。
+  `EMPTY_GOOD_BUTTON`/`EMPTY_EVIL_BUTTON` 来自 `SYSTEM.ICN`/`SYSTEME.ICN` 的 11、12 帧（按下态左边界从释放态拷一列、
+  九个透明角用 `FillTransform` 挖掉）；`EMPTY_POL_BUTTON` 来自 `X_CMPBTN.ICN` 的 4、5 帧（加宽一像素、把按下态的深色边框
+  挪到释放态上、捷克资材少一像素的竖直缝补上）；`EMPTY_GUILDWELL_BUTTON` 来自 `WELLXTRA.ICN` 的 0、1 帧（擦掉文字、重画边框）。
+* `getButtonFillingColor()` 与 `fheroes2::GetColorId()` 一起搬了：good 释放/按下 `(216,184,152)`/`(184,136,96)`，
+  evil `(180,180,180)`/`(144,144,144)`。参考预先把 `64³` 张成索引表，这里不建表，只把 227 个「不循环、不重复」的调色板位置
+  走一遍 Redmean，再套 15 号变换表；调色板取归档里的 `KB.PAL` 原始六位值，两端同一量纲。
+* `Assets.GetImage`/`GetImageCount` 先查合成表，再查归档——和参考「先造图、造不出来才读文件」一致，
+  所以调用方仍然只用 `GetImage( "EMPTY_GOOD_BUTTON.ICN", 0 )`。
+* `EditorMainMenuScene`：`MAIN\nMENU`、`BACK` 两处改用 `ButtonFactory`，`SYSTEM.ICN` 的直接取图删掉；
+  顺带修了绘制——端口每帧从零重画，而 `ButtonBase.DrawOnState()` 只在状态变化时才贴图，
+  所以这些按钮以前根本没画出来（日志说有 20 个帧、屏幕上空白），现在改成先 `Press()`/`Release()` 再 `Draw()`。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `EMPTY_VERTICAL_GOOD_BUTTON`（`HSBTNS` 帧 + `ExtractCommonPattern`）、`EMPTY_MAP_SELECT_BUTTON`（`NGEXTRA` 帧） | 未搬：调用它们的高分榜与地图选择窗口还没移植，`GetBlankAssetName()` 里留着名字，用到时再补 |
+| `makeButtonWithBackground()`、`makeButtonWithShadow()`、`getSupportedText()` | 未搬：`ButtonSprite` 的端口没有 `isTransparentBackground` 那套，等对应窗口搬过来再加 |
+| 帧数不够时 `_icnVsSprite[id]` 留空、`getImage` 返回 `errorImage` | `EmptyButtons.Build()` 返回 `null`，落回端口的「缺失」语义，按钮工厂抛带说明的异常 |
+| `pressed` 宽度 ≤ 2 时保留一个空精灵 | 当作资材损坏，同样返回 `null` |
+
+测试：`ButtonFactoryTests` 8 例（宽高夹取、文字偏移、按下态补背景角、空裁片、单标签参数、六个模板名）、
+`EmptyButtonsTests` 7 例（good/evil/pol/guildwell 的尺寸与重绘像素、按下态透明角、帧缓存、四个底色都落在调色板附近）。
+全量 4 613 绿（Core 236 + Assets 416 + UI 883 + Game 3 078），构建 0 错误 0 警告。
+
+冒烟：`--scene menu --cursor 565,380 --left-click` 截图里编辑器主菜单的三个按钮（`NEW MAP`/`LOAD MAP`/`MAIN MENU`）
+是参考的浅棕底图，`MAIN MENU` 那块就是现场合成的 `EMPTY_GOOD_BUTTON.ICN`，文字位置与参考一致。

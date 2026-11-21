@@ -170,6 +170,42 @@ public sealed class H2DResources : IDisposable
     /// <returns>True when the entry is there.</returns>
     public bool Contains(string name) => Archive.Contains(name);
 
+    /// <summary>
+    /// Finds the archive next to the game data, the <c>Settings::findFile</c> of the reference.
+    /// </summary>
+    /// <remarks>
+    /// The archives themselves often live in a <c>Data</c> sub-folder of the installation while
+    /// <c>files/data</c> sits in the root, so the directory and its parent are both probed, exactly the way
+    /// <c>MoCatalog.FindCatalog</c> looks for <c>files/lang</c>.
+    /// </remarks>
+    /// <param name="dataDirectory">The directory the archives were loaded from.</param>
+    /// <returns>The full path, or <see langword="null"/> when neither place holds the archive.</returns>
+    public static string? FindArchive(string? dataDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return null;
+        }
+
+        List<string> candidates = [GetDefaultPath(dataDirectory)];
+
+        string? parent = Path.GetDirectoryName(Path.GetFullPath(dataDirectory));
+        if (parent is not null)
+        {
+            candidates.Add(GetDefaultPath(parent));
+        }
+
+        foreach (string candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Reads one sprite from this archive, <c>h2d::readImage</c>.</summary>
     /// <param name="name">The entry name.</param>
     /// <param name="image">The sprite that was built.</param>

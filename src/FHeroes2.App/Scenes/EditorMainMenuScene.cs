@@ -94,8 +94,11 @@ public sealed class EditorMainMenuScene : IScene
     /// <summary>The four map size buttons, frames 12..19 of the reference's table.</summary>
     public const string MapSizeButtonAssetName = "BTNESIZE.ICN";
 
-    /// <summary>The blank button the Main Menu and Back labels are printed on, <c>ICN::SYSTEM</c>.</summary>
-    public const string SystemAssetName = "SYSTEM.ICN";
+    /// <summary>
+    /// The blank button the Main Menu and Back labels are printed on, <c>ICN::EMPTY_GOOD_BUTTON</c>
+    /// of <c>getCustomNormalButton()</c>.
+    /// </summary>
+    public const string BlankButtonAssetName = ButtonFactory.GoodBlankAssetName;
 
     /// <summary>Vertical distance between two buttons, <c>spaceBetweenButtons</c> of the reference.</summary>
     public const int SpaceBetweenButtons = 10;
@@ -194,7 +197,6 @@ public sealed class EditorMainMenuScene : IScene
             IcnSpriteFile? mainButtons = assets.TryReadIcn(MainButtonAssetName);
             IcnSpriteFile? newMapButtons = assets.TryReadIcn(NewMapButtonAssetName);
             IcnSpriteFile? sizeButtons = assets.TryReadIcn(MapSizeButtonAssetName);
-            IcnSpriteFile? system = assets.TryReadIcn(SystemAssetName);
             IcnSpriteFile? horizontal = assets.TryReadIcn(StandardWindowChrome.HorizontalAssetName);
             IcnSpriteFile? vertical = assets.TryReadIcn(StandardWindowChrome.VerticalAssetName);
             IcnSpriteFile? windowBackground = assets.TryReadIcn(StandardWindowChrome.BackgroundAssetName);
@@ -209,20 +211,19 @@ public sealed class EditorMainMenuScene : IScene
 
             if (background is not { Count: > 0 } || mainButtons is not { Count: >= 4 } ||
                 newMapButtons is not { Count: >= 4 } || sizeButtons is not { Count: >= 8 } ||
-                system is not { Count: >= 13 } || chrome is null)
+                chrome is null)
             {
                 GameLog.Warn(
                     $"The editor main menu artwork is missing: '{BackgroundAssetName}' " +
                     $"({background?.Count ?? 0} frames), '{MainButtonAssetName}' " +
                     $"({mainButtons?.Count ?? 0} frames), '{NewMapButtonAssetName}' " +
                     $"({newMapButtons?.Count ?? 0} frames), '{MapSizeButtonAssetName}' " +
-                    $"({sizeButtons?.Count ?? 0} frames), '{SystemAssetName}' " +
-                    $"({system?.Count ?? 0} frames), stone window " +
+                    $"({sizeButtons?.Count ?? 0} frames), stone window " +
                     (chrome is null ? "missing." : "ok."));
                 return null;
             }
 
-            List<Sprite> buttonFrames = BuildButtonFrames(mainButtons, newMapButtons, sizeButtons, system, chrome.Background, fonts);
+            List<Sprite> buttonFrames = BuildButtonFrames(mainButtons, newMapButtons, sizeButtons, chrome.Background);
 
             if (buttonFrames.Count < RequiredFrames)
             {
@@ -291,7 +292,7 @@ public sealed class EditorMainMenuScene : IScene
                 $"{background.Sprites[0].Height}, window {placed.Width}x{placed.Height} at " +
                 $"({placed.X}, {placed.Y}), {RequiredFrames} button frames from " +
                 $"'{MainButtonAssetName}', '{NewMapButtonAssetName}', '{MapSizeButtonAssetName}' and " +
-                $"'{SystemAssetName}', " +
+                $"'{BlankButtonAssetName}', " +
                 (messageChrome is null ? "no tooltips." : "right click tooltips."));
 
             return scene;
@@ -310,16 +311,15 @@ public sealed class EditorMainMenuScene : IScene
     /// </summary>
     /// <remarks>
     /// Frames 0..3 come from <c>BTNEMAIN</c>, 8..11 from <c>BTNENEW</c> and 12..19 from <c>BTNESIZE</c>.
-    /// Main Menu and Back have no artwork of their own, so the reference draws them on the blank button
-    /// of <c>SYSTEM.ICN</c> at the size of the New Map button minus its horizontal margin.
+    /// Main Menu and Back have no artwork of their own, so <c>makeButtonSprites()</c> prints them on
+    /// <c>EMPTY_GOOD_BUTTON</c> at the size of the New Map button minus its horizontal margin, with
+    /// <c>STONEBAK</c> behind the corners the pressed plate leaves transparent.
     /// </remarks>
     private static List<Sprite> BuildButtonFrames(
         IcnSpriteFile mainButtons,
         IcnSpriteFile newMapButtons,
         IcnSpriteFile sizeButtons,
-        IcnSpriteFile system,
-        Sprite stoneBackground,
-        GameFonts fonts)
+        Sprite stoneBackground)
     {
         List<Sprite> frames = new(20);
 
@@ -328,20 +328,17 @@ public sealed class EditorMainMenuScene : IScene
             frames.Add(mainButtons.Sprites[index]);
         }
 
-        Sprite emptyReleased = system.Sprites[11];
-        Sprite emptyPressed = system.Sprites[12];
-        int textWidth = mainButtons.Sprites[0].Width - TextButtonArtwork.HorizontalMargin;
-        int textHeight = mainButtons.Sprites[0].Height;
+        Size textArea = new(
+            mainButtons.Sprites[0].Width - ButtonFactory.TextWidthMargin,
+            mainButtons.Sprites[0].Height);
 
-        (Sprite Released, Sprite Pressed) mainMenu = TextButtonArtwork.Create(
-            "MAIN\nMENU", textWidth, textHeight, stoneBackground, emptyReleased, emptyPressed,
-            fonts.White, fonts.White);
+        (Sprite Released, Sprite Pressed) mainMenu = ButtonFactory.MakeButtonSprites(
+            "MAIN\nMENU", textArea, isEvilInterface: false, stoneBackground);
         frames.Add(mainMenu.Released);
         frames.Add(mainMenu.Pressed);
 
-        (Sprite Released, Sprite Pressed) back = TextButtonArtwork.Create(
-            "BACK", textWidth, textHeight, stoneBackground, emptyReleased, emptyPressed,
-            fonts.White, fonts.White);
+        (Sprite Released, Sprite Pressed) back = ButtonFactory.MakeButtonSprites(
+            "BACK", textArea, isEvilInterface: false, stoneBackground);
         frames.Add(back.Released);
         frames.Add(back.Pressed);
 
@@ -499,7 +496,18 @@ public sealed class EditorMainMenuScene : IScene
         ButtonSprite[] visible = VisibleButtons();
         foreach (ButtonSprite button in visible)
         {
-            button.DrawOnState(IsPressed(button), pixels);
+            // The port paints every frame from scratch, so the state is set first and the sprite is
+            // always blitted; drawOnState() of the reference only paints on a state change.
+            if (IsPressed(button))
+            {
+                button.Press();
+            }
+            else
+            {
+                button.Release();
+            }
+
+            button.Draw(pixels);
         }
 
         foreach (ButtonSprite button in visible)
