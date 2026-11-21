@@ -3,6 +3,7 @@ using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Gui;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Spells;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
@@ -537,6 +538,363 @@ public sealed class SpellDialogElement : DialogElement
         }
 
         return new DialogElementResult(false, new DialogPopup(_header, _body));
+    }
+}
+
+/// <summary>
+/// A luck icon on its own, <c>LuckDialogElement</c> (<c>ui_dialog.h:427-448; ui_dialog.cpp:548-573</c>).
+/// </summary>
+/// <remarks>
+/// 参考从 <c>EXPMRL.ICN</c> 取第 0 或第 1 帧，帧号由 <c>goodLuck</c> 决定；两帧都是自带底框的完整图标，元素只
+/// 把它贴到自己的左上角。端口把帧交给调用方，于是元素不再需要知道幸运值——「第几帧」在调用点就确定下来。
+/// </remarks>
+public sealed class LuckDialogElement : DialogElement
+{
+    private const int TextOffsetFromElement = 2;
+
+    private readonly Sprite _icon;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds a luck icon element.</summary>
+    /// <param name="icon">The 34x34 luck frame the caller picked.</param>
+    /// <param name="popupHeader">Header of the right-click popup.</param>
+    /// <param name="popupBody">Body of the right-click popup.</param>
+    public LuckDialogElement(Sprite icon, string popupHeader, string popupBody)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        _icon = icon;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        Area = new Size(icon.Width, icon.Height);
+    }
+
+    /// <inheritdoc/>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        ImageOps.BlitSprite(output, offset, _icon);
+    }
+
+    /// <inheritdoc/>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!events.IsMouseRightButtonPressedInArea(new Rect(offset, Area)))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
+    }
+}
+
+/// <summary>
+/// A morale icon on its own, <c>MoraleDialogElement</c> (<c>ui_dialog.h:450-471; ui_dialog.cpp:575-600</c>).
+/// </summary>
+/// <remarks>
+/// 与 <see cref="LuckDialogElement"/> 同构，只是参考的帧是 <c>EXPMRL.ICN</c> 的第 2、3 帧。两个类分开是为了让
+/// 调用点读起来是「士气」而不是「某个图标」。
+/// </remarks>
+public sealed class MoraleDialogElement : DialogElement
+{
+    private readonly Sprite _icon;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds a morale icon element.</summary>
+    /// <param name="icon">The 34x34 morale frame the caller picked.</param>
+    /// <param name="popupHeader">Header of the right-click popup.</param>
+    /// <param name="popupBody">Body of the right-click popup.</param>
+    public MoraleDialogElement(Sprite icon, string popupHeader, string popupBody)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        _icon = icon;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        Area = new Size(icon.Width, icon.Height);
+    }
+
+    /// <inheritdoc/>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        ImageOps.BlitSprite(output, offset, _icon);
+    }
+
+    /// <inheritdoc/>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!events.IsMouseRightButtonPressedInArea(new Rect(offset, Area)))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
+    }
+}
+
+/// <summary>
+/// An experience icon with the number under it, <c>ExperienceDialogElement</c>
+/// (<c>ui_dialog.h:473-494; ui_dialog.cpp:602-640</c>).
+/// </summary>
+/// <remarks>
+/// 参考把经验值格式化成小号白字放在图标下面（间隔 <c>textOffsetFromElement</c>）；数字为空时元素就是图标本身。
+/// 端口让调用方先格式化——数字的千位分隔符属于界面语言，元素不该自己决定。
+/// </remarks>
+public sealed class ExperienceDialogElement : DialogElement
+{
+    private const int TextOffsetFromElement = 2;
+
+    private readonly Sprite _icon;
+    private readonly Sprite? _background;
+    private readonly string _experience;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds an experience element.</summary>
+    /// <param name="icon">The 34x34 experience frame.</param>
+    /// <param name="experience">The number under it; empty for none.</param>
+    /// <param name="popupHeader">Header of the right-click popup.</param>
+    /// <param name="popupBody">Body of the right-click popup.</param>
+    /// <param name="background">Frame drawn behind the icon, or <see langword="null"/>.</param>
+    public ExperienceDialogElement(Sprite icon, string experience, string popupHeader, string popupBody, Sprite? background = null)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        _icon = icon;
+        _background = background;
+        _experience = experience ?? string.Empty;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        int width = icon.Width;
+        int height = icon.Height;
+
+        if (_experience.Length != 0)
+        {
+            Text text = new(_experience, FontType.SmallWhite());
+            width = Math.Max(width, text.Width());
+            height += TextOffsetFromElement + text.Height();
+        }
+
+        if (background is not null)
+        {
+            width = Math.Max(width, background.Width);
+            height = Math.Max(height, background.Height);
+        }
+
+        Area = new Size(width, height);
+    }
+
+    /// <inheritdoc/>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        if (_background is not null)
+        {
+            ImageOps.BlitSprite(output, offset, _background);
+        }
+
+        ImageOps.BlitSprite(output, offset, _icon);
+
+        if (_experience.Length == 0)
+        {
+            return;
+        }
+
+        Text text = new(_experience, FontType.SmallWhite());
+        int x = offset.X + ((Area.Width - text.Width()) / 2);
+        int y = offset.Y + _icon.Height + TextOffsetFromElement;
+
+        text.DrawInRoi(x, y, Area.Width, output, new Rect(offset, Area));
+    }
+
+    /// <inheritdoc/>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!events.IsMouseRightButtonPressedInArea(new Rect(offset, Area)))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
+    }
+}
+
+/// <summary>
+/// A primary skill with its value, <c>PrimarySkillDialogElement</c>
+/// (<c>ui_dialog.h:496-527; ui_dialog.cpp:642-706</c>).
+/// </summary>
+/// <remarks>
+/// 参考在 34x34 的图标右边写「技能名」（小号黄字，<c>y + 10</c>）与「数值」（大号白字，<c>y + 82</c>）。技能名由
+/// <see cref="PrimarySkillDefaults.GetName"/> 给出，数值由调用方格式化——那是界面语言的事。
+/// </remarks>
+public sealed class PrimarySkillDialogElement : DialogElement
+{
+    private const int SkillTextHeight = 10;
+    private const int ValueTextHeight = 82;
+
+    private readonly Sprite _background;
+    private readonly Sprite _icon;
+    private readonly string _skillName;
+    private readonly string _value;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds a primary skill element.</summary>
+    /// <param name="skill">The skill the icon stands for.</param>
+    /// <param name="background">Frame drawn behind the icon, or <see langword="null"/>.</param>
+    /// <param name="icon">The 34x34 skill frame.</param>
+    /// <param name="value">The value under the name; empty for none.</param>
+    /// <param name="popupHeader">Header of the right-click popup.</param>
+    /// <param name="popupBody">Body of the right-click popup.</param>
+    public PrimarySkillDialogElement(PrimarySkill skill, Sprite background, Sprite icon, string value, string popupHeader, string popupBody)
+    {
+        ArgumentNullException.ThrowIfNull(background);
+        ArgumentNullException.ThrowIfNull(icon);
+
+        _background = background;
+        _icon = icon;
+        _skillName = PrimarySkillDefaults.GetName(skill);
+        _value = value ?? string.Empty;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        Area = new Size(background.Width, background.Height);
+    }
+
+    /// <inheritdoc/>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        ImageOps.BlitSprite(output, offset, _background);
+
+        int iconX = offset.X + ((Area.Width - _icon.Width) / 2);
+        int iconY = offset.Y + ((Area.Height - _icon.Height) / 2);
+
+        ImageOps.BlitSprite(output, new Point(iconX, iconY), _icon);
+
+        Text skillName = new(_skillName, FontType.SmallWhite());
+        int nameX = offset.X + ((Area.Width - skillName.Width()) / 2);
+
+        skillName.DrawInRoi(nameX, offset.Y + SkillTextHeight, Area.Width, output, new Rect(offset, Area));
+
+        if (_value.Length == 0)
+        {
+            return;
+        }
+
+        Text value = new(_value, FontType.NormalWhite());
+        int valueX = offset.X + ((Area.Width - value.Width()) / 2);
+
+        value.DrawInRoi(valueX, offset.Y + ValueTextHeight, Area.Width, output, new Rect(offset, Area));
+    }
+
+    /// <inheritdoc/>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!events.IsMouseRightButtonPressedInArea(new Rect(offset, Area)))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
+    }
+}
+
+/// <summary>
+/// A secondary skill with its level, <c>SecondarySkillDialogElement</c>
+/// (<c>ui_dialog.h:529-559; ui_dialog.cpp:708-770</c>).
+/// </summary>
+/// <remarks>
+/// 参考在图标上方写「技能名」（小号黄字，<c>y + 8</c>）、下方写「等级名」（小号白字，<c>y + 56</c>），两行都以
+/// 图标宽度为上限裁剪。端口把两行文本都交给调用方：等级名要不要带招魂加成，由调用点按英雄算
+/// （<see cref="SecondarySkills.GetLevelNameWithBonus"/>）。
+/// </remarks>
+public sealed class SecondarySkillDialogElement : DialogElement
+{
+    private const int SkillTextHeight = 8;
+    private const int LevelTextHeight = 56;
+
+    private readonly Sprite _background;
+    private readonly Sprite _icon;
+    private readonly string _skillName;
+    private readonly string _levelName;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds a secondary skill element.</summary>
+    /// <param name="background">Frame drawn behind the icon.</param>
+    /// <param name="icon">The 34x34 skill frame.</param>
+    /// <param name="skillName">The skill's name.</param>
+    /// <param name="levelName">The hero's level in it.</param>
+    /// <param name="popupHeader">Header of the right-click popup.</param>
+    /// <param name="popupBody">Body of the right-click popup.</param>
+    public SecondarySkillDialogElement(Sprite background, Sprite icon, string skillName, string levelName, string popupHeader, string popupBody)
+    {
+        ArgumentNullException.ThrowIfNull(background);
+        ArgumentNullException.ThrowIfNull(icon);
+
+        _background = background;
+        _icon = icon;
+        _skillName = skillName ?? string.Empty;
+        _levelName = levelName ?? string.Empty;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        Area = new Size(background.Width, background.Height);
+    }
+
+    /// <inheritdoc/>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        ImageOps.BlitSprite(output, offset, _background);
+
+        int iconX = offset.X + ((Area.Width - _icon.Width) / 2);
+        int iconY = offset.Y + ((Area.Height - _icon.Height) / 2);
+
+        ImageOps.BlitSprite(output, new Point(iconX, iconY), _icon);
+
+        Rect iconArea = new Rect(iconX, iconY, _icon.Width, _icon.Height);
+
+        Text skillName = new(_skillName, FontType.SmallWhite());
+        skillName.FitToOneRow(_icon.Width);
+        skillName.DrawInRoi(iconX + ((_icon.Width - skillName.Width()) / 2), iconY - SkillTextHeight, _icon.Width, output, iconArea);
+
+        Text levelName = new(_levelName, FontType.SmallWhite());
+        levelName.FitToOneRow(_icon.Width);
+        levelName.DrawInRoi(iconX + ((_icon.Width - levelName.Width()) / 2), iconY + _icon.Height + LevelTextHeight, _icon.Width, output, iconArea);
+    }
+
+    /// <inheritdoc/>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        if (!events.IsMouseRightButtonPressedInArea(new Rect(offset, Area)))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
     }
 }
 

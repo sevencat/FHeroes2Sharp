@@ -13,6 +13,7 @@ using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
 using SDL3;
@@ -42,6 +43,7 @@ public sealed class GameHost : IDisposable
     private readonly bool _syntheticCursor;
 
     private AssetBundle? _assets;
+    private H2DResources? _h2d;
     private Palette _palette = new();
     private ScreenBuffer _frame = null!;
     private SdlPresenter? _presenter;
@@ -55,6 +57,7 @@ public sealed class GameHost : IDisposable
     private AdventureMapScene? _adventure;
     private CastleScene? _castle;
     private EditorScene? _editor;
+    private EditorMainMenuScene? _editorMenu;
     private bool _supportsCjk;
     private bool _sdlInitialised;
     private bool _ttfInitialised;
@@ -157,6 +160,10 @@ public sealed class GameHost : IDisposable
         _audio?.Dispose();
         _audio = null;
 
+        _h2d?.Dispose();
+        _h2d = null;
+        H2DResources.Current = null;
+
         _assets?.Dispose();
         _assets = null;
 
@@ -248,6 +255,10 @@ public sealed class GameHost : IDisposable
                         {
                             townScreen.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
                         }
+                        else if (_editorMenu is { } editorMenu)
+                        {
+                            editorMenu.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
                         else if (_editor is { } editing)
                         {
                             editing.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
@@ -279,6 +290,7 @@ public sealed class GameHost : IDisposable
                     if (!_syntheticCursor)
                     {
                         _castle?.SetCursor(null);
+                        _editorMenu?.SetCursor(null);
                         _editor?.SetCursor(null);
                         _adventure?.SetCursor(null);
                         _adventure?.ViewWorld?.DragTo(null);
@@ -300,7 +312,7 @@ public sealed class GameHost : IDisposable
                     // SDL reports a positive y when the wheel turns away from the user, which rolls
                     // a list up and moves the view towards the top of the map. The town screen has
                     // nothing to scroll, so the wheel is dropped while it is open.
-                    if (!_syntheticCursor && _castle is null)
+                    if (!_syntheticCursor && _castle is null && _editorMenu is null)
                     {
                         int notches = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
 
@@ -361,6 +373,18 @@ public sealed class GameHost : IDisposable
         if (_editor is { } editor)
         {
             return HandleEditorKey(key, editor);
+        }
+
+        if (_editorMenu is { } editorMenu)
+        {
+            // SDL key codes of the letters are their ASCII values, so the hot keys of
+            // editor_mainmenu.cpp (N, L, S, R, S/M/L/X and Escape) can be forwarded as characters.
+            if (!key.Repeat && editorMenu.Select((char)key.Key) is { } request)
+            {
+                HandleEditorMenuRequest(request);
+            }
+
+            return false;
         }
 
         if (_castle is { } townScreen)
@@ -460,6 +484,34 @@ public sealed class GameHost : IDisposable
             }
 
             return false;
+        }
+
+        if (_editorMenu is { } editorMenu)
+        {
+            // The editor main menu answers both buttons: the left one walks its three states, the
+            // right one shows the tooltip of the button it is held over.
+            if (!_syntheticCursor)
+            {
+                editorMenu.SetCursor(ToLogical(button.X, button.Y));
+            }
+
+            switch (button.Button)
+            {
+                case LeftMouseButton:
+                    if (editorMenu.SetLeftButton(button.Down) is { } request)
+                    {
+                        HandleEditorMenuRequest(request);
+                    }
+
+                    return false;
+
+                case RightMouseButton:
+                    editorMenu.SetRightButton(button.Down);
+                    return false;
+
+                default:
+                    return false;
+            }
         }
 
         if (_castle is { } townScreen)
@@ -562,17 +614,11 @@ public sealed class GameHost : IDisposable
     /// <summary>Reacts to the choice of a main menu sign; returns <see langword="true"/> to stop.</summary>
     private bool HandleMenuAction(MainMenuAction action)
     {
-        // The editor opens on the first map of the catalog, the way the reference reacts to its
-        // editor button; choosing a map is the editor main menu of a later milestone.
+        // The editor sign opens the editor's own main menu, the window `Editor::menuMain()` of
+        // editor_mainmenu.cpp shows; the map is picked there, not by the game main menu.
         if (action == MainMenuAction.Editor)
         {
-            OpenEditor(null);
-
-            if (_editor is { } editor)
-            {
-                _scene = editor;
-            }
-
+            OpenEditorMenu();
             return false;
         }
 
@@ -849,6 +895,109 @@ public sealed class GameHost : IDisposable
         GameLog.Info($"Closing the editor of '{_editor.MapName}'.");
         _editor = null;
         _scene = _menu ?? (IScene?)_diagnostics;
+    }
+
+    /// <summary>
+    /// Opens the editor main menu, the <c>Editor::menuMain()</c> window of
+    /// <c>editor_mainmenu.cpp</c>: the editor sign of the game main menu lands here, and the map is
+    /// chosen inside the editor's own screen.
+    /// </summary>
+    private void OpenEditorMenu()
+    {
+        _editorMenu ??= EditorMainMenuScene.TryCreate(_frame, _assets, _fonts);
+
+        if (_editorMenu is null)
+        {
+            // A menu without its artwork is a blank screen; the reference always ships the archive, so
+            // this fallback only keeps a broken installation usable.
+            GameLog.Warn("The editor main menu could not be created; opening the first map instead.");
+            OpenEditor(null);
+
+            if (_editor is { } fallback)
+            {
+                _scene = fallback;
+            }
+
+            return;
+        }
+
+        if (_options.Cursor is { } cursor)
+        {
+            _editorMenu.SetCursor(cursor);
+        }
+
+        _scene = _editorMenu;
+        GameLog.Info("Opened the editor main menu.");
+    }
+
+    /// <summary>Leaves the editor main menu for the game main menu.</summary>
+    private void LeaveEditorMenu()
+    {
+        _editorMenu = null;
+        _scene = _menu ?? (IScene?)_diagnostics;
+        GameLog.Info("Left the editor main menu.");
+    }
+
+    /// <summary>
+    /// Acts on a request of the editor main menu, the <c>editNewMapFromScratch()</c>,
+    /// <c>editNewRandomMap()</c> and <c>Editor::menuLoadMap()</c> branches of the reference.
+    /// </summary>
+    /// <param name="request">Action the user asked for and, for the map creation actions, the size.</param>
+    private void HandleEditorMenuRequest(EditorMenuRequest request)
+    {
+        switch (request.Action)
+        {
+            case EditorMenuAction.MainMenu:
+                LeaveEditorMenu();
+                return;
+
+            case EditorMenuAction.LoadMap:
+                // Editor::menuLoadMap() shows Dialog::SelectScenario() with every map file and opens
+                // the chosen one; the scenario list is not wired into the editor yet, so the first
+                // map of the catalog is opened - the same map the game main menu starts on.
+                GameLog.Info("The editor map list is not wired yet; opening the first map of the catalog.");
+                _editorMenu = null;
+                OpenEditor(null);
+
+                if (_editor is { } loaded)
+                {
+                    _scene = loaded;
+                }
+
+                return;
+
+            default:
+                break;
+        }
+
+        int edgeLength = MapSizes.EdgeLength(request.MapSize);
+
+        if (request.Action == EditorMenuAction.NewRandomMap)
+        {
+            // The generator itself (Maps::updateRandomMapConfiguration() and generateRandomMap()) is
+            // not ported yet; a blank map of the requested size keeps the editor usable meanwhile.
+            GameLog.Warn(
+                $"The random map generator is not ported yet; creating a blank {edgeLength}x{edgeLength} map.");
+        }
+
+        EditorScene? scene = EditorScene.CreateNew(_frame, _assets, _fonts, edgeLength, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"A new {edgeLength}x{edgeLength} map cannot be created: {error}");
+            return;
+        }
+
+        _editorMenu = null;
+        _editor = scene;
+
+        if (_options.Cursor is { } cursor)
+        {
+            scene.SetCursor(cursor);
+        }
+
+        _scene = scene;
+        GameLog.Info($"Editor main menu: new {MapSizes.Describe(request.MapSize)} map ('{scene.MapName}').");
     }
 
     /// <summary>
@@ -1506,6 +1655,8 @@ public sealed class GameHost : IDisposable
         // here, once, and keeps it for the life of the process.
         GameAssets.Current = _assets;
 
+        LoadH2DResources();
+
         byte[]? paletteData = _assets.TryRead("KB.PAL");
         if (paletteData is null || paletteData.Length < Palette.RawPaletteSize)
         {
@@ -1515,6 +1666,40 @@ public sealed class GameHost : IDisposable
 
         _palette = Palette.FromGamePalette(paletteData);
         GameLog.Info($"Palette loaded from KB.PAL ({paletteData.Length} bytes, 6 bit VGA normalized).");
+    }
+
+    /// <summary>
+    /// Opens <c>files/data/resurrection.h2d</c>, the images fheroes2 adds on top of the original
+    /// game data, <c>fheroes2::h2d::H2DInitializer</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference treats the archive as mandatory and throws at start up without it. The port keeps
+    /// going instead: a few screens (the editor button of the main menu, the icons of several buttons)
+    /// then fall back to what they can build themselves, which is better than refusing to run.
+    /// </remarks>
+    private void LoadH2DResources()
+    {
+        string? dataDirectory = _assets?.DataDirectory;
+        if (dataDirectory is null)
+        {
+            return;
+        }
+
+        string path = H2DResources.GetDefaultPath(dataDirectory);
+
+        try
+        {
+            _h2d = H2DResources.Open(path);
+            H2DResources.Current = _h2d;
+            GameLog.Info($"'{H2DResources.FileName}' loaded ({_h2d.Archive.Count} entries).");
+        }
+        catch (Exception exception)
+            when (exception is FileNotFoundException or BinaryFormatException or InvalidOperationException)
+        {
+            _h2d = null;
+            H2DResources.Current = null;
+            GameLog.Warn($"'{path}' is not usable ({exception.Message}); the added artwork stays unavailable.");
+        }
     }
 
     /// <summary>

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Castle;
 
@@ -8,8 +10,8 @@ namespace FHeroes2.Game.System;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Only the four the AI needs so far (ADR-195). <c>difficulty.cpp</c> also carries the growth, income, guard and
-/// spell multipliers; those belong with the game settings batch and are not ported yet.
+/// 移植的是 AI 与守卫法术用得到的那些开关（ADR-195）。<c>difficulty.cpp</c> 里还有成长、收入等乘数，那些随
+/// 游戏设置一起补。
 /// </para>
 /// <para>
 /// The reference passes the difficulty in instead of reading <c>Game::getDifficulty()</c>, so the caller decides
@@ -163,4 +165,42 @@ public static class Difficulty
     /// <param name="difficulty">Difficulty of the game.</param>
     /// <returns>Whether the future value of an object may be used.</returns>
     public static bool IsFutureObjectPredictionAllowedForAi(GameDifficulty difficulty) => difficulty != GameDifficulty.Easy;
+
+    /// <summary>
+    /// How strongly a neutral guardian's spells hit, <c>Difficulty::getGuardianSpellMultiplier()</c>
+    /// (<c>difficulty.cpp:272-292</c>).
+    /// </summary>
+    /// <remarks>
+    /// 这是「守卫法术强度」的百分数分母意义上的档位值：数字越小，守卫的法术越弱，玩家的难度越低。参考给五个档位
+    /// 写死 16/14/12/10/8，越界值走 <c>assert( 0 )</c> 后返回 20（最弱的默认值）。
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>The multiplier, 8 to 20.</returns>
+    public static int GetGuardianSpellMultiplier(GameDifficulty difficulty) => difficulty switch
+    {
+        GameDifficulty.Easy => 16,
+        GameDifficulty.Normal => 14,
+        GameDifficulty.Hard => 12,
+        GameDifficulty.Expert => 10,
+        GameDifficulty.Impossible => 8,
+        _ => UnsupportedGuardianSpellMultiplier(),
+    };
+
+    /// <summary>
+    /// Whether the AI may reorder a hero's artifacts, <c>Difficulty::isArtifactSortingAllowedForAI()</c>
+    /// (<c>difficulty.cpp:350-361</c>).
+    /// </summary>
+    /// <remarks>Easy 与 Normal 不让 AI 整理宝物栏，Hard 及以上允许。</remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>Whether the sorting pass may run.</returns>
+    public static bool IsArtifactSortingAllowedForAi(GameDifficulty difficulty) => difficulty != GameDifficulty.Easy && difficulty != GameDifficulty.Normal;
+
+    /// <summary>Logs the reference's <c>assert( 0 )</c> for an unknown difficulty.</summary>
+    /// <returns>The value the reference falls through to, <c>20</c>.</returns>
+    private static int UnsupportedGuardianSpellMultiplier()
+    {
+        Debug.Assert(false, "Unknown difficulty level.");
+
+        return 20;
+    }
 }

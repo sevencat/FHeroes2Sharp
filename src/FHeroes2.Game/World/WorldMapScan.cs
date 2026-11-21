@@ -1,4 +1,6 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 
 // "Army" is both a namespace (FHeroes2.Game.Army) and the type inside it, so the type needs an alias.
@@ -147,6 +149,40 @@ public sealed partial class World
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The monsters a hero can see around it, <c>Maps::getVisibleMonstersAroundHero()</c>
+    /// (<c>maps.cpp:453-462</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两步：先按 <see cref="Hero.GetVisionsDistance"/> 的方形范围扫出怪物——是<b>行走</b>的那一型
+    /// <see cref="Mp2ObjectType.ActionMonster"/>，不是基类型；再剔掉英雄这一方还没看见的格子。参考就地
+    /// <c>std::remove_if</c>，端口用 <see cref="List{T}.RemoveAll"/>，剩下的顺序不变。
+    /// </para>
+    /// <para>
+    /// 参考读 <c>Tile::isFog( heroColor )</c>；端口的迷雾状态收在
+    /// <see cref="FHeroes2.Game.AdventureMap.MapFog"/> 里，所以走它。没有迷雾表（地图还没建好）时一只都不算：
+    /// 那时地图上本来也还没有可看的怪物。
+    /// </para>
+    /// </remarks>
+    /// <param name="hero">The hero whose eyes are used.</param>
+    /// <returns>The visible monster tiles, nearest first.</returns>
+    public List<int> GetVisibleMonstersAroundHero(Hero hero)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+
+        List<int> monsters = ScanAroundObjectWithDistance(hero.MapIndex, (int)Hero.GetVisionsDistance(), Mp2ObjectType.ActionMonster);
+
+        MapFog? fog = Fog;
+
+        if (fog is not null)
+        {
+            monsters.RemoveAll(index => fog.IsFogged(index % Width, index / Width, hero.Color));
+        }
+
+        return monsters;
     }
 
     /// <summary>

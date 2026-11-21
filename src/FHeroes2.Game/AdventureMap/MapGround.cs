@@ -1,3 +1,7 @@
+using System.Diagnostics;
+
+using FHeroes2.Core.Random;
+
 namespace FHeroes2.Game.AdventureMap;
 
 /// <summary>
@@ -118,6 +122,70 @@ public static partial class MapGrounds
         MapGround.Unknown => throw new ArgumentOutOfRangeException(nameof(ground), ground, "The ground has no terrain images."),
         _ => 38,
     };
+
+    /// <summary>
+    /// A random terrain image of one ground, <c>Maps::Ground::getRandomTerrainImageIndex()</c>
+    /// (<c>ground.cpp:244-291</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 四段：水只有四个变体；其余地形在 <paramref name="allowEmbeddedObjects"/> 打开时有一成概率
+    /// （<c>Rand( 6 ) == 0</c>）挑「图上自带小物件」的那一段，起点与数量按地形不同；落到普通变体时取
+    /// <c>Rand( 7 )</c> 加 <see cref="PlainImageOffset"/>。所有 <c>Rand</c> 都是闭区间，和参考一致。
+    /// </para>
+    /// <para>
+    /// <b>编辑器不用它</b>：地形笔刷要「同一次点击产出同样的字节」，走
+    /// <see cref="TerrainTransitions.PlainImageIndex"/> 的确定性变体。这个函数给地图随机生成器
+    /// （<c>map_random_generator_helper.cpp:750</c>）和「战斗背景挑一块地」（<c>battle_only.cpp:160</c>）用。
+    /// </para>
+    /// </remarks>
+    /// <param name="ground">Ground to pick an image of.</param>
+    /// <param name="allowEmbeddedObjects">Whether the image may be one that carries a scenery object.</param>
+    /// <returns>The terrain image index, <c>0</c> for a ground without images.</returns>
+    public static ushort GetRandomTerrainImageIndex(MapGround ground, bool allowEmbeddedObjects = true)
+    {
+        if (ground == MapGround.Unknown)
+        {
+            return (ushort)UnsupportedGround(ground);
+        }
+
+        ushort start = StartImageIndex(ground);
+
+        if (ground == MapGround.Water)
+        {
+            return (ushort)(Rand.Get(3) + 16 + start);
+        }
+
+        if (allowEmbeddedObjects && Rand.Get(6) == 0)
+        {
+            return (ushort)(ground switch
+            {
+                MapGround.Grass or MapGround.Swamp => Rand.Get(15) + 46 + start,
+                MapGround.Snow or MapGround.Wasteland or MapGround.Lava => Rand.Get(7) + 46 + start,
+                MapGround.Desert => Rand.Get(12) + 46 + start,
+                MapGround.Dirt => Rand.Get(15) + 24 + start,
+                MapGround.Beach => Rand.Get(8) + 8 + start,
+                _ => UnsupportedGround(ground),
+            });
+        }
+
+        return (ushort)(Rand.Get(7) + ground switch
+        {
+            MapGround.Dirt => 16,
+            MapGround.Beach => 0,
+            _ => 38,
+        } + start);
+    }
+
+    /// <summary>Logs the reference's <c>assert( 0 )</c> for a ground without images.</summary>
+    /// <param name="ground">The offending ground.</param>
+    /// <returns>The value the reference returns after the assertion, <c>0</c>.</returns>
+    private static int UnsupportedGround(MapGround ground)
+    {
+        Debug.Assert(false, $"The ground has no terrain images: {ground}.");
+
+        return 0;
+    }
 
     /// <summary>
     /// A deterministic variant in <c>0 .. count - 1</c> for a tile, the stand-in for the

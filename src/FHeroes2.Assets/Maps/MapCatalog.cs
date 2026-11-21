@@ -96,6 +96,46 @@ public static class MapCatalog
     }
 
     /// <summary>
+    /// Looks for one file by name below <paramref name="rootDirectories"/>,
+    /// <c>Maps::tryGetMatchingFile()</c>.
+    /// </summary>
+    /// <param name="rootDirectories">The directories to search.</param>
+    /// <param name="fileName">The file name to look for, compared ignoring case.</param>
+    /// <returns>The full path, or <see langword="null"/> when no directory has the file.</returns>
+    /// <remarks>
+    /// 不按扩展名过滤：战役地图叫 <c>.h2c</c>/<c>.hxc</c>，不在 <see cref="Extensions"/> 里，
+    /// 但战役数据就是靠文件名找不到就判定「地图没装」。
+    /// </remarks>
+    public static string? FindFile(IEnumerable<string> rootDirectories, string fileName)
+    {
+        ArgumentNullException.ThrowIfNull(rootDirectories);
+        ArgumentException.ThrowIfNullOrEmpty(fileName);
+
+        foreach (string directory in FindDirectories(rootDirectories))
+        {
+            string[] candidates;
+            try
+            {
+                candidates = [.. Directory.EnumerateFiles(directory)];
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (string file in candidates)
+            {
+                if (Path.GetFileName(file).Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Path.GetFullPath(file);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Every map file found below <paramref name="rootDirectories"/>, without reading it.
     /// </summary>
     public static IReadOnlyList<string> FindFiles(IEnumerable<string> rootDirectories)

@@ -8,6 +8,7 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.Game.H2D;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
 
@@ -67,12 +68,31 @@ public sealed class MainMenuScene : IScene
     /// The editor button of <c>BTNSHNGL.ICN</c>, <c>EDITOR_DEFAULT</c> of <c>Game::MainMenu()</c>.
     /// </summary>
     /// <remarks>
-    /// Only the Price of Loyalty artwork has these three frames (20, 21, 22) and the reference shows
-    /// the button only when that data is installed; a plain Heroes II installation has no editor and
-    /// no frame to draw, which is why the menu paints its own sign there instead
-    /// (<see cref="EditorFallbackArea"/>).
+    /// <para>
+    /// The original archive has twenty sprites (0..19) and no editor frame. The three frames 20, 21 and
+    /// 22 are appended at load time from <c>resurrection.h2d</c> by <c>case ICN::BTNSHNGL</c> of
+    /// <c>game_assets.cpp:3471</c>, together with the little easel that is painted into the street
+    /// scene (<see cref="EditorIconImageName"/>). This is why the button cannot be found in the ICN file
+    /// itself.
+    /// </para>
+    /// <para>
+    /// Only the painted sign in <see cref="EditorFallbackArea"/> is a port addition, used when the
+    /// archive is missing.
+    /// </para>
     /// </remarks>
     public const int EditorFrame = 20;
+
+    /// <summary>The released look of the editor button, <c>main_menu_editor_released_button.image</c>.</summary>
+    public const string EditorReleasedImageName = "main_menu_editor_released_button.image";
+
+    /// <summary>The highlighted look, <c>main_menu_editor_highlighted_button.image</c>.</summary>
+    public const string EditorHighlightedImageName = "main_menu_editor_highlighted_button.image";
+
+    /// <summary>The pressed look, <c>main_menu_editor_pressed_button.image</c>.</summary>
+    public const string EditorPressedImageName = "main_menu_editor_pressed_button.image";
+
+    /// <summary>The easel painted into the street scene, <c>main_menu_editor_icon.image</c>.</summary>
+    public const string EditorIconImageName = "main_menu_editor_icon.image";
 
     /// <summary>msgid of the editor button, the <c>_( "Editor" )</c> of the reference.</summary>
     public const string EditorLabelId = "Editor";

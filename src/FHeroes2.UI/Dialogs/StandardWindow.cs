@@ -1,3 +1,5 @@
+using FHeroes2.Assets;
+using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Widgets;
@@ -614,6 +616,63 @@ public sealed class StandardWindow
 
         ImageOps.AddGradientShadowForArea(target, new Point(windowX, windowY), windowWidth, windowHeight,
             BorderWidth);
+    }
+
+    /// <summary>
+    /// Draws the four small gems into the frame of the window, the
+    /// <c>StandardWindow::applyGemDecoratedCorners()</c> of <c>ui_window.cpp:366-398</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gem is a 9x9 square cut out of <c>REDBACK.ICN</c> at (20, 2) and blitted four times along the
+    /// frame, 4 pixels from the left and 2 from the top, mirrored vertically at the bottom edge. The
+    /// original switches to <c>EVIL_DIALOG_PLAIN_CORNERS</c> and <c>WINLOSEE.ICN</c> when the evil
+    /// interface is enabled; the port has no interface type setting (see <see cref="StandardWindowChrome"/>),
+    /// so only the good look is drawn.
+    /// </para>
+    /// <para>
+    /// Called after <see cref="Draw"/>, because the gems sit on top of the frame the window just painted.
+    /// </para>
+    /// </remarks>
+    /// <param name="target">Indexed frame buffer the window was drawn into.</param>
+    /// <param name="assets">Game data the gem artwork is read from.</param>
+    /// <returns><see langword="false"/> when the archive has no usable <c>REDBACK.ICN</c>.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="target"/> or <paramref name="assets"/> is <see langword="null"/>.
+    /// </exception>
+    public bool TryApplyGemDecoratedCorners(PixelBuffer target, AssetBundle assets)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(assets);
+
+        if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Redback)) is not { Count: > 0 } file)
+        {
+            return false;
+        }
+
+        const int GemSideLength = 9;
+        const int GemSourceX = 20;
+        const int GemSourceY = 2;
+
+        Sprite gem = file.Sprites[0];
+
+        if (gem.Width < GemSourceX + GemSideLength || gem.Height < GemSourceY + GemSideLength)
+        {
+            return false;
+        }
+
+        Rect area = WindowArea;
+        int leftX = area.X + 4;
+        int rightX = area.X + area.Width - 2 - GemSideLength;
+        int topY = area.Y + 2;
+        int bottomY = area.Y + area.Height - GemSideLength - 4;
+
+        Blit(target, gem, GemSourceX, GemSourceY, leftX, topY, GemSideLength, GemSideLength);
+        Blit(target, gem, GemSourceX, GemSourceY, rightX, topY, GemSideLength, GemSideLength);
+        Blit(target, gem, GemSourceX, GemSourceY, leftX, bottomY, GemSideLength, GemSideLength);
+        Blit(target, gem, GemSourceX, GemSourceY, rightX, bottomY, GemSideLength, GemSideLength);
+
+        return true;
     }
 
     /// <summary>
