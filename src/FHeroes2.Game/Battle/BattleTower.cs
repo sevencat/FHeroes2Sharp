@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Random;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
@@ -115,6 +116,20 @@ public sealed class BattleTower
     /// </summary>
     /// <returns>The attack skill used by the shot.</returns>
     public uint GetAttack() => _unit.GetAttack() + _attackBonus;
+
+    /// <summary>
+    /// The damage one shot of the tower deals, <c>Unit::GetDamage()</c> on the <c>Tower</c> subclass
+    /// (<c>battle_troop.cpp:590-612</c>).
+    /// </summary>
+    /// <param name="enemy">The unit being shot at.</param>
+    /// <param name="randomGenerator">The battle's generator, so a replay deals the same damage.</param>
+    /// <returns>The damage, never less than 1.</returns>
+    /// <remarks>
+    /// 参考里塔就是 <c>Unit</c> 的子类，唯一改的是 <c>GetAttack()</c> 多加法师公会那一截，伤害公式照样用父类的。
+    /// 端口的塔不是 <see cref="BattleUnit"/>，于是把那一截加成作为 <c>extraAttack</c> 交给弓箭手自己的公式算，
+    /// 这样射手加成、城墙惩罚、攻防差这些仍然只有一份实现。
+    /// </remarks>
+    public uint GetDamage(BattleUnit enemy, Pcg32 randomGenerator) => _unit.GetDamage(enemy, randomGenerator, _attackBonus);
 
     /// <summary>
     /// The strength of the tower, <c>Tower::GetStrengthWithBonus()</c> as inherited from <c>Troop</c>.

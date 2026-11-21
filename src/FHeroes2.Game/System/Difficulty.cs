@@ -86,6 +86,39 @@ public static class Difficulty
     public static bool AreAiHeroRolesAllowed(GameDifficulty difficulty) => difficulty != GameDifficulty.Easy;
 
     /// <summary>
+    /// Whether the basic battle logic applies, <c>Difficulty::isBasicAIBattleLogicApplicable()</c>
+    /// (<c>difficulty.cpp:338-349</c>).
+    /// </summary>
+    /// <remarks>
+    /// 「基础战斗逻辑」指只按伤害算价值的做法，不做噬魂/吸血的复活点数、后续回合收益这类额外估算。
+    /// 参考的规则出乎意料却是明确的：Easy 下**只有人类**用基础逻辑，其余难度下**只有 AI** 用基础逻辑
+    /// （为了让高难度下的人类也享受完整估算）。
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <param name="isControlledByHuman">Whether a human gives the unit its orders.</param>
+    /// <returns>Whether only the basic battle logic is used.</returns>
+    public static bool IsBasicAiBattleLogicApplicable(GameDifficulty difficulty, bool isControlledByHuman) =>
+        difficulty == GameDifficulty.Easy ? isControlledByHuman : !isControlledByHuman;
+
+    /// <summary>
+    /// How much stronger the enemy must be before the AI runs away,
+    /// <c>Difficulty::getArmyStrengthRatioForAIRetreat()</c> (<c>difficulty.cpp:187-205</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考给的是「敌方 ÷ 我方」的倍数：Normal 13.3 倍、Hard/Expert 11.8 倍、Impossible 10 倍、Easy 16.7 倍。
+    /// 调用方写成 <c>我方 × 该值 ≥ 敌方</c>，即只有兵力低于敌方的 1/13 左右才考虑撤退。
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>The ratio.</returns>
+    public static double GetArmyStrengthRatioForAiRetreat(GameDifficulty difficulty) => difficulty switch
+    {
+        GameDifficulty.Normal => 100.0 / 7.5,
+        GameDifficulty.Hard or GameDifficulty.Expert => 100.0 / 8.5,
+        GameDifficulty.Impossible => 100.0 / 10.0,
+        _ => 100.0 / 6.0,
+    };
+
+    /// <summary>
     /// How far ahead in stats an AI hero must be before it bothers to meet a friendly hero of the same role,
     /// <c>Difficulty::getMinStatDiffForAIHeroesMeeting()</c> (<c>difficulty.cpp:234-255</c>).
     /// </summary>

@@ -72,6 +72,17 @@ public sealed partial class Hero
     public int GetStatsValue() => _attack + _defense + _power + _knowledge + _secondarySkills.TotalLevel;
 
     /// <summary>
+    /// The sum of the four base primary skills, <c>Skill::Primary::getTotalPrimarySkillLevel()</c>
+    /// (<c>skill.h:180-183</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>Heroes</c> 经 <c>HeroBase</c> 继承 <c>Skill::Primary</c>，所以这个方法问的是<b>基础值</b>，
+    /// 不含神器加成。战斗 AI 用它判断「这位英雄等级够不够高、值不值得投降/撤退保下来」。
+    /// </remarks>
+    /// <returns>The sum of attack, defense, power and knowledge.</returns>
+    public int GetTotalPrimarySkillLevel() => _attack + _defense + _power + _knowledge;
+
+    /// <summary>
     /// How much the hero is worth at the tavern, <c>Heroes::getRecruitValue()</c> (<c>heroes.cpp:881</c>).
     /// </summary>
     /// <remarks>

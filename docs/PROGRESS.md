@@ -7988,3 +7988,37 @@ ADR-118 的状态；英雄名只有英文原文；玩家配色与 `AlphaBlit` �
 
 **验证**：`dotnet test` → **3003 通过 / 0 失败**（Game 项目），全量 4 530 条全绿；全量 `dotnet build` 0 警告；
 `AIWorldPathfinder` 的 `NotImplementedException` 13 → **0**，剩 47 处（全在 AI 目录）。
+
+## battle 目录收口：非界面部分 ✅（2026-11-21）
+
+按「整目录推进」把 `battle/` 除界面四篇（`battle_interface`、`battle_interface_settings`、`battle_dialogs`、
+`battle_only`）之外的部分补齐。本轮补的是**回合循环与结算里真正缺的那几段**，不是再写一遍已有的。
+
+| 端口文件（改） | 参考 | 内容 |
+| --- | --- | --- |
+| `Battle/BattleArena.Attack.cs` | `battle_action.cpp:196-272` | `BattleProcess` 补两段：伤害结算后的**兵种自带法术**（单目标、随机挑一个、自带驱散只摘增益）与 `PostAttackAction` |
+| `Battle/BattleUnit.cs` | `battle_troop.cpp:225-244`、`:943-956`、`:1536-1552`、`:1745-1748`、`:1725-1735` | `PostAttackAction`（射击耗箭 + 清运气、无尽弹药免耗、塔上不耗箭的断言）、`GetSpellMagic`、`GetShotString`、`GetSpeedString`、`GetAffectedDuration`、`GetCurrentOrArmyCommander` |
+| `Battle/BattleArena.Turns.cs` | `battle_arena.cpp:552-660` | 回合循环里补 **投石车**（攻方第一个回合 / 攻方全灭行动力时）与 **三座箭塔**（中央→左→右，守方第一个回合），塔打完可能终止战斗 |
+| `Battle/BattleArena.Castle.cs` | `battle_arena.cpp:675-760` | `TowerAction`（按 `EvaluateThreatForUnit` 取威胁最大者，并列时先到先得）、`CatapultAction`（先掷目标→伤害→命中，再打包成一条命令） |
+| `Battle/BattleCommand.cs` | `battle_command.cpp` | 增 `Catapult( IReadOnlyList<int> )`：投石是**先掷骰后回报**，命令必须带上每发的目标/伤害/命中 |
+| `Battle/BattleArena.cs` | `battle_arena.cpp:899-925`、`:1458-1500` | `AutoCombatInProgress`（只看当前出手方）、`CanToggleAutoCombat`、`EnemyOfAIHasAutoCombatInProgress`、`IsSpellcastDisabled`（**否定之球**，不含剧本与自动战斗）；`CanRetreatOpponent`/`CanSurrenderOpponent` 改回参考判据（英雄 + 攻方或不在城里 / 对面有指挥官） |
+| `Battle/BattleArena.Action.cs` | `battle_arena.cpp:372-380` | 抽出 `EnableAutoCombatForHumanSides`，`ApplyActionQuickCombat` 与「不放映」共用 |
+| `Battle/BattleLoader.cs` | 同上 | 不放映时给人类一方开自动战斗 |
+| `Battle/BattleBoard.cs` | `battle_board.cpp:175-191`、`:368-377`、`:1046-1151` | `GetDistance( Position, int )`（宽单位取头尾近者）、`GetIndexAbsPosition`、`GetMoatCellMask`（六处格子微调）、`GetMoatCellsForUnit`（宽单位先头后尾、桥面格豁免） |
+| `Battle/IBattleField.cs` | `battle_arena.cpp:1405-1424` | `GetCommander( color )` 进接口（默认答 `null`，假体不必多写） |
+
+要点：
+
+* **耗箭是新的**：`_shotsLeft` 之前只有初始化、没有递减，射手可以无限放箭。递减放在 `PostAttackAction` 里（参考位置），
+  塔射击不走 `BattleProcess`，所以塔仍然无限。
+* **投石车的三掷顺序不能换**：目标 → 伤害 → 命中，伤害再被墙的剩余耐久截断。少掷或多掷一次，同一份录像重放出不同的墙。
+* **自带法术的驱散**只摘 `GoodMagic`，与英雄施放的驱散不同；这条差别在参考里就是两个 `if`，没有合并。
+* **自动战斗只看当前出手方**：攻城战里攻方托管、守方在玩家手里时，轮到守方 `AutoCombatInProgress` 必须为假。
+* **`isSpellcastDisabled` 原先写错了**：端口原来把「剧本禁魔 + 自动战斗」也算进来，参考里只有否定之球。
+
+**遗留**：`Battle::Force::GetKilledTroops` 依赖尚未转的 `army/Troops`（合并同类项容器），本轮不写临时替代，等
+`army` 目录；`Unit::isIdling`（动画状态，端口没有逐单位动画）与 `Unit::String()`（调试串）不转；`battle_*` 界面四篇
+按计划排在所有内核目录之后。
+
+**验证**：全量 `dotnet test FHeroes2Sharp.slnx` → **4 554 通过 / 0 失败**（Core 236 + Assets 416 + UI 875 + Game 3027），
+`dotnet build` 0 错误 0 警告。

@@ -12,18 +12,70 @@
 | B3 | `ai_planner_castle.cpp` 四个成员 | ✅ 4/4 | — | `AiCastlePlannerTests` 10 条 | 2026-11-21 |
 | B4 | `ai_planner_kingdom.cpp` 十一 + 一个成员 | ⚠️ 10/11（`KingdomTurn` 的回合循环归 B5）+ `revealFog` | ADR-195 | `AiKingdomPlannerTests` 8 条 | 2026-11-21 |
 | B5 | `ai_planner_hero.cpp` 十六个成员 | ✅ 16/16 | — | `AiHeroPlannerTests` 6 条 | 2026-11-21 |
-| B6 | `ai_battle.cpp` + `ai_battle_spell.cpp` | ⚠️ 地基已落：`BattleUnit` 威胁评估三件套 + `Board`/`Arena` 的 AI 所需几何与状态查询；25 个决策函数未开始 | — | `BattleUnitThreatTests` 10 条 | 2026-11-21 |
-| B8 | 战斗启动层（`Battle::Loader`，`battle_main.cpp:291-535`） | ⚠️ 接口已落：`BattleLoader`/`BattleLoadRequest`/`IBattlePresenter` 三件契约 + 缺口清单；正文等 `BattleArena.Turns()` 与攻击/施法行动 | — | 待 `BattleArena.Turns()` 落地后写 | 2026-11-21 |
+| B6 | `ai_battle.cpp` 25 个决策函数 + `ai_battle_spell.cpp` 全部估值函数 | ✅ 25/25 + 15 个成员 + 1 个辅助 | — | `BattleUnitThreatTests` 10 条 | 2026-11-21 |
+| B8 | 战斗主循环（`battle_arena.cpp` 的回合循环 + `battle_action.cpp` 的近战结算 + `Battle::Loader`） | ⚠️ 回合循环 `Turns()` 与近战攻击已落（含反击、幸运、伤害/击杀统计）；剩施法行动、塔与投石车、以及 `BattleLoader` 三处正文 | — | `BattleArenaTurnTests` 8 条 | 2026-11-21 |
 | B7 | `ai_hero_action.cpp` 四个入口 | ⚠️ 2/4（次元门、召船；`HeroesAction`/`HeroesMove` 卡在战斗启动层与对象动作表） | — | `AiHeroActionTests` | — |
 | X1 | `AIWorldPathfinder` 六个方法 | ✅ 6/6 | ADR-196 | `AIWorldPathfinderTests` 26 条（增补 12） | 2026-11-21 |
 | X2 | `ObjectValueStorage` 与对象价值表 | ✅ 随 B5（`AiPlanner.Hero.cs` 的 `ObjectValidator`/`ObjectValueStorage` 两个嵌套类） | — | — | 2026-11-21 |
 | X3 | `battle_action` 法术目标与生效 | ❌ 未开始 | — | — | — |
 | X4 | `heroes_action` + 对象交互 + Interface 解耦 | ❌ 未开始 | — | — | — |
 
-覆盖率基线（`docs/PLAN.md` 的 `ai` 行）：**6/0/3**，27 处 `NotImplementedException`（全在 AI 目录：
-`AiHeroAction` 2、`AiBattlePlanner` 25；`AIWorldPathfinder` 0）。
+覆盖率基线（`docs/PLAN.md` 的 `ai` 行）：**6/0/3**，剩余 5 处 `NotImplementedException`：
+`AiHeroAction` 2（`HeroesAction`/`HeroesMove`，卡战斗启动层与对象动作表）、`BattleLoader` 3（B8 契约占位，
+等施法行动与 `Battle::Loader` 正文）。`AiBattlePlanner` 的 25 处已全部清零。
 
 ## 流水
+
+### 2026-11-21 B8 第一批：战斗回合循环 + 近战攻击结算
+
+④ 批把「一条命令怎么走完一场战斗」打通，`BattleArena` 因此能自己跑到结束：
+
+* `BattleArena.Turns.cs`（新）：`Turns()` 的回合骨架照 `battle_arena.cpp` 的 `Arena::Turns()`——每轮按速度排序
+  取仍未行动的单位，调 `UnitTurn`；`UnitTurn` 里的 `actions` 队列照参考的 `std::vector<Command>`，处理
+  「同一单位的多段命令」（如战后好士气补一次行动、跳过、撤退），并在每个动作后 `RemoveDeadUnits()` 再查
+  `BattleValid()`。**同速先手**用新增的 `_lastActiveUnitArmyColor`（参考 `Arena::_lastActiveUnitArmyColor`）。
+* `BattleArena.Attack.cs`（新）：`BattleProcess`（`battle_action.cpp:143-278`）、`ApplyActionAttack`
+  （`:481-630`）、`TargetsApplyDamage`（`:856-955`）、`ApplyDamageInDirection` 与
+  `GetAttackDirectionOfBlow`/`GetDirectionOfAttackNearestToUnit` 等辅助，全部按参考落；伤害、击杀数、
+  幸运（`SetRandomLuck`）、反击（`IsRetaliationAllowed`/`SetRetaliationCompleted`）、
+  `NoEnemyRetaliation`、宽体双格与倒影方向都在内。
+* `BattleArena.Action.cs`：`ApplyAction` 增 `BattleCommandType.Attack` 分支；默认分支只列剩下的施法/塔/投石车/
+  撤退/投降/自动战斗/快速战斗。
+* `BattleUnit`：补 `IsIgnoringRetaliation`、`SetRetaliationCompleted`（参考 `isIgnoringRetaliation()` /
+  `setRetaliationAsCompleted()`）。
+* `BattleCommand.Attack` 的方向参数由 `AttackDirection` 改回参考的 `int`（默认 `-1`）：八向 `AttackDirection`
+  与六向 `CellDirection` 数值不同，混用会把「自动定方向」读成具体方向。AI 两处调用点随之改为 `(int)`/`-1`。
+* `BattleForce.ApplyToTroopsFromOriginalArmy`：不再按 `troop.IsValid` 过滤。参考的战斗单位是原始兵堆的副本，
+  端口直接持有 `GameArmy` 的 `Troop`，一开打原始人数就被改小；照抄过滤会把全灭兵堆当成「没上场」，
+  使 `CalculateExperienceBasedOnLosses` 少算经验。判据改为「有没有对应的战斗单位」。
+
+零警告、全套 4554 测试全绿（新增 `BattleArenaTurnTests` 8 条：回合轮转、攻击扣血、死亡清理、射手对射跑到结束）。
+
+### 2026-11-21 B6 收尾：`ai_battle.cpp` 25/25 + `ai_battle_spell.cpp` 全部估值函数
+
+③ 批把 `ai_battle.cpp` 剩下的决策函数与整套法术估值落完，`AiBattlePlanner` 的 25 处占位清零：
+
+* `meleeUnitOffense`（`ai_battle.cpp:1594-1668`）：能找到人就打，找不到就退到「够不着」的位置；
+  打不着会还手的最后一堆时优先「不能反击」的落点。
+* `meleeUnitDefense`（`:1764-1884`）四段：先救被贴住的射手（`FindBestCoverCell` 按左→右、下→上的格序
+  贪心取最优单元格），再守阵地（城内看 `IsCastleIndex`、野外看距边不超过半宽的「阵地」判据，
+  `avoidStackingUnits` 时把待救单位挤到阵地外一格）。
+* `findBestCoverCell`/`isPositionLocatedInDefendedArea`/`getBerserkerTarget`（`:2128-2189`、`AI::getBerserkerTarget`）。
+* `BattleArena.GetTargetsForSpell`（`battle_action.cpp:1046-1174`）连同 `TargetsForChainLightning`
+  （`:1014-1044`）与 `FindChainLightningTargetUnits`（`:960-1011`）：链闪电先滚抗魔再跳四跳，
+  **选目标时已滚过抗魔，故返回后不再重复滚**（用 `applyRandomMagicResistance = false` 承接）。
+* `ai_battle_spell.cpp` 十三个估值函数：`selectBestSpell`（:70-158，按法力折算 + 阈值 0.04·我方²/敌方、
+  敌方射手过半 ×0.5、法力过半 ×2）、`spellDamageValue`（:157-285，整队打掉时加 `armyStrength×0.035/0.07`、
+  镜像归并、定身单位「打醒」折价）、`spellEffectValue`（:378-580）、`spellDispelValue`（:597-645）、
+  `spellResurrectValue`（:648-693）、`spellSummonValue`（:696-721）、`spellDragonSlayerValue`（:724-773）、
+  `spellTeleportValue`（:869-932，临时挂 `TELEPORT_ABILITY` 重算最佳攻击目标，`try/finally` 保证撤掉）、
+  `spellEarthquakeValue`（:935-990）、`getSpellDisruptingRayRatio`（:297-328）、`getSpellSlowRatio`（:329-355）、
+  `getSpellHasteRatio`（:356-377）、`spellDurationMultiplier`（:285-296）、`isSpellcastUselessForUnit`（:776-866）。
+* 副作用：`BattleArena.IsAbleToResurrectFromGraveyard`/`GetLastResurrectableUnitFromGraveyard` 由私有转公开
+  （参考本就是 public，AI 与施法流程共用）；`SpellDispelValue`/`SpellEffectValue` 增加 `BattleArena` 参数，
+  因为参考从全局 `Battle::GetArena()` 取，而端口不设全局；`BattleTactics.ReduceEffectivenessByDistance` 补入。
+
+零警告、全套 4546 测试全绿。
 
 ### 2026-11-21 B8 接口 + B6 第二批地基：战斗启动器契约与 AI 所需的战斗几何
 

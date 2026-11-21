@@ -100,9 +100,17 @@ public sealed class BattleCommand
     /// <param name="defenderUid">The unit being attacked.</param>
     /// <param name="cellToMove">The cell the attacker walks to first.</param>
     /// <param name="cellToAttack">The cell of the defender it strikes.</param>
-    /// <param name="direction">The side the blow comes from.</param>
-    public static BattleCommand Attack(int attackerUid, int defenderUid, int cellToMove, int cellToAttack, AttackDirection direction) =>
-        new(BattleCommandType.Attack, attackerUid, defenderUid, cellToMove, cellToAttack, (int)direction);
+    /// <param name="direction">
+    /// The side the blow comes from as a <see cref="CellDirection"/> value, or <c>-1</c> to let the arena work it out.
+    /// </param>
+    /// <remarks>
+    /// 参考里这个参数就是 <c>int32_t</c>（<c>Command::ATTACK</c> 的第五个参数，默认 <c>-1</c>），AI 与界面都靠 <c>-1</c>
+    /// 表示「方向你定」。端口不要<see cref="AttackDirection"/>：那张表是八个方向的攻击环，和六向的格子环数值对不上，
+    /// 混用会让「自动」被读成「从左上方打」。
+    /// </remarks>
+    public static BattleCommand Attack(
+        int attackerUid, int defenderUid, int cellToMove, int cellToAttack, int direction = -1) =>
+        new(BattleCommandType.Attack, attackerUid, defenderUid, cellToMove, cellToAttack, direction);
 
     /// <summary>Casts a spell that names one target.</summary>
     /// <param name="spell">The spell; a mirror image names a unit UID, anything else a cell.</param>
@@ -132,6 +140,20 @@ public sealed class BattleCommand
 
     /// <summary>Fires the catapult, which takes no parameter.</summary>
     public static BattleCommand Catapult() => new(BattleCommandType.Catapult);
+
+    /// <summary>
+    /// Fires the catapult with the shots the arena has already rolled,
+    /// <c>Command( Command::CATAPULT )</c> built by <c>Arena::CatapultAction()</c> (<c>battle_arena.cpp:738-757</c>).
+    /// </summary>
+    /// <param name="shots">
+    /// The number of shots, then for each shot the structure, the damage and whether it hit, in that order — the same
+    /// order the reference writes them before reversing the command.
+    /// </param>
+    /// <remarks>
+    /// 投石是**先掷骰、后回报**：竞技场把每一发打哪、多少伤害、中没中提前定好，<c>ApplyActionCatapult</c> 只照着改建筑。
+    /// 这条命令因此不能像界面那样只写「开火」。
+    /// </remarks>
+    public static BattleCommand Catapult(IReadOnlyList<int> shots) => new(BattleCommandType.Catapult, [.. shots]);
 
     /// <summary>Fires a tower.</summary>
     /// <param name="towerType">Which tower shoots.</param>

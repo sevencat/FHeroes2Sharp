@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Army;
@@ -181,7 +181,7 @@ public class BattleUnitSpellTests
         Commander caster = new() { Power = 4 };
         BattleUnit unit = Unit(MonsterType.Goblin, 10, PlayerColor.Blue, caster);
 
-        Assert.True(unit.ApplySpell(new Spell(SpellType.Bless), caster, new BattleTargetInfo(unit)));
+        Assert.True(unit.ApplySpell(new Spell(SpellType.Bless), caster, new BattleSpellTarget(unit)));
         Assert.True(unit.HasModes(BattleMonsterState.SpellBless));
         Assert.Equal(4u, unit.Affected.GetMode(BattleMonsterState.SpellBless));
     }
@@ -191,8 +191,8 @@ public class BattleUnitSpellTests
     {
         BattleUnit unit = Unit(MonsterType.Goblin, 10);
 
-        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleTargetInfo(unit));
-        unit.ApplySpell(new Spell(SpellType.Curse), null, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleSpellTarget(unit));
+        unit.ApplySpell(new Spell(SpellType.Curse), null, new BattleSpellTarget(unit));
 
         Assert.False(unit.HasModes(BattleMonsterState.SpellBless));
         Assert.True(unit.HasModes(BattleMonsterState.SpellCurse));
@@ -204,7 +204,7 @@ public class BattleUnitSpellTests
         Commander caster = new() { Power = 10 };
         BattleUnit unit = Unit(MonsterType.Goblin, 10, PlayerColor.Blue, caster);
 
-        unit.ApplySpell(new Spell(SpellType.BloodLust), caster, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.BloodLust), caster, new BattleSpellTarget(unit));
 
         // 参考的嗜血是唯一的定长效果，不跟法术强度走。
         Assert.Equal(3u, unit.Affected.GetMode(BattleMonsterState.SpellBloodlust));
@@ -215,8 +215,8 @@ public class BattleUnitSpellTests
     {
         BattleUnit unit = Unit(MonsterType.Goblin, 10);
 
-        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleTargetInfo(unit));
-        unit.ApplySpell(new Spell(SpellType.Dispel), null, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleSpellTarget(unit));
+        unit.ApplySpell(new Spell(SpellType.Dispel), null, new BattleSpellTarget(unit));
 
         Assert.False(unit.HasModes(BattleMonsterState.SpellBless));
         Assert.True(unit.Affected.IsEmpty);
@@ -228,7 +228,7 @@ public class BattleUnitSpellTests
         BattleUnit unit = Unit(MonsterType.Goblin, 10);
         unit.BlindRetaliation = true;
 
-        unit.ApplySpell(new Spell(SpellType.Blind), null, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.Blind), null, new BattleSpellTarget(unit));
 
         Assert.True(unit.HasModes(BattleMonsterState.SpellBlind));
         Assert.False(unit.BlindRetaliation);
@@ -239,8 +239,8 @@ public class BattleUnitSpellTests
     {
         BattleUnit unit = Unit(MonsterType.Goblin, 10);
 
-        unit.ApplySpell(new Spell(SpellType.Haste), null, new BattleTargetInfo(unit));
-        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.Haste), null, new BattleSpellTarget(unit));
+        unit.ApplySpell(new Spell(SpellType.Bless), null, new BattleSpellTarget(unit));
 
         Assert.Equal(
             new[] { SpellType.Bless, SpellType.Haste },
@@ -307,7 +307,7 @@ public class BattleUnitSpellTests
     public void FireballKillsAndReportsTheToll()
     {
         BattleUnit unit = Unit(MonsterType.Peasant, 100);
-        BattleTargetInfo target = new(unit);
+        BattleSpellTarget target = new(unit);
 
         Assert.True(unit.ApplySpell(new Spell(SpellType.Fireball), null, target));
 
@@ -332,7 +332,7 @@ public class BattleUnitSpellTests
         unit.SetModes(BattleMonsterState.SpellCurse);
         unit.Affected.AddMode(BattleMonsterState.SpellCurse, 3);
 
-        Assert.True(unit.ApplySpell(new Spell(SpellType.Cure), null, new BattleTargetInfo(unit)));
+        Assert.True(unit.ApplySpell(new Spell(SpellType.Cure), null, new BattleSpellTarget(unit)));
 
         Assert.False(unit.HasModes(BattleMonsterState.SpellCurse));
         Assert.False(unit.IsHaveDamage);
@@ -347,12 +347,12 @@ public class BattleUnitSpellTests
     {
         BattleUnit unit = Unit(MonsterType.Peasant, 5);
 
-        unit.ApplySpell(new Spell(SpellType.LightningBolt), null, new BattleTargetInfo(unit));
+        unit.ApplySpell(new Spell(SpellType.LightningBolt), null, new BattleSpellTarget(unit));
 
         Assert.False(unit.IsValid);
         Assert.Equal(0u, unit.Count);
 
-        Assert.True(unit.ApplySpell(new Spell(SpellType.ResurrectTrue), null, new BattleTargetInfo(unit)));
+        Assert.True(unit.ApplySpell(new Spell(SpellType.ResurrectTrue), null, new BattleSpellTarget(unit)));
 
         Assert.True(unit.IsValid);
         Assert.Equal(5u, unit.Count);

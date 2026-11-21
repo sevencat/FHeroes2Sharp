@@ -122,7 +122,10 @@ public sealed class Captain : ISpellBookOwner, IArmyCommander
     public uint SpellPoints => _spellPoints;
 
     /// <summary>Ten per point of knowledge, <c>GetMaxSpellPoints()</c>.</summary>
-    public int GetMaxSpellPoints() => 10 * GetKnowledge();
+    public uint GetMaxSpellPoints() => 10 * (uint)GetKnowledge();
+
+    /// <inheritdoc />
+    public bool CanCastSpell(Spell spell) => HasSpellBook && spell.SpellPoints(BagArtifacts) <= _spellPoints;
 
     /// <inheritdoc />
     public SpellStorage MagicBook => _spellBook;

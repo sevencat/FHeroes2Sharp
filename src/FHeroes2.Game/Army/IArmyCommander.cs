@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 
 using CastleType = FHeroes2.Game.Castle.Castle;
@@ -148,6 +149,62 @@ public interface IArmyCommander
     }
 
     /// <summary>
+    /// Sets mode bits, <c>HeroBase::SetModes()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 战斗用到的只有一位：<see cref="HeroModes.Spellcasted"/>——施法之后由竞技场打上，本回合不能再施
+    /// （<c>battle_action.cpp:474</c>），每回合开头由 <see cref="BattleForce"/> 清掉。没有模式字的队长默认什么都不做。
+    /// </remarks>
+    /// <param name="modes">The bits to set.</param>
+    void SetModes(HeroModes modes)
+    {
+    }
+
+    /// <summary>
+    /// Called just before a battle starts, <c>HeroBase::ActionPreBattle()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的英雄实现只重置法术书翻到第几页、选中了哪条法术（<c>heroes.cpp</c> 的
+    /// <c>Heroes::ActionPreBattle()</c> → <c>SpellBook::resetState()</c>），纯粹是界面状态；端口没有法术书界面，
+    /// 于是这里是空实现，接口留着一个位置是为了让 <c>BattleLoader.Load</c> 与参考的调用顺序一一对应。
+    /// </remarks>
+    void ActionPreBattle()
+    {
+    }
+
+    /// <summary>
+    /// Called once the battle is over, <c>HeroBase::ActionAfterBattle()</c>.
+    /// </summary>
+    /// <remarks>英雄的实现见 <c>Hero.ActionAfterBattle</c>（恢复移动力、清理残余状态）；队长没有额外动作。</remarks>
+    void ActionAfterBattle()
+    {
+    }
+
+    /// <summary>
+    /// Writes back the spell points the battle started with, the rollback of <c>ActionPreBattle()</c>'s snapshot.
+    /// </summary>
+    /// <remarks>
+    /// 参考的「重打成手动」是把手上的 <c>spell_points</c> 抄回去再重开一个竞技场（<c>battle_main.cpp:420-430</c>），
+    /// 端口因此需要一个写入口；队长没有法力池，默认什么都不做。
+    /// </remarks>
+    /// <param name="spellPoints">The spell points to restore.</param>
+    void SetSpellPoints(uint spellPoints)
+    {
+    }
+
+    /// <summary>
+    /// Pays for a spell, <c>HeroBase::SpellCasted()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在战斗施法之后调它扣法力与移动力（<c>battle_action.cpp:475</c>）。英雄的实现见
+    /// <c>Hero.SpellCasted</c>；队长没有法力池，默认什么都不做。
+    /// </remarks>
+    /// <param name="spell">The spell that was cast.</param>
+    void SpellCasted(Spell spell)
+    {
+    }
+
+    /// <summary>
     /// The commander's mode bits, <c>HeroBase::Modes()</c> (<c>heroes_base.h:190</c>).
     /// </summary>
     /// <remarks>
@@ -187,6 +244,47 @@ public interface IArmyCommander
     /// </remarks>
     /// <returns>The spell power, at least one.</returns>
     int GetPower();
+
+    /// <summary>
+    /// The mana left to the commander, <c>HeroBase::GetSpellPoints()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 战斗 AI 用它判断「这个法术还付得起吗」（<c>ai_battle_spell.cpp</c>），施法完成后由竞技场扣。
+    /// 队长没有法力池，默认回答零。
+    /// </remarks>
+    uint SpellPoints => 0;
+
+    /// <summary>
+    /// The size of the mana pool, <c>HeroBase::GetMaxSpellPoints()</c> (<c>heroes.cpp:967-970</c>,
+    /// <c>captain.cpp:GetMaxSpellPoints</c>).
+    /// </summary>
+    /// <remarks>Ten per point of knowledge. 战斗 AI 用它判断「这是不是最后一个能施法的回合」。</remarks>
+    /// <returns>The maximum spell points; zero for a commander with no mana pool at all.</returns>
+    uint GetMaxSpellPoints() => 0;
+
+    /// <summary>
+    /// Whether the commander could cast this spell now, <c>HeroBase::CanCastSpell()</c> (<c>heroes_base.cpp:CanCastSpell</c>).
+    /// </summary>
+    /// <remarks>书、法力两关由指挥官自己回答；「这个格子能不能吃这个法术」由竞技场回答。</remarks>
+    /// <param name="spell">The spell about to be cast.</param>
+    /// <returns>Whether the commander knows and can afford it.</returns>
+    bool CanCastSpell(Spell spell) => false;
+
+    /// <summary>
+    /// Whether the commander carries a spell book, <c>HeroBase::HaveSpellBook()</c> (<c>heroes_base.h:145-148</c>).
+    /// </summary>
+    /// <remarks>没有书就没有 <see cref="GetAllSpells"/> 里的东西，也就不能施法；队长默认回答否。</remarks>
+    bool HasSpellBook => false;
+
+    /// <summary>
+    /// Every combat spell the commander can cast, <c>HeroBase::getAllSpells()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考返回「魔法书里的法术」；端口把它抽成接口成员，好让战斗 AI 不必知道指挥者是英雄还是队长。
+    /// 没有书的指挥官默认给一份空表。
+    /// </remarks>
+    /// <returns>The spells, empty for a commander without a book.</returns>
+    SpellStorage GetAllSpells() => new();
 
     /// <summary>
     /// The commander's morale, <c>HeroBase::GetMorale()</c> (<c>heroes.cpp:1033</c>).

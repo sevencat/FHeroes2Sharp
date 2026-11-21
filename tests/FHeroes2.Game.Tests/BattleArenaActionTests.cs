@@ -153,14 +153,12 @@ public class BattleArenaActionTests
     }
 
     [Fact]
-    public void CommandsThatAreNotPortedYetAreLoudAboutIt()
+    public void ACatapultShotWithoutACastleIsRefused()
     {
         BattleArena arena = Field();
 
-        NotSupportedException error = Assert.Throws<NotSupportedException>(
-            () => arena.ApplyAction(BattleCommand.Catapult()));
-
-        Assert.Contains("not ported yet", error.Message, StringComparison.Ordinal);
+        // 野战没有投石车：参考在 ApplyActionCatapult 里碰到空指针就返回，端口判成调用方的错误。
+        Assert.Throws<ArgumentException>(() => arena.ApplyAction(BattleCommand.Catapult()));
     }
 
     [Fact]

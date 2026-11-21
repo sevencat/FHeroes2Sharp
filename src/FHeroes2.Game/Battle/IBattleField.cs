@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Monsters;
 
 namespace FHeroes2.Game.Battle;
@@ -71,4 +72,16 @@ public interface IBattleField
     /// 攻方朝右、守方朝左（<c>battle_troop.cpp:196-202</c>）。这是竞技场被单位反查的第六个事实。
     /// </remarks>
     PlayerColor AttackingArmyColor { get; }
+
+    /// <summary>
+    /// The commander of one side, <c>Arena::getCommander( color )</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>Unit::GetCurrentOrArmyCommander()</c> 靠它回答「这个单位此刻替谁打」：颜色已经算上催眠，所以不能直接问
+    /// 自己所属的军队。副作用类法术（吸血、鹰眼之外的加成）与战后的宝物转移都要按当前这一方去问。
+    /// 默认实现回答 <see langword="null"/>，让只关心其它几件事的假体不必多写一个方法。
+    /// </remarks>
+    /// <param name="color">The side to ask about.</param>
+    /// <returns>The hero or captain of that side, or <see langword="null"/> when it has none.</returns>
+    IArmyCommander? GetCommander(PlayerColor color) => null;
 }

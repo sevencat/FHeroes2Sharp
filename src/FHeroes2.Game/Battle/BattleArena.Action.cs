@@ -1,4 +1,7 @@
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Game.Resources;
+using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Battle;
 
@@ -9,9 +12,9 @@ namespace FHeroes2.Game.Battle;
 /// <remarks>
 /// <para>
 /// 参考的 <c>battle_action.cpp</c> 有 1274 行，其中一半是界面动画：每走一格要等一帧、每次攻击要播三段动画。
-/// 端口先落地**不带界面的那一半**——移动、跳过、士气、撤退、投降——这些动作改的是格子、模式位与战斗结果，
-/// 与画面无关。攻击、法术、塔与投石车的执行要等 <see cref="BattleUnit"/> 的反击判定与
-/// <c>TargetsApplyDamage</c> 一起做，见 <see cref="ApplyAction"/> 里显式抛出的那些分支。
+/// 端口只落**不带界面的那一半**——移动、跳过、士气、攻击、施法、撤退、投降——这些动作改的是格子、模式位与
+/// 战斗结果，与画面无关。塔、投石车与自动/快速战斗还没转，见 <see cref="ApplyAction"/> 里显式抛出的那些分支；
+/// 施法在 <c>BattleArena.Spell.cs</c>，近战在 <c>BattleArena.Attack.cs</c>。
 /// </para>
 /// <para>
 /// 错误处理与参考不同：参考对非法参数打日志、在调试构建里 <c>assert( 0 )</c>，发布构建里静默返回。端口一律抛
@@ -188,12 +191,12 @@ public sealed partial class BattleArena
     /// </summary>
     /// <param name="command">The command to execute.</param>
     /// <exception cref="NotSupportedException">
-    /// The command belongs to a part of <c>battle_action.cpp</c> the port has not taken yet: attack, spell cast,
-    /// tower, catapult, retreat, surrender, auto combat or quick combat.
+    /// The command is one <c>battle_action.cpp</c> has but <see cref="BattleCommandType"/> does not: the reference's
+    /// dispatcher is a plain <c>switch</c> over all eleven types, so nothing is expected to land here.
     /// </exception>
     /// <remarks>
-    /// 分发器只认得已经落地的四种命令，其余显式抛出：一条被悄悄吞掉的 <c>ATTACK</c> 会让战斗停在原地而没有任何
-    /// 迹象，那种 bug 比一个异常难查得多。
+    /// 分发器只认得已经落地的命令，其余显式抛出：一条被悄悄吞掉的命令会让战斗停在原地而没有任何迹象，那种 bug
+    /// 比一个异常难查得多。
     /// </remarks>
     public void ApplyAction(BattleCommand command)
     {
@@ -205,6 +208,14 @@ public sealed partial class BattleArena
                 ApplyActionMove(command);
                 break;
 
+            case BattleCommandType.Attack:
+                ApplyActionAttack(command);
+                break;
+
+            case BattleCommandType.Spellcast:
+                ApplyActionSpellCast(command);
+                break;
+
             case BattleCommandType.Skip:
                 ApplyActionSkip(command);
                 break;
@@ -213,10 +224,34 @@ public sealed partial class BattleArena
                 ApplyActionMorale(command);
                 break;
 
+            case BattleCommandType.Tower:
+                ApplyActionTower(command);
+                break;
+
+            case BattleCommandType.Catapult:
+                ApplyActionCatapult(command);
+                break;
+
+            case BattleCommandType.Retreat:
+                ApplyActionRetreat();
+                break;
+
+            case BattleCommandType.Surrender:
+                ApplyActionSurrender();
+                break;
+
+            case BattleCommandType.ToggleAutoCombat:
+                ApplyActionToggleAutoCombat(command);
+                break;
+
+            case BattleCommandType.QuickCombat:
+                ApplyActionQuickCombat();
+                break;
+
             default:
                 throw new NotSupportedException(
-                    $"The '{command.Type}' command is not ported yet; battle_action.cpp's attack, spell, tower, "
-                    + "catapult and battle-ending actions are still pending.");
+                    $"The '{command.Type}' command is not ported yet; battle_action.cpp's tower, catapult and "
+                    + "battle-ending actions are still pending.");
         }
     }
 
@@ -341,6 +376,168 @@ public sealed partial class BattleArena
 
             unit.ResetModes(BattleMonsterState.MoraleBad);
             unit.SetModes(BattleMonsterState.Moved);
+        }
+    }
+
+    /// <summary>
+    /// Ends the battle with the current side running away, <c>Arena::ApplyActionRetreat()</c>
+    /// (<c>battle_action.cpp:761-786</c>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The side is not allowed to retreat.</exception>
+    /// <remarks>
+    /// 撤退只写结果标志，不动军队：跑掉的那些兵由战后结算按「撤退」处理（在 <c>BattleLoader</c> 那一侧）。
+    /// </remarks>
+    public void ApplyActionRetreat()
+    {
+        PlayerColor currentColor = GetCurrentColor();
+
+        if (!CanRetreatOpponent(currentColor))
+        {
+            throw new InvalidOperationException("This side is not allowed to retreat.");
+        }
+
+        if (AttackingArmyColor == currentColor)
+        {
+            _battleResult.Attacker = BattleOutcome.Retreat;
+        }
+        else if (DefendingArmyColor == currentColor)
+        {
+            _battleResult.Defender = BattleOutcome.Retreat;
+        }
+        else
+        {
+            throw new InvalidOperationException("The current colour belongs to neither force.");
+        }
+    }
+
+    /// <summary>
+    /// Ends the battle with the current side buying its way out, <c>Arena::ApplyActionSurrender()</c>
+    /// (<c>battle_action.cpp:788-854</c>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The side may not surrender, or its kingdom cannot pay the ransom.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// 赎金按「对面那支军队的幸存者买回价」算（<see cref="BattleForce.GetSurrenderCost"/>），由投降方的王国付给对面王国。
+    /// 参考通过全局 <c>world</c> 找王国，端口用 <see cref="World.Current"/>，与 AI 判断「付得起吗」走同一个入口。
+    /// </para>
+    /// <para>
+    /// 注意只动金库，不动军队：跑掉/被赎走的兵怎么处理是战后结算的事。
+    /// </para>
+    /// </remarks>
+    public void ApplyActionSurrender()
+    {
+        PlayerColor currentColor = GetCurrentColor();
+
+        if (AttackingArmyColor != currentColor && DefendingArmyColor != currentColor)
+        {
+            throw new InvalidOperationException("The current colour belongs to neither force.");
+        }
+
+        if (!CanSurrenderOpponent(currentColor))
+        {
+            throw new InvalidOperationException("This side is not allowed to surrender.");
+        }
+
+        BattleForce surrendering = GetForce(currentColor);
+        BattleForce winning = GetForce(GetOppositeColor(currentColor));
+        Funds cost = new(Resource.Gold, surrendering.GetSurrenderCost());
+
+        World world = World.Current;
+
+        if (!world.GetKingdom(currentColor).AllowPayment(cost))
+        {
+            throw new InvalidOperationException("The kingdom cannot pay the ransom.");
+        }
+
+        world.GetKingdom(currentColor).OddFundsResource(cost);
+        world.GetKingdom(winning.Color).AddFundsResource(cost);
+
+        if (AttackingArmyColor == currentColor)
+        {
+            _battleResult.Attacker = BattleOutcome.Surrender;
+        }
+        else
+        {
+            _battleResult.Defender = BattleOutcome.Surrender;
+        }
+    }
+
+    /// <summary>
+    /// Turns auto combat on or off for one side, <c>Arena::ApplyActionToggleAutoCombat()</c>
+    /// (<c>battle_action.cpp:1297-1340</c>).
+    /// </summary>
+    /// <param name="command">Toggle command: the colour.</param>
+    /// <exception cref="ArgumentException">The colour is not in this battle, or its side is already run by the AI.</exception>
+    /// <remarks>
+    /// 标志按颜色做异或，所以同一条命令连发两次等于没发。AI 自己的一方不许切——它本来就不等玩家。
+    /// </remarks>
+    public void ApplyActionToggleAutoCombat(BattleCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        PlayerColor color = (PlayerColor)command.GetNextValue();
+
+        if (color != AttackingArmyColor && color != DefendingArmyColor)
+        {
+            throw new ArgumentException("That colour is not in this battle.", nameof(command));
+        }
+
+        if (GetForce(color).GetControl() == PlayerControl.Ai)
+        {
+            throw new ArgumentException("An AI-controlled side cannot toggle auto combat.", nameof(command));
+        }
+
+        _autoCombatColors ^= color;
+    }
+
+    /// <summary>
+    /// Hands the rest of the battle to auto combat, <c>Arena::ApplyActionQuickCombat()</c>
+    /// (<c>battle_action.cpp:1342-1370</c>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Neither side is human, so there is nothing to finish.</exception>
+    /// <remarks>
+    /// 只对玩家一方生效（AI 一方本来就在自动打）。参考还顺手丢掉 <c>_interface</c>，让剩下的回合不再等动画；
+    /// 端口没有界面，这一步对应的是「不再呈现」。
+    /// </remarks>
+    public void ApplyActionQuickCombat()
+    {
+        PlayerControl attackingControl = _attackingForce.GetControl();
+        PlayerControl defendingControl = _defendingForce.GetControl();
+
+        if (attackingControl != PlayerControl.Human && defendingControl != PlayerControl.Human)
+        {
+            throw new InvalidOperationException("Neither side is human, so there is nothing to finish.");
+        }
+
+        EnableAutoCombatForHumanSides();
+    }
+
+    /// <summary>
+    /// Hands every human-controlled side to the AI, <c>Arena::_autoCombatColors</c> set for the human sides.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两个调用者：<see cref="ApplyActionQuickCombat"/>，以及「没有界面」的战斗——参考在竞技场构造函数里
+    /// 直接给人类那一方打上自动战斗（<c>battle_arena.cpp:372-380</c>），端口在 <see cref="BattleLoader"/>
+    /// 决定不放映时调这里，效果相同。
+    /// </para>
+    /// <para>
+    /// 只处理人类那一方：AI 那一位本来就不等玩家，把它的颜色也记进来会让
+    /// <see cref="AutoCombatInProgress"/> 断言失败。
+    /// </para>
+    /// </remarks>
+    public void EnableAutoCombatForHumanSides()
+    {
+        if (_attackingForce.GetControl() == PlayerControl.Human)
+        {
+            _autoCombatColors |= AttackingArmyColor;
+        }
+
+        if (_defendingForce.GetControl() == PlayerControl.Human)
+        {
+            _autoCombatColors |= DefendingArmyColor;
         }
     }
 }

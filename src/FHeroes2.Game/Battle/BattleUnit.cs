@@ -133,6 +133,18 @@ public sealed class BattleUnit : BitModes
     /// <summary>The arrows left, <c>Unit::GetShots()</c>.</summary>
     public uint GetShots() => _shotsLeft;
 
+    /// <summary>
+    /// The ammunition as the reference prints it, <c>Unit::GetShotString()</c> (<c>battle_troop.cpp:225-235</c>).
+    /// </summary>
+    /// <remarks>满弹只报存量；打掉过就写成「初始 (剩余)」，界面与 AI 共用这一种写法。</remarks>
+    /// <returns>The shot count, or the initial and remaining counts.</returns>
+    public string GetShotString()
+    {
+        int initialShots = _troop.GetShots();
+
+        return initialShots == (int)_shotsLeft ? initialShots.ToString() : $"{initialShots} ({_shotsLeft})";
+    }
+
     /// <summary>Whether this particular unit is the one with the id, <c>Unit::isUID()</c>.</summary>
     /// <param name="uid">The id to test.</param>
     public bool IsUid(uint uid) => _uid == uid;
@@ -306,6 +318,49 @@ public sealed class BattleUnit : BitModes
         !HasModes(BattleMonsterState.Retaliated);
 
     /// <summary>
+    /// Whether the unit's blows cannot be retaliated against, <c>Unit::isIgnoringRetaliation()</c>.
+    /// </summary>
+    /// <remarks>参考：<c>Monster::isIgnoringRetaliation()</c>，能力位 <c>NO_ENEMY_RETALIATION</c>。</remarks>
+    public bool IsIgnoringRetaliation => MonsterAbilities.IsPresent(Monster, MonsterAbility.NoEnemyRetaliation);
+
+    /// <summary>
+    /// Marks this turn's retaliation as used up, <c>Unit::setRetaliationAsCompleted()</c>.
+    /// </summary>
+    /// <remarks>置 <c>TR_RETALIATED</c>；除了无限反击的兵种，其余单位本回合不再还手。</remarks>
+    public void SetRetaliationCompleted() => SetModes(BattleMonsterState.Retaliated);
+
+    /// <summary>
+    /// What a unit does right after its blow lands, <c>Unit::PostAttackAction()</c> (<c>battle_troop.cpp:943-956</c>).
+    /// </summary>
+    /// <param name="enemy">The unit that was struck; decides whether the blow was a shot or a melee hit.</param>
+    /// <remarks>
+    /// <para>
+    /// 两件事：射击消耗一支箭（除非在近战，或指挥官带着「无尽弹药」），以及清掉这一击带来的一次性运气。
+    /// 参考在这里断言「塔上的射手不耗箭、且箭还没打光」；端口照抄成 <see cref="Debug.Assert(bool)"/>，
+    /// 打光箭仍然射击属于算术错误而不是可恢复状态。
+    /// </para>
+    /// <para>
+    /// 改的是单位自己的箭数，不回写军队；战后由 <c>BattleForce.ApplyToTroopsFromOriginalArmy</c> 统一同步。
+    /// </para>
+    /// </remarks>
+    public void PostAttackAction(BattleUnit enemy)
+    {
+        if (IsArchers && !IsHandFighting(this, enemy))
+        {
+            IArmyCommander? commander = GetCommander();
+
+            if (commander == null || !commander.BagArtifacts.IsBonusPresent(ArtifactBonusType.EndlessAmmunition))
+            {
+                Debug.Assert(!HasModes(BattleMonsterState.CapTower) && _shotsLeft > 0, "A shooter fired with no arrows left.");
+
+                --_shotsLeft;
+            }
+        }
+
+        ResetModes(BattleMonsterState.LuckGood | BattleMonsterState.LuckBad);
+    }
+
+    /// <summary>
     /// Whether the unit hits both of the cells in front of it, <c>Monster::isDoubleCellAttack()</c>.
     /// </summary>
     /// <remarks>
@@ -398,6 +453,13 @@ public sealed class BattleUnit : BitModes
 
         return speed;
     }
+
+    /// <summary>
+    /// The speed as the reference prints it, <c>Unit::GetSpeedString()</c> (<c>battle_troop.cpp:240-244</c>).
+    /// </summary>
+    /// <remarks>读的是数据速度：不因「已经行动过」「被致盲」而变成 <see cref="Speed.Standing"/>。</remarks>
+    /// <returns>The speed in the reference's wording, e.g. «Average» or «Very Fast».</returns>
+    public string GetSpeedString() => FHeroes2.Game.Army.Troop.GetSpeedString(GetSpeed(true, false));
 
     /// <summary>
     /// Moves the unit's head to a cell, <c>Unit::SetPosition( int32_t index )</c>.
@@ -577,6 +639,19 @@ public sealed class BattleUnit : BitModes
 
         return currentColor == PlayerColor.None ? Color : currentColor;
     }
+
+    /// <summary>
+    /// The commander the unit currently fights for, <c>Unit::GetCurrentOrArmyCommander()</c>
+    /// (<c>battle_troop.cpp:1725-1735</c>).
+    /// </summary>
+    /// <returns>
+    /// The hero or captain of <see cref="GetCurrentOrArmyColor"/>, or <see langword="null"/> when the unit has no arena
+    /// or that side has no commander (a neutral army, a summoned elemental).
+    /// </returns>
+    /// <remarks>
+    /// 与 <see cref="GetCommander"/> 的差别只在催眠与狂暴：那个答「它属于谁」，这个答「它此刻替谁打」。
+    /// </remarks>
+    public IArmyCommander? GetCurrentOrArmyCommander() => _field?.GetCommander(GetCurrentOrArmyColor());
 
     /// <summary>
     /// Whether the unit stands outside the castle walls, <c>Unit::isOutOfCastleWalls()</c>.
@@ -806,11 +881,18 @@ public sealed class BattleUnit : BitModes
 
     /// <summary>The smallest damage the unit would deal to the enemy, <c>Unit::CalculateMinDamage()</c>.</summary>
     /// <param name="enemy">The unit that would be struck.</param>
-    public uint CalculateMinDamage(BattleUnit enemy) => CalculateDamageUnit(enemy, _troop.GetDamageMin());
+    /// <param name="extraAttack">
+    /// Attack on top of the unit's own, standing in for <c>Tower::GetAttack()</c>'s override; 0 for everything that is
+    /// really a unit on the board.
+    /// </param>
+    public uint CalculateMinDamage(BattleUnit enemy, uint extraAttack = 0) =>
+        CalculateDamageUnit(enemy, _troop.GetDamageMin(), extraAttack);
 
     /// <summary>The largest damage the unit would deal to the enemy, <c>Unit::CalculateMaxDamage()</c>.</summary>
     /// <param name="enemy">The unit that would be struck.</param>
-    public uint CalculateMaxDamage(BattleUnit enemy) => CalculateDamageUnit(enemy, _troop.GetDamageMax());
+    /// <param name="extraAttack">Attack on top of the unit's own; see <see cref="CalculateMinDamage"/>.</param>
+    public uint CalculateMaxDamage(BattleUnit enemy, uint extraAttack = 0) =>
+        CalculateDamageUnit(enemy, _troop.GetDamageMax(), extraAttack);
 
     /// <summary>
     /// The damage an average blow of this unit would deal to the enemy,
@@ -841,6 +923,11 @@ public sealed class BattleUnit : BitModes
     /// </summary>
     /// <param name="enemy">The unit that would be struck.</param>
     /// <param name="damage">The raw damage, usually <c>GetDamageMin()</c> or <c>GetDamageMax()</c> times a roll.</param>
+    /// <param name="extraAttack">
+    /// Attack added to this unit's own when the attack difference is worked out. 参考里这来自
+    /// <c>Tower::GetAttack()</c> 的覆写（塔的弓箭手带法师公会的攻击加成），端口用参数表达：塔不是
+    /// <see cref="BattleUnit"/>，没法靠虚函数把加成渗进伤害公式。
+    /// </param>
     /// <returns>The damage after every modifier, never less than 1.</returns>
     /// <remarks>
     /// <para>
@@ -855,7 +942,7 @@ public sealed class BattleUnit : BitModes
     /// <item>攻防差：正差每点 +10%（最多 +300%），负差每点 −5%（最多 −80%）。</item>
     /// </list>
     /// </remarks>
-    public uint CalculateDamageUnit(BattleUnit enemy, double damage)
+    public uint CalculateDamageUnit(BattleUnit enemy, double damage, uint extraAttack = 0)
     {
         if (IsArchers)
         {
@@ -904,7 +991,7 @@ public sealed class BattleUnit : BitModes
             damage *= 2;
         }
 
-        int difference = (int)GetAttack() - (int)enemy.GetDefense();
+        int difference = (int)(GetAttack() + extraAttack) - (int)enemy.GetDefense();
 
         if (MonsterAbilities.IsDragons(enemy.Monster) && HasModes(BattleMonsterState.SpellDragonSlayer))
         {
@@ -922,23 +1009,25 @@ public sealed class BattleUnit : BitModes
     /// </summary>
     /// <param name="enemy">The unit that would be struck.</param>
     /// <param name="randomGenerator">The battle's generator, so a replay deals the same damage.</param>
+    /// <param name="extraAttack">Attack on top of the unit's own; see <see cref="CalculateMinDamage"/>.</param>
     /// <returns>The damage, never less than 1.</returns>
     /// <remarks>参考：<c>battle_troop.cpp:590-612</c>。祝福取上限、诅咒取下限，两者都不掷骰。</remarks>
-    public uint GetDamage(BattleUnit enemy, Pcg32 randomGenerator)
+    public uint GetDamage(BattleUnit enemy, Pcg32 randomGenerator, uint extraAttack = 0)
     {
         uint damage;
 
         if (HasModes(BattleMonsterState.SpellBless))
         {
-            damage = CalculateMaxDamage(enemy);
+            damage = CalculateMaxDamage(enemy, extraAttack);
         }
         else if (HasModes(BattleMonsterState.SpellCurse))
         {
-            damage = CalculateMinDamage(enemy);
+            damage = CalculateMinDamage(enemy, extraAttack);
         }
         else
         {
-            damage = Rand.GetWithGen(CalculateMinDamage(enemy), CalculateMaxDamage(enemy), randomGenerator);
+            damage = Rand.GetWithGen(CalculateMinDamage(enemy, extraAttack), CalculateMaxDamage(enemy, extraAttack),
+                randomGenerator);
         }
 
         if (HasModes(BattleMonsterState.LuckGood))
@@ -1244,6 +1333,27 @@ public sealed class BattleUnit : BitModes
     /// <returns>The hero or captain, or <see langword="null"/> when the unit belongs to no army.</returns>
     public IArmyCommander? GetCommander() => _army?.Commander;
 
+    /// <summary>
+    /// The spell a spell-casting creature may throw this round, <c>Unit::GetSpellMagic()</c>
+    /// (<c>battle_troop.cpp:1536-1552</c>).
+    /// </summary>
+    /// <param name="randomGenerator">The battle's generator.</param>
+    /// <returns>The spell, or an invalid spell (<see cref="SpellType.None"/>) for a creature that cannot or did not cast.</returns>
+    /// <remarks>
+    /// 概率是兵种表里 <c>SPELL_CASTER</c> 那一项的百分比，掷骰在 1..100 上做——因此 0% 与 100% 都照常消耗一次掷骰，
+    /// 战斗录像的随机序列依赖这一点。
+    /// </remarks>
+    public Spell GetSpellMagic(Pcg32 randomGenerator)
+    {
+        if (!MonsterAbilities.TryGetInstance(Monster, MonsterAbility.SpellCaster, out MonsterAbilityInstance caster)
+            || Rand.GetWithGen(1, 100, randomGenerator) > caster.Percentage)
+        {
+            return new Spell(SpellType.None);
+        }
+
+        return new Spell(caster.Spell);
+    }
+
     /// <summary>Whether the unit has lost hit points, <c>Unit::isHaveDamage()</c> (<c>battle_troop.cpp:1554-1557</c>).</summary>
     /// <remarks>
     /// 与「死了几个」不是一回事：满员但被削了血也算有伤。治疗法术据此判断「这个队伍还值不值得治」。
@@ -1274,6 +1384,14 @@ public sealed class BattleUnit : BitModes
         RemoveAffection(remove);
         AddAffection(add, duration);
     }
+
+    /// <summary>
+    /// How many turns an effect still lasts, <c>Unit::GetAffectedDuration()</c> (<c>battle_troop.cpp:1745-1748</c>).
+    /// </summary>
+    /// <param name="mode">The effect, a single bit of <see cref="BattleMonsterState"/>.</param>
+    /// <returns>The remaining turns; zero when the effect is not on the unit.</returns>
+    /// <remarks>AI 用它决定「这个目标身上的祝福还值不值得驱散」。</remarks>
+    public uint GetAffectedDuration(uint mode) => _affected.GetMode(mode);
 
     /// <summary>
     /// Whether a spell may land on this unit, <c>Unit::AllowApplySpell()</c> (<c>battle_troop.cpp:793-811</c>).
@@ -1331,7 +1449,7 @@ public sealed class BattleUnit : BitModes
     /// （<c>_spellModesAction</c>）。连锁闪电是唯一「对敌方施放却可能落到友军头上」的法术，
     /// 所以它强制允许落在自己人身上。
     /// </remarks>
-    public bool ApplySpell(Spell spell, IArmyCommander? applyingHero, BattleTargetInfo target)
+    public bool ApplySpell(Spell spell, IArmyCommander? applyingHero, BattleSpellTarget target)
     {
         // 参考的注释原话：连锁闪电是唯一不能施放在友军身上、却可能被友军吃到的法术。
         bool isForceApply = spell.Type == SpellType.ChainLightning;
@@ -1363,7 +1481,7 @@ public sealed class BattleUnit : BitModes
     /// Deals the damage of a spell, <c>Unit::_spellApplyDamage()</c> (<c>battle_troop.cpp:1268-1279</c>).
     /// </summary>
     /// <remarks>先算伤害再落账：算出来的数写在 <paramref name="target"/> 上，击杀数由 <c>_applyDamage</c> 回答。</remarks>
-    private void SpellApplyDamage(Spell spell, uint spellPower, IArmyCommander? applyingHero, BattleTargetInfo target)
+    private void SpellApplyDamage(Spell spell, uint spellPower, IArmyCommander? applyingHero, BattleSpellTarget target)
     {
         Debug.Assert(spell.IsDamage());
 

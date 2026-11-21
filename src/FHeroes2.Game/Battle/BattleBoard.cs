@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Battle;
@@ -299,6 +301,34 @@ public static class BattleBoard
         uint headToTail = GetDistance(first.HeadIndex, second.TailIndex);
 
         return Math.Min(Math.Min(headToHead, headToTail), Math.Min(tailToHead, tailToTail));
+    }
+
+    /// <summary>
+    /// How many steps from a unit's position to a cell, <c>Board::GetDistance( const Position &amp;, int32_t )</c>
+    /// (<c>battle_board.cpp:175-191</c>).
+    /// </summary>
+    /// <remarks>
+    /// 宽单位取头、尾到目标格里近的那个。任一侧无效答 0：参考在这两种情况下一路返回 0，端口照做，
+    /// 免得调用方为了「顺手问一下」再写一遍判空。
+    /// </remarks>
+    /// <param name="position">A unit's position.</param>
+    /// <param name="index">The cell to measure to.</param>
+    /// <returns>The distance in steps.</returns>
+    public static uint GetDistance(BattlePosition position, int index)
+    {
+        if (position.Head == null || !IsValidIndex(index))
+        {
+            return 0;
+        }
+
+        uint distance = GetDistance(position.HeadIndex, index);
+
+        if (position.Tail != null)
+        {
+            distance = Math.Min(distance, GetDistance(position.TailIndex, index));
+        }
+
+        return distance;
     }
 
     /// <summary>
@@ -700,6 +730,39 @@ public static class BattleBoard
     }
 
     /// <summary>
+    /// Whether a mirror image of a unit could stand on a cell, <c>Board::isValidMirrorImageIndex()</c>
+    /// (<c>battle_board.cpp:951-970</c>).
+    /// </summary>
+    /// <remarks>
+    /// 三条：这格放得下这个单位的体型（含宽单位的两格都要在战场内）、头部那格不与本体重叠、宽单位的尾部也不与本体重叠。
+    /// 参考只挡「与本体自身重叠」，不挡别人——镜像落到一支友军身上由后续的位置校验拦。
+    /// </remarks>
+    /// <param name="index">The cell the mirror image would stand on.</param>
+    /// <param name="unit">The unit being copied.</param>
+    /// <returns>Whether the mirror image fits there.</returns>
+    public static bool IsValidMirrorImageIndex(int index, BattleUnit? unit)
+    {
+        if (unit == null)
+        {
+            return false;
+        }
+
+        BattlePosition mirrorPosition = BattlePosition.GetPosition(unit, index);
+
+        if (!mirrorPosition.IsValidForUnit(unit))
+        {
+            return false;
+        }
+
+        if (unit.Position.Contains(mirrorPosition.HeadIndex))
+        {
+            return false;
+        }
+
+        return !unit.IsWide || mirrorPosition.Tail == null || !unit.Position.Contains(mirrorPosition.TailIndex);
+    }
+
+    /// <summary>
     /// The combat description of the moat, <c>Battle::Board::GetMoatInfo()</c> (<c>battle_board.cpp:1038-1044</c>).
     /// </summary>
     /// <remarks>
@@ -850,6 +913,174 @@ public static class BattleBoard
         foundUnits.Sort(static (first, second) => first.Distance.CompareTo(second.Distance));
 
         return [.. foundUnits.Select(static found => found.Unit)];
+    }
+
+    /// <summary>
+    /// The cell under a point of the battle field, <c>Board::GetIndexAbsPosition()</c> (<c>battle_board.cpp:368-377</c>).
+    /// </summary>
+    /// <remarks>
+    /// 逐个格子问「这个点在不在你的六边形里」：格子互相重叠一点，所以先问到的赢——顺序就是格子的下标顺序，
+    /// 调用方不该依赖别的一致性。点在战场外答 -1。
+    /// </remarks>
+    /// <param name="board">The battle field's cells.</param>
+    /// <param name="point">A point in the battle field's coordinates.</param>
+    /// <returns>The cell index, or -1 when the point falls on no cell.</returns>
+    public static int GetIndexAbsPosition(BattleBoardCells board, Point point)
+    {
+        ArgumentNullException.ThrowIfNull(board);
+
+        for (int index = 0; index < SizeInCells; ++index)
+        {
+            BattleCell? cell = board.GetCell(index);
+
+            if (cell != null && cell.IsPositionIncludePoint(point))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The part of a moat cell the water covers, <c>Board::GetMoatCellMask()</c> (<c>battle_board.cpp:1046-1098</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 水面在格子下部、左右各留 3 像素：战场美术把护城河画成一条贯穿城前的水带，逐个格子只画自己那一段，
+    /// 会“咬”进相邻格子的水面。
+    /// </para>
+    /// <para>
+    /// 每一格还有微调：最上面一格水面低 3 像素、左侧一列的几格向左扩 2 像素、桥面那一格向右挪 12 像素并加宽 8 像素
+    /// ——不这样调，水面就会盖到相邻格的岸边或桥面上。非护城河格是调用方的错误，端口的可空返回让界面画不出来时
+    /// 悄悄跳过。
+    /// </para>
+    /// </remarks>
+    /// <param name="cell">A moat cell.</param>
+    /// <returns>The water rectangle in the cell's coordinates, or <see langword="null"/> for a non-moat cell.</returns>
+    public static Rect? GetMoatCellMask(BattleCell cell)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+
+        const int waterTopOffset = 34;
+        const int waterHeight = 10;
+        const int insetX = 3;
+
+        Rect mask = new(cell.Position.X + insetX, cell.Position.Y + waterTopOffset, BattleCell.WidthPx - insetX, waterHeight);
+
+        switch (cell.Index)
+        {
+            case 7:
+                mask = new Rect(mask.X, mask.Y + 3, mask.Width, mask.Height - 3);
+                break;
+
+            case 18:
+            case 28:
+            case 39:
+                mask = new Rect(mask.X - 2, mask.Y, mask.Width, mask.Height);
+                break;
+
+            case BridgeMoatIndex:
+                mask = new Rect(mask.X + 12, mask.Y, mask.Width + 8, mask.Height);
+                break;
+
+            case 61:
+            case 72:
+            case 84:
+                break;
+
+            case 95:
+                mask = new Rect(mask.X + 6, mask.Y, mask.Width + 4, mask.Height);
+                break;
+
+            default:
+                Debug.Assert(false, "Only a moat cell has water to draw.");
+
+                return null;
+        }
+
+        return mask;
+    }
+
+    /// <summary>
+    /// Which moat cells a unit is about to enter or leave, <c>Board::GetMoatCellsForUnit()</c>
+    /// (<c>battle_board.cpp:1100-1151</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 走过护城河要挨伤害、也要演出，界面要先知道「这一步会踩进哪一格」。答案是一对格子：现在站的那格
+    /// （已经在河里）和下一步要进的那格，各自可能为空。
+    /// </para>
+    /// <para>
+    /// 宽单位先看头，头那边一无所获再整只看尾部。桥放下时，桥面那一格不算护城河——**除非**这一对的任一半就是
+    /// 桥面格本身：那时单位正从桥上进河，两头都不算踩河（桥把它托住了）。
+    /// </para>
+    /// </remarks>
+    /// <param name="board">The battle field's cells.</param>
+    /// <param name="unit">The unit that moves.</param>
+    /// <param name="bridge">The drawbridge, or <see langword="null"/> when the battle has none.</param>
+    /// <param name="movementDirection">The direction the unit moves in.</param>
+    /// <returns>The cell it leaves and the cell it enters, either or both <see langword="null"/>.</returns>
+    public static (BattleCell? Current, BattleCell? Next) GetMoatCellsForUnit(
+        BattleBoardCells board, BattleUnit unit, BattleBridge? bridge, CellDirection movementDirection)
+    {
+        ArgumentNullException.ThrowIfNull(board);
+        ArgumentNullException.ThrowIfNull(unit);
+
+        bool bridgeIsPassable = bridge != null && bridge.IsPassable(unit);
+
+        (BattleCell? Current, BattleCell? Next) result =
+            ResolveMoatCellsForCell(board, board.GetCell(unit.HeadIndex), unit.IsFlying, bridgeIsPassable, movementDirection);
+
+        if (result.Current == null && result.Next == null && unit.IsWide)
+        {
+            result = ResolveMoatCellsForCell(board, board.GetCell(unit.TailIndex), unit.IsFlying, bridgeIsPassable,
+                movementDirection);
+        }
+
+        if (result.Current == null && result.Next == null)
+        {
+            return result;
+        }
+
+        if (bridge == null || !bridge.IsDown)
+        {
+            return result;
+        }
+
+        // 桥面那一格被桥托住：从桥上起步的单位不算踩进护城河。
+        if (result.Current?.Index == BridgeMoatIndex || result.Next?.Index == BridgeMoatIndex)
+        {
+            return (null, null);
+        }
+
+        return result;
+    }
+
+    private static (BattleCell? Current, BattleCell? Next) ResolveMoatCellsForCell(
+        BattleBoardCells board, BattleCell? cell, bool unitIsFlying, bool bridgeIsPassable, CellDirection movementDirection)
+    {
+        if (cell == null)
+        {
+            return (null, null);
+        }
+
+        BattleCell? current = IsMoatIndex(cell.Index, unitIsFlying, bridgeIsPassable) ? cell : null;
+        BattleCell? next = null;
+
+        int nextIndex = GetIndexDirection(cell.Index, movementDirection);
+
+        if (IsValidIndex(nextIndex))
+        {
+            BattleCell? nextCell = board.GetCell(nextIndex);
+
+            if (nextCell != null && IsMoatIndex(nextCell.Index, unitIsFlying, bridgeIsPassable))
+            {
+                next = nextCell;
+            }
+        }
+
+        return (current, next);
     }
 
     public static string GetMoatInfo() =>

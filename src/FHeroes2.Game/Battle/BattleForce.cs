@@ -310,29 +310,31 @@ public sealed class BattleForce : BattleUnits
     }
 
     /// <summary>
-    /// Runs an action for every army slot that still has a stack on the board, paired with its battle unit.
+    /// Runs an action for every army slot that went to battle, paired with its battle unit.
     /// </summary>
     /// <param name="action">The action; the slot and the unit always match.</param>
     /// <remarks>
-    /// 参考里的 <c>_applyActionToTroopsFromOriginalArmy</c>（<c>battle_army.h:...</c>）是个模板小函数，端口写成
-    /// 私有方法加委托——它只服务本类的三处统计，不值得给它一个公共的泛型形状。
+    /// <para>
+    /// 参考里的 <c>_applyActionToTroopsFromOriginalArmy</c>（<c>battle_army.h</c>）是个模板小函数，端口写成私有方法加
+    /// 委托——它只服务本类的几处统计，不值得给它一个公共的泛型形状。
+    /// </para>
+    /// <para>
+    /// 参考会先跳过「空槽位」（<c>!troop-&gt;isValid()</c>），端口<b>不能照抄</b>：参考的战斗单位是原始兵堆的副本，
+    /// 而端口的 <see cref="BattleUnit"/> 直接持有 <see cref="GameArmy"/> 的 <see cref="Troop"/>，一开打原始兵堆的人数就
+    /// 被改小了。若在这里按 <c>troop.IsValid</c> 过滤，全灭的兵堆会被当成「本来就没上场」，于是
+    /// <see cref="CalculateExperienceBasedOnLosses"/> 少算经验、<see cref="SyncOriginalArmy"/> 漏写槽位。
+    /// 判据改成「有没有对应的战斗单位」——那才是真的上过场。
+    /// </para>
     /// </remarks>
     private void ApplyToTroopsFromOriginalArmy(Action<Troop, BattleUnit> action)
     {
         for (int index = 0; index < GameArmy.MaximumTroopCount; ++index)
         {
-            Troop troop = _army.GetTroop(index);
-
-            if (!troop.IsValid)
-            {
-                continue;
-            }
-
             BattleUnit? unit = FindUid(_uids[index]);
 
             if (unit != null)
             {
-                action(troop, unit);
+                action(_army.GetTroop(index), unit);
             }
         }
     }

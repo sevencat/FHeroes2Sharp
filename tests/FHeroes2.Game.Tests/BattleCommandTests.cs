@@ -23,7 +23,7 @@ public class BattleCommandTests
     [Fact]
     public void PoppingTheValuesGivesThemBackInCallOrder()
     {
-        BattleCommand command = BattleCommand.Attack(attackerUid: 3, defenderUid: 9, cellToMove: 20, cellToAttack: 21, AttackDirection.Right);
+        BattleCommand command = BattleCommand.Attack(attackerUid: 3, defenderUid: 9, cellToMove: 20, cellToAttack: 21, (int)AttackDirection.Right);
 
         Assert.Equal(5, command.Count);
         Assert.Equal(3, command.GetNextValue());
@@ -83,8 +83,8 @@ public class BattleCommandTests
     {
         ulong seed = 0x9876;
 
-        BattleCommand byHuman = BattleCommand.Attack(1, 2, 30, 31, AttackDirection.Top);
-        BattleCommand byAi = BattleCommand.Attack(1, 2, 30, 40, AttackDirection.BottomLeft);
+        BattleCommand byHuman = BattleCommand.Attack(1, 2, 30, 31, (int)AttackDirection.Top);
+        BattleCommand byAi = BattleCommand.Attack(1, 2, 30, 40, (int)AttackDirection.BottomLeft);
 
         // 参考只混入移动格与双方 UID，所以这两种写法落在同一条随机序列上。
         Assert.Equal(byHuman.UpdatePcg32Stream(seed), byAi.UpdatePcg32Stream(seed));
@@ -96,8 +96,8 @@ public class BattleCommandTests
         ulong seed = 0x9876;
 
         Assert.NotEqual(
-            BattleCommand.Attack(1, 2, 30, 31, AttackDirection.Top).UpdatePcg32Stream(seed),
-            BattleCommand.Attack(1, 2, 32, 31, AttackDirection.Top).UpdatePcg32Stream(seed));
+            BattleCommand.Attack(1, 2, 30, 31, (int)AttackDirection.Top).UpdatePcg32Stream(seed),
+            BattleCommand.Attack(1, 2, 32, 31, (int)AttackDirection.Top).UpdatePcg32Stream(seed));
     }
 
     [Fact]

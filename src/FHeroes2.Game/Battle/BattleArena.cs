@@ -5,7 +5,11 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
+using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Spells;
 
 // 从 Battle 命名空间里看，`Castle` 是 FHeroes2.Game.Castle 这个命名空间，不是城堡类型本身。
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -75,11 +79,22 @@ public sealed partial class BattleArena : IBattleField
     private readonly BattleGraveyard _graveyard = new();
     private readonly BattlePathfinder _pathfinder;
     private readonly Pcg32 _randomGenerator;
+    private readonly BattleTroopsUidGenerator _uidGenerator;
+    private readonly SpellStorage _usedSpells = new();
 
     private BattleResult _battleResult;
+
+    /// <summary>Sides whose units the AI plays for, <c>Arena::_autoCombatColors</c>.</summary>
+    private PlayerColor _autoCombatColors;
     private BattleUnit? _currentUnit;
     private IcnType _coverIcn = IcnType.Unknown;
     private uint _turnNumber;
+
+    /// <summary>
+    /// The side of the last unit that actually took an action, <c>Arena::_lastActiveUnitArmyColor</c>.
+    /// </summary>
+    /// <remarks>同速时的先手判据：上一回合谁最后出手，这一轮就轮到对面先。战斗开始时是 <see cref="PlayerColor.None"/>。</remarks>
+    private PlayerColor _lastActiveUnitArmyColor = PlayerColor.None;
 
     /// <summary>
     /// Deploys a field battle, <c>Battle::Arena::Arena()</c> (<c>battle_arena.cpp:346-452</c>) with no castle.
@@ -114,9 +129,9 @@ public sealed partial class BattleArena : IBattleField
 
         _randomGenerator = randomGenerator;
 
-        BattleTroopsUidGenerator uidGenerator = new();
-        _attackingForce = new BattleForce(attackingArmy, _board, false, uidGenerator);
-        _defendingForce = new BattleForce(defendingArmy, _board, true, uidGenerator);
+        _uidGenerator = new BattleTroopsUidGenerator();
+        _attackingForce = new BattleForce(attackingArmy, _board, false, _uidGenerator);
+        _defendingForce = new BattleForce(defendingArmy, _board, true, _uidGenerator);
 
         // If this is a siege of a town, then there is in fact no castle.
         IsTown = castle != null;
@@ -131,14 +146,14 @@ public sealed partial class BattleArena : IBattleField
         {
             if (castle.IsBuild(FHeroes2.Game.Castle.BuildingType.LeftTurret))
             {
-                _towers[0] = new BattleTower(castle, BattleTowerType.Left, uidGenerator.GetUnique());
+                _towers[0] = new BattleTower(castle, BattleTowerType.Left, _uidGenerator.GetUnique());
             }
 
-            _towers[1] = new BattleTower(castle, BattleTowerType.Center, uidGenerator.GetUnique());
+            _towers[1] = new BattleTower(castle, BattleTowerType.Center, _uidGenerator.GetUnique());
 
             if (castle.IsBuild(FHeroes2.Game.Castle.BuildingType.RightTurret))
             {
-                _towers[2] = new BattleTower(castle, BattleTowerType.Right, uidGenerator.GetUnique());
+                _towers[2] = new BattleTower(castle, BattleTowerType.Right, _uidGenerator.GetUnique());
             }
 
             if (_attackingForce.Commander != null)
@@ -273,6 +288,20 @@ public sealed partial class BattleArena : IBattleField
 
     /// <summary>The random source of the battle, <c>Arena::_randomGenerator</c>.</summary>
     public Pcg32 RandomGenerator => _randomGenerator;
+
+    /// <summary>
+    /// Every spell cast in this battle so far, <c>Arena::_usedSpells</c> / <c>GetUsedSpells()</c>.
+    /// </summary>
+    /// <remarks>战后给鹰眼技能抄写用的清单：谁施过什么法术，战利品结算时按它决定能否学到。</remarks>
+    public SpellStorage UsedSpells => _usedSpells;
+
+    /// <summary>The sides currently played by the AI, <c>Arena::_autoCombatColors</c>.</summary>
+    public PlayerColor AutoCombatColors => _autoCombatColors;
+
+    /// <summary>Whether one side has handed its units to the AI, <c>Arena::isAutoCombat()</c>.</summary>
+    /// <param name="color">The side to ask about.</param>
+    /// <returns>True when auto combat is on for that side.</returns>
+    public bool IsAutoCombat(PlayerColor color) => (_autoCombatColors & color) != 0;
 
     /// <summary>The number of the round in progress, <c>Arena::GetTurnNumber()</c>.</summary>
     public uint TurnNumber => _turnNumber;
@@ -480,44 +509,548 @@ public sealed partial class BattleArena : IBattleField
     }
 
     /// <summary>
-    /// Whether the side may run away, <c>Arena::CanRetreatOpponent()</c>.
+    /// Whether the side may run away, <c>Arena::CanRetreatOpponent()</c> (<c>battle_arena.cpp:906-910</c>).
     /// </summary>
-    /// <remarks>只有被人类控制的一方才有「撤退」这个选项；AI 从不逃。</remarks>
+    /// <remarks>
+    /// <para>
+    /// 两个条件：那一边的指挥官得是英雄（队长不能带队逃跑），而且它要么是**攻方**、要么不在城里。
+    /// 「在城里」指守城战里被迫防守的一方——城墙替它挡着，跑就等于把城交出去。
+    /// </para>
+    /// <para>
+    /// 注意这答的是「允许不允许」，界面还要再问「玩家有没有这个选项」；AI 从来不逃，但它不是靠这个函数拦住的。
+    /// </para>
+    /// </remarks>
     /// <param name="color">The side to ask about.</param>
     /// <returns>Whether that side can retreat.</returns>
-    public bool CanRetreatOpponent(PlayerColor color) =>
-        GetCommander(color) is { } commander && commander.GetControl() != System.PlayerControl.Ai;
+    public bool CanRetreatOpponent(PlayerColor color)
+    {
+        IArmyCommander? commander = GetCommander(color);
+
+        return commander is { IsHeroes: true } && (color == _attackingForce.Color || commander.InCastle == null);
+    }
 
     /// <summary>
-    /// Whether the side may give up, <c>Arena::CanSurrenderOpponent()</c>.
+    /// Whether the side may give up, <c>Arena::CanSurrenderOpponent()</c> (<c>battle_arena.cpp:899-904</c>).
     /// </summary>
-    /// <remarks>与撤退同理，只有在场的人类指挥官才谈得上投降。</remarks>
+    /// <remarks>
+    /// 投降要付钱、而且要有人收钱：自己得是英雄，对面得有指挥官（英雄或队长都行）。对面是一群野兵时无从谈判。
+    /// </remarks>
     /// <param name="color">The side to ask about.</param>
     /// <returns>Whether that side can surrender.</returns>
-    public bool CanSurrenderOpponent(PlayerColor color) =>
-        GetCommander(color) is { } commander && commander.GetControl() != System.PlayerControl.Ai;
+    public bool CanSurrenderOpponent(PlayerColor color)
+    {
+        IArmyCommander? commander = GetCommander(color);
+
+        return commander is { IsHeroes: true } && GetCommander(GetOppositeColor(color)) != null;
+    }
 
     /// <summary>
-    /// Whether the fight is being played by the computer, <c>Arena::AutoCombatInProgress()</c>.
+    /// Whether the fight is being played by the computer, <c>Arena::AutoCombatInProgress()</c>
+    /// (<c>battle_arena.cpp:1458-1472</c>).
     /// </summary>
     /// <remarks>
-    /// 参考在这里读 <c>_autoBattle</c>；端口的自动战斗还没接进竞技场（<see cref="BattleLoader"/> 的缺口之一），
-    /// 所以恒为 <see langword="false"/>。等自动战斗落地，这里改成读开关即可。
+    /// <para>
+    /// 只看**当前出手的这一方**：攻城战里攻方开了自动、守方还在人手里，轮到守方时这仍然是 <see langword="false"/>。
+    /// 没有人出手（<see cref="_currentUnit"/> 为空）时也答否——这时没有「正在进行」可言。
+    /// </para>
+    /// <para>
+    /// 自动战斗只可能开给人类控制的一方：AI 本来就不等人，所以这里断言当前方不是 AI。
+    /// </para>
     /// </remarks>
-    public bool AutoCombatInProgress => false;
+    public bool AutoCombatInProgress
+    {
+        get
+        {
+            if (_currentUnit == null)
+            {
+                return false;
+            }
+
+            if ((_autoCombatColors & _currentUnit.GetCurrentColor()) == 0)
+            {
+                return false;
+            }
+
+            Debug.Assert(GetCurrentForce().GetControl() != System.PlayerControl.Ai,
+                "Auto combat can only be switched on for a human-controlled side.");
+
+            return true;
+        }
+    }
 
     /// <summary>
-    /// Whether the player could hand the fight over to the computer, <c>Arena::CanToggleAutoCombat()</c>.
-    /// </summary>
-    /// <remarks>同理，自动战斗未接入，先恒为 <see langword="false"/>。</remarks>
-    public bool CanToggleAutoCombat => false;
-
-    /// <summary>
-    /// Whether spells are switched off for this fight, <c>Arena::IsSpellcastDisabled()</c>.
+    /// Whether the other side's AI is playing while this side's auto combat runs,
+    /// <c>Arena::EnemyOfAIHasAutoCombatInProgress()</c> (<c>battle_arena.cpp:1474-1491</c>).
     /// </summary>
     /// <remarks>
-    /// 参考把「剧本禁用魔法」与「自动战斗进行中」两件事合在这里；端口还没有前者（无设置入口），
-    /// 后者见 <see cref="AutoCombatInProgress"/>。
+    /// 人类把战斗交给电脑之后，「对面也是电脑」这件事在界面上不该再弹提示；这个函数专门回答那个场景：
+    /// 当前方是 AI、对面是人、而人那边已经开了自动。
     /// </remarks>
-    public bool IsSpellcastDisabled => AutoCombatInProgress;
+    /// <returns>Whether the AI's opponent is running on auto combat.</returns>
+    public bool EnemyOfAIHasAutoCombatInProgress
+    {
+        get
+        {
+            if (_currentUnit == null || GetCurrentForce().GetControl() != System.PlayerControl.Ai)
+            {
+                return false;
+            }
+
+            BattleForce enemyForce = GetEnemyForce(GetCurrentColor());
+
+            if (enemyForce.GetControl() == System.PlayerControl.Ai)
+            {
+                return false;
+            }
+
+            return (_autoCombatColors & enemyForce.Color) != 0;
+        }
+    }
+
+    /// <summary>
+    /// Whether the player could hand the fight over to the computer, <c>Arena::CanToggleAutoCombat()</c>
+    /// (<c>battle_arena.cpp:1493-1500</c>).
+    /// </summary>
+    /// <remarks>
+    /// 战斗已经开始（有人出手）才有「交给电脑」这回事；而且 AI 那一方没有开关，它本来就不等人。
+    /// </remarks>
+    public bool CanToggleAutoCombat => _currentUnit != null && GetCurrentForce().GetControl() != System.PlayerControl.Ai;
+
+    /// <summary>
+    /// Whether spells are switched off for this fight, <c>Arena::IsSpellcastDisabled()</c>
+    /// (<c>battle_arena.cpp:912-925</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 唯一的来源是「否定之球」：任意一方的指挥官带着它，整场战斗双方都不能施法。不含剧本开关，也不含自动战斗
+    /// ——自动战斗里 AI 照样可以施法（<c>ai_battle.cpp:534</c> 用它决定英雄要不要施法）。
+    /// </para>
+    /// <para>
+    /// 这是全场的性质而不是某一方的：带着它的一方自己也放不出法术。
+    /// </para>
+    /// </remarks>
+    public bool IsSpellcastDisabled =>
+        IsSphereOfNegationPresent(_attackingForce.Commander) || IsSphereOfNegationPresent(_defendingForce.Commander);
+
+    private static bool IsSphereOfNegationPresent(IArmyCommander? commander) =>
+        commander != null && commander.BagArtifacts.IsBonusPresent(ArtifactBonusType.DisableAllSpellCombatCasting);
+
+    /// <summary>
+    /// Whether casting this spell right now would be refused, <c>Arena::isDisableCastSpell()</c>
+    /// (<c>battle_arena.cpp:927-1008</c>).
+    /// </summary>
+    /// <remarks>
+    /// 依次排除：整场禁魔、没有指挥官、本回合已经施过法、空法术（空法术用来「探一探能不能施法」，
+    /// 所以不算被禁）、地震在没有城堡时、召唤已有另一种元素时、召唤时英雄旁边没有空格，
+    /// 最后是「场上有单位吃这个法术，或坟场里有能复活的尸体」。
+    /// </remarks>
+    /// <param name="spell">The spell about to be cast.</param>
+    /// <returns>Whether the cast would be refused.</returns>
+    public bool IsDisableCastSpell(Spell spell)
+    {
+        if (IsSpellcastDisabled)
+        {
+            return true;
+        }
+
+        IArmyCommander? commander = GetCurrentCommander();
+
+        if (commander == null)
+        {
+            return true;
+        }
+
+        if ((commander.Modes & HeroModes.Spellcasted) != 0)
+        {
+            return true;
+        }
+
+        // 空法术拿来探「能不能施法」，本身不算被禁。
+        if (spell.Type == SpellType.None)
+        {
+            return false;
+        }
+
+        if (spell.Type == SpellType.Earthquake)
+        {
+            return Castle == null;
+        }
+
+        if (spell.IsSummon())
+        {
+            MonsterType summoned = MonsterSummons.FromSpell(spell.Type);
+            Debug.Assert(summoned != MonsterType.Unknown, "Every summoning spell names an elemental.");
+
+            BattleUnit? elemental = GetCurrentForce().FindMode(BattleMonsterState.CapSummonElement);
+
+            if (elemental != null && elemental.Monster != summoned)
+            {
+                return true;
+            }
+
+            if (GetFreePositionNearHero(GetCurrentColor()) < 0)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        for (int index = 0; index < BattleBoard.SizeInCells; ++index)
+        {
+            BattleUnit? unit = GetTroopBoard(index);
+
+            if (unit != null)
+            {
+                if (unit.AllowApplySpell(spell, commander))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (IsAbleToResurrectFromGraveyard(index, spell))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a resurrection spell could bring something back on this cell, <c>Arena::isAbleToResurrectFromGraveyard()</c>
+    /// (<c>battle_arena.cpp:1011-1057</c>).
+    /// </summary>
+    /// <param name="index">The cell.</param>
+    /// <param name="spell">The spell about to be cast.</param>
+    /// <returns>Whether the cell holds a corpse the spell can raise.</returns>
+    public bool IsAbleToResurrectFromGraveyard(int index, Spell spell)
+    {
+        if (!spell.IsResurrect())
+        {
+            return false;
+        }
+
+        IArmyCommander? commander = GetCurrentCommander();
+
+        if (commander == null)
+        {
+            return false;
+        }
+
+        BattleUnit? unit = GetLastResurrectableUnitFromGraveyard(index, spell);
+
+        if (unit == null)
+        {
+            return false;
+        }
+
+        if (!unit.AllowApplySpell(spell, commander))
+        {
+            return false;
+        }
+
+        int headIndex = unit.HeadIndex;
+        Debug.Assert(BattleBoard.IsValidIndex(headIndex), "A fallen unit keeps a valid head cell.");
+
+        // 尸体上不能站着别的单位。
+        if (GetTroopBoard(headIndex) != null)
+        {
+            return false;
+        }
+
+        if (!unit.IsWide)
+        {
+            return true;
+        }
+
+        int tailIndex = unit.TailIndex;
+        Debug.Assert(BattleBoard.IsValidIndex(tailIndex), "A fallen wide unit keeps a valid tail cell.");
+
+        return GetTroopBoard(tailIndex) == null;
+    }
+
+    /// <summary>
+    /// The topmost corpse on a cell that the spell can raise, <c>Arena::getLastResurrectableUnitFromGraveyard()</c>
+    /// (<c>battle_arena.cpp:1079-1082</c>).
+    /// </summary>
+    /// <param name="index">The cell.</param>
+    /// <param name="spell">The spell about to be cast.</param>
+    /// <returns>The unit, or <see langword="null"/> when nothing there can be raised.</returns>
+    public BattleUnit? GetLastResurrectableUnitFromGraveyard(int index, Spell spell)
+    {
+        if (!spell.IsResurrect())
+        {
+            return null;
+        }
+
+        IArmyCommander? commander = GetCurrentCommander();
+
+        if (commander == null)
+        {
+            return null;
+        }
+
+        List<BattleUnit> units = _graveyard.GetUnits(index);
+
+        // 参考从链尾往前找：最后倒下的那堆优先。
+        for (int i = units.Count - 1; i >= 0; --i)
+        {
+            BattleUnit unit = units[i];
+            Debug.Assert(!unit.IsValid, "The graveyard holds fallen units only.");
+
+            if (unit.Army?.Color != commander.GetColor())
+            {
+                continue;
+            }
+
+            if (unit.AllowApplySpell(spell, commander))
+            {
+                return unit;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Every unit a spell would hit when aimed at a cell, <c>Arena::GetTargetsForSpell()</c>
+    /// (<c>battle_action.cpp:1046-1174</c>).
+    /// </summary>
+    /// <param name="hero">The commander casting the spell.</param>
+    /// <param name="spell">The spell.</param>
+    /// <param name="dst">The cell it is aimed at.</param>
+    /// <param name="applyRandomMagicResistance">Whether to roll magic resistance; battle AI passes <see langword="true"/>.</param>
+    /// <returns>The units that would be hit; empty when nothing can be affected.</returns>
+    public List<BattleSpellTarget> GetTargetsForSpell(
+        IArmyCommander hero,
+        Spell spell,
+        int dst,
+        bool applyRandomMagicResistance = true)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+
+        List<BattleSpellTarget> targets = [];
+
+        BattleUnit? target = GetTroopBoard(dst);
+
+        // 链闪电与寒冰环不认「瞄准的那个单位」：前者按链子挑，后者按格子周围挑。
+        if (spell.Type is SpellType.ChainLightning or SpellType.ColdRing)
+        {
+            target = null;
+        }
+
+        HashSet<BattleUnit> consideredTargets = [];
+
+        if (target != null && target.AllowApplySpell(spell, hero) && consideredTargets.Add(target))
+        {
+            targets.Add(new BattleSpellTarget { Defender = target });
+        }
+        else if (target == null && IsAbleToResurrectFromGraveyard(dst, spell))
+        {
+            target = GetLastResurrectableUnitFromGraveyard(dst, spell);
+            Debug.Assert(target != null, "A cell that can be resurrected holds a corpse.");
+
+            if (consideredTargets.Add(target))
+            {
+                targets.Add(new BattleSpellTarget { Defender = target });
+            }
+        }
+        else
+        {
+            switch (spell.Type)
+            {
+                case SpellType.ChainLightning:
+                    foreach (BattleSpellTarget spellTarget in TargetsForChainLightning(hero, dst, applyRandomMagicResistance))
+                    {
+                        Debug.Assert(spellTarget.Defender != null, "Chain lightning always targets units.");
+
+                        if (consideredTargets.Add(spellTarget.Defender))
+                        {
+                            targets.Add(spellTarget);
+                        }
+                    }
+
+                    // 链闪电在选目标时已经滚过抗魔，下面不再重复。
+                    applyRandomMagicResistance = false;
+
+                    break;
+
+                case SpellType.Fireball:
+                case SpellType.MeteorShower:
+                case SpellType.ColdRing:
+                case SpellType.FireBlast:
+                    foreach (int index in BattleBoard.GetDistanceIndexes(dst, spell.Type == SpellType.FireBlast ? 2u : 1u))
+                    {
+                        BattleUnit? targetUnit = GetTroopBoard(index);
+
+                        if (targetUnit != null && targetUnit.AllowApplySpell(spell, hero) && consideredTargets.Add(targetUnit))
+                        {
+                            targets.Add(new BattleSpellTarget { Defender = targetUnit });
+                        }
+                    }
+
+                    break;
+
+                case SpellType.DeathRipple:
+                case SpellType.DeathWave:
+                case SpellType.ElementalStorm:
+                case SpellType.HolyWord:
+                case SpellType.HolyShout:
+                case SpellType.Armageddon:
+                case SpellType.MassBless:
+                case SpellType.MassCure:
+                case SpellType.MassCurse:
+                case SpellType.MassDispel:
+                case SpellType.MassHaste:
+                case SpellType.MassShield:
+                case SpellType.MassSlow:
+                    for (int index = 0; index < BattleBoard.SizeInCells; ++index)
+                    {
+                        BattleUnit? unit = GetTroopBoard(index);
+
+                        if (unit != null && unit.AllowApplySpell(spell, hero) && consideredTargets.Add(unit))
+                        {
+                            targets.Add(new BattleSpellTarget { Defender = unit });
+                        }
+                    }
+
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        // 标出被抗魔顶掉的目标。
+        foreach (BattleSpellTarget spellTarget in targets)
+        {
+            BattleUnit defender = spellTarget.Defender!;
+            uint resist = defender.GetMagicResist(spell, hero);
+
+            Debug.Assert(resist < 100, "A fully immune unit never gets into the target list.");
+
+            if (applyRandomMagicResistance && resist >= Rand.GetWithGen(1U, 100U, _randomGenerator))
+            {
+                spellTarget.Resist = true;
+            }
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// The chain of units a chain lightning would run through, <c>Arena::TargetsForChainLightning()</c>
+    /// (<c>battle_action.cpp:1014-1044</c>).
+    /// </summary>
+    /// <param name="hero">The commander casting the spell.</param>
+    /// <param name="attackedTroopIndex">The head cell of the first unit.</param>
+    /// <param name="applyRandomMagicResistance">Whether to roll magic resistance.</param>
+    /// <returns>The units in the order the bolt reaches them.</returns>
+    private List<BattleSpellTarget> TargetsForChainLightning(IArmyCommander hero, int attackedTroopIndex, bool applyRandomMagicResistance)
+    {
+        List<BattleSpellTarget> targets = [];
+
+        BattleUnit? unit = GetTroopBoard(attackedTroopIndex);
+
+        if (unit == null)
+        {
+            Debug.Assert(false, "Chain lightning is aimed at a unit.");
+
+            return targets;
+        }
+
+        Spell chainLightning = new(SpellType.ChainLightning);
+
+        uint firstUnitResist = unit.GetMagicResist(chainLightning, hero);
+
+        if (firstUnitResist >= 100 || (applyRandomMagicResistance && firstUnitResist >= Rand.GetWithGen(1U, 100U, _randomGenerator)))
+        {
+            targets.Add(new BattleSpellTarget { Defender = unit, Resist = true });
+
+            return targets;
+        }
+
+        List<BattleUnit> targetUnits = FindChainLightningTargetUnits(hero, unit, applyRandomMagicResistance);
+
+        for (int i = 0; i < targetUnits.Count; ++i)
+        {
+            // damage 先存「链子上的次序」，真正的伤害由施法流程按次序算。
+            targets.Add(new BattleSpellTarget { Defender = targetUnits[i], Damage = (uint)i });
+        }
+
+        return targets;
+    }
+
+    /// <summary>
+    /// The units a chain lightning would jump to, <c>Arena::FindChainLightningTargetIndexes()</c>
+    /// (<c>battle_action.cpp:960-1011</c>).
+    /// </summary>
+    /// <param name="hero">The commander casting the spell.</param>
+    /// <param name="firstUnit">The first unit struck.</param>
+    /// <param name="applyRandomMagicResistance">Whether to roll magic resistance.</param>
+    /// <returns>The units, starting with <paramref name="firstUnit"/>.</returns>
+    private List<BattleUnit> FindChainLightningTargetUnits(IArmyCommander hero, BattleUnit firstUnit, bool applyRandomMagicResistance)
+    {
+        const int ChainLightningCreatureCount = 4;
+
+        Spell chainLightning = new(SpellType.ChainLightning);
+
+        List<BattleUnit> result = [firstUnit];
+        List<BattleUnit> ignoredTroops = [firstUnit];
+
+        List<BattleUnit> foundTroops = BattleBoard.GetNearestTroops(this, result[^1], ignoredTroops);
+
+        // 先把完全免疫的剔掉：它们既不吃伤害，也不该挡在链子上。
+        for (int i = 0; i < foundTroops.Count;)
+        {
+            if (foundTroops[i].GetMagicResist(chainLightning, hero) >= 100)
+            {
+                ignoredTroops.Add(foundTroops[i]);
+                foundTroops.RemoveAt(i);
+            }
+            else
+            {
+                ++i;
+            }
+        }
+
+        while (result.Count != ChainLightningCreatureCount && foundTroops.Count > 0)
+        {
+            bool targetFound = false;
+
+            for (int i = 0; i < foundTroops.Count; ++i)
+            {
+                uint resist = foundTroops[i].GetMagicResist(chainLightning, hero);
+                Debug.Assert(resist < 100, "Fully immune units were filtered out above.");
+
+                if (!applyRandomMagicResistance || resist < Rand.GetWithGen(1U, 100U, _randomGenerator))
+                {
+                    ignoredTroops.Add(foundTroops[i]);
+                    result.Add(foundTroops[i]);
+                    foundTroops.RemoveAt(i);
+                    targetFound = true;
+
+                    break;
+                }
+            }
+
+            // 全部抗住了：挑最近的继续跳，免得链子断掉。
+            if (!targetFound)
+            {
+                ignoredTroops.Add(foundTroops[0]);
+                result.Add(foundTroops[0]);
+                foundTroops.RemoveAt(0);
+            }
+
+            if (result.Count != ChainLightningCreatureCount)
+            {
+                foundTroops = BattleBoard.GetNearestTroops(this, result[^1], ignoredTroops);
+            }
+        }
+
+        return result;
+    }
 }
