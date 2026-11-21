@@ -28,8 +28,6 @@ namespace FHeroes2.Game.Army;
 /// <para>
 /// Not here: the methods that move stacks <i>between</i> two armies — <c>JoinStrongest</c>,
 /// <c>JoinStrongestFromArmy</c>, <c>MoveTroops</c> and <c>SwapTroops</c> — are in <c>Army.Transfer.cs</c>.
-/// <c>UpgradeTroops</c> waits for <c>Castle</c> — it is the "upgrade what the castle can upgrade and the
-/// kingdom can pay for" half of the pair, and both of its extra questions need a castle;
 /// <c>SplitTroopIntoFreeSlots</c> and its three siblings wait for the dialog that drags a single stack.
 /// </para>
 /// </remarks>

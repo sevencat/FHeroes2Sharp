@@ -28,9 +28,13 @@ namespace FHeroes2.UI.Dialogs;
 /// 城画一遍——跳过的是「哪块该用 alpha」，不是「要不要画」。
 /// </para>
 /// <para>
-/// 未搬：<c>drawCastleDialogBuilding</c> 的玩家配色（<c>getModifiedByColorImage</c>，六张旗帜类 ICN 要按玩家
-/// 颜色换调色板）与 <c>AlphaBlit</c> 的半透明混合。前者意味着城堡旗帜目前不是玩家色，后者意味着新建筑是
-/// 瞬间出现而不是淡入（<see cref="FadeBuilding"/> 仍在推进，只是画的时候 alpha 未参与混合）。
+/// 旗帜的玩家配色由 <see cref="CastleFlagPalette"/> 负责：六张旗帜类 ICN 在这里按
+/// <c>PlayerColor</c> 换调色板（参考的 <c>getModifiedByColorImage</c>），<see cref="DrawBuilding"/> 的
+/// <c>color</c> 参数一路接 <c>Castle.Color</c>。
+/// </para>
+/// <para>
+/// 未搬：<c>AlphaBlit</c> 的半透明混合——新建筑因此是瞬间出现而不是淡入（<see cref="FadeBuilding"/> 仍在推进，
+/// 只是画的时候 alpha 未参与混合）。
 /// </para>
 /// </remarks>
 public static class CastleScreenPainter
@@ -109,12 +113,12 @@ public static class CastleScreenPainter
         if (castle.Race == MapRace.Barbarian)
         {
             // The barbarian's river is a full sprite of its own rather than an overlay on the background.
-            DrawBuilding(target, IcnType.Twnbext1, (int)riverFrame, offset, maxArea);
+            DrawBuilding(target, IcnType.Twnbext1, (int)riverFrame, offset, maxArea, color: castle.Color);
         }
         else if (castle.Race == MapRace.Wizard)
         {
             // The wizard's "bay" is a river in a gorge: frame 0 is already on the background, only the animation is drawn.
-            DrawBuilding(target, IcnType.Twnzext0, (int)riverFrame, offset, maxArea);
+            DrawBuilding(target, IcnType.Twnzext0, (int)riverFrame, offset, maxArea, color: castle.Color);
         }
 
         BuildingType fadingIn = fade.Building;
@@ -125,8 +129,8 @@ public static class CastleScreenPainter
         {
             if (GetBay(castle.Race) is { } bay)
             {
-                DrawBuilding(target, bay, 0, offset, maxArea);
-                DrawBuilding(target, bay, (int)riverFrame, offset, maxArea);
+                DrawBuilding(target, bay, 0, offset, maxArea, color: castle.Color);
+                DrawBuilding(target, bay, (int)riverFrame, offset, maxArea, color: castle.Color);
             }
         }
 
@@ -232,7 +236,7 @@ public static class CastleScreenPainter
             return;
         }
 
-        DrawBuilding(target, icn, index, offset, maxArea, alpha);
+        DrawBuilding(target, icn, index, offset, maxArea, alpha, castle.Color);
 
         // The knight's castle flags are overlapped by the right turret, so they are drawn after the turret instead.
         bool knightCastleCase = race == MapRace.Knight
@@ -247,7 +251,7 @@ public static class CastleScreenPainter
         uint animated = IcnCatalog.GetAnimatedIndex(icn, (uint)index, animationIndex);
         if (animated != 0)
         {
-            DrawBuilding(target, icn, (int)animated, offset, maxArea, alpha);
+            DrawBuilding(target, icn, (int)animated, offset, maxArea, alpha, castle.Color);
         }
 
         if (knightCastleCase && building == BuildingType.RightTurret)
@@ -256,7 +260,7 @@ public static class CastleScreenPainter
             uint flags = IcnCatalog.GetAnimatedIndex(castleIcn, (uint)index, animationIndex);
             if (flags > 0)
             {
-                DrawBuilding(target, castleIcn, (int)flags, offset, maxArea, alpha);
+                DrawBuilding(target, castleIcn, (int)flags, offset, maxArea, alpha, castle.Color);
             }
         }
     }
@@ -301,12 +305,12 @@ public static class CastleScreenPainter
             {
                 IcnType boat = Castle.GetICNBoat(race);
 
-                DrawBuilding(target, boat, 0, offset, maxArea, alpha);
+                DrawBuilding(target, boat, 0, offset, maxArea, alpha, castle.Color);
 
                 uint animated = IcnCatalog.GetAnimatedIndex(boat, 0, animationIndex);
                 if (animated != 0)
                 {
-                    DrawBuilding(target, boat, (int)animated, offset, maxArea, alpha);
+                    DrawBuilding(target, boat, (int)animated, offset, maxArea, alpha, castle.Color);
                 }
             }
             else
@@ -316,7 +320,7 @@ public static class CastleScreenPainter
                 uint animated = IcnCatalog.GetAnimatedIndex(dock, 0, animationIndex);
                 if (animated != 0)
                 {
-                    DrawBuilding(target, dock, (int)animated, offset, maxArea, alpha);
+                    DrawBuilding(target, dock, (int)animated, offset, maxArea, alpha, castle.Color);
                 }
             }
         }
@@ -329,14 +333,14 @@ public static class CastleScreenPainter
                 // While the statue fades in over a standing garden, the picture priority of the two is swapped.
                 IcnType garden = Castle.GetICNBuilding(BuildingType.Well2, race);
 
-                DrawBuilding(target, garden, 0, offset, maxArea);
+                DrawBuilding(target, garden, 0, offset, maxArea, color: castle.Color);
                 uint animated = IcnCatalog.GetAnimatedIndex(garden, 0, animationIndex);
                 if (animated != 0)
                 {
-                    DrawBuilding(target, garden, (int)animated, offset, maxArea);
+                    DrawBuilding(target, garden, (int)animated, offset, maxArea, color: castle.Color);
                 }
 
-                DrawBuilding(target, IcnType.Twnsext1, 0, offset, maxArea, alpha);
+                DrawBuilding(target, IcnType.Twnsext1, 0, offset, maxArea, alpha, castle.Color);
             }
         }
         else if (building == BuildingType.Well2)
@@ -347,12 +351,12 @@ public static class CastleScreenPainter
                     && CastleBuildingRender.IsBuildingFullyBuilt(castle, BuildingType.Statue, underConstruction))
                 {
                     // Statue and Crystal Garden together are one picture.
-                    DrawBuilding(target, IcnType.Twnsext1, 0, offset, maxArea, alpha);
+                    DrawBuilding(target, IcnType.Twnsext1, 0, offset, maxArea, alpha, castle.Color);
 
                     uint animated = IcnCatalog.GetAnimatedIndex(IcnType.Twnsext1, 0, animationIndex);
                     if (animated != 0)
                     {
-                        DrawBuilding(target, IcnType.Twnsext1, (int)animated, offset, maxArea, alpha);
+                        DrawBuilding(target, IcnType.Twnsext1, (int)animated, offset, maxArea, alpha, castle.Color);
                     }
                 }
             }
@@ -366,7 +370,7 @@ public static class CastleScreenPainter
                         offset.X + rightFarm.OffsetX - GetFrameWidth(IcnType.KnightCastleLeftFarm),
                         offset.Y + rightFarm.OffsetY);
 
-                    DrawBuilding(target, IcnType.KnightCastleLeftFarm, 0, leftFarmOffset, maxArea, alpha);
+                    DrawBuilding(target, IcnType.KnightCastleLeftFarm, 0, leftFarmOffset, maxArea, alpha, castle.Color);
                 }
             }
         }
@@ -388,14 +392,15 @@ public static class CastleScreenPainter
                             0,
                             leftQuartersOffset,
                             maxArea,
-                            alpha);
+                            alpha,
+                            castle.Color);
                     }
                 }
             }
             else if (race == MapRace.Sorceress
                      && !CastleBuildingRender.IsBuildingFullyBuilt(castle, BuildingType.Castle, underConstruction))
             {
-                DrawBuilding(target, IcnType.SorceressCastleCaptainQuartersLeftSide, 0, offset, maxArea, alpha);
+                DrawBuilding(target, IcnType.SorceressCastleCaptainQuartersLeftSide, 0, offset, maxArea, alpha, castle.Color);
             }
         }
     }
@@ -443,7 +448,7 @@ public static class CastleScreenPainter
                     return;
                 }
 
-                DrawBuilding(target, IcnType.Twnbext2, 0, offset, maxArea, alpha);
+                DrawBuilding(target, IcnType.Twnbext2, 0, offset, maxArea, alpha, castle.Color);
             }
 
             if (building == BuildingType.DwellingMonster3 || building == BuildingType.ThievesGuild)
@@ -458,7 +463,7 @@ public static class CastleScreenPainter
                     return;
                 }
 
-                DrawBuilding(target, IcnType.Twnbext3, 0, offset, maxArea, alpha);
+                DrawBuilding(target, IcnType.Twnbext3, 0, offset, maxArea, alpha, castle.Color);
             }
         }
         else if (castle.Race == MapRace.Necromancer)
@@ -478,7 +483,7 @@ public static class CastleScreenPainter
                 return;
             }
 
-            DrawBuilding(target, IcnType.NecromancerCastleCaptainQuartersBridge, 0, offset, maxArea, alpha);
+            DrawBuilding(target, IcnType.NecromancerCastleCaptainQuartersBridge, 0, offset, maxArea, alpha, castle.Color);
         }
     }
 
@@ -491,13 +496,18 @@ public static class CastleScreenPainter
     /// <param name="offset">Where the sprite's own offset is measured from.</param>
     /// <param name="clip">The rectangle every blit is clipped to.</param>
     /// <param name="alpha">How opaque the frame is; <see cref="byte.MaxValue"/> means "copy as is".</param>
+    /// <param name="color">
+    /// Owner of the town, used to recolour the flags of the six colour-bearing archives
+    /// (<see cref="CastleFlagPalette"/>); <see cref="PlayerColor.None"/> keeps the archive's own flags.
+    /// </param>
     public static void DrawBuilding(
         PixelBuffer target,
         IcnType icn,
         int frame,
         Point offset,
         Rect clip,
-        byte alpha = byte.MaxValue)
+        byte alpha = byte.MaxValue,
+        PlayerColor color = PlayerColor.None)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -511,6 +521,8 @@ public static class CastleScreenPainter
         {
             return;
         }
+
+        sprite = CastleFlagPalette.Get(sprite, icn, frame, color);
 
         Point position = new(offset.X + sprite.OffsetX, offset.Y + sprite.OffsetY);
         Rect placed = new(position, sprite.Image.Bounds.Size);

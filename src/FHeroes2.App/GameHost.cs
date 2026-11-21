@@ -1334,7 +1334,10 @@ public sealed class GameHost : IDisposable
                     townScene.SetCursor(start);
                 }
 
-                GameLog.Info($"Opened the town screen of '{townScene.Castle.Name}' from the command line.");
+                // The race is part of the message because a random town re-rolls it on every load, so smoke tests
+                // that click fixed coordinates need to know which race they got.
+                GameLog.Info(
+                    $"Opened the town screen of '{townScene.Castle.Name}' ({townScene.Castle.Race}) from the command line.");
 
                 // --town-window opens one of the windows above it, so their frames can be captured the
                 // same way the screen's is.

@@ -327,6 +327,15 @@ public sealed partial class Hero
     public int PatrolDistance { get; private set; }
 
     /// <summary>
+    /// What the AI uses this hero for, <c>getAIRole()</c>/<c>setAIRole()</c> (<c>heroes.h:679-687</c>).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="HeroRole.Hunter"/> until the portfolio of the AI is ported; the planner only reads it so far, to
+    /// tell the heroes it sends into a fight from the ones it keeps out of one.
+    /// </remarks>
+    public HeroRole AiRole { get; set; } = HeroRole.Hunter;
+
+    /// <summary>
     /// Puts the hero on a tile, <c>Position::SetIndex()</c> as called by <c>LoadFromMP2()</c>
     /// (<c>heroes.cpp:427</c>).
     /// </summary>

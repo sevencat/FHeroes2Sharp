@@ -68,32 +68,34 @@
 `src/tools` 的 8 个命令行工具不逐个对照（本项目用自研 `AssetProbe` 替代）。
 快照于 2026-11-15（M4 完成、E3b 之后），**每个里程碑收尾时重算一次**；`agg`、`castle`、`system`、`audio`、
 `h2d`、`resource` 与 `army` 七行，以及 `engine` 行里的 `h2d_file.cpp`，于 2026-11-17（ADR-134、ADR-135、
-ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过；`army` 行又于 2026-11-19 按 ADR-182 重算（1/3/0）。
+ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过；`army` 行又于 2026-11-19 按 ADR-182 重算（1/3/0）；
+2026-11-21 又按下面的逐文件清单把**整表重数**了一遍（`castle`、`dialog`、`gui`、`engine`、`kingdom`、`heroes`、
+`ai` 七行与合计都动了，见本节末尾的说明）。
 
 | 目录 | 文件数 | 已转 | 部分 | 未转 |
 | --- | --- | --- | --- | --- |
-| `engine` | 26 | 8 | 7 | 11 |
+| `engine` | 26 | 8 | 8 | 10 |
 | `agg` | 6 | 6 | 0 | 0 |
-| `ai` | 9 | 0 | 0 | 9 |
+| `ai` | 9 | 3 | 0 | 6 |
 | `army` | 4 | 1 | 3 | 0 |
 | `audio` | 1 | 1 | 0 | 0 |
 | `battle` | 18 | 8 | 5 | 5 |
 | `campaign` | 3 | 0 | 0 | 3 |
-| `castle` | 11 | 3 | 8 | 0 |
-| `dialog` | 29 | 2 | 4 | 23 |
+| `castle` | 11 | 4 | 7 | 0 |
+| `dialog` | 29 | 5 | 5 | 19 |
 | `editor` | 18 | 1 | 4 | 13 |
 | `game` | 28 | 2 | 6 | 20 |
-| `gui` | 33 | 7 | 12 | 14 |
+| `gui` | 33 | 7 | 14 | 12 |
 | `h2d` | 1 | 1 | 0 | 0 |
-| `heroes` | 12 | 2 | 5 | 5 |
-| `kingdom` | 14 | 6 | 6 | 2 |
+| `heroes` | 12 | 2 | 6 | 4 |
+| `kingdom` | 14 | 6 | 7 | 1 |
 | `maps` | 17 | 5 | 7 | 5 |
 | `monster` | 3 | 0 | 2 | 1 |
 | `resource` | 4 | 2 | 2 | 0 |
 | `spell` | 4 | 1 | 3 | 0 |
 | `system` | 3 | 3 | 0 | 0 |
 | `world` | 5 | 1 | 4 | 0 |
-| **合计** | **249** | **49** | **75** | **125** |
+| **合计** | **249** | **67** | **83** | **99** |
 
 2026-11-19 重算了四行（都是「下面逐文件清单早就写了，表格没跟上」）：
 
@@ -113,6 +115,37 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过；`army` 行�
 2026-11-19 收尾：`army` 目录四个文件全量盘点（ADR-182）—— `army_ui_helper.cpp` 已转，`army_bar.cpp` 从「未转」
 转「部分」（规则、绘制与事件都在，缺的是调用方），`army.cpp`/`army_troop.cpp` 仍是「部分」（缺加成文案与
 `*String`）。`army` 行 0/2/2 → **1/3/0**，合计 **49/75/125**。
+
+2026-11-21 整表重数：不再一行一行打补丁，按下面的逐文件清单把 21 个目录全部对了一遍，七行要改：
+
+* `castle` 3/8/0 → **4/7/0** —— `castle_tavern.cpp` 在 ADR-193 整份落地（`TAVWIN` 动画、两段文字、模态循环），
+  于是目录里再没有「未转」的文件，剩的七处「部分」都是明确点名的缺口（见下面的 `castle` 条目）。
+* `dialog` 2/4/23 → **5/5/19** —— 三个「已转」早就写在清单里没记进表：`dialog_marketplace.cpp`（ADR-163 之后
+  模型 + 视图）、`dialog_giftresources.cpp`（`GiftWindowView`）、`dialog_recruit.cpp`（`RecruitDialog` +
+  `RecruitWindowView`）；「部分」是 `dialog_armyinfo`/`dialog_quickinfo`/`dialog_game_settings`/
+  `dialog_language_selection`/`dialog_selectscenario`。原来那份「上述 24 个的实现」名单已按 19 个重列（去掉
+  `giftresources` 与 `recruit`）。
+* `gui` 7/12/14 → **7/14/12** —— `ui_castle.cpp`（ADR-165~ADR-193：`CastleScreenPainter` 的建筑绘制与整屏合成、
+  `CastleFlagPalette` 的旗帜配色）与 `ui_option_item.cpp`（`OptionItem` 的网格绘制）都从「未转」改记「部分」。
+* `engine` 8/7/11 → **8/8/10** —— `serialize.cpp` 在 ADR-181 转的是部分（四个流类，`ZStreamBuf` 那一版没有），
+  表里漏在「未转」。
+* `kingdom` 6/6/2 → **6/7/1** —— 整份未转的只有 `kingdom_overview.cpp`；`view_world.cpp` 在 ADR-184~189 之后
+  是「部分」（窗口本体已转，缺淡入淡出与正式入口），表里还记着「未转」。
+* `heroes` 2/5/5 → **2/6/4** —— 清单把 `direction.cpp` 记成「部分（已转对象动作与渲染钩子）」，
+  `heroes.cpp`/`skill.cpp`/`route.cpp`/`heroes_move.cpp`/`heroes_action.cpp` 也是「部分」，六个都对不上「5」；
+  整份未转的四个是 `heroes_dialog`/`heroes_indicator`/`heroes_meeting`/`heroes_spell`。
+* `ai` 0/0/9 → **1/0/8** —— `ai_personality.cpp` 的枚举与随机/取名早在 `System/AiPersonality.cs`（条目里
+  写着），表里还记着未转；其余八个只有契约，实现按 B1..B7 分批，见 `docs/planv3.md`。
+  2026-11-21 B1 落地后 `ai_common.cpp` 由「未转」转「已转」，本行 **1/0/8 → 2/0/7**，合计
+  **65/83/101 → 66/83/100**（测试 `AiCommonTests` 19 条）。同日 B2 只做完 `ai_planner.cpp` 五个短函数
+  里的四个，`ai_planner.cpp` 仍是「部分」，本行不动（剩余 `NotImplementedException` 62 处 + `AIWorldPathfinder`
+  13 处 = 75 处）。同日 B3 落地 `ai_planner_castle.cpp` 全部四个成员（外加文件内的 `CastleDevelopment`、
+  六张建造顺序表），该文件由「未转」转「已转」，本行 **2/0/7 → 3/0/6**，合计 **66/83/100 → 67/83/99**
+  （测试 `AiCastlePlannerTests` 10 条；剩余 `NotImplementedException` 58 处 + `AIWorldPathfinder` 13 处 = 71 处）。
+  `ai_planner.cpp` 仍记「部分」：`KingTurn`/`HeroTurn` 等要等 B4、B5。
+
+另外旧表的「合计」行 `49/75/125` 与各列实际相加（`60/78/111`）对不上——它一直是手写的，没跟列和一起改。
+这次按列和填：**65/83/101**（合计仍是 249）。
 
 2026-11-15 晚：`map_object_info.cpp` 从未转转为部分（类型骨架 + 先三组、后全部 21 组表），
 所以合计比 `PROGRESS.md` 里那张快照多一个「部分」、少一个「未转」。它仍是「部分」：拾取与信息框那几支没转。
@@ -745,11 +778,11 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 | AI | `ai` 目录 9 019 全是契约：`ai_planner_hero` 3 309、`ai_hero_action` 2 504、`ai_battle` 2 152、`ai_battle_spell` 984、`ai_planner_kingdom` 987、`ai_planner_castle` 536、`ai_common` 525 … | 9 019 | ADR-161 的契约已落，九个文件都要实现，没有可复用的半成品 |
 | 编辑器窗口 | 16 个 9 799：`editor_interface` 3 015、`editor_map_specs_window` 2 005、`editor_castle_details_window` 883、`editor_event_details_window` 394 … | 9 799 | 旁支，不进 M 主线；`EditorScene`/`EditorPanel` 只有骨架 |
 | `game` 会话层 | 21 个 7 262：`game_campaign` 1 409、`game_credits` 655、`game_over` 566、`game_auto_playtest` 556、`game_newgame` 532、`game_hotkeys` 530、`game_scenarioinfo` 421 … | 7 262 | 场景循环的宿主，窗口最终要接进这里 |
-| `gui` 冒险界面外壳 | 14 个 4 385：`ui_keyboard` 1 146、`interface_events` 535、`interface_icons` 433、`skill_bar` 394、`player_info` 380、`ui_map_object` 316、`ui_castle` 271、`interface_buttons` 249、`interface_focus` 237 … | 4 385 | `MapFrame`/`StatusPanel`/`ButtonsPanel`/`Radar` 已落；缺的是这些面板本体与事件细化 |
+| `gui` 冒险界面外壳 | 14 个 4 385：`ui_keyboard` 1 146、`interface_events` 535、`interface_icons` 433、`skill_bar` 394、`player_info` 380、`ui_map_object` 316、`interface_buttons` 249、`interface_focus` 237 … | 4 385 | `MapFrame`/`StatusPanel`/`ButtonsPanel`/`Radar` 已落；缺的是这些面板本体与事件细化。`ui_castle`（271）已从这一包移走：ADR-165~194 之后只剩 `AlphaBlit`，不算未转 |
 | 设置窗口 | 7 个 1 907：`dialog_hotkeys` 384、`dialog_system_options` 379、`dialog_resolution` 274、`dialog_graphics_settings` 252、`dialog_interface_settings` 221、`dialog_audio` 212、`dialog_random_map_generator` 205 | 1 907 | **不卡 `OptionButtonGroup`**：当前参考改用 `drawOption` 网格（`ui_option_item.cpp`），端口的 `OptionItem` 已在；每个窗口是一次网格绘制 + 点击映射 |
 | `dialog_selectitems` | 1 777 | 1 777 | 卡 `TextBox` 与滚动列表 |
 | `maps` 剩余 | `maps_tiles_render` 1 118、随机地图三件 2 121 | 3 239 | 地形绘制端口还没有等价物；随机地图是旁支 |
-| 城堡屏 | `castle_dialog` 859（布局、资源面板、建筑绘制、整屏合成、点击分派、场景循环与魔法塔/水井入口已落，剩 ≈90）、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel`/`CastleScene`/`MageGuildWindow`/`WellWindow` 已落；**其余四个已落窗口仍没有入口**，缺玩家配色与淡入 |
+| 城堡屏 | `castle_dialog` 859（布局、资源面板、建筑绘制、整屏合成与点击分派、场景循环、魔法塔/水井/酒馆三个模态、船长像与速览、旗帜配色都已落，剩 ≈90 的说明框分支）、`castle_town` 772（招募框余支）、`castle_building` 的 `AlphaBlit`、`buildinginfo` 的红黑角标与 `BUILD_STRUCTURE` | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel`/`CastleScene`/`MageGuildDialog`/`WellDialog`/`TavernView`/`CastleScreenPainter`/`CastleFlagPalette` 都已落；**各建筑窗口都有入口**（`OpenBuilding` + `--town-window`），只差 `AlphaBlit` 的淡入 |
 | `heroes` 剩余 | `heroes_meeting` 695、`heroes_spell` 333、`heroes_indicator` 269、`direction` 186 | 1 483 | 会面窗口依赖已落的 `ArmyInfo` |
 | `campaign` | 3 个 1 874 | 1 874 | 旁支，等 P6 |
 | `engine` 剩余 | `image_color_conversion` 1 362、`audio` 867（播放层）、`audio_xmi2mid` 579、`system` 495、`smk_decoder` 264 … | ≈3 700 | 除 `smk`/`xmi2mid` 外多为平台层 |
@@ -851,10 +884,12 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   换兵箭头、OKAY/CANCEL），`ProcessEvents` 按参考的 `else-if` 链转发（换兵、怪物信息、键入、计数框、
   滚轮与 UP/DOWN 连按、MAX/MIN、两键、四处 tooltip）。缺：热键（`DEFAULT_*`）、`ArmyInfo()` 的窗口内容
   （归 `dialog_armyinfo`）、扣款归调用方
-* ❌ 上述 24 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`artifact`、`audio`、
-  `buyboat`、`chest`、`file`、`gameinfo`、`giftresources`、`graphics_settings`、`hotkeys`、
-  `interface_settings`、`levelup`、`random_map_generator`、
-  `resolution`、`selectcount`、`selectfile`、`selectitems`、`system_options`、`thievesguild`
+* ❌ 其余 19 个的**实现**（各文件都要先有控件层）：`adventure`、`arena`、`artifact`、`audio`、
+  `buyboat`、`chest`、`file`、`gameinfo`、`graphics_settings`、`hotkeys`、`interface_settings`、`levelup`、
+  `random_map_generator`、`resolution`、`selectcount`、`selectfile`、`selectitems`、`system_options`、
+  `thievesguild`。`dialog_giftresources.cpp` 与 `dialog_recruit.cpp` 已经整份落地（上面两行），不再是「只有模型」；
+  五个「部分」是 `dialog_armyinfo`/`dialog_quickinfo`/`dialog_game_settings`/`dialog_language_selection`/
+  `dialog_selectscenario`，合计 **5/5/19**。
 
 ### `editor`（18）
 
@@ -885,20 +920,25 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 
 ### `gui`（33）
 
-* ✅ `cursor.cpp`→`CursorTheme`/`CursorLayout`；`ui_button.cpp`→`Button`/`ButtonBase`/`ButtonSprite`/
+* ✅（7）`cursor.cpp`→`CursorTheme`/`CursorLayout`；`ui_button.cpp`→`Button`/`ButtonBase`/`ButtonSprite`/
   `ButtonGroup`/`ButtonArtwork`/`DialogButtonTemplate`；`ui_dialog.cpp`→`MessageBox`；
-  `ui_window.cpp`→`StandardWindow`；`ui_text.cpp`→`Game.Gui.*` 全套；`ui_tool.cpp`→`MovableSprite`；
-  `ui_scrollbar.cpp`→`ScrollSlider`（贴图生成）+ `ScrollBar`（索引↔像素映射）；`interface_font.cpp`→`CompositeGlyphSource`；
-  `interface_list.h`→`ListBoxBase`/`ListBox<T>`（选择、翻页、滚轮、拖拽滚屏与按键，行绘制留给子类）
-* ◐ `ui_font.cpp`（主体 + 修补 + 派生已转，`generateCP1250GoodButtonFont` 这类代码页补充未）；
+  `ui_window.cpp`→`StandardWindow`；`ui_text.cpp`→`Game.Gui.*` 全套；`ui_tool.cpp`→`MovableSprite`
+  （+ `Widgets/TimedEventValidator` 的连发计时）；`ui_scrollbar.cpp`→`ScrollSlider`（贴图生成）+
+  `ScrollBar`（索引↔像素映射）。同目录的 `interface_list.h`（不是 `.cpp`，不计入 33）→`ListBoxBase`/
+  `ListBox<T>`（选择、翻页、滚轮、拖拽滚屏与按键，行绘制留给子类）
+* ◐（14）`ui_font.cpp`（主体 + 修补 + 派生已转，`generateCP1250GoodButtonFont` 这类代码页补充未）；
   `interface_gamearea.cpp`→`AdventureMapView.Draw`（地形/对象/英雄/怪物/船/雾已转，AUTO 组合与动画未）；
   `interface_radar.cpp`→`Minimap`；`interface_icons.cpp`→`IconBar`/`IconSpriteSet`；
   `interface_border.cpp`→`MapFrame`；`interface_buttons.cpp`→`ButtonsPanel`/`ButtonSpriteSet`；
   `interface_cpanel.cpp`→状态栏占位；`interface_events.cpp`→`MapScrollController`；
-  `ui_monster.cpp`→`MonsterSpriteSet`；`statusbar.cpp`→占位
-* ❌ 其余 15：`interface_base`、`interface_focus`、`interface_status`、`player_info`、`skill_bar`、
-  `ui_base`、`ui_campaign`、`ui_castle`、`ui_keyboard`、`ui_kingdom`、`ui_mage_guild`、
-  `ui_map_interface`、`ui_map_object`、`ui_option_item`、`ui_slider`
+  `ui_monster.cpp`→`MonsterSpriteSet`；`statusbar.cpp`→占位；
+  `ui_mage_guild.cpp`（ADR-175/178 的 `SpellsInOneRow`、行偏移与绘制）；
+  `ui_language.cpp`（CRC32 指纹表在 `System.ResourceLanguage`，列表控件未转）；
+  `ui_castle.cpp`（ADR-165~ADR-193：`CastleScreenPainter` 的建筑绘制、整屏合成与点击分派，
+  `CastleFlagPalette` 的旗帜配色；缺 `AlphaBlit` 淡入与 `cityScreen` 的若干开关）；
+  `ui_option_item.cpp`（`OptionItem` 的网格绘制与点击映射，各设置窗口本体未接）
+* ❌ 其余 12：`interface_base`、`interface_focus`、`interface_status`、`player_info`、`skill_bar`、
+  `ui_base`、`ui_campaign`、`ui_keyboard`、`ui_kingdom`、`ui_map_interface`、`ui_map_object`、`ui_slider`
 
 ### `maps`（17）
 
@@ -960,14 +1000,18 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 
 ### 已落契约、补实现与测试的清单（2026-11-17 起）
 
-`ai` 与 `dialog` 两批只落了签名/模型，**实现与测试都还欠着**，按下面的顺序补：
+`ai` 与 `dialog` 两批只落了签名/模型，**实现与测试都还欠着**，按下面的顺序补。`ai` 的实现已经拆成
+B1..B7 七个批次与 X1..X4 四个前置批，批次表、验收与偏差记在 `docs/planv3.md`，完成情况记在
+`docs/progressv3.md`；下表 `ai` 行只保留一句总述：
 
 | 目录 | 已落 | 还欠的实现 | 还欠的测试 |
 | --- | --- | --- | --- |
-| `ai`（ADR-161） | `Game/Ai/` 六个文件：`AiPlanner` 的十五个成员、五种数据结构、九个自由函数、四个入口、四个阈值；签名照抄参考，真行为只有数据默认值/`Reset`/`UpdateOutcome`/单例/常量 | `ai_battle.cpp`（`BattlePlanner` 的决策）、`ai_common.cpp`（九个函数）、`ai_hero_action.cpp`（四个入口）、`ai_planner_hero.cpp`/`_castle`/`_kingdom`/`_internals`；现在除上面几处以外全是 `NotImplementedException` | 每换掉一个 `NotImplementedException` 配一条行为测试。`AiContractTests` 只钉住数据结构、单例、常量与「未移植会抛」，不能替代行为测试 |
+| `ai`（ADR-161） | `Game/Ai/` 六个文件：`AiPlanner` 的十五个成员、五种数据结构、九个自由函数、四个入口、四个阈值；签名照抄参考。真行为：`ai_personality.cpp` 整份（`System/AiPersonality.cs`）、`ai_common.cpp` 九个函数（B1，2026-11-21）、数据默认值/`Reset`/`UpdateOutcome`/单例/常量 | `ai_battle.cpp`（`BattlePlanner` 的决策）、`ai_hero_action.cpp`（四个入口）、`ai_planner_hero.cpp`/`_castle`/`_kingdom`/`_internals`；这几处除契约外全是 `NotImplementedException` | 每换掉一个 `NotImplementedException` 配一条行为测试。`AiContractTests` 钉住数据结构、单例、常量与参数校验；`ai_common` 的九条行为见 `AiCommonTests`（19 条） |
 | `dialog`（ADR-163） | 20 个模型 + `DialogButton` 的 14 个位值；`Create` 的参数校验与 `FromButton` 的按钮映射是真行为 | 24 个入口的 `Area`/`Render`/事件；前置是控件层 `DialogElement`/`TextBase`/`Slider`/`OptionButtonGroup`/`TextBox`（`ScrollBar` 与 `ListBox` 已就位）；另欠 `SelectFile` 的列表接线、`SelectCount` 的上下控件、各对话框的屏幕偏移 | 模型层已有 25 条（`DialogModelsTests`）。渲染与交互要等控件层，届时按基线图（`tools/Verify*Baseline.ps1`）补像素与点击测试 |
 
-这两张表在实现批次完成后删除并把内容并回各自目录的条目；在此之前，`ai` 与 `dialog` 在覆盖率表里继续按「无整篇落地」计。
+这两张表在实现批次完成后删除并把内容并回各自目录的条目；在此之前，`ai` 与 `dialog` 在覆盖率表里继续按「无整篇落地」计
+（`ai` 的 `ai_personality.cpp` 例外，它整份落在 `System/AiPersonality.cs`；`ai_common.cpp` 于 2026-11-21 由 B1 补齐，
+所以本行按 2/0/7 记）。
 
 ### 其余目录
 
@@ -1007,9 +1051,12 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   `BattlePlanner`、`ai_common.h` 的九个自由函数、`ai_hero_action.h` 的四个入口、`ai_planner_internals.h`
   的四个常量都落在 `Game/Ai/`，签名照抄、行为未转（抛 `NotImplementedException`），真行为只落数据结构的默认值、
   `BudgetEntry.Reset`、`SpellcastOutcome.UpdateOutcome` 与单例；`ai_personality.cpp` 的枚举与随机/取名在
-  `System/AiPersonality.cs`；`ai_battle.cpp`/`ai_common.cpp`/`ai_hero_action.cpp`/`ai_planner*.cpp` 的实现在
-  `ai` 的下一批；`AIWorldPathfinderStateRestorer` 的两个开关现在有地方挂了（`AIWorldPathfinder` 已落），
-  本轮未做。
+  `System/AiPersonality.cs`（**已转，所以本行 1/0/8**）；私有半（`Planner` 的二十四个成员方法、
+  `BattlePlanner` 的十五个）在 ADR-180 补齐，`AiContractTests`（169 行）钉住契约——**契约先行这步已经做完**；
+  实现按 B1..B7 分批，计划见 `docs/planv3.md`，进度见 `docs/progressv3.md`：B1..B4 无前置，
+  B5 等 `AIWorldPathfinder` 的六个方法与对象价值表，B6 等 `battle_action` 的法术目标与生效，
+  B7 等 `heroes_action` 补全与 `Interface` 解耦；`AIWorldPathfinderStateRestorer` 的两个开关已挂上
+  （`AIWorldPathfinder` 已落）。
 * `campaign`（3）：**全部未转**——它要的多半是 `dialog` 与 `Maps` 的战役数据，等 `dialog` 控件层落地再看。
 * `battle`（18）：◐ 已起步（ADR-147）—— `battle.h` 的 `Result` 与胜负位（`BattleOutcome`/`BattleResult`）、
   两个方向环（`CellDirection`/`AttackDirection` 与其环运算）、`battle_board.cpp` 的**纯几何**（11×9 偏移
@@ -1070,15 +1117,20 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   `TrainHeroInMageGuild`/`TrainGuestHeroAndCaptainInMageGuild`、`GetDescriptionBuilding`（ADR-134）、
   `IsPosition`/`IsControlAi`、船坞四方法（`AllowBuyBoat`/`BuyBoat`/`HasBoatNearby`/`GetTileIndexToPlaceBoat`）、
   `ActionPreBattle`/`ActionAfterBattle`、`GetICNBuilding`/`GetICNBoat`（ADR-145）；
-  剩余缺口写明白：塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、`DrawImageCastle`
-  （城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）；
+  剩余缺口写明白：塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、`ActionPreBattle`
+  的 AI 分支（`AI::Planner::CastlePreBattle`）——`DrawImageCastle` 原来也在这个缺口里，ADR-165 之后由
+  `CastleScreenPainter` 整屏重画接管，已经不算缺；
   ◐ `buildinginfo.cpp` 的**数据层**已转：`BuildingInfo`（四个改写、状态、成本/名字/描述/矩形、
   `getBuildingDescription` 的住所分支）、`DwellingsBar`（六项、布局、命中、周产、左右键意图）；**建造说明框**
   （`Dialog::BuyBuilding()`）在第十二批补齐：`BuildDialogLayout`/`BuildDialogArtwork`/`BuildDialogView`/
   `ResourceCostBox` 加场景外壳 `BuildWindow`，含右键帮助；只剩城镇屏建筑格子的红黑角标（`BuildingInfo::Redraw`）
-  与进入说明框的 `BUILD_STRUCTURE` 列表（ADR-165）；◐ `castle_building.cpp` 的**非绘制部分**已转：`FadeBuilding` 的 9 步淡入
+  与进入说明框的 `BUILD_STRUCTURE` 列表（ADR-165）；
+  ◐ `castle_building.cpp` 的**非绘制部分**已转：`FadeBuilding` 的 9 步淡入
   （帧钟当参数）、`BuildingsRenderQueue`（绘制优先级 + 屏幕偏移）、`CastleBuildingRender` 的三个判定
   （连接件、是否建完、这栋画不画，含升级替代基础建筑的淡入例外），blit 未转（ADR-166）；
+  blit 这条路拆开算：建筑本身的绘制在 ADR-165 由 `CastleScreenPainter` 接管，旗帜的玩家配色在 ADR-194
+  由 `CastleFlagPalette` 补齐（只有骑士城堡/左右塔/五级住宅两种/法师城堡六张图），只剩 `AlphaBlit` 的
+  半透明混合没转；
   ◐ `castle_mageguild.cpp`/`castle_well.cpp` 的**规则部分**已转：`Castle.GetMageGuildSpellRows` 的五层行
   （槽位问种族、法术问种族+图书馆）、`UI/Dialogs/MageGuildDialog`（行偏移、城镇切换、两句状态栏）、
   `CastleMaxRecruitment`（强到弱分配、三态拒绝文案、汇总行），绘制循环未转（ADR-167）；
@@ -1090,10 +1142,15 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   **消息循环**在 ADR-178 补齐（`ProcessEvents`：EXIT/MAX/六格/tooltip），只剩生物动画；
   ◐ `castle_dialog.cpp`/`castle_town.cpp` 的**文字与返回值**已转：`BuildingInfo.GetStatusLine`（住所
   `"Recruit {复数小写}"`、其余建筑报名字、随机城镇退化到等级）、`UI/Dialogs/CastleDialog`（日期行、八种返回值）、
-  `UI/Dialogs/RecruitHeroDialog`（招募英雄的句子、魔法书不计宝物、价格），绘制与事件循环未转（ADR-168）；
-  ◐ `castle_tavern.cpp` 的**文字**已转：`UI/Dialogs/TavernDialog`（标题、开场句、空白行、传闻及其语言标签，
-  另可从世界直接取本周传闻），动画与布局未转（ADR-169/170）；**castle 目录至此没有完全未转的文件**，剩下的都是 blit 与事件循环，端口 UI 层还没有
-  城堡屏
+  `UI/Dialogs/RecruitHeroDialog`（招募英雄的句子、魔法书不计宝物、价格）（ADR-168）；
+  这两份的**绘制与事件循环**在 ADR-165/ADR-179~192 补齐，端口 UI 层已经有城堡屏：`CastleScreenPainter`
+  （背景、建筑队列、船长像、底栏、收入框）与 `App/Scenes/CastleScene`（点击分派、`OpenBuilding` 九种分支、
+  收入框右键、英雄速览、酒馆模态）；剩下的缺口：`castle_dialog.cpp` 的购买/升级确认提示（`GetStringBuilding`
+  的若干文案分支）与 `castle_town.cpp` 的招募框「换一批」与守军排序；
+  ✔ `castle_tavern.cpp` 在 ADR-169/170/193 整份落地：`UI/Dialogs/TavernDialog` 的文字（标题、开场句、
+  空白行、传闻及其语言标签）+ `UI/Dialogs/TavernView` 的 `TAVWIN` 吧台手（背景 `{0,1}`、首帧 2、20 帧、
+  75ms）+ 模态循环（只有 OK/ESC/Enter 能关），`CastleScene.OpenTavern()` 与 `--town-window tavern` 两个入口；
+  **castle 目录至此 4/7/0：没有未转的文件**，七处「部分」各自缺什么就写在本条里。
 * `army`（4）：◐ `army.cpp`→`Army`（五槽、取用、合并、清空、`Reset` 与初始兵数、
   `AllTroopsAreTheSame`/`AllTroopsAreUndead`/`AreAllTroopsUnique`、士气修正、含英雄箭术/攻防/魔法战略值的 `GetStrength`，
   ADR-095/099/100/102；`Army.Troops.cs` 的容器半边：`GetOptimized`/`MergeSameMonsterOnce`/
@@ -1264,7 +1321,7 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 
 | 序 | 工作包 | 参考文件（行数） | 批数 | 前置 | 退出条件 |
 | --- | --- | --- | --- | --- | --- |
-| **P0** | 城堡屏入口（进行中：布局、绘制、合成、点击、进退游戏、魔法塔/水井/市场/盗贼公会/建造确认/建造列表/招募英雄窗口、水井里的招募窗口与城镇屏点住宅的招募、英雄速览框都已落，缺玩家配色与淡入） | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | 2–3 | 无：`Castle`/`Kingdom`/`BuildingInfo`/`FadeBuilding` 与六个子窗口（招募、水井、魔法塔、军队信息、市场、城建）都已落，招募窗口的外壳（`RecruitWindow` + `RecruitWindowView`）在水井与城镇屏两条路径上都能开能回，市场的两个说明框（兑换率、每日收入）与盗贼公会的十行排行（含神谕全解锁、右键 `"Exit this menu."`）也接上了，建造列表的 19 格、船长面板与阵型图标、两个英雄位在第十三批落齐、点开它们的招募确认框在第十四批落齐（`Hero.Name` 的 73 个默认名与换周补位一并补上），英雄速览框（`HeroQuickInfoView`）在第十五批落齐（招募框相框、建造列表英雄位、城镇屏英雄像三处右键），城镇屏左侧的船长像与它的速览在第十六批落齐（`CaptainPortrait` + `HeroQuickInfoSubject`），缺的是玩家配色与淡入 | 冒险屏点城堡 → 城镇屏 → 六个窗口能开、能回、能改数据 → 出城；`castle-dialog.png` 基线；M6 验收 |
+| **P0** | 城堡屏入口（基本收口：布局、绘制、合成、点击、进退游戏、魔法塔/水井/市场/盗贼公会/建造确认/建造列表/招募英雄窗口、英雄速览、船长像、酒馆闲话框、旗帜玩家配色都已落，只剩 `AlphaBlit` 淡入） | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | 2–3 | 无：`Castle`/`Kingdom`/`BuildingInfo`/`FadeBuilding` 与各建筑窗口（招募、水井、魔法塔、军队信息、市场、城建、酒馆、盗贼公会）都已落，招募窗口的外壳（`RecruitWindow` + `RecruitWindowView`）在水井与城镇屏两条路径上都能开能回，市场的两个说明框（兑换率、每日收入）与盗贼公会的十行排行（含神谕全解锁、右键 `"Exit this menu."`）也接上了，建造列表的 19 格、船长面板与阵型图标、两个英雄位在第十三批落齐、点开它们的招募确认框在第十四批落齐（`Hero.Name` 的 73 个默认名与换周补位一并补上），英雄速览框（`HeroQuickInfoView`）在第十五批落齐（招募框相框、建造列表英雄位、城镇屏英雄像三处右键），城镇屏左侧的船长像与它的速览在第十六批落齐（`CaptainPortrait` + `HeroQuickInfoSubject`），酒馆闲话框在第十七批落齐（`TavernView` + `TavernDialog`），旗帜的玩家配色在第十八批落齐（`CastleFlagPalette`），缺的只剩 `AlphaBlit` 的淡入 | 冒险屏点城堡 → 城镇屏 → 九个建筑窗口能开、能回、能改数据 → 出城；`castle-dialog.png` 基线；M6 验收 |
 | **P1** | 设置窗口网格 | 7 个 1 907 | 1–2 | 无：`OptionItem` 已在（`drawOption` 网格） | 每个窗口一组网格 + 点击映射，改动落到 `Settings`；`SettingsDialog` 的 chevron 替身换成同一套网格 |
 | **P2** | `TextBox` + `dialog_selectitems` | 1 777 | 1–2 | P1 | 选件窗口能滚动、能过滤、能返回选择；`InputString` 的文本框一并落 |
 | **P3** | 冒险界面外壳补全 | `interface_events` 535、`interface_icons` 433、`skill_bar` 394、`ui_map_object` 316、`ui_castle` 271、`interface_buttons` 249、`interface_focus` 237 | 2–3 | P0（`ui_castle` 与城镇屏共用命中表） | 焦点/悬停/按钮面板/英雄栏与参考一致；`adventure-map.png` 重拍 |
@@ -1276,10 +1333,10 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 **不排进任何包**：`map_format_helper.cpp`/`map_format_info.cpp`（本项目走 MP2）、`dir.cpp`、`tinyconfig.cpp`、
 翻译层（ADR-139）、`tools` 8 个（有 `AssetProbe` 对拍）。
 
-排序只看一条：**哪个动作能最先接出让玩家跑起来的闭环**。城堡屏排最前，因为六个窗口都已落却（魔法塔与水井之外）都没有入口，
-它一到位，「进城镇 → 招募/水井/魔法塔 → 出城」就是完整可玩的一段；设置窗口与 `selectitems` 次之，它们是把
-对话框这一层真正收尾；冒险外壳补全排在其后，因为它不再挡任何东西。战斗与 AI 仍留最后，但进包前先清掉
-`monster_anim` 与 `battle_action` 的五个分支，否则那个批次会一拖再拖。
+排序只看一条：**哪个动作能最先接出让玩家跑起来的闭环**。城堡屏排最前，它已经在第十八批收口——各建筑窗口
+都有入口，「进城镇 → 招募/水井/魔法塔/酒馆 → 出城」是完整可玩的一段，剩 `AlphaBlit` 淡入与招募框的两个余支；
+设置窗口与 `selectitems` 次之，它们是把对话框这一层真正收尾；冒险外壳补全排在其后，因为它不再挡任何东西。
+战斗与 AI 仍留最后，但进包前先清掉 `monster_anim` 与 `battle_action` 的五个分支，否则那个批次会一拖再拖。
 
 ### 分批落地顺序（6 步，按此顺序推进）
 
@@ -1322,9 +1379,10 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
    `RecruitWindowArtwork`）也已落，每帧整窗重画、`ProcessEvents` 照参考的 `else-if` 链转发，27 条 xunit。
    这一步的招募子项只欠热键（`DEFAULT_UP/DOWN/LEFT/RIGHT/OKAY/CANCEL`）与 `ArmyInfo()` 的窗口内容。剩下的
    `Dialog::InputString` 的文本框（`TextInput`）还没有动。
-4. **城堡屏入口**（P0，进行中）：`castle_dialog`、`castle_town`、`castle_building`、`ui_castle`、`ui_mage_guild`。
-   分三批：先 `CastleDialogLayout` + 静态绘制（`TOWNBKG` 背景、日期行、状态行、左右切城箭头、EXIT），
-   再 `CastleScreenPainter` 的建筑与淡入，最后把六个已落窗口接进事件循环并补 `castle-dialog.png` 基线。
+4. **城堡屏入口**（P0，基本收口，只剩 `AlphaBlit` 淡入）：`castle_dialog`、`castle_town`、`castle_building`、
+   `ui_castle`、`ui_mage_guild`。分三批：先 `CastleDialogLayout` + 静态绘制（`TOWNBKG` 背景、日期行、状态行、
+   左右切城箭头、EXIT），再 `CastleScreenPainter` 的建筑绘制，最后把已落窗口逐个接进事件循环并补
+   `castle-dialog.png` 基线（这一步已经做完，见下面十八批流水）。
    **前两批已全部落**（`CastleDialogLayout`、`ResourcePanel`、`CastleScreenPainter`，39 条测试）；
    **第三批的合成与命中已落**（`CastleScreenArtwork`/`CastleScreenFrame`/`CastleScreenView`、
    `CastleBuildingHitTest`、`ArmyBarArtwork`，另 19 条测试：城名牌、状态行文字与优先级、军队条、EXIT 按下帧）；
@@ -1352,8 +1410,10 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   **第十六批补上城镇屏船长像与船长速览**（`CaptainPortrait` + `HeroQuickInfoSubject`：`PORT0090`~`PORT0095` 贴
   `HEROFL` 旗、`MINICAPT` 小肖像、Captain 没有等级也没有移动力行、右键徽记弹框）；
   **第十七批补上酒馆闲话框**（`TavernView` + `TavernDialog`：`TAVWIN` 吧台手 20 帧 75ms、引子与本周传闻两段
-  `MultiFontText`、单个 OK，模态框压过城镇屏、右键不关，`--town-window tavern` 与城镇屏酒馆建筑两处入口），
-  城堡屏至此只剩玩家配色与淡入混合。
+  `MultiFontText`、单个 OK，模态框压过城镇屏、右键不关，`--town-window tavern` 与城镇屏酒馆建筑两处入口）；
+  **第十八批补上旗帜的玩家配色**（`CastleFlagPalette`：调色板 152~174 整段线性映射到六色色阶，只有骑士城堡/
+  左右塔/五级住宅两种/法师城堡六张图，动画帧整帧、静态帧只改三乘三小旗，`DrawBuilding` 接 `castle.Color`），
+  城堡屏至此只剩 `AlphaBlit` 的淡入混合。
    `StatusPanel` 的 ARMY/RESOURCE 两种状态也在这一步补上（需要 `ArmyTroop` 与 `RESOURCE.ICN` 索引表）。
 5. **战斗界面与结算**（P4）：`battle_interface` 与其配套五个文件。
 6. **AI 与会话层**（P5/P6）：两者一起排，因为 AI 回合必须有 `Game::NewDay`/存读档这一层才能跑通。

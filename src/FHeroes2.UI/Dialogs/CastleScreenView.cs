@@ -25,8 +25,8 @@ namespace FHeroes2.UI.Dialogs;
 /// 换成第二帧。
 /// </para>
 /// <para>
-/// 未搬：玩家配色的旗帜（<c>getModifiedByColorImage</c>）与 <c>AlphaBlit</c> 的淡入，见
-/// <see cref="CastleScreenPainter"/>；状态文字不做滚动，超宽时截断。
+/// 旗帜的玩家配色已由 <see cref="CastleFlagPalette"/> 接管（<c>getModifiedByColorImage</c>）；未搬的只剩
+/// <c>AlphaBlit</c> 的淡入（<see cref="CastleScreenPainter"/>）；状态文字不做滚动，超宽时截断。
 /// </para>
 /// </remarks>
 public sealed class CastleScreenView

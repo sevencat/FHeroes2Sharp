@@ -9,8 +9,8 @@ namespace FHeroes2.Game.Tests;
 /// </summary>
 /// <remarks>
 /// The members of the layer that only describe work (<see cref="AiPlanner.KingdomTurn"/> and friends) are not
-/// exercised: they throw until their translation unit is ported (ADR-161), and the test below only pins that
-/// promise so a half-finished implementation cannot slip in unnoticed.
+/// exercised: they throw until their translation unit is ported (ADR-161). <c>ai_common.cpp</c> is ported, so
+/// its behaviour is covered by <see cref="AiCommonTests"/> instead.
 /// </remarks>
 public sealed class AiContractTests
 {
@@ -150,9 +150,11 @@ public sealed class AiContractTests
     }
 
     [Fact]
-    public void TheUnportedMembersSaySo()
+    public void BuildIfEnoughFundsRejectsTheMultiplierOutsideTheReferenceRange()
     {
-        _ = Assert.Throws<NotImplementedException>(() => AiCommon.BuildIfPossible(null!, default));
+        // The guard runs before anything touches the world, so a null castle is enough to prove it fired.
+        Assert.False(AiCommon.BuildIfEnoughFunds(null!, default, 0));
+        Assert.False(AiCommon.BuildIfEnoughFunds(null!, default, 100));
     }
 
     [Fact]

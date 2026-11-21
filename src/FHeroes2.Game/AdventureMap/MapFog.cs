@@ -160,6 +160,48 @@ public sealed class MapFog
     }
 
     /// <summary>
+    /// How many tiles <see cref="Reveal"/> would uncover with the same arguments,
+    /// <c>Maps::getFogTileCountToBeRevealed</c> (<c>maps.cpp:531</c>).
+    /// </summary>
+    /// <remarks>
+    /// The disc is the one of <see cref="Reveal"/> — same <see cref="SquaredRevealLimit"/> and the same clamp to
+    /// the map — but nothing changes. The AI uses it to decide whether an Observation Tower is worth a visit, and
+    /// the reference answers zero for a radius of zero or less and for a tile outside the map.
+    /// </remarks>
+    /// <param name="column">Column of the center tile.</param>
+    /// <param name="row">Row of the center tile.</param>
+    /// <param name="distance">Radius in tiles.</param>
+    /// <param name="colors">The colors that would lose the fog.</param>
+    /// <returns>How many tiles of the disc are undiscovered for <paramref name="colors"/>.</returns>
+    public int CountFoggedAround(int column, int row, int distance, PlayerColor colors)
+    {
+        if (distance <= 0 || column < 0 || row < 0 || column >= Width || row >= Height)
+        {
+            return 0;
+        }
+
+        int limit = SquaredRevealLimit(distance);
+        int lastRow = Math.Min(Height - 1, row + distance);
+        int lastColumn = Math.Min(Width - 1, column + distance);
+        int count = 0;
+
+        for (int y = Math.Max(0, row - distance); y <= lastRow; ++y)
+        {
+            int dy = y - row;
+            for (int x = Math.Max(0, column - distance); x <= lastColumn; ++x)
+            {
+                int dx = x - column;
+                if (((dx * dx) + (dy * dy)) < limit && IsFogged(x, y, colors))
+                {
+                    ++count;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
     /// Recomputes the fog mask of every tile from the fog of its neighbours
     /// (<c>updateDirectionsInArea</c> over the whole map; tiles outside the map count as fogged).
     /// </summary>

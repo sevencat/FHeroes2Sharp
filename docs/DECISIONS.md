@@ -7316,3 +7316,39 @@ UI 847 → **854**，合计 4 449 → **4 456** 全绿，`-warnaserror` 0 警告
 
 **遗留**：玩家配色与淡入（城堡屏主线只剩这一项）；船长战斗界面（`battle_only`）；随机城的固定坐标冒烟不可复现，
 要么等地图随机种子可设，要么给 CLI 加按建筑名取中心的点击入口；酒馆传闻的多语言字体仍随本地化一起缺。
+
+## ADR-194：城堡旗帜按玩家配色——152~174 整段线性映射到六色色阶，只有六张图、按帧裁矩形 ✅
+
+**背景**：`drawCastleDialogBuilding`（`ui_castle.cpp:110-148`）在 blit 之前先问
+`isImagePlayerColorDependent()`（`ui_castle.cpp:150-165`），命中就用 `getModifiedByColorImage()` 现做一张换过
+调色板的图：`getColorEffectiveAreas()`（`:85-134`）给出这一帧里旗帜所在的矩形，`getModifiedPaletteByPlayerColor()`
+（`:61-83`）给出从调色板 152~174（十六色加七级阴影）线性映射到该玩家色十六色色阶的 256 项表。命中名单只有六张：
+骑士的城堡、左塔、右塔、五级住宅 `TWNKDW_4` 与升级版 `TWNKUP_4`、法师的城堡；死灵、野蛮人、女巫、术士的城堡
+本来就没有玩家色的旗。无主的城（`PlayerColor::NONE`）在参考里会断言失败，正式版本退化为恒等映射。
+
+**决定**：
+
+1. **表就是恒等表加一段**：`CastleFlagPalette.ForColor()` 建 256 项表，只重写 152~174 这 23 项，其余保持下标。
+   映射公式照参考 `outputStart + i * outputLength / inputLength`；六个玩家色的段是蓝 `63/22`、绿 `85/23`、
+   黄 `108/23`、紫 `132/21`、红 `175/23`、橙 `199/16`。无主直接给恒等表，不抛断言。
+2. **只改旗帜所在的矩形**：`EffectiveAreas()` 逐图逐帧照参考写死——法师城堡帧 0 是 `(76,7,3,3)`、`(96,7,3,3)`、
+   `(178,11,3,3)`；骑士城堡帧 0 是 `(127,36,3,3)`、`(287,6,3,3)`；骑士左/右塔帧 0 是 `(5,6,3,3)` / `(55,6,3,3)`；
+   五级住宅两种帧 0 是一像素 `(61,3,1,1)`、其余帧 `(59,0,6,5)`；其它帧一律整帧。整帧也不怕，因为表在 152~174
+   之外是恒等。
+3. **按「图 + 帧 + 颜色」缓存**：参考每画一次就新建一张，端口把结果留在 `CastleFlagPalette` 的字典里，动画二十帧
+   与六个颜色最多一百多张，缓存的图与原图一样只读。`Get()` 对无主与非旗帜图直接返回原精灵，连克隆都不做。
+4. **颜色一路从城堡传下来**：`CastleScreenPainter.DrawBuilding()` 末尾加 `PlayerColor color = PlayerColor.None`，
+   全部二十一处在调用时补 `castle.Color`（原来带 `alpha` 的位置参数调用改成显式尾部实参，测试里的 `alpha:` 具名
+   调用不受影响）。构造窗那侧的 `CastleImagePainter` 用 `OBJNTOWN`，参考不换色，保持不动。
+5. **顺手让冒烟日志带上种族**：`--enter-town` 的日志改成
+   `Opened the town screen of 'Quick Silver' (Wizard) from the command line.`，因为随机城每次载入重掷种族，
+   点固定坐标的冒烟必须知道这一局是哪个族（上一条遗留的坑）。
+
+**后果**：新增 `src/FHeroes2.UI/Dialogs/CastleFlagPalette.cs`；`CastleScreenPainter` 的 `DrawBuilding` 与二十一
+处调用改签名，类注释从「未搬玩家配色」改成「配色见 `CastleFlagPalette`，未搬的只剩 `AlphaBlit`」。测试新增
+`CastleFlagPaletteTests` 21 条（常量与六色段的首尾值、段外恒等、无主恒等、六张图名单、逐图逐帧的矩形、
+只改旗像素、动画帧整帧、无旗帜图原样返回、缓存按颜色共享）。UI 854 → **875**，合计 4 456 → **4 477** 全绿，
+`-warnaserror` 0 警告。截图 `artifacts/town-flag-color.png`：红玩家的法师城，三面旗帜是红的。
+
+**遗留**：`AlphaBlit` 的半透明混合（新建筑淡入仍是一步到位，城堡屏主线只剩这一项）；船长战斗界面
+（`battle_only`）；酒馆传闻的多语言字体随本地化一起缺。

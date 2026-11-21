@@ -1,10 +1,16 @@
+using System.Diagnostics;
+
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Kingdom;
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.System;
+using ArmyTroops = FHeroes2.Game.Army.Army;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.Game.Ai;
@@ -32,9 +38,9 @@ public enum AiTurnOutcome
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>This is the contract, not the implementation.</b> Every member below exists so that the rest of the port can be
-/// written against the same names the reference uses; the bodies throw <see cref="NotImplementedException"/> until
-/// the corresponding <c>ai_planner*.cpp</c> file is ported (see <c>docs/DECISIONS.md</c>, ADR-161).
+/// <b>Mostly a contract.</b> Every member below exists so that the rest of the port can be written against the same
+/// names the reference uses; the bodies throw <see cref="NotImplementedException"/> until the corresponding
+/// <c>ai_planner*.cpp</c> file is ported (see <c>docs/DECISIONS.md</c>, ADR-161).
 /// </para>
 /// <para>
 /// The reference is a Meyers singleton (<c>Planner::Get()</c>) whose state - the priority targets, the enemy armies,
@@ -43,11 +49,13 @@ public enum AiTurnOutcome
 /// are instance methods exactly as in the header, and nothing here is saved.
 /// </para>
 /// <para>
-/// <b>The private half is declared, not implemented.</b> The members <c>ai_planner_hero.cpp</c>,
-/// <c>ai_planner_castle.cpp</c> and <c>ai_planner_kingdom.cpp</c> implement are all listed with the signatures of
-/// <c>ai_planner.h:200-281</c> and throw exactly like the public ones, so the shape of the layer is complete while
-/// the rest of the port is written (ADR-180). Only what a declared member already needs - the two inline helpers of
-/// the header, the per-turn caches and the clean-up at the start of a turn - carries code.
+/// <b>What already runs</b>, in the order <c>docs/planv3.md</c> ports it: the two inline helpers of the header, the
+/// per-turn caches, the clean-up at the start of a turn, the guardian strength cache
+/// (<see cref="GetTileArmyStrength"/>), the two resource weights (<see cref="GetResourcePriorityModifier"/> and
+/// <see cref="GetFundsValueBasedOnPriority"/>), and the whole castle side of <c>ai_planner_castle.cpp</c>: what a
+/// castle does before a battle, on a defensive turn, when it is reinforced, and what its turn puts on the kingdom's
+/// budget. The kingdom and hero turns that call these, and the region evaluation the peaceful castle turn reads,
+/// still throw.
 /// </para>
 /// </remarks>
 public sealed class AiPlanner
@@ -207,13 +215,36 @@ public sealed class AiPlanner
     /// Strength of the army guarding a tile, <c>Planner::getTileArmyStrength()</c> (<c>ai_planner.h:191-193</c>).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The reference fills a temporary <c>Army</c> from the tile and measures it, so the result is valid for neutral
     /// monsters and dwelling guardians only - not for hero armies or garrisons.
+    /// </para>
+    /// <para>
+    /// The cache is keyed by <see cref="Tile.Index"/>, which is assigned when a map is loaded. A world built by
+    /// <see cref="World.GenerateUninitializedMap"/> leaves every index at zero, so a test world has to number its
+    /// tiles first - otherwise every tile shares one entry.
+    /// </para>
     /// </remarks>
     /// <param name="tile">The tile to measure.</param>
     /// <returns>The strength of the guarding army, <c>0</c> when nothing guards the tile.</returns>
-    public double GetTileArmyStrength(Tile tile) =>
-        throw new NotImplementedException("AiPlanner.GetTileArmyStrength — ai_planner_hero.cpp 未移植（ADR-161）");
+    public double GetTileArmyStrength(Tile tile)
+    {
+        ArgumentNullException.ThrowIfNull(tile);
+
+        if (_tileArmyStrengthValues.TryGetValue(tile.Index, out double strength))
+        {
+            return strength;
+        }
+
+        // Building an army is relatively expensive and the same tile is measured many times per turn.
+        Army.Army tileArmy = new();
+        tileArmy.SetFromTile(World.Current, tile);
+
+        strength = tileArmy.GetStrength();
+        _tileArmyStrengthValues[tile.Index] = strength;
+
+        return strength;
+    }
 
     /// <summary>
     /// Prepares a hero or captain for a battle, <c>Planner::HeroesPreBattle()</c> (<c>ai_planner.h:195</c>).
@@ -230,11 +261,33 @@ public sealed class AiPlanner
         throw new NotImplementedException("AiPlanner.HeroesPreBattle — ai_planner.cpp 未移植（ADR-161）");
 
     /// <summary>
-    /// Prepares a castle for a battle, <c>Planner::CastlePreBattle()</c> (<c>ai_planner.h:196</c>).
+    /// Prepares a castle for a battle, <c>Planner::CastlePreBattle()</c> (<c>ai_planner.h:196</c>,
+    /// <c>ai_planner_castle.cpp:252</c>).
     /// </summary>
+    /// <remarks>
+    /// The garrison is folded into the guest hero's army only when a hero stands in the castle; a castle without
+    /// one defends with its garrison alone and has nothing to arrange. The troops are only reordered when they
+    /// actually moved, because the arrangement the attacker saw while marching in has to be the one it fights.
+    /// </remarks>
     /// <param name="castle">The castle that is about to be attacked.</param>
-    public static void CastlePreBattle(CastleTown castle) =>
-        throw new NotImplementedException("AiPlanner.CastlePreBattle — ai_planner.cpp 未移植（ADR-161）");
+    public static void CastlePreBattle(CastleTown castle)
+    {
+        World world = World.Current;
+        Hero? guestHero = AiCommon.FindGuestHero(world, castle);
+
+        if (guestHero is null)
+        {
+            return;
+        }
+
+        // The guest is the AI's own hero, so the reference's default argument makes it AI controlled.
+        if (!guestHero.Army.ArrangeForCastleDefense(castle.Army, true))
+        {
+            return;
+        }
+
+        AiCommon.OptimizeTroopsOrder(guestHero.Army);
+    }
 
     /// <summary>
     /// Picks one of two secondary skills, <c>Planner::pickSecondarySkill()</c> (<c>ai_planner.h:198</c>).
@@ -250,19 +303,205 @@ public sealed class AiPlanner
     // 私有半边（ai_planner.h:200-281）：签名照抄参考，正文留到移植对应的 ai_planner_*.cpp 时再写（ADR-180）。
     // -------------------------------------------------------------------------------------------------------------
 
-    /// <summary>Plays the turn of one castle, <c>Planner::CastleTurn()</c> (<c>ai_planner.h:203</c>).</summary>
+    /// <summary>
+    /// Plays the turn of one castle, <c>Planner::CastleTurn()</c> (<c>ai_planner.h:203</c>,
+    /// <c>ai_planner_castle.cpp:516</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A castle that may be attacked this turn hires first and builds last: the troops have to be bought before the
+    /// enemy takes the castle and hires them, and no dwelling is built because a dwelling the enemy captures would
+    /// arm the enemy. Only defensive buildings go up, and only when the castle has someone to defend it.
+    /// </para>
+    /// <para>
+    /// Every other castle develops along the build order of its race, gated by the safety and the spell level of the
+    /// region it stands in. Both come from <see cref="_regions"/>, which <c>evaluateRegionSafety()</c> fills at the
+    /// start of the turn — it is not ported yet (B4), so a peaceful castle turn is only reachable from there.
+    /// </para>
+    /// </remarks>
     /// <param name="castle">The castle whose turn it is.</param>
     /// <param name="defensiveStrategy">Whether the castle is expected to be attacked this turn.</param>
-    private void CastleTurn(CastleTown castle, bool defensiveStrategy) =>
-        throw new NotImplementedException("AiPlanner.CastleTurn — ai_planner_castle.cpp 未移植（ADR-180）");
+    internal void CastleTurn(CastleTown castle, bool defensiveStrategy)
+    {
+        World world = World.Current;
+
+        if (defensiveStrategy)
+        {
+            ReinforceCastle(castle);
+
+            // The garrison may be empty after the hero took everything with it; then there is nothing to defend
+            // with and no point in paying for turrets.
+            if (castle.GetActualArmy(AiCommon.FindGuestHero(world, castle)).GetCount() > 0)
+            {
+                Build(castle, DefensiveStructures);
+                Build(castle, SupportingDefensiveStructures);
+            }
+
+            return;
+        }
+
+        RegionStats stats = _regions[(int)world.GetTile(castle.TileIndex).Region];
+
+        CastleDevelopment(castle, stats.SafetyFactor, stats.SpellLevel);
+    }
 
     /// <summary>
     /// Upgrades and hires as much as possible and hands the best troops to the guest hero,
-    /// <c>Planner::reinforceCastle()</c> (<c>ai_planner.h:207</c>).
+    /// <c>Planner::reinforceCastle()</c> (<c>ai_planner.h:207</c>, <c>ai_planner_castle.cpp:314</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The castle buys one stack of every dwelling it has, strongest dwelling first, and pays for it by dismissing
+    /// the weakest stack it owns when there is no free slot. A stack is only dismissed when it is weaker than the
+    /// one being bought, so the army never gets worse.
+    /// </para>
+    /// <para>
+    /// When the castle is safe and its garrison empty, half of the hero's best stack — or the whole of a single
+    /// stack — is left behind, so that the castle is not taken by the next wandering monster. Which stack that is
+    /// depends on the hero's role: a champion leaves its weakest stack, everyone else the strongest.
+    /// </para>
+    /// </remarks>
     /// <param name="castle">The castle to reinforce.</param>
-    private void ReinforceCastle(CastleTown castle) =>
-        throw new NotImplementedException("AiPlanner.ReinforceCastle — ai_planner_castle.cpp 未移植（ADR-180）");
+    internal void ReinforceCastle(CastleTown castle)
+    {
+        World world = World.Current;
+        GameKingdom kingdom = world.GetKingdom(castle.Color);
+
+        Debug.Assert(CastleTown.IsControlAi(kingdom), "Only an AI castle is reinforced by the AI planner.");
+
+        ref Funds treasury = ref kingdom.Treasury;
+
+        ArmyTroops garrison = castle.Army;
+
+        garrison.UpgradeTroops(castle, ref treasury);
+        garrison.MergeSameMonsterTroops();
+
+        Hero? guestHero = AiCommon.FindGuestHero(world, castle);
+
+        if (guestHero is not null)
+        {
+            // The guest is the AI's own hero, so it is active, AI controlled and of the castle's colour.
+            Debug.Assert(guestHero.IsActive, "The hero standing in a castle has to be active.");
+            Debug.Assert(world.GetKingdom(guestHero.Color).IsControlAi, "The guest hero has to be AI controlled.");
+            Debug.Assert(guestHero.Color == castle.Color, "The guest hero has to serve the castle's colour.");
+
+            guestHero.Army.UpgradeTroops(castle, ref treasury);
+            guestHero.Army.MergeSameMonsterTroops();
+        }
+
+        // The dwellings are tried from the seventh upgrade down, so an upgraded dwelling wins over its base: the
+        // same gold buys a stronger stack.
+        foreach (BuildingType dwelling in CastleDwellings)
+        {
+            if (!castle.IsBuild(dwelling))
+            {
+                continue;
+            }
+
+            MonsterType monster = DwellingMonsters.FromDwelling(castle.Race, dwelling);
+            uint count = castle.GetRecruitLimit(monster, treasury);
+
+            if (count == 0)
+            {
+                continue;
+            }
+
+            Troop troop = new(monster, count);
+
+            if (RecruitMonster(castle, troop, ref treasury, guestHero))
+            {
+                continue;
+            }
+
+            Troop? weakestTroop = null;
+
+            if (guestHero is not null)
+            {
+                ArmyTroops guestHeroArmy = guestHero.Army;
+
+                // The hero has no free slot either, so free one by handing a garrison stack over to it.
+                if (TryTransferGarrisonTroopToHero(castle, garrison, guestHero, guestHeroArmy))
+                {
+                    if (!RecruitMonster(castle, troop, ref treasury, guestHero))
+                    {
+                        Debug.Assert(false, "A slot was freed but the recruitment still failed.");
+                    }
+
+                    continue;
+                }
+
+                weakestTroop = guestHeroArmy.GetWeakestTroop();
+
+                Debug.Assert(weakestTroop is not null, "An army without a free slot has at least one stack.");
+            }
+
+            {
+                Troop? weakestGarrisonTroop = garrison.GetWeakestTroop();
+
+                Debug.Assert(weakestGarrisonTroop is not null, "A garrison without a free slot has at least one stack.");
+
+                // The strengths of the stacks themselves, without the statistics of the hero commanding them: the
+                // hero's weakest stack is only dismissed instead of the garrison's when it is the weaker of the two.
+                if (weakestTroop is null || weakestTroop.GetStrength() >= weakestGarrisonTroop.GetStrength())
+                {
+                    weakestTroop = weakestGarrisonTroop;
+                }
+            }
+
+            if (weakestTroop.GetStrength() > troop.GetStrength())
+            {
+                continue;
+            }
+
+            weakestTroop.Reset();
+
+            if (!RecruitMonster(castle, troop, ref treasury, guestHero))
+            {
+                Debug.Assert(false, "A stack was dismissed but the recruitment still failed.");
+            }
+        }
+
+        if (guestHero is not null)
+        {
+            // Hand the best of what is left to the guest hero.
+            guestHero.Army.JoinStrongestFromArmy(garrison);
+
+            // A safe castle has to keep a garrison of its own, otherwise it falls to the first wandering stack.
+            // The region is read last so that a garrison that is still manned needs no evaluation at all; filling
+            // the regions themselves is B4's job.
+            if (castle.IsCastle && !garrison.IsValid && _regions[(int)world.GetTile(castle.TileIndex).Region].SafetyFactor <= 100)
+            {
+                (Troop? troopForTransfer, bool transferHalf) = ChooseTroopForGarrison(guestHero, guestHero.Army);
+
+                if (troopForTransfer is not null)
+                {
+                    Debug.Assert(guestHero.Army.OccupiedSlotCount > 1, "A champion hero must keep at least one stack.");
+
+                    uint initialCount = troopForTransfer.Count;
+                    uint countToTransfer = transferHalf ? initialCount / 2 : initialCount;
+
+                    if (garrison.JoinTroop(troopForTransfer.Monster, countToTransfer, true))
+                    {
+                        if (countToTransfer == initialCount)
+                        {
+                            troopForTransfer.Reset();
+                        }
+                        else
+                        {
+                            troopForTransfer.Count = initialCount - countToTransfer;
+                        }
+                    }
+                }
+            }
+        }
+
+        AiCommon.OptimizeTroopsOrder(garrison);
+
+        if (guestHero is not null)
+        {
+            AiCommon.OptimizeTroopsOrder(guestHero.Army);
+        }
+    }
 
     /// <summary>
     /// Gives the kingdom's heroes their tasks one at a time, <c>Planner::HeroesTurn()</c> (<c>ai_planner.h:210</c>).
@@ -361,8 +600,102 @@ public sealed class AiPlanner
     /// <param name="resource">One of the <see cref="Resource"/> constants.</param>
     /// <param name="isMine">Whether the source of the resource is a mine.</param>
     /// <returns>The modifier the value of the source is multiplied by.</returns>
-    private double GetResourcePriorityModifier(int resource, bool isMine) =>
-        throw new NotImplementedException("AiPlanner.GetResourcePriorityModifier — ai_planner_hero.cpp 未移植（ADR-180）");
+    internal double GetResourcePriorityModifier(int resource, bool isMine)
+    {
+        // One unit of gold is not worth one unit of gems, so the weights are normalised: a mine is worth the
+        // two days of income it brings in, a pile the usual size of a pile of that resource on a map.
+        IReadOnlyDictionary<int, double> resourcePriorities = isMine ? MinePriorities : PilePriorities;
+
+        double priority = resourcePriorities.TryGetValue(resource, out double known) ? known : 1.0;
+
+        Debug.Assert(resourcePriorities.ContainsKey(resource), "The AI only ever asks about the seven resources.");
+
+        foreach (BudgetEntry budget in _budget)
+        {
+            if (budget.Resource != resource)
+            {
+                continue;
+            }
+
+            if (budget.RecurringCost)
+            {
+                priority *= 1.5;
+            }
+
+            return budget.Priority ? priority * 2.0 : priority;
+        }
+
+        return priority;
+    }
+
+    /// <summary>The seven resource flags, in the order the reference iterates them.</summary>
+    /// <remarks>Declared before the tables below because their initializers read it.</remarks>
+    private static readonly int[] AllResources =
+    [
+        Resource.Wood,
+        Resource.Mercury,
+        Resource.Ore,
+        Resource.Sulfur,
+        Resource.Crystal,
+        Resource.Gems,
+        Resource.Gold,
+    ];
+
+    /// <summary>
+    /// What one mine of each resource is worth, <c>minePriorities</c> of
+    /// <c>Planner::getResourcePriorityModifier()</c> (<c>ai_planner.cpp:99-116</c>).
+    /// </summary>
+    /// <remarks>
+    /// The weights are the inverse of the daily income, doubled, so that a mine beats a pile of the same resource:
+    /// a gold mine earns 1000 per day and weighs 2, an ore mine earns 2 and weighs 1000.
+    /// </remarks>
+    private static readonly IReadOnlyDictionary<int, double> MinePriorities = BuildMinePriorities();
+
+    /// <summary>
+    /// What one pile of each resource is worth, <c>pilePriorities</c> of
+    /// <c>Planner::getResourcePriorityModifier()</c> (<c>ai_planner.cpp:120-129</c>).
+    /// </summary>
+    /// <remarks>
+    /// The weights follow the usual size of a pile: a pile holds 500 to 1500 gold, 5 to 10 wood or ore, and 2 to 5
+    /// of the four rare resources, so one rare unit is worth about twice one unit of wood.
+    /// </remarks>
+    private static readonly IReadOnlyDictionary<int, double> PilePriorities = new Dictionary<int, double>
+    {
+        [Resource.Gold] = 1,
+        [Resource.Wood] = 125,
+        [Resource.Ore] = 125,
+        [Resource.Mercury] = 250,
+        [Resource.Sulfur] = 250,
+        [Resource.Crystal] = 250,
+        [Resource.Gems] = 250,
+    };
+
+
+    /// <summary>
+    /// Builds <see cref="MinePriorities"/>, <c>minePriorities</c> of <c>Planner::getResourcePriorityModifier()</c>.
+    /// </summary>
+    /// <returns>One weight per resource, keyed by the resource flag.</returns>
+    private static IReadOnlyDictionary<int, double> BuildMinePriorities()
+    {
+        double goldMineIncome = ProfitConditions.FromMine(Resource.Gold).Gold;
+        Debug.Assert(goldMineIncome > 0, "A gold mine earns something.");
+
+        Dictionary<int, double> priorities = [];
+
+        foreach (int resource in AllResources)
+        {
+            int mineIncome = ProfitConditions.FromMine(resource).Get(resource);
+
+            if (mineIncome <= 0)
+            {
+                continue;
+            }
+
+            priorities[resource] = goldMineIncome / mineIncome * 2;
+        }
+
+        return priorities;
+    }
 
     /// <summary>
     /// The value of a pile of resources for the AI, <c>Planner::getFundsValueBasedOnPriority()</c>
@@ -370,8 +703,30 @@ public sealed class AiPlanner
     /// </summary>
     /// <param name="funds">The resources.</param>
     /// <returns>How much they are worth.</returns>
-    private double GetFundsValueBasedOnPriority(in Funds funds) =>
-        throw new NotImplementedException("AiPlanner.GetFundsValueBasedOnPriority — ai_planner_hero.cpp 未移植（ADR-180）");
+    internal double GetFundsValueBasedOnPriority(in Funds funds)
+    {
+        double value = 0;
+        int validItems = funds.GetValidItems();
+
+        foreach (int resource in AllResources)
+        {
+            if ((validItems & resource) == 0)
+            {
+                continue;
+            }
+
+            int amount = funds.Get(resource);
+
+            if (amount <= 0)
+            {
+                continue;
+            }
+
+            value += amount * GetResourcePriorityModifier(resource, false);
+        }
+
+        return value;
+    }
 
     /// <summary>
     /// Turns an object a hero just visited into tasks, <c>Planner::updatePriorityTargets()</c>
@@ -387,18 +742,72 @@ public sealed class AiPlanner
     /// Works out what the kingdom is short of, <c>Planner::updateKingdomBudget()</c> (<c>ai_planner.h:231</c>).
     /// </summary>
     /// <remarks>
-    /// The reference cleans the seven entries up before it fills them (<c>ai_planner_castle.cpp:270-275</c>); that
-    /// much is kept here so the field has a use while the rest of the body is missing.
+    /// <para>
+    /// The walk asks every castle, in turn, how much of each resource it would still be short of to build the next
+    /// entries of its build order, and the worst castle decides: a resource that one castle lacks must be saved for
+    /// even when another castle has it in abundance.
+    /// </para>
+    /// <para>
+    /// A castle that already has its sixth dwelling keeps needing the price of the upgraded unit, because that
+    /// dwelling keeps hiring every turn; those resources are marked recurring so that the AI treats them as a
+    /// running cost rather than a one-off spend.
+    /// </para>
     /// </remarks>
     /// <param name="kingdom">The kingdom whose turn it is.</param>
-    private void UpdateKingdomBudget(GameKingdom kingdom)
+    internal void UpdateKingdomBudget(GameKingdom kingdom)
     {
+        ArgumentNullException.ThrowIfNull(kingdom);
+
+        // The budget is rebuilt from scratch every turn.
         foreach (BudgetEntry entry in _budget)
         {
             entry.Reset();
         }
 
-        throw new NotImplementedException("AiPlanner.UpdateKingdomBudget — ai_planner_castle.cpp 未移植（ADR-180）");
+        Funds kingdomFunds = kingdom.Treasury;
+        Funds requirements = new();
+
+        foreach (CastleTown castle in kingdom.Castles)
+        {
+            MapRace race = castle.Race;
+
+            foreach (BuildOrder order in GetBuildOrder(race))
+            {
+                if (castle.CheckBuyBuilding(order.Building, kingdomFunds) != BuildingStatus.LackResources)
+                {
+                    continue;
+                }
+
+                Funds missing = PaymentConditions.BuyBuilding(race, order.Building) - kingdomFunds;
+
+                requirements = requirements.Max(missing);
+            }
+
+            // A castle that can field its strongest unit keeps needing the resources that unit costs.
+            if (castle.IsBuild(BuildingType.DwellingMonster6))
+            {
+                MonsterType bestUpgrade = MonsterUpgrades.GetUpgrade(DwellingMonsters.FromDwelling(race, BuildingType.DwellingMonster6));
+                Funds bestUnitCost = MonsterStatistics.GetGeneralStats(bestUpgrade).GetCost();
+
+                foreach (BudgetEntry entry in _budget)
+                {
+                    if (bestUnitCost.Get(entry.Resource) > 0)
+                    {
+                        entry.RecurringCost = true;
+                    }
+                }
+            }
+        }
+
+        foreach (BudgetEntry entry in _budget)
+        {
+            entry.Missing = requirements.Get(entry.Resource);
+
+            if (entry.Missing > 0)
+            {
+                entry.Priority = true;
+            }
+        }
     }
 
     /// <summary>
@@ -417,8 +826,22 @@ public sealed class AiPlanner
     /// </summary>
     /// <param name="kingdom">The kingdom whose turn it is.</param>
     /// <param name="mapIndex">Tile index to look at.</param>
-    private void UpdateMapActionObjectCache(GameKingdom kingdom, int mapIndex) =>
-        throw new NotImplementedException("AiPlanner.UpdateMapActionObjectCache — ai_planner_kingdom.cpp 未移植（ADR-180）");
+    private void UpdateMapActionObjectCache(GameKingdom kingdom, int mapIndex)
+    {
+        ArgumentNullException.ThrowIfNull(kingdom);
+
+        World world = World.Current;
+        Mp2ObjectType objectType = world.GetTile(mapIndex).GetMainObjectType(world);
+
+        if (!AiCommon.IsValuableAdventureMapObject(kingdom, objectType, mapIndex))
+        {
+            _mapActionObjects.Remove(mapIndex);
+
+            return;
+        }
+
+        _mapActionObjects[mapIndex] = objectType;
+    }
 
     /// <summary>
     /// Finds the castles an enemy can reach this turn, <c>Planner::findCastlesInDanger()</c>
@@ -506,5 +929,546 @@ public sealed class AiPlanner
         _enemyArmies.Clear();
         _tileArmyStrengthValues.Clear();
         _regions.Clear();
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // File-local helpers of ai_planner_castle.cpp: the build order tables and build()/castleDevelopment() that sit in
+    // its anonymous namespace, plus the three lambdas reinforceCastle() defines inline.
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /// <summary>One entry of a build order: what to build and how badly, <c>struct BuildOrder</c> (<c>:50-60</c>).</summary>
+    /// <remarks>
+    /// The priority multiplies the price the castle has to be able to afford, so a 10 costs ten times the ordinary
+    /// price before the AI spends anything on it.
+    /// </remarks>
+    /// <param name="Building">The building.</param>
+    /// <param name="Priority">How many times its price has to be in the treasury to be worth building.</param>
+    private readonly record struct BuildOrder(BuildingType Building, uint Priority);
+
+    /// <summary>The four buildings that only help the defence, <c>defensiveStructures</c> (<c>:62</c>).</summary>
+    private static readonly BuildOrder[] DefensiveStructures =
+    [
+        new(BuildingType.LeftTurret, 1),
+        new(BuildingType.RightTurret, 1),
+        new(BuildingType.Moat, 1),
+        new(BuildingType.Captain, 1),
+    ];
+
+    /// <summary>The buildings that help the defence indirectly, <c>supportingDefensiveStructures</c> (<c>:63</c>).</summary>
+    private static readonly BuildOrder[] SupportingDefensiveStructures =
+    [
+        new(BuildingType.MageGuild1, 1),
+        new(BuildingType.Spec, 2),
+        new(BuildingType.Tavern, 1),
+    ];
+
+    /// <summary>
+    /// The buildings every castle of any race wants first, <c>GetIncomeStructures()</c> (<c>:67-70</c>).
+    /// </summary>
+    /// <remarks>
+    /// A warlock castle adds its special structure because it pays for itself in spell power, which is what the whole
+    /// town is for.
+    /// </remarks>
+    /// <param name="race">The race of the castle.</param>
+    /// <returns>The build order to try first.</returns>
+    private static IReadOnlyList<BuildOrder> GetIncomeStructures(MapRace race) =>
+        race == MapRace.Warlock ? WarlockIncomeStructures : StandardIncomeStructures;
+
+    /// <summary>The three buildings every castle wants, <c>standard</c> of <c>GetIncomeStructures()</c>.</summary>
+    private static readonly BuildOrder[] StandardIncomeStructures =
+    [
+        new(BuildingType.Castle, 1),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+    ];
+
+    /// <summary>The warlock version, with the special structure, <c>warlock</c> of <c>GetIncomeStructures()</c>.</summary>
+    private static readonly BuildOrder[] WarlockIncomeStructures =
+    [
+        new(BuildingType.Castle, 1),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.Spec, 1),
+    ];
+
+    /// <summary>
+    /// The full build order of a race, <c>GetBuildOrder()</c> (<c>:73-137</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every list starts with the castle, the statue and the marketplace, then names the dwellings and ends with the
+    /// mage guild and the remaining utility buildings. The races differ in what they consider urgent: the knight
+    /// de-prioritises the fifth dwelling (it can reach the sixth without it) and raises the archery upgrade, the
+    /// necromancer goes for the fifth and sixth dwellings and the second mage guild, the wizard for the mage guild
+    /// and the library.
+    /// </para>
+    /// <para>
+    /// A race with no list of its own falls back to the generic order, which is what the reference's <c>default</c>
+    /// branch does - a mercenary or a random castle gets the safe list.
+    /// </para>
+    /// </remarks>
+    /// <param name="race">The race of the castle.</param>
+    /// <returns>The build order to try once the income structures are up.</returns>
+    private static IReadOnlyList<BuildOrder> GetBuildOrder(MapRace race) => race switch
+    {
+        MapRace.Knight => KnightBuildOrder,
+        MapRace.Necromancer => NecromancerBuildOrder,
+        MapRace.Wizard => WizardBuildOrder,
+        MapRace.Sorceress => SorceressBuildOrder,
+        MapRace.Barbarian => BarbarianBuildOrder,
+        _ => GenericBuildOrder,
+    };
+
+    /// <summary>The order of a race without a list of its own, <c>genericBuildOrder</c> (<c>:75-80</c>).</summary>
+    private static readonly BuildOrder[] GenericBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingUpgrade7, 1),
+        new(BuildingType.DwellingUpgrade6, 1),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingUpgrade5, 1),
+        new(BuildingType.DwellingMonster5, 1),
+        new(BuildingType.DwellingUpgrade4, 1),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.DwellingUpgrade3, 2),
+        new(BuildingType.DwellingMonster3, 2),
+        new(BuildingType.DwellingUpgrade2, 3),
+        new(BuildingType.DwellingMonster2, 3),
+        new(BuildingType.DwellingMonster1, 4),
+        new(BuildingType.MageGuild1, 2),
+        new(BuildingType.Well2, 10),
+        new(BuildingType.Tavern, 5),
+        new(BuildingType.ThievesGuild, 10),
+        new(BuildingType.MageGuild2, 3),
+        new(BuildingType.MageGuild3, 4),
+        new(BuildingType.MageGuild4, 5),
+        new(BuildingType.MageGuild5, 5),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>The barbarian order, <c>barbarianBuildOrder</c> (<c>:82-87</c>).</summary>
+    private static readonly BuildOrder[] BarbarianBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingUpgrade5, 1),
+        new(BuildingType.DwellingMonster5, 1),
+        new(BuildingType.DwellingUpgrade4, 1),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.DwellingMonster3, 1),
+        new(BuildingType.DwellingUpgrade2, 2),
+        new(BuildingType.DwellingMonster2, 2),
+        new(BuildingType.DwellingMonster1, 4),
+        new(BuildingType.MageGuild1, 3),
+        new(BuildingType.Well2, 10),
+        new(BuildingType.Tavern, 5),
+        new(BuildingType.ThievesGuild, 10),
+        new(BuildingType.MageGuild2, 4),
+        new(BuildingType.MageGuild3, 5),
+        new(BuildingType.MageGuild4, 6),
+        new(BuildingType.MageGuild5, 7),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>The sorceress order, <c>sorceressBuildOrder</c> (<c>:89-94</c>).</summary>
+    private static readonly BuildOrder[] SorceressBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingMonster5, 1),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.MageGuild1, 1),
+        new(BuildingType.DwellingMonster3, 1),
+        new(BuildingType.DwellingUpgrade4, 1),
+        new(BuildingType.DwellingUpgrade3, 2),
+        new(BuildingType.DwellingUpgrade2, 5),
+        new(BuildingType.DwellingMonster2, 2),
+        new(BuildingType.Tavern, 2),
+        new(BuildingType.DwellingMonster1, 4),
+        new(BuildingType.Well2, 10),
+        new(BuildingType.ThievesGuild, 10),
+        new(BuildingType.MageGuild2, 3),
+        new(BuildingType.MageGuild3, 4),
+        new(BuildingType.MageGuild4, 5),
+        new(BuildingType.MageGuild5, 5),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>
+    /// The knight order, <c>knightBuildOrder</c> (<c>:98-103</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference de-prioritises the fifth dwelling - a knight can reach the sixth without it - and the first
+    /// dwelling and the upgrades of the third and fourth, because the well, the tavern and the archery upgrade are
+    /// worth more.
+    /// </remarks>
+    private static readonly BuildOrder[] KnightBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingUpgrade6, 2),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingUpgrade5, 2),
+        new(BuildingType.DwellingMonster5, 2),
+        new(BuildingType.DwellingUpgrade4, 2),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.DwellingUpgrade3, 2),
+        new(BuildingType.DwellingMonster3, 1),
+        new(BuildingType.DwellingUpgrade2, 1),
+        new(BuildingType.DwellingMonster2, 3),
+        new(BuildingType.DwellingMonster1, 4),
+        new(BuildingType.Well, 1),
+        new(BuildingType.Tavern, 1),
+        new(BuildingType.MageGuild1, 2),
+        new(BuildingType.MageGuild2, 3),
+        new(BuildingType.MageGuild3, 5),
+        new(BuildingType.MageGuild4, 5),
+        new(BuildingType.MageGuild5, 5),
+        new(BuildingType.Spec, 5),
+        new(BuildingType.ThievesGuild, 10),
+        new(BuildingType.Well2, 20),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>
+    /// The necromancer order, <c>necromancerBuildOrder</c> (<c>:106-111</c>).
+    /// </summary>
+    /// <remarks>Priority on the fifth and sixth dwellings and the second mage guild, which is what raises skeletons.</remarks>
+    private static readonly BuildOrder[] NecromancerBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingUpgrade6, 1),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingUpgrade5, 2),
+        new(BuildingType.DwellingMonster5, 1),
+        new(BuildingType.MageGuild1, 1),
+        new(BuildingType.DwellingUpgrade4, 2),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.DwellingUpgrade3, 3),
+        new(BuildingType.DwellingMonster3, 3),
+        new(BuildingType.DwellingUpgrade2, 4),
+        new(BuildingType.DwellingMonster2, 2),
+        new(BuildingType.DwellingMonster1, 3),
+        new(BuildingType.MageGuild2, 2),
+        new(BuildingType.ThievesGuild, 2),
+        new(BuildingType.Well2, 8),
+        new(BuildingType.MageGuild3, 4),
+        new(BuildingType.MageGuild4, 5),
+        new(BuildingType.MageGuild5, 5),
+        new(BuildingType.Shrine, 10),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>
+    /// The wizard order, <c>wizardBuildOrder</c> (<c>:114-119</c>).
+    /// </summary>
+    /// <remarks>Priority on the mage guild and the library, and every dwelling at the same level.</remarks>
+    private static readonly BuildOrder[] WizardBuildOrder =
+    [
+        new(BuildingType.Castle, 2),
+        new(BuildingType.Statue, 1),
+        new(BuildingType.Marketplace, 1),
+        new(BuildingType.DwellingUpgrade6, 1),
+        new(BuildingType.DwellingMonster6, 1),
+        new(BuildingType.DwellingUpgrade5, 1),
+        new(BuildingType.DwellingMonster5, 1),
+        new(BuildingType.DwellingMonster4, 1),
+        new(BuildingType.DwellingMonster3, 1),
+        new(BuildingType.DwellingMonster2, 1),
+        new(BuildingType.DwellingMonster1, 1),
+        new(BuildingType.MageGuild1, 1),
+        new(BuildingType.DwellingUpgrade3, 4),
+        new(BuildingType.Spec, 2),
+        new(BuildingType.Well2, 8),
+        new(BuildingType.MageGuild2, 3),
+        new(BuildingType.MageGuild3, 4),
+        new(BuildingType.MageGuild4, 4),
+        new(BuildingType.MageGuild5, 4),
+        new(BuildingType.Tavern, 10),
+        new(BuildingType.ThievesGuild, 10),
+        new(BuildingType.Shipyard, 4),
+    ];
+
+    /// <summary>The dwellings a castle hires from, best first, <c>castleDwellings</c> (<c>:348-350</c>).</summary>
+    private static readonly BuildingType[] CastleDwellings =
+    [
+        BuildingType.DwellingUpgrade7,
+        BuildingType.DwellingUpgrade6,
+        BuildingType.DwellingMonster6,
+        BuildingType.DwellingUpgrade5,
+        BuildingType.DwellingMonster5,
+        BuildingType.DwellingUpgrade4,
+        BuildingType.DwellingMonster4,
+        BuildingType.DwellingUpgrade3,
+        BuildingType.DwellingMonster3,
+        BuildingType.DwellingUpgrade2,
+        BuildingType.DwellingMonster2,
+        BuildingType.DwellingMonster1,
+    ];
+
+    /// <summary>
+    /// Builds the first affordable entry of a build order, <c>Build()</c> (<c>:139-162</c>).
+    /// </summary>
+    /// <remarks>
+    /// A multiplier of one asks only for the price of the building; anything else asks for that many times the price,
+    /// which is how the reference keeps the defensive buildings for a castle that can easily afford them. Buildings
+    /// the difficulty forbids are skipped, not treated as blockers, so a lower entry can still be built.
+    /// </remarks>
+    /// <param name="castle">The castle that builds.</param>
+    /// <param name="buildOrderList">The order to walk.</param>
+    /// <param name="multiplier">How many times the price the treasury has to cover.</param>
+    /// <returns>Whether something was built.</returns>
+    private static bool Build(CastleTown castle, IReadOnlyList<BuildOrder> buildOrderList, uint multiplier = 1)
+    {
+        GameDifficulty difficulty = Settings.Get().GameDifficulty;
+        bool isCampaign = Settings.Get().IsCampaignGameType;
+
+        foreach (BuildOrder order in buildOrderList)
+        {
+            if (!Difficulty.AllowAiToBuildCastleBuilding(difficulty, isCampaign, order.Building))
+            {
+                continue;
+            }
+
+            uint fundsMultiplier = order.Priority * multiplier;
+
+            if (fundsMultiplier == 1)
+            {
+                if (AiCommon.BuildIfPossible(castle, order.Building))
+                {
+                    return true;
+                }
+            }
+            else if (AiCommon.BuildIfEnoughFunds(castle, order.Building, fundsMultiplier))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Builds what a peaceful castle wants next, <c>CastleDevelopment()</c> (<c>:164-249</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The order is not a single list but a sequence of attempts, each of which stops the whole function when it
+    /// succeeds: the well on a castle that has none after the first week, the income structures, a shipyard when the
+    /// region is a peninsula or smaller, the racial build order, the mage guild when the region still needs spells,
+    /// a boat when the kingdom has heroes to use one, and finally the defensive buildings.
+    /// </para>
+    /// <para>
+    /// The spell level of the region is what stops the mage guild from growing past what the heroes can learn:
+    /// <paramref name="spellLevel"/> is the guild level the region's shrines and guilds support.
+    /// </para>
+    /// </remarks>
+    /// <param name="castle">The castle that develops.</param>
+    /// <param name="safetyFactor">How safe the region of the castle is, from the turn's evaluation.</param>
+    /// <param name="spellLevel">The mage guild level the region supports.</param>
+    /// <returns>Whether anything was built or bought.</returns>
+    private static bool CastleDevelopment(CastleTown castle, int safetyFactor, int spellLevel)
+    {
+        World world = World.Current;
+
+        GameDifficulty difficulty = Settings.Get().GameDifficulty;
+        bool isCampaign = Settings.Get().IsCampaignGameType;
+
+        if (!Difficulty.AllowAiToDevelopCastlesOnDay(difficulty, isCampaign, world.DayCount))
+        {
+            return false;
+        }
+
+        // Without a well the castle cannot grow, so it comes before everything else once a week has passed.
+        if (castle.IsCastle && !castle.IsBuild(BuildingType.Well) && world.DayCount > 6)
+        {
+            return AiCommon.BuildIfPossible(castle, BuildingType.Well);
+        }
+
+        if (Build(castle, GetIncomeStructures(castle.Race)))
+        {
+            return true;
+        }
+
+        int neighbourRegions = world.GetRegion((uint)world.GetTile(castle.TileIndex).Region).NeighboursCount;
+        bool islandOrPeninsula = neighbourRegions < 3;
+
+        // A castle with few neighbours is where the war has to be taken elsewhere, so it is forced to build a
+        // shipyard; the +1 stands for the case of no neighbours at all, where a plain price check would be free.
+        if (islandOrPeninsula && AiCommon.BuildIfEnoughFunds(castle, BuildingType.Shipyard, (uint)(neighbourRegions + 1)))
+        {
+            return true;
+        }
+
+        if (Build(castle, GetBuildOrder(castle.Race)))
+        {
+            return true;
+        }
+
+        if (castle.GetLevelMageGuild() < spellLevel && safetyFactor > 0)
+        {
+            if (Build(castle, MagicGuildUpgrades))
+            {
+                return true;
+            }
+        }
+
+        // A boat is only worth it when there is a hero to sail it, and only when the resources can be raised, either
+        // by waiting for them or by trading for them.
+        bool buyBoat = false;
+
+        GameKingdom kingdom = world.GetKingdom(castle.Color);
+
+        if (castle.AllowBuyBoat(world, checkPayment: false) && kingdom.Heroes.Count > 0)
+        {
+            Funds requiredFunds = PaymentConditions.BuyBoat() * (uint)(islandOrPeninsula ? 2 : 4);
+
+            if (kingdom.AllowPayment(requiredFunds))
+            {
+                buyBoat = true;
+            }
+            else if (AiCommon.CalculateMarketplaceTransaction(kingdom, requiredFunds) is not null)
+            {
+                if (kingdom.AllowPayment(PaymentConditions.BuyBoat()))
+                {
+                    buyBoat = true;
+                }
+                else if (AiCommon.TradeAtMarketplace(kingdom, PaymentConditions.BuyBoat()))
+                {
+                    buyBoat = true;
+                }
+                else
+                {
+                    Debug.Assert(false, "The marketplace promised a trade that it then refused.");
+                }
+            }
+        }
+
+        if (buyBoat)
+        {
+            castle.BuyBoat(world, kingdom);
+        }
+
+        if (Build(castle, DefensiveStructures, 10))
+        {
+            return true;
+        }
+
+        return Build(castle, SupportingDefensiveStructures, 10);
+    }
+
+    /// <summary>The mage guild levels a region may still want, <c>magicGuildUpgrades</c> (<c>:192-193</c>).</summary>
+    private static readonly BuildOrder[] MagicGuildUpgrades =
+    [
+        new(BuildingType.MageGuild2, 2),
+        new(BuildingType.MageGuild3, 2),
+        new(BuildingType.MageGuild4, 1),
+        new(BuildingType.MageGuild5, 1),
+    ];
+
+    /// <summary>
+    /// Hires a stack into the garrison or, when the garrison is full, into the guest hero's army,
+    /// the <c>recruitMonster</c> lambda of <c>reinforceCastle()</c> (<c>:318-327</c>).
+    /// </summary>
+    /// <param name="castle">The castle that hires.</param>
+    /// <param name="troop">What to hire.</param>
+    /// <param name="treasury">The funds that pay.</param>
+    /// <param name="guestHero">The hero in the castle, if any.</param>
+    /// <returns>Whether the stack was hired.</returns>
+    private static bool RecruitMonster(CastleTown castle, Troop troop, ref Funds treasury, Hero? guestHero) =>
+        // The reference passes no dialog flag; the port's version takes the guest army explicitly, which is where
+        // the stack goes when the garrison has no free slot.
+        castle.RecruitMonster(troop, ref treasury, guestHero?.Army);
+
+    /// <summary>
+    /// Frees a garrison slot by handing a garrison stack to the guest hero,
+    /// the first lambda of <c>reinforceCastle()</c> (<c>:375-397</c>).
+    /// </summary>
+    /// <remarks>
+    /// Every garrison slot is occupied when this runs - the recruitment just failed for lack of one - so the loop
+    /// is only looking for a stack the hero can take.
+    /// </remarks>
+    /// <param name="castle">The castle, for the castle's own limits.</param>
+    /// <param name="garrison">The garrison to take a stack from.</param>
+    /// <param name="guestHero">The hero that receives the stack.</param>
+    /// <param name="guestHeroArmy">The hero's army.</param>
+    /// <returns>Whether a slot was freed.</returns>
+    private static bool TryTransferGarrisonTroopToHero(CastleTown castle, ArmyTroops garrison, Hero guestHero, ArmyTroops guestHeroArmy)
+    {
+        for (int slot = 0; slot < ArmyTroops.MaximumTroopCount; ++slot)
+        {
+            Troop? garrisonTroop = garrison.GetTroop(slot);
+
+            Debug.Assert(garrisonTroop is { IsValid: true }, "The garrison was supposed to be full.");
+
+            if (garrisonTroop is null || !guestHeroArmy.JoinTroop(garrisonTroop))
+            {
+                continue;
+            }
+
+            garrisonTroop.Reset();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Picks the stack a safe castle keeps behind, the second lambda of <c>reinforceCastle()</c> (<c>:400-440</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A champion leaves its weakest stack - it is off to win the game and half of anything is worth less than
+    /// momentum - while every other hero leaves half of the stack it can spare, which is the slowest one first and
+    /// only then the weakest.
+    /// </para>
+    /// <para>
+    /// "Can spare" is measured against the strength of the army without the hero: a stack worth more than a tenth
+    /// (a twentieth for a fighter or a champion) of everything the hero carries is one the hero needs.
+    /// </para>
+    /// </remarks>
+    /// <param name="guestHero">The hero in the castle.</param>
+    /// <param name="guestHeroArmy">The hero's army.</param>
+    /// <returns>The stack to hand over and whether only half of it goes; the stack is null when the hero keeps everything.</returns>
+    private static (Troop? Troop, bool TransferHalf) ChooseTroopForGarrison(Hero guestHero, ArmyTroops guestHeroArmy)
+    {
+        bool isFighterRole = guestHero.AiRole is HeroRole.Fighter or HeroRole.Champion;
+        double armyStrength = guestHeroArmy.GetTroopsStrength();
+
+        Debug.Assert(armyStrength > 0.0, "An army that can spare a stack has a strength.");
+
+        double significanceRatio = isFighterRole ? 20.0 : 10.0;
+        double neededStrength = armyStrength / significanceRatio;
+
+        Troop? candidate = guestHeroArmy.GetSlowestTroop();
+
+        if (candidate is not null && candidate.GetStrength() <= neededStrength)
+        {
+            return (candidate, false);
+        }
+
+        if (isFighterRole)
+        {
+            return (null, false);
+        }
+
+        candidate = guestHeroArmy.GetWeakestTroop();
+
+        if (candidate is not null && candidate.GetStrength() <= neededStrength)
+        {
+            return (candidate, true);
+        }
+
+        return (null, false);
     }
 }

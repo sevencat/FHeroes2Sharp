@@ -7809,3 +7809,132 @@ ADR-118 的状态；英雄名只有英文原文；玩家配色与 `AlphaBlit` �
 
 **遗留**：玩家配色与淡入（城堡屏主线只剩这一项）；船长战斗界面（`battle_only`）；随机城的固定坐标冒烟不可复现；
 酒馆传闻的多语言字体随本地化一起缺；`RECRUIT` 模式位与敌方英雄的 `isFullInfo == false` 路径照旧。
+
+## 城堡屏第十八批：旗帜的玩家配色 ✅
+
+城镇屏上城堡的旗帜现在按城主颜色换：`drawCastleDialogBuilding` 在 blit 前先看图是不是「带旗」的六张之一，
+命中就现做一张换过调色板的图（`ui_castle.cpp:42-165`）。做法是恒等表加一段——调色板 152~174 这二十三项
+（十六色加七级阴影）线性映射到该玩家色的十六色色阶，其余下标不动；改的像素也照参考逐图逐帧裁出矩形，
+动画帧整帧、静态帧只改那几面三乘三的小旗。无主的城走恒等。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/CastleFlagPalette.cs`（新） | `ui_castle.cpp:42-165` | `ForColor()` 建 256 项表（蓝 `63/22`、绿 `85/23`、黄 `108/23`、紫 `132/21`、红 `175/23`、橙 `199/16`，公式 `outputStart + i * outputLength / inputLength`）；`EffectiveAreas()` 逐图逐帧写死矩形（法师城堡帧 0 三面、骑士城堡帧 0 两面、左右塔各一面、五级住宅两种帧 0 一像素）；`Get()` 按「图 + 帧 + 颜色」缓存，无主/非旗帜图直接返回原精灵 |
+| `UI/Dialogs/CastleScreenPainter.cs`（改） | `ui_castle.cpp:110-148` | `DrawBuilding()` 尾部加 `PlayerColor color`，取到精灵后交给 `CastleFlagPalette.Get()`；二十一处调用补 `castle.Color`；类注释改成「配色见 `CastleFlagPalette`，未搬的只剩 `AlphaBlit`」 |
+| `App/GameHost.cs`（改） | — | `--enter-town` 的日志带上种族，例如 `Opened the town screen of 'Quick Silver' (Wizard) from the command line.` |
+| `tests/…/CastleFlagPaletteTests.cs`（新） | — | 21 条：两个常量、六色段首尾、段外恒等、无主恒等、六张图名单、逐图逐帧矩形、只改旗像素、动画帧整帧、无旗帜图原样返回、缓存按颜色共享 |
+
+三个坑：
+
+* **静态帧不能整帧换**：154~174 这段索引在别的像素上也可能出现，所以静态帧只改参考给的那几个三乘三小旗；
+  整帧只用在动画帧上（那里旗帜已经铺满整帧）。
+* **蓝色不是恒等**：默认的旗帜色阶是 23 项，蓝色玩家自己的段只有 22 项，映射时最后一档会并到前一档；看起来
+  一样，但别顺手把蓝色「优化」成跳过。
+* **随机城的种族每局都变**：日志里补种族之后，冒烟脚本可以等某个族再截图，不用再靠瞎点坐标试。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --smoke-frames 6 --screenshot artifacts/town-flag-color.png` 循环跑到 `(Wizard)` 那一局：
+  红玩家的法师城，三面旗帜都是红的（改动前是蓝的）；
+* `dotnet test`：UI 854 → **875**，合计 4 456 → **4 477** 全绿；`dotnet build -warnaserror` 0 警告。
+
+**遗留**：`AlphaBlit` 的半透明混合（新建筑淡入仍是一步到位，城堡屏主线只剩这一项）；船长战斗界面
+（`battle_only`）；酒馆传闻的多语言字体随本地化一起缺。
+
+## AI 实现路线：拆批与 v3 账本建立 ✅（2026-11-21）
+
+本轮不动代码，只把 `ai` 目录的实现拆成可勾选的批次，并建立两份专项账本。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `docs/planv3.md`（新） | `ai/*.cpp`/`ai/*.h` | 基线表（九个文件 11 230 行、九个契约、88 处 `NotImplementedException`）、`B1..B7` 批次与 `X1..X4` 前置、四条契约偏差、记账规则 |
+| `docs/progressv3.md`（新） | — | 状态总表 + 流水，只记「哪批做完」 |
+| `docs/PLAN.md`（改） | — | `ai` 行 0/0/9 → **1/0/8**（`ai_personality.cpp` 早在 `System/AiPersonality.cs`），合计 **65/83/101**；`ai` 条目与「已落契约」表加两份账本的指针 |
+
+三个判断：
+
+* **契约先行不用再做**：ADR-161/180 已把 `Planner` 39 个公开成员、24 个私有成员、`BattlePlanner`
+  24 个成员、9 个自由函数、4 个入口、4 个阈值全部落齐，`AiContractTests` 钉住「未移植会抛」，
+  所以 v3 从实现起步，88 处异常就是 88 个原子任务。
+* **B1..B4 不该等**：`ai_common`（9）、`ai_planner` 五个短函数、`ai_planner_castle`（4）、
+  `ai_planner_kingdom`（11）只依赖 `Castle`/`Kingdom`/`Army`/`ResourceTrading`，这些都已就位；
+  `ai_planner_kingdom` 对 `AIWorldPathfinder` 只用 `GetDistance` 与两个 setter，也都已实现。
+* **B5 才是门槛**：`ai_planner_hero` 的十六个成员全过 `AIWorldPathfinder` 的六个未实现方法与
+  `ObjectValueStorage`（对象价值表），这两项都在 world 侧，单列为 X1/X2；`B6` 等 `battle_action`
+  的法术目标与生效（`GetTargetsForSpell` 的参考实现就在 `battle_action.cpp:1046`），`B7` 等
+  `heroes_action` 补全与 34 处 `Interface::AdventureMap::Get()` 的解耦。
+
+顺带记一处契约注释偏差：`RecruitHero`/`PurchaseNewHeroes` 的异常消息写「`ai_planner_castle.cpp` 未移植」，
+参考里这两个函数在 `ai_planner_kingdom.cpp`，随 B4 落地时改消息。
+
+**验证**：只改文档，无构建改动；`ai` 行按列和重算（249 = 65 + 83 + 101）。
+
+## AI 实现批次 B1：`ai_common.cpp` 九个函数 ✅（2026-11-21）
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `src/FHeroes2.Game/Ai/AiCommon.cs`（改） | `ai_common.cpp` | `BuildIfPossible`/`BuildIfEnoughFunds`（价格 ×1..99）/`OptimizeTroopsOrder`（弓兵优先、按速度排、高难度拆弱队）/`TransferSlowestTroopsToGarrison`/`CalculateMarketplaceTransaction`/`TradeAtMarketplace`/`ShareObjectVisitInfoWithAllies`/`IsUltimateArtifactAvailableToHero`/`IsValuableAdventureMapObject` |
+| `src/FHeroes2.Game/System/Difficulty.cs`（新） | `difficulty.cpp` | `AllowAiToSplitWeakStacks`、`IsObjectVisitInfoSharingAllowedForAi`（Easy/Normal 关闭） |
+| `src/FHeroes2.Game/AdventureMap/MapFog.cs`（改） | `maps.cpp:531` | `CountFoggedAround`：观察塔分支要的「周围还有几张雾格」，按平方半径（1→9、2→21） |
+| `tests/FHeroes2.Game.Tests/AiCommonTests.cs`（新） | — | 19 条：建筑三条路径、部队排序与拆队、市场计划与扣款、盟友共享（含人类盟友与低难度）、终极神器、对象价值、观察塔 |
+| `tests/FHeroes2.Game.Tests/AiContractTests.cs`（改） | — | 删掉「未移植会抛」，换成 `BuildIfEnoughFunds` 的倍率越界校验 |
+
+两个值得记的行为细节：
+
+* **市场计划不按「先卖光普通资源」走**：每轮挑「潜在收益最大」的资源，普通资源卖到只剩 3 份
+  （3 × 25 < 5 × 50）时改卖稀有资源，所以 7500 → 9000 金的缺口由 17 木 + 17 矿 + 13 稀有凑出。
+* **搬兵清空槽位不压缩**：`TransferSlowestTroopsToGarrison` 照参考只 `Reset`，最快的栈留在原槽位，
+  测试按「槽位内容」而不是「槽位序号」断言。
+
+**验证**：`dotnet test tests/FHeroes2.Game.Tests` → **2969 通过 / 0 失败**；`ai` 行 1/0/8 → **2/0/7**，
+合计 **66/83/100**，剩余 `NotImplementedException` 79 处（AI 目录 66 + `AIWorldPathfinder` 13）。
+
+## AI 实现批次 B2：`ai_planner.cpp` 的缓存与资源权重 ⚠️ 4/5（2026-11-21）
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `src/FHeroes2.Game/Ai/AiPlanner.cs`（改） | `ai_planner.cpp` | `getTileArmyStrength`（`Army.SetFromTile` 估值，按 `Tile.Index` 缓存）、`getResourcePriorityModifier`（矿/堆两张权重表 + `_budget` 缩放）、`getFundsValueBasedOnPriority`、`updateMapActionObjectCache`；`revealFog` 留给 B4 |
+| `tests/FHeroes2.Game.Tests/AiPlannerTests.cs`（新） | — | 4 条：守军强度只算一次、四种矿权重、七种堆权重、组合价值 |
+
+三个判断：
+
+* **`revealFog` 归 B4**：它自己不含逻辑，只调 `updatePriorityAttackTarget`（`ai_planner_kingdom.cpp`）与
+  `updateMapActionObjectCache`；留在 B2 只会让「为什么还抛」有两个解释。
+* **两个权重函数改 `internal`**：参考是 private，但唯一调用者是 B5 的 `getObjectValue` 系列，测试没有别的
+  入口；不改成 public 是为了不让它们进对外 API。
+* **缓存靠 `Tile.Index`**：`World.GenerateUninitializedMap` 把每个瓦片索引都留成 0（只有加载地图时才编号），
+  所以测试世界自己编号，否则 64 个瓦片共用一条缓存——这个坑写进了 `GetTileArmyStrength` 的注释。
+
+权重表的数值：矿按「金矿日收入 ÷ 该矿日收入 × 2」（金 2、木/矿 1000、稀有 2000），
+堆按常规堆量（金 1、木/矿 125、稀有 250）。
+
+**验证**：`dotnet test tests/FHeroes2.Game.Tests` → **2973 通过 / 0 失败**；剩余 `NotImplementedException`
+75 处（AI 目录 62 + `AIWorldPathfinder` 13），`ai` 行不动（`ai_planner.cpp` 仍是「部分」）。
+
+## AI 实现批次 B3：`ai_planner_castle.cpp` 四个成员 ✅（2026-11-21）
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `src/FHeroes2.Game/Ai/AiPlanner.cs`（改） | `ai_planner_castle.cpp` | `CastlePreBattle`（访客英雄 → `ArrangeForCastleDefense` → `OptimizeTroopsOrder`）、`CastleTurn`（防守/平时两分支）、`ReinforceCastle`（升级合并 → 按住所征募 → 腾槽或解散最弱 → 交还最强给访客 → 安全城堡留半队）、`UpdateKingdomBudget`（缺口累加 + 6 号住所的升级兵种价记 `recurringCost`） |
+| 同上（同文件私有辅助） | `ai_planner_castle.cpp:164-249` | `CastleDevelopment`（安全度越高越敢买建筑、船坞与 `AllowBuyBoat`）、六张建造顺序表、`CastleDwellings`、`Build`（一次只买一个建筑） |
+| `src/FHeroes2.Game/System/Difficulty.cs`（改） | `difficulty.cpp:313/325` | `AllowAiToDevelopCastlesOnDay`（Easy 隔天）、`AllowAiToBuildCastleBuilding`（Easy 不建 6 号住所与 5 级图书馆） |
+| `src/FHeroes2.Game/Heroes/HeroRole.cs`（新）+ `Hero.cs`（改） | `heroes.h:217-241` | `Heroes::Role` 五值枚举按声明顺序、`Hero.AiRole` 默认 `Hunter` |
+| `src/FHeroes2.Game/Ai/AiCommon.cs`（改） | — | `FindGuestHero` 由 private 改 internal（planner 也要找访客英雄） |
+| `tests/FHeroes2.Game.Tests/AiCastlePlannerTests.cs`（新） | — | 10 条：难度开关、战前搬运与开槽重排、防守回合征募 + 单日单建筑、空守军不买塔、按住所征募、满编解散最弱、满编交给访客腾槽、预算缺口 ×2、循环成本 ×1.5 |
+
+四个判断：
+
+* **平时分支按参考写死但不测**：`CastleTurn` 的平时分支与 `reinforceCastle` 的「留半队守军」都读
+  `_regions`（`evaluateRegionSafety` 的产物，B4 才填）。端口把 `!garrison.IsValid` 提到区域查找之前，
+  语义等价（都是无副作用的读），好处是半移植状态下守军还在时不会越界。
+* **一次只买一个建筑**：`BuyBuilding` 清掉当天许可，所以 `CastleTurn` 防守分支里
+  `Build(DefensiveStructures)` 买到第一座塔后，`Build(SupportingDefensiveStructures)` 当日无货——
+  测试按这个行为断言（左塔有、法师公会 1 无）。
+* **`_budget` 用权重反查**：没有加只读属性，测试用 `getResourcePriorityModifier` 的 ×1.5 / ×2
+  观察预算；每个预算测试结束时用「没有城堡的王国」再算一次，把单例的预算清空（同集合内串行）。
+* **难度开关与新枚举是本批的隐式依赖**：`CastleDevelopment` 的两个难度判断、`ReinforceCastle`
+  的安全值判断都要它们，所以一起落地，测试也一起覆盖。
+
+**验证**：`dotnet test tests/FHeroes2.Game.Tests` → **2983 通过 / 0 失败**；`-warnaserror` 重建
+`src/FHeroes2.Game` 0 警告；`ai` 行 2/0/7 → **3/0/6**（`ai_planner_castle.cpp` 全转），合计
+**67/83/99**，剩余 `NotImplementedException` 71 处（AI 目录 58 + `AIWorldPathfinder` 13）。
