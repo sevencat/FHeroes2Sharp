@@ -1,9 +1,11 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -11,11 +13,15 @@ namespace FHeroes2.UI.Tests;
 /// <see cref="TavernView"/>: the barkeep of <c>TAVWIN.ICN</c> over the rumor of the week and one OK button,
 /// <c>Castle::_openTavern()</c> (<c>castle_tavern.cpp:39-54</c>).
 /// </summary>
+/// <remarks>
+/// The box is drawn in a <see cref="FrameBox"/>, which reads <c>BUYBUILD.ICN</c> itself, so the tests that
+/// build one need the installed archives and return when the machine has none.
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class TavernViewTests
 {
     private const byte HeaderColor = 90;
     private const byte BodyColor = 200;
-    private const byte ChromeColor = 7;
 
     private static readonly LocalizedString Rumor = new(World.TruthRumor);
 
@@ -34,106 +40,100 @@ public sealed class TavernViewTests
     {
         // Only the two backgrounds: the reference's ICN::getAnimatedIcnIndex() would ask for frame 2 and up.
         Assert.Null(TavernView.TryCreate(
-            CreateDialog(), CreateTavwin(2), CreateChrome(), new FakeGlyphSource(HeaderColor),
+            CreateDialog(), CreateTavwin(2), new FakeGlyphSource(HeaderColor),
             new FakeGlyphSource(BodyColor), new FakeArtwork()));
         Assert.Null(TavernView.TryCreate(
-            CreateDialog(), [], CreateChrome(), new FakeGlyphSource(HeaderColor),
+            CreateDialog(), [], new FakeGlyphSource(HeaderColor),
             new FakeGlyphSource(BodyColor), new FakeArtwork()));
     }
 
     [Fact]
-    public void TheBoxHoldsTheBarkeepAndTheTextUnderTheTitle()
-    {
-        MessageBox box = TavernView.TryCreate(
-            CreateDialog(), CreateTavwin(22), CreateChrome(), new FakeGlyphSource(HeaderColor),
-            new FakeGlyphSource(BodyColor), new FakeArtwork())!;
+    public void TheBoxHoldsTheBarkeepAndTheTextUnderTheTitle() => Assert.True(TryWithArchives(
+        () => CreateView(),
+        box =>
+        {
+            Assert.Equal(TavernDialog.Title, box.Header);
+            Assert.Equal(string.Empty, box.Body);
+            Assert.Equal(2, box.Elements.Count);
 
-        Assert.Equal(TavernDialog.Title, box.Header);
-        Assert.Equal(string.Empty, box.Body);
-        Assert.Equal(2, box.Elements.Count);
+            // The barkeep is the 188x100 background of frame 0, not the smaller 182x94 of frame 1.
+            AnimationDialogElement barkeep = Assert.IsType<AnimationDialogElement>(box.Elements[0]);
+            Assert.Equal(new Size(188, 100), barkeep.Area);
+            Assert.IsType<TextDialogElement>(box.Elements[1]);
 
-        // The barkeep is the 188x100 background of frame 0, not the smaller 182x94 of frame 1.
-        AnimationDialogElement barkeep = Assert.IsType<AnimationDialogElement>(box.Elements[0]);
-        Assert.Equal(new Size(188, 100), barkeep.Area);
-        Assert.IsType<TextDialogElement>(box.Elements[1]);
-
-        // The reference passes both paragraphs as one element, so the element fills the 244 pixel area.
-        Assert.Equal(FrameBox.AreaWidth, box.Elements[1].Area.Width);
-    }
+            // The reference passes both paragraphs as one element, so the element fills the 244 pixel area.
+            Assert.Equal(FrameBox.AreaWidth, box.Elements[1].Area.Width);
+        }));
 
     [Fact]
-    public void TheOnlyButtonIsACentredOkay()
-    {
-        MessageBox box = TavernView.TryCreate(
-            CreateDialog(), CreateTavwin(22), CreateChrome(), new FakeGlyphSource(HeaderColor),
-            new FakeGlyphSource(BodyColor), new FakeArtwork())!;
+    public void TheOnlyButtonIsACentredOkay() => Assert.True(TryWithArchives(
+        () => CreateView(),
+        box =>
+        {
+            Assert.NotNull(box.Buttons);
+            Assert.Equal(1, box.Buttons.Count);
+            Assert.Equal(DialogButton.Ok, box.Buttons.ValueOf(0));
 
-        Assert.NotNull(box.Buttons);
-        Assert.Equal(1, box.Buttons.Count);
-        Assert.Equal(DialogButton.Ok, box.Buttons.ValueOf(0));
+            Rect button = box.Buttons[0].Area;
 
-        Rect button = box.Buttons[0].Area;
-
-        Assert.Equal(box.Area.X + ((box.Area.Width - button.Width) / 2), button.X);
-        Assert.Equal(box.Area.Y + box.Area.Height - button.Height, button.Y);
-    }
+            Assert.Equal(box.Area.X + ((box.Area.Width - button.Width) / 2), button.X);
+            Assert.Equal(box.Area.Y + box.Area.Height - button.Height, button.Y);
+        }));
 
     [Fact]
-    public void APressAndReleaseOnOkayAnswersTheButton()
-    {
-        MessageBox box = TavernView.TryCreate(
-            CreateDialog(), CreateTavwin(22), CreateChrome(), new FakeGlyphSource(HeaderColor),
-            new FakeGlyphSource(BodyColor), new FakeArtwork())!;
+    public void APressAndReleaseOnOkayAnswersTheButton() => Assert.True(TryWithArchives(
+        () => CreateView(),
+        box =>
+        {
+            Rect button = box.Buttons![0].Area;
+            var centre = new Point(button.X + (button.Width / 2), button.Y + (button.Height / 2));
 
-        Rect button = box.Buttons![0].Area;
-        var centre = new Point(button.X + (button.Width / 2), button.Y + (button.Height / 2));
+            box.SetCursor(centre);
 
-        box.SetCursor(centre);
-
-        Assert.Equal(DialogButton.None, box.SetLeftButton(true));
-        Assert.Equal(DialogButton.Ok, box.SetLeftButton(false));
-    }
+            Assert.Equal(DialogButton.None, box.SetLeftButton(true));
+            Assert.Equal(DialogButton.Ok, box.SetLeftButton(false));
+        }));
 
     [Fact]
-    public void TheBarkeepMovesOnAfterOneDelay()
-    {
-        MessageBox box = TavernView.TryCreate(
-            CreateDialog(), CreateTavwin(22), CreateChrome(), new FakeGlyphSource(HeaderColor),
-            new FakeGlyphSource(BodyColor), new FakeArtwork())!;
+    public void TheBarkeepMovesOnAfterOneDelay() => Assert.True(TryWithArchives(
+        () => CreateView(),
+        box =>
+        {
+            var barkeep = (AnimationDialogElement)box.Elements[0];
+            PixelBuffer target = new(640, 480);
 
-        var barkeep = (AnimationDialogElement)box.Elements[0];
-        PixelBuffer target = new(640, 480);
+            Assert.Equal(0, barkeep.FrameNumber);
+            Assert.False(box.Update(target, TimeSpan.FromMilliseconds(TavernView.FrameDelayMilliseconds - 1)));
+            Assert.Equal(0, barkeep.FrameNumber);
 
-        Assert.Equal(0, barkeep.FrameNumber);
-        Assert.False(box.Update(target, TimeSpan.FromMilliseconds(TavernView.FrameDelayMilliseconds - 1)));
-        Assert.Equal(0, barkeep.FrameNumber);
-
-        Assert.True(box.Update(target, TimeSpan.FromMilliseconds(1)));
-        Assert.Equal(1, barkeep.FrameNumber);
-    }
+            Assert.True(box.Update(target, TimeSpan.FromMilliseconds(1)));
+            Assert.Equal(1, barkeep.FrameNumber);
+        }));
 
     [Fact]
     public void EveryArgumentIsRequired()
     {
         TavernDialog dialog = CreateDialog();
         IReadOnlyList<Sprite> tavwin = CreateTavwin(22);
-        FrameBoxChrome chrome = CreateChrome();
         IGlyphSource font = new FakeGlyphSource(BodyColor);
         FakeArtwork artwork = new();
 
         Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(null!, tavwin, chrome, font, font, artwork));
+            TavernView.TryCreate(null!, tavwin, font, font, artwork));
         Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(dialog, null!, chrome, font, font, artwork));
+            TavernView.TryCreate(dialog, null!, font, font, artwork));
         Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(dialog, tavwin, null!, font, font, artwork));
+            TavernView.TryCreate(dialog, tavwin, null!, font, artwork));
         Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(dialog, tavwin, chrome, null!, font, artwork));
+            TavernView.TryCreate(dialog, tavwin, font, null!, artwork));
         Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(dialog, tavwin, chrome, font, null!, artwork));
-        Assert.Throws<ArgumentNullException>(() =>
-            TavernView.TryCreate(dialog, tavwin, chrome, font, font, null!));
+            TavernView.TryCreate(dialog, tavwin, font, font, null!));
     }
+
+    /// <summary>Builds the tavern window of the reference with the test doubles.</summary>
+    private static MessageBox CreateView() => TavernView.TryCreate(
+        CreateDialog(), CreateTavwin(22), new FakeGlyphSource(HeaderColor), new FakeGlyphSource(BodyColor),
+        new FakeArtwork())!;
 
     private static TavernDialog CreateDialog() => TavernDialog.Create(Rumor);
 
@@ -160,24 +160,36 @@ public sealed class TavernViewTests
         return sprites;
     }
 
-    private static FrameBoxChrome CreateChrome()
-    {
-        // Only the geometry of BUYBUILD.ICN matters here, so every piece is a flat colour.
-        Size[] sizes =
-        [
-            new(144, 99), new(145, 45), new(144, 81), new(251, 20),
-            new(160, 99), new(161, 45), new(161, 81),
-        ];
+    /// <summary>Opens the game data the message frame is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
 
-        Sprite[] pieces = new Sprite[sizes.Length];
-        for (int index = 0; index < sizes.Length; ++index)
+    /// <summary>Builds the window against the real frame artwork.</summary>
+    /// <param name="create">Builds the window.</param>
+    /// <param name="assert">Checks it.</param>
+    /// <returns>Always <see langword="true"/>; the test returns when the machine has no game data.</returns>
+    private static bool TryWithArchives(Func<MessageBox> create, Action<MessageBox> assert)
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
         {
-            PixelBuffer image = new(sizes[index].Width, sizes[index].Height);
-            image.Fill(ChromeColor);
-            pieces[index] = new Sprite(image, 0, 0);
+            return true;
         }
 
-        return FrameBoxChrome.TryCreate(pieces)!;
+        GameAssets.Current = assets;
+
+        try
+        {
+            assert(create());
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
     }
 
     /// <summary>The OK button is 60x25 in the test, so its placement is easy to check.</summary>

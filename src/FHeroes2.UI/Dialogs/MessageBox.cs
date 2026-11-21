@@ -104,7 +104,6 @@ public sealed class MessageBox
     /// </summary>
     /// <param name="header">Title of the message; an empty string leaves the title out.</param>
     /// <param name="body">Message text; an empty string leaves the body out.</param>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c>.</param>
     /// <param name="headerFont">Font of the title, <c>FontType::normalYellow()</c> in the reference.</param>
     /// <param name="bodyFont">Font of the message, <c>FontType::normalWhite()</c> in the reference.</param>
     /// <param name="elements">Elements drawn under the text; empty or <see langword="null"/> for none.</param>
@@ -116,18 +115,20 @@ public sealed class MessageBox
     /// </param>
     /// <param name="buttonArtwork">Source of the button sprites, required as soon as <paramref name="buttons"/> is set.</param>
     /// <exception cref="ArgumentNullException">
-    /// <paramref name="header"/>, <paramref name="body"/>, <paramref name="chrome"/>,
-    /// <paramref name="headerFont"/>, <paramref name="bodyFont"/> or, when buttons are asked for,
-    /// <paramref name="buttonArtwork"/> is <see langword="null"/>.
+    /// <paramref name="header"/>, <paramref name="body"/>, <paramref name="headerFont"/>,
+    /// <paramref name="bodyFont"/> or, when buttons are asked for, <paramref name="buttonArtwork"/> is
+    /// <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentException">An element of <paramref name="elements"/> is <see langword="null"/>.</exception>
-    public static MessageBox Create(string header, string body, FrameBoxChrome chrome, IGlyphSource headerFont,
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no message frame, see <see cref="FrameBox.Create"/>.
+    /// </exception>
+    public static MessageBox Create(string header, string body, IGlyphSource headerFont,
         IGlyphSource bodyFont, IReadOnlyList<DialogElement>? elements = null, int startY = -1, Size? screen = null,
         DialogButton buttons = DialogButton.None, IDialogButtonArtworkSource? buttonArtwork = null)
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(body);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(headerFont);
         ArgumentNullException.ThrowIfNull(bodyFont);
 
@@ -165,7 +166,7 @@ public sealed class MessageBox
             throw new ArgumentNullException(nameof(buttonArtwork), "A message box with buttons needs their artwork.");
         }
 
-        FrameBox frame = FrameBox.Create(chrome, contentHeight + elementBlockHeight, hasButtons, startY, screen);
+        FrameBox frame = FrameBox.Create(contentHeight + elementBlockHeight, hasButtons, startY, screen);
 
         List<Rect> areas = PlaceElements(rows, frame.Area, contentHeight, bodyHeight > 0);
 

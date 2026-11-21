@@ -851,3 +851,472 @@ Game 层将来的存档与事件文案也要用。
 `RecruitWindowTests` 里用 `ClearTyped` 的那处改成 `SetCount( 0 )`。
 全量 4 706 绿（Core 267 + Assets 416 + UI 939 + Game 3 084），构建 0 错误 0 警告。
 
+## 2026-11-21 B：`cursor.cpp` 全量
+
+新增 `Game/Cursor/` 四个文件（`cursor.cpp:31-271`、`cursor.h:37-240`）：
+
+| 文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `CursorState.cs` | `Cursor`（`cursor.cpp:31-237`） | 主题、偏移、单色开关三件状态；`SetThemes`/`SetCustomImage`/`UpdateCursorPosition`/`SetVideoPlaybackCursor`/`Refresh`；`Current` 对应 `Cursor::Get()` |
+| `CursorImages.cs` | `SetThemes` 里的 `icnID` 选择 + `Assets::getImage` | `CursorImageSet` → 帧：三套彩色 ICN 走 `Assets.GetImage`，三套单色走逐帧 `.BMP`（`MonoCursorFile`，条目名照抄 `game_assets.cpp:4094-4138`：`ADVMBW01`/`CMSEBW01` 从 1 数、`SPELBW00` 从 0 数） |
+| `CursorRestorer.cs` | `CursorRestorer`（`cursor.cpp:239-271`） | 构造时记下可见性与主题、析构时先恢复可见性再恢复主题 |
+| `ICursorRenderer.cs` | `fheroes2::cursor()`（`engine/screen.h:289-359`） | `IsVisible`/`IsSoftwareEmulation`/`Position`/`Show`/`Update`/`SetPosition`/`KeepInScreenArea` |
+
+几何那半边（主题→图集、精灵序号、按主题的偏移表、距离变体）A 系列已经由 `Core/Imaging/CursorLayout.cs`
+覆盖，本步只做状态与图源，`DistanceThemes`/`WithoutDistanceThemes` 因此不再重复一层转发，调用方直接用
+`CursorLayout.WithDistance`/`WithoutDistance`。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `SetThemes` 取图必然成功（缺图给 `errorImage` 占位） | 取不到图只记主题、不换图；`Offset`、指针位置、屏幕内夹取都保持上一次的值。当前触发点：距离光标两套图还没合成，单色 `.BMP` 缺条目 |
+| 从 `LocalEvent::Get()` 读鼠标位置 | 从 `ICursorRenderer.Position` 读，模型不依赖输入状态 |
+| `Cursor::~CursorRestorer` 末尾强制重绘指针下 1 像素（软件光标） | 未搬：端口没有软件光标，也没有按矩形重绘的入口；届时用 `UpdateCursorPosition` 的返回值补 |
+| `MONO_CURSOR_ADVENTURE_MAP`/`COLOR_CURSOR_ADVENTURE_MAP`（距离光标） | `CursorImages` 返回 `null`：参考是 `generateDefaultImages()` 用 `ADVMCO` 4..11 帧加画出来的数字现拼的（`game_assets.cpp:3694-3740`），属于资材合成，未搬 |
+
+两处计划前提有误，已改：其一，`AdventureMapScene` 从来没有光标选择，也没有任何代码画过光标图（端口的指针就是
+操作系统自带箭头），所以「删掉场景里的自选光标」无对象；其二，B 的收口「地图上光标由 `Cursor` 决定」要等 App 层
+按 `ICursorRenderer` 实现软件指针（`engine/screen.cpp`）之后才谈得上，`CursorState.Current` 现在由组合根留空。
+
+测试：`CursorStateTests` 7 例（自定义图与偏移、缺图只记主题、软件光标移动与 1x1 报告、宿主光标不动、
+视频指针仅软件光标、`CursorRestorer` 两参/一参的进出、缺 `Current` 抛错）；`CursorImagesTests` 7 例对真实归档
+（三套彩色 ICN、三套单色 BMP、距离图集为空、越界帧为空、指针主题出图与去重、滚动主题夹屏内、单色开关与视频指针例外）。
+全量 4 720 绿（Core 267 + Assets 416 + UI 939 + Game 3 098），构建 0 错误 0 警告。
+
+## 2026-11-21 C：`TextInputField` + 文本层收尾
+
+新增 `UI/Widgets/TextInputField.cs`（`ui_tool.cpp:196-281`、`ui_tool.h:147-200`）：`Text`（`TextInput`）、`Cursor`
+（`MovableSprite`）、`TextInputArea`、`OverallArea`（文字区左右各外扩 1、上沿扩 2）、`IsMultiLineText`、
+`IsSingleLineTextCenterAligned`、`VerticalTextOffset`、`EventProcessing()`（`CURSOR_BLINK_DELAY` 翻可见性）、
+`Draw()`、`Set()`、`GetCursorInTextPosition()`、`GetCursorPositionInAdjacentLine()`、`Height()`。多行滚动照抄：光标跑到
+可视区上沿之上就整块上移，跑到下沿之下就按整行数下挪，滚动因此总停在行边界。
+
+`Game/Gui/FontCharHandler.cs` 补齐 `ui_text.cpp` 最后两个公开函数：
+
+| 新增 | 参考 | 说明 |
+| --- | --- | --- |
+| `CursorChar` | `ui_text.cpp:40` 的 `cursorChar` | 从 `TextInput` 的私有常量提上来，`GetCursorSprite` 与 `TextInput` 共用 |
+| `GetCursorSprite( in FontType )` | `ui_text.cpp:1425` | `'|'` 的字形，就是文字输入的光标 |
+| `IsFontAvailable( ReadOnlySpan<byte>, in FontType )` | `ui_text.cpp:1398` | 空文本算可用；按字节判定（参考的文本本来一字节一字符） |
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 构造函数收 `Image & output`（给 `ImageRestorer` 用），`draw()` 先 `_background.restore()` 再画 | `output` 挪到 `Draw` 的参数（与 `MovableText` 等控件一致）；没有恢复这回事——每帧从干净缓冲重画，`Draw` 返回自己画过的矩形 |
+| `MovableSprite::hide()`/`show()` 立即上屏/复原 | 光标字形由 `Draw` 按可见性贴进缓冲：进来时可见才画并重置闪烁计时，不可见就只画文字、不动计时。否则整屏重画的模型里闪烁永远关不掉 |
+| 构造函数的 `std::optional<SupportedLanguage>` | 未搬，本地化子系统 `ui_language.*` 尚未移植（与 `TextInput` 同一处理） |
+| `height()` 复制一份 `TextInput` 再量 | 用同样的字体与宽度新造一个临时实例，结果相同 |
+
+收口未达成：计划写的「存档命名、战役名可用」前提不成立——`SelectFileDialog` 现在只有静态辅助（列文件、拼文件名），
+`InputStringDialog` 只有签名，两个都没有名字输入这一步；整个仓库没有一处调用 `TextInputField`。等 D 的屏幕键盘
+（`ui_keyboard.cpp`）与存档 / 战役名对话框移植时再接，届时直接 `new TextInputField( area, isMultiLine, isCenterAligned )`
+即可。另：`TextInputField` 在参考里属于 `ui_tool.cpp`，计划原先归到 `ui_text.cpp` 已改正。
+
+测试：`FontCharHandlerTests` 3 例（光标字形、可用文本、含不可用字节）；`TextInputFieldTests` 7 例（空字段与两块区域、
+只画在字段内、光标位置与隐藏时不画、居中开关、多行按整行滚动、`Height` 不动字段自身的文字、点在字段上换算出偏移）。
+全量 4 730 绿（Core 267 + Assets 416 + UI 946 + Game 3 101），构建 0 错误 0 警告。
+
+## 2026-11-21 D：屏幕键盘 `ui_keyboard.cpp` 全量 + `ui_language` 收口
+
+`ui_language.cpp` 的语言名单、缩写、码页与切换守卫此前已落在 `CodePage.cs` / `GameLanguage.cs` /
+`LanguageSwitcher.cs`，本步只补键盘本身，新增 `UI/Dialogs/` 六个文件（`ui_keyboard.cpp:1-1360`）：
+
+| 文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `VirtualKeyboardLayout.cs` | `ui_keyboard.h:37-133`、`ui_keyboard.cpp:36-623` | `KeyboardDialogAction`、`KeyboardLayoutType`、`KeyboardCursorMove` 三个枚举；十七种语言的字母表（按码页 CP1250/1251/1252/1253/1254/1258/ISO-8859-3/16 解码）、数字与标点表、`GetCharacterLayout`、`GetDefaultButtonSize`、`IsLanguageSwitchingSupported`、全部布局常量 |
+| `VirtualKeyboardArtwork.cs` | `ui_keyboard.cpp:1185-1200`、`1320-1328` | 窗框、`STONEBAK` 底板、`REQBKG` 第 0 帧输入框、确定键 0/1 帧 |
+| `VirtualKeyboardRenderer.cs` | `KeyboardRenderer`（`ui_keyboard.cpp:137-370`） | 窗口、`TextInputField`、光标、`InsertCharacter`/`RemoveCharacter`/`SwapSign`/`Resize`/`SetCursorPosition`/`Update`，多行自动换行与滚动、光标闪烁、`InputAreaHeightIncrease` |
+| `VirtualKeyboardButton.cs` | `KeyboardButton`（`ui_keyboard.cpp:372-426`） | `ButtonSprite` + 阴影 + 快捷键 + 动作 + 反相渲染标记 + 右键说明 |
+| `VirtualKeyboardText.cs` | 各处 `_( ... )` | 特殊键标签与右键说明；`OutOfRange` 的占位符替换 |
+| `VirtualKeyboardView.cs` | `processVirtualKeyboardEvent`（`ui_keyboard.cpp:1125-1250`）+ 两个外层循环（`1252-1480`） | 生成按键、居中排布、事件处理、布局与语言切换、确定键；`ReadNumpad`/`TryCreateNumpad`/`GetStartLanguage`/`LastSelectedLanguage` |
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `while ( le.HandleEvents() )` 阻塞循环，换布局时 `continue` 重来，按确定键才返回 | `ProcessEvents` 处理一帧并就地应用布局 / 语言动作，宿主循环到读到 `KeyboardDialogAction.Close` 为止 |
+| 每个循环重画窗口并用 `ImageRestorer` 擦掉上一帧 | 每帧从干净缓冲重画：`Draw` 依次画窗口、文字、按键、确定键 |
+| `generateButtons` 每次调用都重建 `KeyboardButton` 并贴图 | 布局只在 `LayoutType`/`Language` 变化时重建，`Rows`/`OkayArea`/`WindowArea` 首次访问时惰性构建 |
+| 反相渲染（大写键盘上那个 `|`）每帧 `press()` 一次后由 `drawOnState` 改状态 | 构建时 `SetPressed( true )`，之后每帧按「是否按住」取反 |
+| 阴影画在按键之后 | 画在按键之前（`DrawShadow` 先于 `Draw`），重叠像素因此是按键本体；隐藏按键连阴影都不画，与参考「`draw()` 返回 `false` 就跳过阴影」一致 |
+| `ICN::BUTTON_SMALL_OKAY_GOOD` 由 `game_assets.cpp:1042-1054` 现拼（原始资源分支取 `SPANBTN.ICN`） | 资源层只有档案帧，确定键取 `SPANBTN.ICN` / `SPANBTNE.ICN` 的 0/1 帧，即参考 `useOriginalResources()` 那条路 |
+| 参考的 `assert`（缺语言表、`ChangeLanguage` 越权、`getDefaultButtonSize` 未列语言） | 分别退成：回退英文表、忽略该动作、英文 30×25 |
+| 布局生成期间的 `_( )` 由 `LanguageSwitcher` 换语言 | 标签由调用方按目标语言先行解析（`VirtualKeyboardText`），UI 层不读翻译目录 |
+| `std::stoi` 家族：空串 / 只有减号抛 `invalid_argument`，溢出抛 `out_of_range`，尾随垃圾被忽略 | `ReadNumpad` 用 `int.TryParse` 区分，空串与单个符号算「非法」，溢出与越界算「越界」；尾随垃圾直接判非法（键盘打不出，走不到） |
+
+收口：`openVirtualKeyboard`/`openVirtualNumpad` 的阻塞循环与两处 `showStandardTextMessage` 没有对应函数，
+宿主读 `VirtualKeyboardResult.Popup` 自己弹窗，读 `ReadNumpad` 的返回值自己报错。存档 / 战役名对话框仍未移植，
+所以屏幕键盘暂时还没有调用方——和 C 步记录的缺口同一个。
+
+测试：`VirtualKeyboardLayoutTests` 9 例（英文三行大小写、数字与标点表、四种语言的键宽、语言切换守卫、
+CP1251 解码、未知布局）；`VirtualKeyboardViewTests` 17 例（小写布局的行数与隐藏语言键、点字母打出小写、确定键与
+热键关闭、布局键三态往返与反相键的按下状态、右键说明、多行多出回车键与窗口变高、语言键往返并记住选择、
+数字键盘的正负号与隐藏键、`ReadNumpad` 八种输入、缺图与非法参数）。全量 **4 756 绿**
+（Core 267 + Assets 416 + UI 972 + Game 3 101），构建 0 错误 0 警告。
+
+## 2026-11-21 E-1：`ui_dialog.cpp` 收尾
+
+`DialogElement.cs` 补齐参考里最后两个元素，`ui_dialog.cpp` 的元素类到此一一对应：
+
+| 端口类 | 参考 | 内容 |
+| --- | --- | --- |
+| `CustomAnimationDialogElement` | `ui_dialog.h:317-346`、`ui_dialog.cpp:856-902` | 静态图 + 循环动画，尺寸取自静态图，动画位置是元素内偏移加帧自身锚点；`Update` 按 `IcnAnimation` 的帧时长推进并重画 |
+| `MonsterDialogElement` | `ui_dialog.h:348-363`、`ui_dialog.cpp:904-935` | 底板（`STRIP` 第 12 帧，忽略变换层）+ 种族底图 + 立绘，全部叠在 `(6, 6)` 处再整体贴出；左右键都返回生物说明弹窗 |
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `CustomAnimationDialogElement` 拿 ICN id，逐帧问 `ICN::getAnimatedIcnIndex()` | 调用方直接给帧列表与区间，和 `AnimationDialogElement` 一致（端口没搬那张表） |
+| `MonsterDialogElement` 自己调 `Assets::getImage( ICN::STRIP, 12 )` 与 `renderMonsterFrame()`（`ui_monster.cpp:31-59`），弹窗是 `Dialog::ArmyInfo()` | 底板 / 种族底图 / 立绘由调用方给（`MonsterIcnIds.GetDwellingIcn()` + `ArmyBarArtwork.GetRaceFrameIndex()` 取），弹窗返回 `DialogPopup` 文本。`ui_monster.cpp` 与军队信息窗口在 H 步，届时改回参考的取图方式 |
+| 静态图只在 `_currentIndex == 0` 时画一次 | 每次 `Draw` 都画（整帧重画，理由同 `AnimationDialogElement`） |
+| 立绘画进 `STRIP` 副本后才贴出 | 每次都从 `WithoutTransformLayer().Clone()` 的干净副本开始，图片本身不被写脏 |
+
+测试：`DialogElementTests` 新增 7 例（静态图尺寸与首帧位置、按帧时长推进并回绕、构造参数校验、生物底板的
+尺寸与 `(6, 6)` 叠加、重复绘制不写脏图源、左右键弹窗与区域外不响应、缺底板）。全量 **4 763 绿**
+（Core 267 + Assets 416 + UI 979 + Game 3 101），构建 0 错误 0 警告。
+
+## 2026-11-21 E-2：删两套自建窗框，`ui_window.cpp` 对拍
+
+两套自建窗框工件删除，`StandardWindow` 与 `FrameBox` 回到参考的取图方式——**对话框骨架只剩一套**：
+
+| 端口类 | 参考 | 取图方式 |
+| --- | --- | --- |
+| `Dialogs/StandardWindow.cs` | `ui_window.cpp:1-541` | 边框取 `SURDRBKG.ICN`（上/下）与 `WINLOSE.ICN`（角/左右，窗口过矮时退到 `SURDRBKG` 帧 4/5），内衬取 `STONEBAK.ICN`；`Settings.IsEvilInterfaceEnabled` 时换成 `SURDRBKE.ICN` / `WINLOSEE.ICN` / `STONEBAK_EVIL.ICN` |
+| `Dialogs/FrameBox.cs` | `dialog_box.cpp` 的 `Dialog::FrameBox` / `redraw()` | 帧 0-2 与 4-6 取自 `BUYBUILD.ICN`（`ICN::BUYBUILD`），邪恶界面换成 `BUYBUILE.ICN`（`ICN::BUYBUILE`） |
+
+接口收敛（调用方不再碰窗框图）：
+
+* `MessageBox.Create` 去掉 `chrome` 形参；`KingdomIncome.Create`、`TavernView.TryCreate`、
+  `SelectCountView.TryCreate`、`MarketplaceView.TryCreate`、`MarketplaceLayout.Create` 同步。
+* `RecruitHeroArtwork` / `BuildDialogArtwork` 不再持有 `Chrome` 属性，`RecruitHeroView` / `BuildDialogView`
+  直接用 `FrameBox.Create`。
+* `FrameBox` 新增 `ArtworkFileName`、`IsArtworkAvailable`、`RequiredSpriteCount`，供 `Try*` 与场景判断能否画框。
+* App 场景（`MainMenuScene`、`EditorMainMenuScene`、`EditorScene`、`CastleScene`、`MarketplaceWindow`）把
+  `_messageChrome` 换成布尔 `HasMessageFrame()` / `_hasInfoFrame`，日志文案同步。
+* `tools/FHeroes2.AssetProbe` 的 `window` 命令改为打开 `AssetBundle` 并设 `GameAssets.Current`，预览不再收窗框。
+
+删除的文件：`Dialogs/StandardWindowChrome.cs`、`Dialogs/FrameBoxChrome.cs`。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `Assets::getImage` 缺图时断言 / 返回空图，`FrameBox` 直接崩 | `StandardWindow.Draw` / `FrameBox.Create` 抛 `InvalidOperationException`（带档案名与帧号）；`Try*` 系列先问 `FrameBox.IsArtworkAvailable` 返回 `null`，场景据此静默降级 |
+| `FrameBox` 在 `redraw()` 里每次 `getImage`，由 ICN 缓存兜底 | 同名帧每次也走 `Assets.GetImage`（自带缓存），端口不另存副本 |
+| `ui_window.cpp` 用 `ImageRestorer` 还原被覆盖的底图 | 不搬：场景整帧重画，`StandardWindow` / `FrameBox` 只负责贴图 |
+| 窗框在构造时即取图 | `StandardWindow` 延迟到首次 `Draw`（布局不依赖图片尺寸）；`FrameBox` 必须在 `Create` 时取（左/右列宽决定布局） |
+
+测试：`FrameBoxTests` 重写（常量、`BUYBUILD.ICN` / 帧号、缺数据抛错、布局与中段切片理论值、绘制只落在
+`FrameArea` 内、底行位于切片之下）；`StandardWindowTests` 去掉 chrome 表测试，绘制断言改为「不再是画布底色」
+与「角缝里含内衬像素（有/无内衬两次绘制对比）」；`MessageBoxTests`、`KingdomIncomeTests`、`TavernViewTests`、
+`SelectCountViewTests`、`MarketplaceViewTests`、`GiftWindowTests`、`RecruitWindowTests`、`SettingsDialogTests`、
+`AdventureOptionsViewTests`、`RecruitHeroViewTests`、`BuildDialogTests`、`VirtualKeyboardViewTests` 同步去掉自建窗框，
+改为在 `GameAssets.Current` 作用域内创建（缺数据的机器直接返回）。全量 **4 764 绿**
+（Core 267 + Assets 416 + UI 980 + Game 3 101），构建 0 错误 0 警告。
+
+## 2026-11-22 F：`ui_button.cpp` 收尾（合成按钮 / 取词回落 / `ButtonRestorer`）
+
+`gui/ui_button.cpp` 的剩余件全部落地，端口不再有「按钮外观自算」的代码：
+
+| 参考 | 端口 |
+| --- | --- |
+| `getSupportedText()`（:959-963） | `ButtonFactory.GetSupportedText( translatedText, untranslatedText, in FontType )` |
+| `makeButtonWithBackground()`（:739-768） | `ButtonFactory.MakeButtonWithBackground( offsetX, offsetY, released, pressed, background )` |
+| `makeButtonWithShadow()`（:770-813） | `ButtonFactory.MakeButtonWithShadow( ..., Point shadowOffset )` |
+| `ButtonRestorer`（:643-665） | `Widgets/ButtonRestorer.cs`（`IDisposable`，构造即压暗并重绘，`Dispose` 还原） |
+
+两个合成函数的做法与参考一致：背景按 `released` 的尺寸从自身锚点处裁一块（`Crop( background, offsetX,
+offsetY, released.width(), released.height() )`），把释放态与按下态按各自锚点贴上去；禁用态是 `released` 的
+拷贝过 `PAL::PaletteType::DARKENING` 后贴到**同一块背景副本**上（参考把裁好的背景直接 move 给禁用态，端口也
+复用 `croppedBackground.Image`，不另拷）。阴影变换号沿用参考硬编码的 `3`。
+
+`ButtonArtwork.AddShine` 复核时补上了参考 `ui_button.cpp:241-242` 漏掉的两笔（`DrawLine( {15,4}, {13,6} )`
+第一色 + `SetPixel( 12, 7 )` 末色），此前左侧长亮线少一段。
+
+排查记录：`MakeButtonWithBackground_DarkensTheDisabledState` 一开始画不出禁用态，根因不是 `Draw` 的偏移，
+而是禁用态精灵用「锚点归零」的方式克隆——参考里 `Sprite disabled( released )` 是**拷贝构造**、锚点仍是释放态
+的 `(x, y)`；锚点归零后暗色按钮把整块背景盖满，背景像素被抹成暗色。改用 `released.Clone()` 后正确。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `getSupportedText` 里直接取 `gettext` 的译名 | 翻译层未搬，译名/原名由调用方成对传入 |
+| `makeButtonWithBackground` 用 `PAL::GetPalette( DARKENING )` 造禁用色 | `ImageOps.ApplyPalette( image, PaletteId.Darkening )`（同一张调色板表） |
+| `ButtonRestorer` 重绘到 `Display::instance()` 并 `updateNextRenderRoi( area() )` | 帧缓冲由调用方传入，宿主负责上传；无渲染 ROI 概念 |
+| `ButtonGroup( const std::vector<const char *> & )` 文本构造函数 | 未搬：唯一调用方 `dialog_selectitems.cpp` 的 TOWN/CASTLE 行未转，且它把索引 `0..n-1` 当按钮值返回，端口需要 `DialogButton`；其底层 `MakeSymmetricBackgroundSprites` 已就位 |
+| `OptionButtonGroup` 依赖 `ActionObject` 观察者 | 未搬：`ButtonBase` 无观察者机制（已在该类文档登记），设置对话框暂用现成选项按钮 |
+
+台账复核（`docs/planv4.md` §5.4）：`Widgets/DialogButtonArtwork.cs` 现在只是一个 `readonly record struct`
+（一对 released/pressed 精灵）+ 资产注入接口，是取图缝而不是画法；`Widgets/ButtonArtwork.cs` 已核实是
+`resizeButton` / `addButtonShine` / `makeTransparentBackground` 的 1:1 移植。两者都保留。
+
+测试：`ButtonFactoryTests` +4（背景合成、禁用态压暗、阴影锚点、`GetSupportedText` 回落），新增
+`ButtonRestorerTests`（5：构造即暗、`Dispose` 还原、原本已禁用不动、可重复 `Dispose`、空参），
+`ButtonArtworkTests` 同步补齐新增亮线的像素断言，`EmptyButtonsTests`（9）复跑确认六张 `EMPTY_*_BUTTON` 表。
+全量 **4 775 绿**（Core 267 + Assets 416 + UI 989 + Game 3 103），构建 0 错误 0 警告。
+
+## 2026-11-22 G1（1/4）：`interface_border.cpp` 的 `GameBorderRedraw`
+
+`UI/Interface/GameBorder.cs`：`GameBorderRedraw()`（`interface_border.cpp:70-418`）与文件内的
+`repeatPattern()`（:40-67）1:1 移植，含 `borderWidthPx`/`tileWidthPx`/`radarWidthPx` 三个常量（`BorderWidth`/
+`TileWidth`/`RadarWidth`）与 `ADVBORD.ICN`/`ADVBORDE.ICN` 两个资产名。
+
+拼边框的九段切法、四组重复块（上下 32 像素瓦片与 6 像素角边、邪恶底边的 7 像素骨节、左右 32 像素竖瓦片与
+4/6/8 像素竖缝）、`topPadWidth`/`bottomPadWidth`/`vertPadHeight` 的余量分配、按多余高度选 4/7/8 行图标的
+`iconsCount`、视图世界模式对中缝分叉的两块 3 像素补丁，全部按参考的 `srcrt`/`dstpt` 逐步搬，没有重排。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 内部读 `Settings::Get().isHideInterfaceEnabled()` / `isEvilInterfaceEnabled()` 与 `Display::instance()` 尺寸 | 三个开关与帧缓冲都由调用方传入（`hideInterface`/`evilInterface`/`viewWorldMode`、`PixelBuffer target`），尺寸取自 `target` |
+| `ICN::ADVBORD` / `ICN::ADVBORDE` | `GameBorder.GoodAssetName` / `EvilAssetName` + `AssetBundle.TryReadIcn`（`TryLoad` 返回 `null` 而不抛） |
+| `fheroes2::Blit( in, inX, inY, out, outX, outY, w, h )` | `ImageOps.Blit( target, Point, art, Rect )`，只取图像层、不带变换层 |
+| `fheroes2::Rect fixrt / fixpt` 两个局部量 | 端口 `Rect`。参考把 `fixpt` 声明成 `Rect` 却当点用（`fixpt.x += 14`），端口直接写目标点 |
+
+测试 `GameBorderTests`（7 条）：640x480 下上/左边缘条带与 `ADVBORD.ICN` 第 0 帧逐像素一致且地图区不被改写、
+隐藏界面时整屏不动、672x512 时四角贴合（重复块加余量正好铺满）、视图世界模式下补丁生效、`RepeatPattern` 的
+余量贴边与空请求，以及无档案时 `TryLoad` 返回 `null`。数据缺失时用例静默返回。
+
+全量 **4 782 绿**（Core 267 + Assets 416 + Game 3 103 + UI 996），构建 0 错误 0 警告。
+
+G1 剩余：`interface_base.cpp`（需 `GameArea`/`Radar` 类型，G2/G3）、`interface_cpanel.cpp`、`interface_buttons.cpp`、
+`interface_border.cpp` 的 `BorderWindow`（需 `Dialog::FrameBorder`，H 步）。
+
+## 2026-11-22 G1（2/4）：`Dialog::FrameBorder`、`ImageRestorer`、`Interface::BorderWindow`
+
+G1 的第一批依赖落地，`interface_border.cpp` 至此全部转完：
+
+| 参考 | 端口 |
+| --- | --- |
+| `fheroes2::ImageRestorer`（`engine/image.h:184-231`、`engine/image.cpp:665-773`） | `Core/Imaging/ImageRestorer.cs` |
+| `Dialog::FrameBorder`（`dialog.h:177-225`、`dialog_frameborder.cpp:34-77`） | `UI/Dialogs/FrameBorder.cs` |
+| `Interface::BorderWindow`（`interface_border.h:35-78`、`interface_border.cpp:420-524`） | `UI/Interface/BorderWindow.cs`（含 `BorderDrag`） |
+
+`ImageRestorer` 的 `_updateRoi()` 逐分支照搬：负起点向内裁、超出远端裁剪、整块在外则塌成 `(0,0,0,0)`；`update()`
+先把 `_isRestored` 置回 `false` 再存新矩形，`restore()` 可重复调用而析构不再重复。端口 `PixelBuffer` 只有一层，
+参考里「单层就不拷贝变换层」的分支在这里不存在。
+
+`FrameBorder` 的几何三段（`rect` = 内容 + 两侧边框、`area`、`top`）与「先 restore 再 update」的移动语义按参考写。
+`RenderRegular` 从 `shadowWidthPx` 处开始拉伸（右侧与底部各留一条阴影），`RenderOther` 整块拉伸，两者都走
+`ImageOps.Resize` + `ImageOps.Blit`。
+
+`BorderWindow` 的 `GetRect` 就是参考的 `isHideInterfaceEnabled() && border.isValid()` 分支；隐藏界面时
+`SetPosition(x,y)` 先把窗口夹进屏幕、再换算成内容原点、重放边框并调用派生类的 `SavePosition()`。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `ImageRestorer` 里 `_copy.resize()` 复用缓冲 | `PixelBuffer` 尺寸只读，`Update` 重新分配 `_copy` |
+| `FrameBorder` 构造时把 restorer 绑到 `Display::instance()`，渲染时自己读 `Settings` + `Assets` | 帧缓冲由构造参数传入，主题与素材由调用方经 `FrameBorder.TryLoadArtwork` + `RenderRegular( target, artwork, rect )` 提供 |
+| `BorderWindow` 内部读 `Settings::Get().isHideInterfaceEnabled()` | `HideInterfaceEnabled` 属性由场景赋值（面板重建时本来就会重读设置） |
+| `QueueEventProcessing()` 是阻塞循环：虚线框 `DrawBorder` + `MovableSprite` + `while ( le.HandleEvents() … )` | 拆成 `QueueEventProcessing( events )` 返回 `BorderDrag`（`MoveTo` / `Draw`），帧循环由宿主驱动，与虚拟键盘、文字光标同一套做法 |
+| 循环里 `Cursor::Get().SetThemes( Cursor::POINTER )` | 未做：光标层在 UI 程序集之上，由宿主在拿到 `BorderDrag` 时处理 |
+| `DrawBorder()` 顺带清掉被画像素的变换层 | 端口 `ImageOps.DrawBorder` 只吃单层 `PixelBuffer`，`BorderDrag` 事后自己清（`MakePaintedPixelsVisible`），否则虚框整块被 `reset()` 的跳过标记吃掉 |
+| `BorderDrag` 的颜色 `GetColorId( 0xD0, 0xC0, 0x48 )` 存在静态量里 | 改成属性按需解析，避免加载类型时就要求 `KB.PAL` |
+
+测试：`ImageRestorerTests`（6：还图/两端裁剪/整块在外/`Update` 换矩形/`Restore` 可重入/显式 `Restore` 后 `Update`
+恢复自动还原）、`FrameBorderTests`（7：边框几何、负尺寸沿用旧矩形、自定义边框宽、析构还图、`RenderOther` 拉伸、
+`RenderRegular` 从阴影带之后起拉、空矩形不画）、`BorderWindowTests`（10：正常/隐藏两种 `GetRect`、夹屏、`SavePosition`、
+顶边拖动起手与两处否决、`BorderDrag` 跟随光标并画虚线框、鼠标捕获在松开那一帧仍归属面板）。需要 `KB.PAL` 的两条
+用例走 `GameAssets.Current`，数据缺失时静默返回。
+
+全量 **4 805 绿**（Core 273 + Assets 416 + Game 3 103 + UI 1 013），构建 0 错误 0 警告。
+
+G1 剩余：`interface_base.cpp`（需 `GameArea`/`Radar`，G2/G3）、`interface_cpanel.cpp`、`interface_buttons.cpp`
+（两者都要 `Interface::AdventureMap` 编排器，属 S14-5 / G4）。
+
+
+## 2026-11-22 G1（3/4）：`Interface::BaseInterface` 基座与 `GameArea`/`Radar` 签名骨架
+
+`interface_cpanel.cpp` 与 `interface_buttons.cpp` 都要 `Interface::AdventureMap`，而编排器又挂在
+`Interface::BaseInterface`（`interface_base.h:60-186`）上。按项目规则先给被依赖方落接口，本轮三件：
+
+| 参考 | 端口 |
+| --- | --- |
+| `Interface::Redraw` 掩码（`interface_base.h:33-59`） | `UI/Interface/Redraw.cs`（`[Flags]`，数值逐个对齐，含 `Icons = Heroes \| Castles`） |
+| `Interface::BaseInterface`（`interface_base.h:60-186`） | `UI/Interface/BaseInterface.cs` |
+| `Interface::GameArea` + `ScrollingType`/`RedrawLevelType`/三种动画信息（`interface_gamearea.h:34-320`） | `UI/Interface/GameArea.cs` |
+| `Interface::Radar`（`interface_radar.h:34-97`） | `UI/Interface/Radar.cs` |
+
+已实现的真逻辑：重绘掩码的累积与 `NeedRedraw`、四条边缘滚动判定（余量就是 `GameArea` 边框的 16 像素，
+即端口的 `GameBorder.BorderWidth`）、视口矩形与中点、待滚动标志、动画队列、以及两个动画步进器
+（`ObjectFadingOutInfo` / `ObjectFadingInInfo`，每帧 ±20，255→0 与 0→255）。
+`GameArea` 的几何（`generate`/`Scroll`/`SetCenterInPixels`/绘制）与 `Radar` 的成像（`_redraw`/`SetZoom`/光标）
+方法体统一抛 `NotImplementedException`，分别归 G3 与 G2。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `BaseInterface` 用 `Display::instance()` 的尺寸做边缘滚动 | 判定拆成 `Point cursor` + `Size screenSize` 两个参数，尺寸由宿主传 |
+| `_radar( *this )` 自己从 `Display` + `Settings` 取几何 | `Radar( BaseInterface &, PixelBuffer display )`：帧缓冲注入（端口无 `Display` 单例） |
+| 抽象方法 `redraw( uint32_t force )` | 改名 `RedrawInterface( Redraw force )`：C# 里方法不能与它接收的枚举类型同名 |
+| `renderWithFadeInOrPlanRender()` / `validateFadeInAndRender()` 读 `Game::validateDisplayFadeIn()` | 抛 `NotImplementedException`：全局 `Game` 状态未转（S14），端口淡入由宿主持有的 `DisplayFade` 驱动 |
+| `Radar` 的 View World 副本构造、`RedrawForViewWorld()`、`QueueEventProcessingForWorldView()` | 暂不声明：参数类型 `ViewWorld::ZoomROIs` 属于 `kingdom/view_world.cpp`（H），到那时一并补进 `Radar` |
+| `GameArea::_inertiaHandler`（`UIScrollInertia`）与 `updateInertia()` | 一起留给 G3（`ui_tool.cpp` 的 `UIScrollInertia` 尚未转） |
+
+一律不加「临时替代」：骨架里没有自造的滚动、没有简化雷达，调用方拿到的是会立刻抛异常的签名。
+
+测试 `InterfaceBaseTests`（22 条）：`Redraw` 十个数值与 `Icons` 别名、掩码累积与 `NeedRedraw`、四条边缘判定
+（0/15/16/623/624/464 等边界）、视口矩形与中点、`IsEditor` / `UseMouseDragMovement` / `GetRadar()` 非空、
+`RenderWithFadeInOrPlanRender` 抛 `NotImplementedException`、两个动画步进器的 13 帧收敛与字段携带。
+
+全量 **4 827 绿**（Core 273 + Assets 416 + Game 3 103 + UI 1 035），构建 0 错误 0 警告。
+
+G1 剩余：`interface_cpanel.cpp`、`interface_buttons.cpp`，两者下一步随 `Interface::AdventureMap`
+（`game_interface.h`）骨架一起落。
+
+## 2026-11-22 G1（3/4）：`AlphaBlit` 与 `Interface::ControlPanel`
+
+隐藏界面后右下角那块 180x36、半透明的五个按钮条（`gui/interface_cpanel.cpp`）转完，连带补它唯一缺的
+引擎函数 `fheroes2::AlphaBlit()`。
+
+| 参考 | 端口 |
+| --- | --- |
+| `fheroes2::AlphaBlit()`（`engine/image.cpp:961-1085`） | `Core/Imaging/ImageOps.AlphaBlit.cs` |
+| `Interface::ControlPanel`（`gui/interface_cpanel.h:38-90`、`interface_cpanel.cpp:34-133`） | `UI/Interface/ControlPanel.cs` + `ControlPanelButton` |
+
+`AlphaBlit` 按参考逐像素做：变换层 `1` 跳过、`>1` 先用 `PaletteTransformTable` 把**目标色**改掉再混合；
+混合在 6 位域 `( 源 * alpha + 目标 * ( 255 - alpha ) ) / 255` 整数截断，再交给 `PALColorId.Get` 回查调色板；
+`alpha == 255` 退化为普通 `BlitSprite`，`alpha == 0` 直接返回。`ControlPanel` 的几何是五块 36x36 顺排、
+`SetPos` 同时移动整条与五块，`_redraw` 五块都以 128 半透明叠加。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `ControlPanel( AdventureMap & )` 记编排器引用，点击直接调 `EventSwitchShowRadar()` 等 | `QueueEventProcessing( LocalEvent )` 返回 `ControlPanelButton`（Radar/Icons/Buttons/Status/EndTurn/None），事件由编排器执行——与 `BorderDrag` 同一套「阻塞循环改宿主驱动」 |
+| `ResetTheme()` 在构造里读 `Settings` + `Assets` | 静态工厂 `ControlPanel.Create( AssetBundle?, bool evilInterface )`，缺图返回 `null` |
+| 取图走 `Assets::getImage( icn, frame )` | `assets.TryReadIcn( "ADVBTNS.ICN" / "ADVEBTNS.ICN" )`，帧号 4/0/12/10/8 提为常量 |
+| `AlphaBlit` 用 `getRGBGamePalette()` 全局调色板 | 形参传 `Palette`（与 `ImageOps.ApplyAlpha` 一致），取 `ToRaw()` 后 `>> 2` 进 6 位域 |
+| `AlphaBlit` 三个重载含 `flip` | 只落两个（整图 + 显式落点），`flip` 未用即不声明 |
+
+测试：`AlphaBlitTests`（10：50% 混合落在中间色、通道独立混合、截断取整、`255` 等同普通 blit、`0` 不画、
+变换层跳过、两侧裁剪、整块在外、偏移重载、空参抛错）、`ControlPanelTests`（14：五块布局、五块点击命中 +
+两块落空、右键不认、点击被消费、半透明叠加 + 边界不出界、空参抛错、无档案返回 `null`、真档案读到按钮组）。
+
+全量 **4 851 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 049），构建 0 错误 0 警告。
+
+G1 只剩 `interface_buttons.cpp`：它要 `AdventureMap` 编排器与 `Kingdom`/`World`（H + G4），下一步先落
+`Interface::AdventureMap`（`game_interface.h`）的签名骨架。
+
+## 2026-11-22 G1 收官（4/4）：`Interface::ButtonsPanel`
+
+冒险地图那八个按钮（`gui/interface_buttons.cpp`）转完，G1 四个文件全部落地。
+
+| 参考 | 端口 |
+| --- | --- |
+| `Interface::ButtonsPanel`（`gui/interface_buttons.h:38-70`、`interface_buttons.cpp:34-293`） | `UI/Interface/ButtonsPanel.cs` + `ButtonsPanelAction` / `ButtonsPanelInput` |
+
+两行四列 144x72：上排下一英雄/移动/王国/法术，下排结束回合/冒险/存档/系统。每颗按钮吃 `ADVBTNS.ICN`
+（邪恶界面 `ADVEBTNS.ICN`）的 `2i` 释放帧与 `2i+1` 按下帧；只有移动按钮会换图——行走 (2,3)、行动 (16,17)、
+待机 (18,19)，其中 16..19 只有扩展素材有，缺帧时按文档回落到 (2,3)。`SetButtonStatus` 对应
+`_setButtonStatus()`：仅下一英雄/移动/法术三颗会变灰，其余五颗恒可用。`UpdatePressState` 对应参考里那个
+`drawOnPressOrRelease` lambda，按下/抬起就把按钮直接画进目标帧并回报是否需要呈现。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 记 `AdventureMap &`，点击直接调 `EventNextHero()` / `EventEndTurn()` … | `QueueEventProcessing( LocalEvent )` 返回 `ButtonsPanelAction`（按钮 + Click/LongPress/RightClick），事件由编排器执行 |
+| `_setButtonStatus()` 里查 `GetFocusHeroes()` 与 `world.GetKingdom()` | 面板收 `AdventureButtonStatus`，不碰游戏模型；为此给该记录加了 `HasValidPath`（长按判定要 `GetPath().isValidForMovement()`） |
+| `BorderWindow::QueueEventProcessing()` 先行，拖动时直接返回 `GameMode::CANCEL` | 拖动留在基类（返回 `BorderDrag` 由编排器持有），同签名的面板方法用 `new` 隐藏基类成员，文档写明「先调基类」 |
+| `QueueEventProcessing` 内部自己弹 tooltip（`Dialog::MessageBox`） | 返回 `RightClick` 动作，由编排器决定提示框 |
+| `SavePosition()` 写 `.fh2config` 的面板偏移 | 抛 `NotImplementedException`：`Settings` 尚无位置持久化 |
+| 构造函数 + `Display::instance()` | 帧缓冲与区域注入（同 `Radar`）；取图走静态 `Create( AssetBundle?, evil, display, area, artwork )` |
+
+测试 `ButtonsPanelTests`（26 条）：两行四列布局与 `AreaOf`、帧数不足抛 `ArgumentException`、移动按钮三套帧
+（行走 / 行动 / 缺帧回落）、三颗条件按钮的灰/亮、八颗按钮逐个点击命中、禁用按钮不响应、块外点击落空、
+右键按下报 `RightClick`、单击不误判成长按、八颗按钮逐个绘制到正确方格、禁用帧被压暗、按下/抬起各画一次、
+`SavePosition` 抛 `NotImplementedException`、无档案返回 `null`、真档案读到按钮组。
+
+全量 **4 877 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 075），构建 0 错误 0 警告。
+
+顺带：`FHeroes2.Game.AdventureMap.ButtonsPanel`（老场景自绘版）与新的 `UI/Interface/ButtonsPanel` 同名，
+`AdventureMapScene` 与测试用 `using ButtonsPanel = …;` 别名钉住各自那一个，等场景被 `Interface::AdventureMap`
+替换时一并删掉老版本。
+
+G1 完成。下一步 G2：`interface_radar.cpp`，填 `Radar` 的成像与光标（`ViewWorld::ZoomROIs` 相关的三件留到 H）。
+
+## 2026-11-22 G2（1/…）：`Interface::Radar`
+
+G1 骨架里 `Radar` 的方法体全是 `NotImplementedException`，本轮把成像、光标与事件补齐，G2 首项落地。
+
+| 参考 | 端口 |
+| --- | --- |
+| `Interface::Radar`（`gui/interface_radar.h:33-121`、`interface_radar.cpp:142-499`） | `UI/Interface/Radar.cs` + `RadarAction` |
+| `GetPaletteIndexFromGround` / `GetPaletteIndexFromColor`（匿名命名空间） | `Radar.GetPaletteIndexOfGround` / `GetPaletteIndexOfColor`（`public static`，测试要直查） |
+
+144x144 小地图：`SetZoom` 取 `area.width / world.w()`，36/72/144 三档地图分别 4/2/1 像素每格。
+`RedrawObjects` 沿参考的判定链逐格取色——英雄色（`OBJ_HERO`）、灯塔/炼金实验室/矿场/锯木厂的占领色、
+城镇色、道路色、地形色，丘陵与树木压深 3 级；`_roi` 只在覆盖全图时先刷黑，重绘完把 ROI 收回全图，
+保留参考的部分重绘语义（用于滚屏时只更新露出的条带）。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 全局 `world`、`Display::instance()`、`Settings::Get()` | `Build( World )` 注入世界，帧缓冲与区域由构造函数注入，`HideInterfaceEnabled` / `ShowRadar` 做成属性 |
+| `_redraw( bool )` 内部取 `Players::FriendColors()` | `RedrawRadar( bool, PlayerColor )`，友方颜色作参数；`redrawForEditor` 对应 `RedrawForEditor( bool )` |
+| `QueueEventProcessing()` 里直接 `_interface.SetCenter()`、右键弹 `Dialog::MessageBox` | 同签名方法用 `new` 隐藏基类（文档写明「先调基类」），返回 `RadarAction`（`MapCentered` / `ShowTooltip` / `None`），由编排器执行 |
+| `SavePosition()` 写 `.fh2config` 的雷达偏移 | 写进 `Settings.PosRadar`（会话内），落盘等配置写入器 |
+| 拷贝构造 `Radar( const Radar &, const Display & )`（View World 用）、`RedrawForViewWorld`、`QueueEventProcessingForWorldView` | 留到 H：要 `ViewWorld::ZoomROIs`；本轮 `RedrawCursor()` 无参重载同理依赖 `GameArea.VisibleTileRoi`（G3），先抛 `NotImplementedException` |
+| `Radar( BaseInterface & )` 自算位置 | 构造收 `Rect`，取图走静态 `Create( BaseInterface, PixelBuffer, AssetBundle?, evil )`（`HEROLOGO.ICN` / `HEROLOGE.ICN` 第 0 帧） |
+
+顺带：`BorderDrag.MakePaintedPixelsVisible` 由 `private` 提为 `internal`，雷达画 logo 与浮动边框共用同一套「把刚画的像素转成可见」逻辑。
+
+测试 `RadarTests`（26 条）：三档地图的 zoom 与 `RenderArea`、`Build(null)` 抛异常、`SetRedraw` 只收雷达位并累加、
+`SetRenderArea` 裁剪到世界、折叠且隐藏时丢弃 render area、全雾全黑、按 zoom 缩放每格、折叠绘 logo、隐藏不绘、
+光标矩形 40x30 @ (50,30) 且帧内含 `RADARCOLOR`、整图可见时无光标、无参 `RedrawCursor` 抛异常、右键报
+`ShowTooltip`、区域外点击落空、六色与组合色映射、九种地面与未知地面映射、`SavePosition` 写入 `Settings.PosRadar`、
+`Create` 无档案 / 真档案两路。
+
+全量 **4 903 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 101），构建 0 错误 0 警告。
+
+G2 剩余：`interface_status.cpp`（`Widgets/StatusPanel.cs`）、`interface_icons.cpp`（`Widgets/ItemsBarLayout.cs`）。
+
+## 2026-11-22 G2（2/3）：`Interface::StatusPanel`
+
+G1 骨架与 `StatusPanelPainter` 之后，状态栏按 `interface_status.cpp` 整块重写成 `UI/Interface/StatusPanel.cs`。
+
+| 参考 | 端口 |
+| --- | --- |
+| `Interface::StatusPanel`（`gui/interface_status.h:33-90`、`interface_status.cpp:55-524`） | `UI/Interface/StatusPanel.cs` + `StatusType` / `StatusPanelAction` |
+
+五个状态：日期、王国资源、焦点英雄/城堡的部队、「找到少量资源」、AI 回合沙漏。`NextState()` 只在前三态之间循环
+（日期 → 资源 → 部队），左键点击切换并立刻 `SetRedraw( REDRAW_STATUS )`；`_redraw()` 按面板高度分三段布局——
+装得下三态画三态、装得下两态画当前态加日期、否则只画当前态（居中），`AiTurn` 永远独占整块。
+背景 `_drawBackground()` 在普通布局下把 `STONBACK` 的第 11 行起重复 46 像素，让面板一直贴到屏幕底边；
+隐藏界面时改为填 `GetColorId( 0x51, 0x31, 0x18 )` 的深棕。`Reset()` 回到日期态并清掉「上次资源」，
+`SetResource()` 记下资源与数量并把 `ShowLastResource` 的 2.5 秒计时器重置。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 全局 `world`、`Display::instance()`、`Assets::getImage()` | 世界、帧缓冲、`IViewWorldSpriteSource`、`IMiniMonsterSprites` 全部构造注入；取图与 `Radar` 共用同一套源接口 |
+| `Settings::ShowStatus()` / `isEvilInterfaceEnabled()` / `IsGameType( TYPE_AUTO_PLAYTEST )` | `ShowStatus` / `EvilInterface` / `IsAutoPlayTest` 属性，由编排器与 `Settings` 同步（面板早于设置定型就建出来了） |
+| 右键弹 `Dialog::MessageBox`，拖动存全局 `_border` | 右键返回 `StatusPanelAction.ShowTooltip`、拖动经 `Dragging` 交回编排器；同签名 `QueueEventProcessing` 用 `new` 隐藏基类并文档写明「先调基类」 |
+| `SavePosition()` 写 `.fh2config` | 写进 `Settings.PosStatus`（`Settings` 为此补了 `PosStatus` / `PosRadar` 与两个 setter），落盘等配置写入器 |
+| `drawAITurnProgress()` 内部拉事件队列并呈现 | 只做动画节流与 `RedrawInterface( REDRAW_STATUS )` / `SetRedraw( REDRAW_GAMEAREA )`，事件循环归宿主 |
+| 隐藏界面时的浮动石框 | 无石框：九宫格边框图 `Dialog::FrameBorder` 没有可用的取图源，同 `Radar` 的偏差 |
+| 焦点英雄/城堡取 `Interface::GetFocus()` | `InterfaceFocus.GetFocusHeroes()` / `GetFocusCastle()`（G4 会再对拍一遍） |
+
+顺带修掉一个真 bug：`Copy()` 原先走 `ImageOps.BlitSprite( …, new Rect( srcX, srcY, w, h ) )`，而那个重载会把
+源切片自身的偏移再加到目标点上，于是「重复中段」的每一块都向下错位——`STONBACK` 11 行之后整块背景漏画。
+改用 `ImageOps.Blit( … , sprite.Image, rect )`，与 `StandardWindow.CopyArea` 同一语义。
+
+测试 `StatusPanelTests`（22 条）：两种布局下的 `SetPos`（普通布局拉到屏幕底、隐藏布局加 16 像素边框）、
+左键在日期/资源/部队之间循环、资源态下进入部队态被拒、右键报 `ShowTooltip`、区域外点击落空、隐藏且不显示时
+不画任何像素、无日期时只画背景、有真实资源时日期态/资源态/AI 沙漏都画出了像素（`AssetLocator` 找不到档案就
+跳过）、`Reset()` 回日期态、`DrawAiTurnProgress` 触发一次状态重绘、`SavePosition` 写进 `Settings.PosStatus`。
+
+全量 **4 925 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 123），构建 0 错误 0 警告。
+
+G2 剩余：`interface_icons.cpp`（`Widgets/ItemsBarLayout.cs`）。

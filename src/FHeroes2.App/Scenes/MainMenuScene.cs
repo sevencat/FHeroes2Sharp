@@ -174,7 +174,7 @@ public sealed class MainMenuScene : IScene
     private readonly Sprite? _lanternBase;
     private readonly IcnAnimation? _lantern;
     private readonly DoorHighlight? _door;
-    private readonly FrameBoxChrome? _messageChrome;
+    private readonly bool _hasMessageFrame;
     private readonly Button[] _buttons;
     private readonly Button? _editorSign;
     private readonly GameFonts _fonts;
@@ -205,7 +205,7 @@ public sealed class MainMenuScene : IScene
         Sprite? lanternBase,
         IcnAnimation? lantern,
         DoorHighlight? door,
-        FrameBoxChrome? messageChrome,
+        bool hasMessageFrame,
         Button[] buttons,
         Button? editorSign,
         GameFonts fonts,
@@ -220,7 +220,7 @@ public sealed class MainMenuScene : IScene
         _lanternBase = lanternBase;
         _lantern = lantern;
         _door = door;
-        _messageChrome = messageChrome;
+        _hasMessageFrame = hasMessageFrame;
         _buttons = buttons;
         _editorSign = editorSign;
         _fonts = fonts;
@@ -308,14 +308,14 @@ public sealed class MainMenuScene : IScene
             IcnSpriteFile? lanternFile = assets.TryReadIcn(AnimationAssetName);
             (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(lanternFile);
             DoorHighlight? door = CreateDoor(lanternFile);
-            FrameBoxChrome? messageChrome = CreateMessageChrome(assets);
+            bool hasMessageFrame = HasMessageFrame(assets);
 
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
             ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
 
             MainMenuScene scene = new(
-                frame, streetScene, lanternBase, lantern, door, messageChrome, buttons, editorSign, fonts,
+                frame, streetScene, lanternBase, lantern, door, hasMessageFrame, buttons, editorSign, fonts,
                 languages, culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
 
             GameLog.Info(
@@ -327,7 +327,7 @@ public sealed class MainMenuScene : IScene
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
                 (editorSign is null ? "editor sign drawn here, " : "editor sign from resurrection.h2d, ") +
-                (messageChrome is null ? "no tooltips, " : "right click tooltips, ") +
+                (hasMessageFrame ? "right click tooltips, " : "no tooltips, ") +
                 (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
@@ -722,7 +722,7 @@ public sealed class MainMenuScene : IScene
             titleHeight, optionFont.LineHeight, 1, _settingsArtwork.OkayHeight);
 
         StandardWindow window = StandardWindow.CreateCentered(
-            _settingsArtwork.Chrome, new Size(SettingsContentWidth, contentHeight), true, _frame.Size);
+            new Size(SettingsContentWidth, contentHeight), true, _frame.Size);
 
         ButtonGroup buttons = ButtonGroup.CreateStandard(window.ActiveArea, DialogButton.Ok, _settingsArtwork);
 
@@ -985,22 +985,22 @@ public sealed class MainMenuScene : IScene
     }
 
     /// <summary>
-    /// Loads the pieces of the message frame. The menu works without them, so missing artwork only
-    /// costs the right click tooltips.
+    /// Whether the message frame <see cref="FrameBox"/> reads can be composed. The menu works without
+    /// it, so missing artwork only costs the right click tooltips.
     /// </summary>
-    private static FrameBoxChrome? CreateMessageChrome(AssetBundle assets)
+    private static bool HasMessageFrame(AssetBundle assets)
     {
-        IcnSpriteFile? file = assets.TryReadIcn(FrameBoxChrome.AssetName);
-        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(file?.Sprites);
+        bool available = assets.TryReadIcn(FrameBox.ArtworkFileName) is { } file &&
+            file.Count >= FrameBox.RequiredSpriteCount;
 
-        if (chrome is null)
+        if (!available)
         {
             GameLog.Warn(
-                $"'{FrameBoxChrome.AssetName}' is missing or has fewer than " +
-                $"{FrameBoxChrome.RequiredSpriteCount} sprites; the menu will not show tooltips.");
+                $"'{FrameBox.ArtworkFileName}' is missing or has fewer than " +
+                $"{FrameBox.RequiredSpriteCount} sprites; the menu will not show tooltips.");
         }
 
-        return chrome;
+        return available;
     }
 
     /// <summary>
@@ -1009,7 +1009,7 @@ public sealed class MainMenuScene : IScene
     /// </summary>
     private MessageBox? CreateTip()
     {
-        if (_messageChrome is null)
+        if (!_hasMessageFrame)
         {
             return null;
         }
@@ -1038,7 +1038,7 @@ public sealed class MainMenuScene : IScene
             return null;
         }
 
-        return MessageBox.Create(header, body, _messageChrome, _fonts.Yellow, _fonts.Normal);
+        return MessageBox.Create(header, body, _fonts.Yellow, _fonts.Normal);
     }
 
     private static IReadOnlyList<GameText> SelectLanguages(IReadOnlyList<GameText> languages, GameFonts fonts)

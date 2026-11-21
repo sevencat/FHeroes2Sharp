@@ -7,6 +7,7 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -17,6 +18,7 @@ namespace FHeroes2.UI.Tests;
 /// <remarks>
 /// 需要 AGG 数据的几条在缺数据时直接返回；布局与价格框的几条不依赖资产，任何环境都会跑。
 /// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class BuildDialogTests
 {
     private const byte HeaderColor = 90;
@@ -133,8 +135,8 @@ public sealed class BuildDialogTests
     [Fact]
     public void ARichTownCanBuild()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
@@ -144,7 +146,7 @@ public sealed class BuildDialogTests
 
         Assert.Equal(BuildingStatus.AllowBuild, info.Status);
 
-        BuildDialogView view = CreateView(assets, info);
+        BuildDialogView view = CreateView(scope.Assets, info);
 
         Assert.True(view.OkayEnabled);
         Assert.True(view.Buttons[0].IsEnabled);
@@ -156,8 +158,8 @@ public sealed class BuildDialogTests
     [Fact]
     public void APoorTownIsToldWhatItCannotAfford()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
@@ -167,7 +169,7 @@ public sealed class BuildDialogTests
 
         Assert.Equal(BuildingStatus.LackResources, info.Status);
 
-        BuildDialogView view = CreateView(assets, info);
+        BuildDialogView view = CreateView(scope.Assets, info);
 
         Assert.False(view.OkayEnabled);
         Assert.False(view.Buttons[0].IsEnabled);
@@ -178,8 +180,8 @@ public sealed class BuildDialogTests
     [Fact]
     public void APrerequisiteIsWrittenOnItsOwnRow()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
@@ -189,7 +191,7 @@ public sealed class BuildDialogTests
 
         Assert.Equal(BuildingStatus.RequiresBuild, info.Status);
 
-        BuildDialogView view = CreateView(assets, info);
+        BuildDialogView view = CreateView(scope.Assets, info);
 
         Assert.False(view.OkayEnabled);
         Assert.Equal("Mage Guild, Level 1", view.Requirement);
@@ -200,8 +202,8 @@ public sealed class BuildDialogTests
     [Fact]
     public void ADisabledBuildingSkipsTheRequirementRow()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
@@ -211,7 +213,7 @@ public sealed class BuildDialogTests
 
         Assert.Equal(BuildingStatus.BuildDisabled, info.Status);
 
-        BuildDialogView view = CreateView(assets, info);
+        BuildDialogView view = CreateView(scope.Assets, info);
 
         Assert.False(view.OkayEnabled);
         Assert.Null(view.Requirement);
@@ -222,15 +224,15 @@ public sealed class BuildDialogTests
     [Fact]
     public void DrawPaintsTheFrameAndLeavesTheRestAlone()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
 
         Castle castle = CreateTown(MapRace.Knight);
         BuildingInfo info = new(castle, BuildingType.Well, Rich);
-        BuildDialogView view = CreateView(assets, info);
+        BuildDialogView view = CreateView(scope.Assets, info);
 
         Assert.True(view.FrameArea.X >= 0);
         Assert.True(view.FrameArea.Y >= 0);
@@ -294,8 +296,34 @@ public sealed class BuildDialogTests
         return view;
     }
 
-    private static AssetBundle? OpenArchives() =>
-        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+    /// <summary>
+    /// Opens the game data and points <see cref="GameAssets.Current"/> at it: the dialog frame reads
+    /// <c>BUYBUILD.ICN</c> itself, so <see cref="BuildDialogView.TryCreate"/> needs it.
+    /// </summary>
+    private sealed class ArchiveScope : IDisposable
+    {
+        private readonly AssetBundle? _assets;
+
+        private ArchiveScope(AssetBundle? assets) => _assets = assets;
+
+        public bool HasData => _assets is not null;
+
+        public AssetBundle Assets => _assets!;
+
+        public static ArchiveScope Open()
+        {
+            AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+            GameAssets.Current = assets;
+
+            return new ArchiveScope(assets);
+        }
+
+        public void Dispose()
+        {
+            GameAssets.Current = null;
+            _assets?.Dispose();
+        }
+    }
 
     /// <summary>A glyph source with the metrics of <c>FONT.ICN</c> (15 pixel line, 6 pixel advance).</summary>
     private sealed class FakeGlyphSource : IGlyphSource

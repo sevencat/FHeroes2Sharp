@@ -251,16 +251,16 @@
 
 | 参考文件 | 行数 | 端口对应 | 判定 |
 | --- | --- | --- | --- |
-| `ui_tool.cpp` | 861 | `Widgets/ColorFade.cs`、`DisplayFade*.cs`、`*Restorer.cs`、`HeroRacePortrait.cs`、`IntegerValueTyping.cs`、`Game/Gui/LocalizedText.cs`、`MovableText.cs`、`SystemInfoRenderer.cs`、`TimedEventValidator.cs` | ①部分：剩 `getLocalizedStrings`（翻译层，不搬）、`UIScrollInertia`（G3 随 `interface_gamearea` 搬） |
-| `cursor.cpp` | 225 | `AdventureMapScene` 内部自选光标 | ②未移植 |
+| `ui_tool.cpp` | 861 | `Widgets/ColorFade.cs`、`DisplayFade*.cs`、`*Restorer.cs`、`HeroRacePortrait.cs`、`IntegerValueTyping.cs`、`TextInputField.cs`、`Game/Gui/LocalizedText.cs`、`MovableText.cs`、`SystemInfoRenderer.cs`、`TimedEventValidator.cs` | ①部分：剩 `getLocalizedStrings`（翻译层，不搬）、`UIScrollInertia`（G3 随 `interface_gamearea` 搬） |
+| `cursor.cpp` | 225 | `Game/Cursor/CursorState.cs`、`CursorImages.cs`、`CursorRestorer.cs`、`ICursorRenderer.cs` | ①部分：缺 `engine/screen.cpp` 的软件光标实现（App 层），距离光标图由资材合成（`game_assets.cpp:3694-3740`）未搬 |
 | `ui_base.cpp` | 27 | 无 | ③纯缺失（`setIMEText` 一类平台钩子） |
-| `ui_button.cpp` | 813 | `Widgets/ButtonFactory.cs`、`ButtonBase.cs`、`ButtonSprite.cs`、`ButtonGroup.cs` | ①部分：缺透明背景按钮、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` |
+| `ui_button.cpp` | 813 | `Widgets/ButtonFactory.cs`、`ButtonBase.cs`、`ButtonSprite.cs`、`ButtonGroup.cs`、`ButtonArtwork.cs`、`ButtonRestorer.cs`、`Game/Assets/EmptyButtons.cs` | ①完成：剩 `ButtonGroup` 的文本构造函数（唯一调用方 `dialog_selectitems.cpp` 未转）与 `OptionButtonGroup`（依赖 `ActionObject` 观察者，端口无该机制） |
 | `ui_window.cpp` | 541 | `Dialogs/StandardWindow.cs`、`FrameBox.cs`、`Widgets/WindowPadding.cs` | ①部分：`FrameBox` 取的是 `dialog/dialog_box.cpp`，与 `ui_window.cpp` 的 `FrameBox` 不是同一件东西 |
-| `ui_dialog.cpp` | 849 | `Dialogs/DialogElement.cs` | ①部分：缺 `MonsterDialogElement`、`CustomAnimationDialogElement`、`drawMonsterLine` |
-| `ui_text.cpp` | 1132 | `Game/Gui/Text.cs`、`TextBase.cs` | ①部分：缺 `TextInputField`、`getCursorSprite`、字符校验工具 |
+| `ui_dialog.cpp` | 849 | `Dialogs/DialogElement.cs` | ①完成：元素类齐全；`drawMonsterLine` 属于军队信息窗口（`dialog.cpp`），随 H 一并转 |
+| `ui_text.cpp` | 1132 | `Game/Gui/Text.cs`、`TextBase.cs`、`TextInput.cs`、`MultiFontText.cs`、`TextAlgorithms.cs`、`FontCharHandler.cs` | ①部分：全转完；`getCursorSprite`/`isFontAvailable`/`cursorChar` 落在 `FontCharHandler` |
 | `ui_font.cpp` | 6317 | `Assets/Fonts`（自建字形渲染） | ②未移植：整块待对拍 |
-| `ui_keyboard.cpp` | 1146 | 无 | ③纯缺失 |
-| `ui_language.cpp` | 327 | `Localization` + `LanguageSelectionDialog` 部分 | ①部分 |
+| `ui_keyboard.cpp` | 1146 | `Dialogs/VirtualKeyboardLayout.cs`、`VirtualKeyboardArtwork.cs`、`VirtualKeyboardRenderer.cs`、`VirtualKeyboardButton.cs`、`VirtualKeyboardView.cs` | ①全转完；阻塞事件循环改由宿主驱动，`openVirtualNumpad` 的数值校验落在 `ReadNumpad` |
+| `ui_language.cpp` | 327 | `CodePage.cs`、`GameLanguage.cs`、`LanguageSwitcher.cs` | ①转完：语言名单 / 缩写 / 码页 / 切换守卫 |
 | `ui_scrollbar.cpp` / `ui_slider.cpp` / `ui_option_item.cpp` | 213/129/144 | `Widgets/ScrollBar.cs`、`ScrollSlider.cs`、`Slider.cs`、`OptionItem.cs` | 已 1:1（保留） |
 | `ui_castle.cpp` | 271 | `Widgets/ResourcePanel.cs` | ①部分 |
 | `ui_kingdom.cpp` | 78 | 无 | ③纯缺失 |
@@ -269,18 +269,18 @@
 | `ui_monster.cpp` | 56 | 无 | ③纯缺失 |
 | `ui_map_interface.cpp` | 67 | `Widgets/StandardPopupWindow.cs` 部分 | ①部分 |
 | `ui_map_object.cpp` + `ui_object_rendering.h` | 316+52 | 无 | ③纯缺失 |
-| `interface_base.cpp` | 45 | `Widgets/InterfaceRedraw.cs` | ①部分 |
-| `interface_border.cpp` | 428 | 无（`FrameBox`/`StandardWindow` 只覆盖一部分） | ②未移植 |
-| `interface_buttons.cpp` | 249 | 无（`AdventureMapScene` 自绘） | ②未移植 |
-| `interface_cpanel.cpp` | 100 | 无 | ②未移植 |
+| `interface_base.cpp` | 45 | `UI/Interface/BaseInterface.cs`、`UI/Interface/Redraw.cs` | ①部分：`Redraw` 掩码、边缘滚动判定、`GameArea`/`Radar` 持有与重绘队列已转；两个淡入方法待 `Game::validateDisplayFadeIn`（S14） |
+| `interface_border.cpp` | 428 | `UI/Interface/GameBorder.cs`、`UI/Interface/BorderWindow.cs` | ①完成（拖动循环改为宿主驱动的 `BorderDrag`） |
+| `interface_buttons.cpp` | 249 | `UI/Interface/ButtonsPanel.cs` | ①完成（点击返回 `ButtonsPanelAction`，事件由编排器执行；`SavePosition` 待 Settings 位置持久化） |
+| `interface_cpanel.cpp` | 100 | `UI/Interface/ControlPanel.cs` | ①完成（点击返回 `ControlPanelButton`，事件由编排器执行） |
 | `interface_events.cpp` | 535 | `AdventureMapScene`/`AdventureMapView` 自建事件 | ②未移植 |
 | `interface_focus.cpp` | 237 | 无 | ②未移植 |
-| `interface_gamearea.cpp` | 1053 | `AdventureMapScene` 自建滚动与绘制 | ②未移植 |
+| `interface_gamearea.cpp` | 1053 | `UI/Interface/GameArea.cs` 骨架 + `AdventureMapScene` 自建滚动与绘制 | ①部分：类型/枚举/动画队列已声明，几何与绘制待 G3 |
 | `interface_icons.cpp` | 433 | 无 | ②未移植 |
 | `interface_itemsbar.h` | 460 | `Widgets/ItemsBarLayout.cs`（自建） | ②未移植 |
 | `interface_list.h` | 540 | `Widgets/ListBox.cs`、`ListBoxBase.cs` | 已 1:1（保留） |
-| `interface_radar.cpp` | 459 | `AdventureMapScene` 自绘雷达 | ②未移植 |
-| `interface_status.cpp` | 440 | `Widgets/StatusPanel.cs` | ①部分 |
+| `interface_radar.cpp` | 459 | `UI/Interface/Radar.cs` | ①完成（View World 的拷贝构造 / `RedrawForViewWorld` / `QueueEventProcessingForWorldView` 待 H 的 `ViewWorld::ZoomROIs`；`SavePosition` 待 Settings 位置持久化） |
+| `interface_status.cpp` | 440 | `UI/Interface/StatusPanel.cs` | ①完成（`SavePosition` 只写会话内 Settings，待配置写入器；隐藏界面时无浮动石框，同 `Radar`） |
 | `player_info.cpp` | 380 | 无 | ③纯缺失 |
 | `skill_bar.cpp` | 394 | 无（`SpellScrollRow` 不是它） | ③纯缺失 |
 | `statusbar.cpp` | 62 | 无 | ③纯缺失 |
@@ -297,10 +297,11 @@
 | A5 | `renderHeroRacePortrait` | `ui_tool.cpp:841-912` | 英雄对话框改用 |
 | A6 | `getLocalizedText` 两个重载；`getLocalizedStrings` 登记不搬（翻译层）；`UIScrollInertia` 推迟到 G3 | `ui_tool.cpp:890-1077` | 偏差入档 |
 | A7 | `processIntegerValueTyping`（A 系列漏项）；`RecruitDialog` 换成 `TypeKey` 并由 `RecruitWindowView` 调用。`SelectCountView` 没有键盘入口，留到该窗口补输入时接 | `ui_tool.cpp:766-839` | 招募输入走参考实现 |
-| B | `cursor.cpp` 全量（`Cursor` 类、动画帧表），删 `AdventureMapScene` 里的光标选择 | `cursor.cpp:1-225` | 地图上光标由 `Cursor` 决定 |
-| C | `ui_text.cpp` 收尾：`TextInputField`、`getCursorSprite`、字符校验与换行工具 | `ui_text.cpp:600-1132` | 存档命名、战役名可用 |
-| D | `ui_keyboard.cpp`（屏幕键盘）+ `ui_language.cpp` | `ui_keyboard.cpp:1-1146` | 名称输入全走参考键盘 |
-| E | `ui_window.cpp` + `ui_dialog.cpp`：`FrameBox`/`WindowPadding` 对拍，删 `FrameBoxChrome`/`StandardWindowChrome`；补 `MonsterDialogElement`/`CustomAnimationDialogElement` | `ui_window.cpp:1-541`、`ui_dialog.cpp:1-849` | 对话框骨架只剩参考一套 |
+| B | `cursor.cpp` 全量：`CursorState` + `CursorRestorer` + 图源解析（`AdventureMapScene` 从来没有光标选择，原计划这条前提有误） | `cursor.cpp:1-271` | 光标状态机就位，等 App 层的软件指针接 |
+| C | `ui_text.cpp` 收尾：`getCursorSprite`、`isFontAvailable`、`cursorChar`；`TextInputField`（实际在 `ui_tool.cpp`，原计划归在 `ui_text` 有误）。存档 / 战役名输入对话框尚未移植，暂无调用方 | `ui_text.cpp:1398-1432`、`ui_tool.cpp:196-281` | 文本控件齐备，等 D 的屏幕键盘与存档对话框接 |
+| D | `ui_keyboard.cpp` 全量（`VirtualKeyboardLayout`、`VirtualKeyboardArtwork`、`VirtualKeyboardRenderer`、`VirtualKeyboardButton`、`VirtualKeyboardView`、`ReadNumpad`）；`ui_language.cpp` 已随 C 步落在 `CodePage`/`GameLanguage`/`LanguageSwitcher` | `ui_keyboard.cpp:1-1360` | 名称输入全走参考键盘；`openVirtualKeyboard`/`openVirtualNumpad` 的阻塞循环改由宿主驱动 |
+| E-1 | `ui_dialog.cpp` 收尾：补 `MonsterDialogElement`、`CustomAnimationDialogElement` | `ui_dialog.cpp:856-935` | `DialogElement` 与参考一一对应 |
+| E-2 | `ui_window.cpp` 对拍：删 `StandardWindowChrome`/`FrameBoxChrome`，`StandardWindow` / `FrameBox` 自己按参考取图（`SURDRBKG`/`WINLOSE`/`STONEBAK`/`BUYBUILD`），`WindowPadding` 复核 | `ui_window.cpp:1-541` | 对话框骨架只剩参考一套 |
 | F | `ui_button.cpp` 剩余：透明背景按钮、`makeButtonWithBackground/Shadow`、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` | `ui_button.cpp:1-813` | 删 `DialogButtonArtwork`、`ButtonArtwork` 自算段 |
 | G1 | `interface_base.cpp` / `interface_cpanel.cpp` / `interface_buttons.cpp` / `interface_border.cpp` | 共 822 行 | 冒险地图面板由参考类绘制 |
 | G2 | `interface_radar.cpp` / `interface_status.cpp` / `interface_icons.cpp` | 共 1 332 行 | 雷达、状态栏、图标条 |
@@ -313,19 +314,36 @@
 
 进度：A1（`colorFade`）、A2（淡出/淡入、调色板淡入淡出、反色阴影）、A3（三件作用域守卫 +
 `ScreenBuffer.ChangePalette`）、A4（死亡波浪 / 圣言 / 涟漪）、A5（`SubpixelResize` + 种族立绘）、
-A6（`getLocalizedText` + `ui_tool` 剩余件盘点）、A7（`processIntegerValueTyping` + 招募窗口接线）
-已完成，2026-11-21；下一步 B（`cursor.cpp` 全量）。
+A6（`getLocalizedText` + `ui_tool` 剩余件盘点）、A7（`processIntegerValueTyping` + 招募窗口接线）、
+B（`cursor.cpp` 全量）、C（`TextInputField` + `getCursorSprite`/`isFontAvailable`）、
+D（屏幕键盘全量 + `ui_language` 收口）、E-1（`MonsterDialogElement` / `CustomAnimationDialogElement`）、
+E-2（删两套自建窗框，`StandardWindow` / `FrameBox` 自己取图）已完成，2026-11-21；
+F（`ui_button.cpp` 剩余：`getSupportedText` / `makeButtonWithBackground` / `makeButtonWithShadow` / `ButtonRestorer`，
+`EMPTY_*_BUTTON` 六张表随 `EmptyButtons` 落地）已完成，2026-11-22；
+G1 完成（4/4，2026-11-22）：`interface_border.cpp` 已全部转完（`UI/Interface/GameBorder.cs` + `UI/Interface/BorderWindow.cs`），
+连带落地它缺的两个依赖 `Core/Imaging/ImageRestorer.cs`（`fheroes2::ImageRestorer`）与 `UI/Dialogs/FrameBorder.cs`
+（`Dialog::FrameBorder`）；`interface_base.cpp` 的基座已落：`UI/Interface/Redraw.cs`（`Interface::Redraw` 掩码）、
+`UI/Interface/BaseInterface.cs`、以及它持有的 `UI/Interface/GameArea.cs` / `UI/Interface/Radar.cs` 签名骨架
+（方法体抛 `NotImplementedException`，随 G3 / G2 填）；`interface_cpanel.cpp` 已全部转完
+（`UI/Interface/ControlPanel.cs`，连带 `Core/Imaging/ImageOps.AlphaBlit.cs`）；`interface_buttons.cpp` 已全部转完
+（`UI/Interface/ButtonsPanel.cs`，仅 `SavePosition` 待 Settings 的位置持久化）。
+G2 已开工（2/3，2026-11-22）：`interface_radar.cpp` 已全部转完（`UI/Interface/Radar.cs`，成像 / 光标 /
+事件 / 调色板查表，View World 的拷贝构造、`RedrawForViewWorld`、`QueueEventProcessingForWorldView` 与无参
+`RedrawCursor` 分别待 H 的 `ViewWorld::ZoomROIs` 与 G3 的 `GameArea.VisibleTileRoi`）；`interface_status.cpp` 已全部
+转完（`UI/Interface/StatusPanel.cs`，五态绘制 / 三段布局 / 左键循环 / 「找到资源」计时 / AI 回合沙漏，隐藏界面时
+无浮动石框，同 `Radar`）。两者 `SavePosition` 都已写进 `Settings.PosRadar` / `Settings.PosStatus`，落盘等配置写入器。
+下一步 G2：`interface_icons.cpp`（`Widgets/ItemsBarLayout.cs`）。
 
 ### 5.4 自建删除台账（`gui/` 范围）
 
 | 端口文件 | 现在的样子 | 由谁接管 | 步骤 |
 | --- | --- | --- | --- |
-| `Dialogs/FrameBoxChrome.cs` | 自己拼的窗框边框 | `ui_window.cpp` 的 `FrameBox` | E |
-| `Dialogs/StandardWindowChrome.cs` | 同上，另一套 | 同上 | E |
-| `Widgets/DialogButtonArtwork.cs` | 自己算的对话框按钮立体感 | `ui_button.cpp` 的 `makeButtonSprites` 等 | F |
-| `Widgets/ButtonArtwork.cs` | 残留的文字定位与描边自算 | 同上 | F |
+| `Dialogs/FrameBoxChrome.cs` | 自己拼的窗框边框 | `dialog_box.cpp` 的 `Dialog::FrameBox` | E-2，已删除（2026-11-21） |
+| `Dialogs/StandardWindowChrome.cs` | 同上，另一套 | `ui_window.cpp` 的 `StandardWindow` | E-2，已删除（2026-11-21） |
+| `Widgets/DialogButtonArtwork.cs` | 已核实**无自算美术**：只剩 `readonly record struct`（一对 released/pressed 精灵）+ 资产注入接口 | `ui_button.cpp` 的 `makeButtonSprites` 等 | F 复核保留（2026-11-22）：它是取图缝，不是画法 |
+| `Widgets/ButtonArtwork.cs` | 已核实是 `resizeButton` / `addButtonShine` / `makeTransparentBackground` 的 1:1 移植（补齐了 `addButtonShine` 漏掉的两笔亮线） | 同上 | F 复核保留（2026-11-22） |
 | `Widgets/ItemsBarLayout.cs` | 自算格子 | `interface_itemsbar.h` 的 `ItemsBar` | G2 |
-| `Widgets/StatusPanel.cs` | 自算状态栏 | `interface_status.cpp` | G2 |
+| `Interface/StatusPanelPainter.cs` | 自算两态状态栏 | `interface_status.cpp` 的 `Interface::StatusPanel` | G2 已按参考写出 `Interface/StatusPanel.cs`，这个过渡画笔等 G5 删 |
 | `Scenes/AdventureMapScene.cs` 的面板/雷达/视口段 | 自绘 | `interface_*.cpp` | G1~G5 |
 | `AdventureMapView` 的事件段 | 自建事件循环 | `interface_events.cpp` | G4 |
 | `Scenes/MageGuildWindow.cs` | 自建窗口 | `ui_mage_guild.cpp` | H |

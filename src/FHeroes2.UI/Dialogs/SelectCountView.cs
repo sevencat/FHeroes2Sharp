@@ -63,25 +63,28 @@ public sealed class SelectCountView
     /// Builds the window.
     /// </summary>
     /// <param name="dialog">The parameters and the answer.</param>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c> the frame is composed of.</param>
     /// <param name="buttonArtwork">OK and CANCEL artwork.</param>
     /// <param name="headerFont">Font of the header, <c>FontType::normalWhite()</c> in the reference.</param>
     /// <param name="townWindowFrames">Frames of <c>TOWNWIND.ICN</c>, at least
     /// <see cref="ValueSelectionElement.RequiredFrameCount"/>.</param>
     /// <param name="initialValue">Number shown first, clamped into the range.</param>
-    /// <returns>The window, or <see langword="null"/> when an asset is missing.</returns>
+    /// <returns>
+    /// The window, or <see langword="null"/> when an asset is missing - the frame artwork included.
+    /// </returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
-    public static SelectCountView? TryCreate(SelectCountDialog dialog, FrameBoxChrome chrome,
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no message frame, see <see cref="FrameBox.Create"/>.
+    /// </exception>
+    public static SelectCountView? TryCreate(SelectCountDialog dialog,
         IDialogButtonArtworkSource buttonArtwork, IGlyphSource headerFont, IReadOnlyList<Sprite> townWindowFrames,
         int initialValue = 0)
     {
         ArgumentNullException.ThrowIfNull(dialog);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(buttonArtwork);
         ArgumentNullException.ThrowIfNull(headerFont);
         ArgumentNullException.ThrowIfNull(townWindowFrames);
 
-        if (townWindowFrames.Count < ValueSelectionElement.RequiredFrameCount)
+        if (townWindowFrames.Count < ValueSelectionElement.RequiredFrameCount || !FrameBox.IsArtworkAvailable)
         {
             return null;
         }
@@ -89,7 +92,7 @@ public sealed class SelectCountView
         int headerHeight = GlyphText.WrapLines(headerFont, dialog.Header, FrameBox.AreaWidth).Count *
                            headerFont.LineHeight;
         FrameBox box = FrameBox.Create(
-            chrome, headerHeight + ElementOffset + SelectionAreaHeight, showButtons: true);
+            headerHeight + ElementOffset + SelectionAreaHeight, showButtons: true);
 
         Point selectionOrigin = new(box.Area.X + SelectionInset, box.Area.Y + headerHeight + ElementOffset);
         ValueSelectionElement value = new(

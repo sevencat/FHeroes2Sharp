@@ -72,7 +72,6 @@ public static class KingdomIncome
     /// <summary>Composes the box for one day of <paramref name="income"/>.</summary>
     /// <param name="income">Daily income of the kingdom.</param>
     /// <param name="resourceIcons">Frames of <c>RESOURCE.ICN</c>, indexed by <see cref="ResourceIconIndex.Of"/>.</param>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c>.</param>
     /// <param name="headerFont">Font of the title, <c>FontType::normalYellow()</c> in the reference.</param>
     /// <param name="bodyFont">Font of the message, <c>FontType::normalWhite()</c> in the reference.</param>
     /// <param name="header">Translated title; <see cref="Header"/> when omitted.</param>
@@ -84,12 +83,11 @@ public static class KingdomIncome
     /// <exception cref="ArgumentException">
     /// <paramref name="resourceIcons"/> has fewer than <see cref="ResourceIconIndex.Count"/> frames.
     /// </exception>
-    public static MessageBox Create(in Funds income, IReadOnlyList<Sprite> resourceIcons, FrameBoxChrome chrome,
+    public static MessageBox Create(in Funds income, IReadOnlyList<Sprite> resourceIcons,
         IGlyphSource headerFont, IGlyphSource bodyFont, string header = Header, string body = Body, int startY = -1,
         Size? screen = null)
     {
         ArgumentNullException.ThrowIfNull(resourceIcons);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(headerFont);
         ArgumentNullException.ThrowIfNull(bodyFont);
 
@@ -111,6 +109,6 @@ public static class KingdomIncome
                 string.Empty));
         }
 
-        return MessageBox.Create(header, body, chrome, headerFont, bodyFont, elements, startY, screen);
+        return MessageBox.Create(header, body, headerFont, bodyFont, elements, startY, screen);
     }
 }

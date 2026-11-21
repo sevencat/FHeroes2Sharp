@@ -79,7 +79,7 @@ public sealed class ArmyInfoArtwork
         evilInterface ? IcnType.Viewarme : IcnType.Viewarmy;
 
     /// <summary>
-    /// Takes the two frames out of the archive, the counterpart of <c>FrameBoxChrome.TryCreate</c>.
+    /// Takes the two frames out of the archive.
     /// </summary>
     /// <param name="sprites">The frames of <see cref="GetAssetIcn"/>.</param>
     /// <param name="evilInterface">Whether the frames are the evil interface's.</param>

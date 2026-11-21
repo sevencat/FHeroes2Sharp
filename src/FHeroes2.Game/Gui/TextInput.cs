@@ -30,9 +30,6 @@ namespace FHeroes2.Game.Gui;
 /// </remarks>
 public sealed class TextInput : Text
 {
-    /// <summary><c>cursorChar</c>: the glyph that marks the caret.</summary>
-    private const byte CursorChar = (byte)'|';
-
     /// <summary>The caret position kept clear of the truncated text edges.</summary>
     private const int CursorToTruncationDistance = 4;
 
@@ -516,7 +513,7 @@ public sealed class TextInput : Text
 
         FontCharHandler charHandler = new(Font);
 
-        Sprite charSprite = charHandler.GetSprite(CursorChar);
+        Sprite charSprite = charHandler.GetSprite(FontCharHandler.CursorChar);
 
         int cursorWidth = charSprite.Width;
         int cursorHeight = charSprite.Height;

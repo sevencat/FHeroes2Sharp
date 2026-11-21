@@ -11,7 +11,8 @@ namespace FHeroes2.UI.Dialogs;
 /// <remarks>
 /// <para>
 /// 参考用 <c>SURRENDR.ICN</c> 帧 4 当肖像相框（111x105，大肖像 102x93 贴进内圈），<c>RESOURCE.ICN</c> 的 0~6
-/// 帧画价格，<c>BUYBUILD.ICN</c> 的六块边框当对话框底板（<c>Dialog::FrameBox( dialogHeight, true )</c>）。
+/// 帧画价格。对话框底板的六块 <c>BUYBUILD.ICN</c> 边框由 <see cref="FrameBox"/> 自己读
+/// （<c>Dialog::FrameBox( dialogHeight, true )</c>）。
 /// </para>
 /// <para>
 /// 大肖像本身不在这里：它是每个英雄的 <c>PORT00xx</c> 帧 0，由窗口按英雄取，这样同一个对话框可以给任何
@@ -23,11 +24,10 @@ public sealed class RecruitHeroArtwork
     /// <summary>Frame of <c>SURRENDR.ICN</c> that holds the 111x105 portrait frame.</summary>
     public const int FrameIndex = 4;
 
-    private RecruitHeroArtwork(Sprite frame, IReadOnlyList<Sprite> resourceIcons, FrameBoxChrome chrome)
+    private RecruitHeroArtwork(Sprite frame, IReadOnlyList<Sprite> resourceIcons)
     {
         Frame = frame;
         ResourceIcons = resourceIcons;
-        Chrome = chrome;
     }
 
     /// <summary>The 111x105 frame of <c>SURRENDR.ICN</c>.</summary>
@@ -35,9 +35,6 @@ public sealed class RecruitHeroArtwork
 
     /// <summary>The first seven frames of <c>RESOURCE.ICN</c>.</summary>
     public IReadOnlyList<Sprite> ResourceIcons { get; }
-
-    /// <summary>Pieces of the dialog frame, <c>BUYBUILD.ICN</c>.</summary>
-    public FrameBoxChrome Chrome { get; }
 
     /// <summary>
     /// Loads the artwork.
@@ -61,12 +58,6 @@ public sealed class RecruitHeroArtwork
             return null;
         }
 
-        if (assets.TryReadIcn(FrameBoxChrome.AssetName) is not { } chromeFile ||
-            FrameBoxChrome.TryCreate(chromeFile.Sprites) is not { } chrome)
-        {
-            return null;
-        }
-
-        return new RecruitHeroArtwork(frames.Sprites[FrameIndex], resources.Sprites, chrome);
+        return new RecruitHeroArtwork(frames.Sprites[FrameIndex], resources.Sprites);
     }
 }

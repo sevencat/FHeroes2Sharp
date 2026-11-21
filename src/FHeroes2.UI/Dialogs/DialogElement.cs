@@ -898,6 +898,208 @@ public sealed class SecondarySkillDialogElement : DialogElement
     }
 }
 
+/// <summary>
+/// An animation drawn over a static image, <c>CustomAnimationDialogElement</c>
+/// (<c>ui_dialog.h:317-346</c>, <c>ui_dialog.cpp:856-902</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The reference keeps one static image and an ICN id, and asks <c>ICN::getAnimatedIcnIndex()</c> which
+/// sprite the next frame number stands for. The port names the frames themselves, like
+/// <see cref="AnimationDialogElement"/>, so a test can hand it three sprites instead of a file.
+/// </para>
+/// <para>
+/// <b>The static image is painted on every <see cref="Draw"/>.</b> The reference paints it once, when
+/// <c>_currentIndex</c> is still 0, because its dialog loop owns the rest of the screen; a ported scene
+/// repaints the whole frame every time, so the static part has to come back with it.
+/// </para>
+/// <para>
+/// The animation is placed relative to the element and never handles input, like the reference.
+/// </para>
+/// </remarks>
+public sealed class CustomAnimationDialogElement : DialogElement
+{
+    private readonly Sprite _staticImage;
+    private readonly Point _animationPosition;
+    private readonly IcnAnimation _animation;
+
+    /// <summary>
+    /// Creates the element and sizes it to the static image,
+    /// <c>CustomAnimationDialogElement( icnId, staticImage, animationPositionOffset, animationIndexOffset, delay )</c>.
+    /// </summary>
+    /// <param name="staticImage">Image drawn under the animation; it also gives the size of the element.</param>
+    /// <param name="animationPosition">Offset of the animation inside the element, <c>_animationPosition</c>.</param>
+    /// <param name="sprites">Sprites of the ICN file, in file order.</param>
+    /// <param name="firstFrame">Index of the first animated sprite inside <paramref name="sprites"/>.</param>
+    /// <param name="frameCount">Number of sprites the animation cycles through.</param>
+    /// <param name="frameDuration">Time one frame stays on screen.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="staticImage"/> or <paramref name="sprites"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// The animation range does not fit into <paramref name="sprites"/>.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="firstFrame"/> is negative, <paramref name="frameCount"/> is not positive or
+    /// <paramref name="frameDuration"/> is zero or negative.
+    /// </exception>
+    public CustomAnimationDialogElement(Sprite staticImage, Point animationPosition,
+        IReadOnlyList<Sprite> sprites, int firstFrame, int frameCount, TimeSpan frameDuration)
+    {
+        ArgumentNullException.ThrowIfNull(staticImage);
+        ArgumentNullException.ThrowIfNull(sprites);
+
+        _staticImage = staticImage;
+        _animationPosition = animationPosition;
+        _animation = new IcnAnimation(sprites, firstFrame, frameCount, frameDuration);
+        Area = new Size(staticImage.Width, staticImage.Height);
+    }
+
+    /// <summary>Current frame of the cycle, <c>_currentIndex % frame count</c> of the reference.</summary>
+    public int FrameNumber => _animation.FrameNumber;
+
+    /// <summary>Draws the static image and the current frame of the animation on top of it.</summary>
+    /// <param name="output">Frame buffer of the message box.</param>
+    /// <param name="offset">Position of the element.</param>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        ImageOps.BlitSprite(output, offset, _staticImage);
+
+        Sprite frame = _animation.Current;
+
+        ImageOps.BlitSprite(
+            output,
+            new Point(
+                offset.X + _animationPosition.X + frame.OffsetX,
+                offset.Y + _animationPosition.Y + frame.OffsetY),
+            frame);
+    }
+
+    /// <summary>Advances the clock and repaints when the frame of the animation changed.</summary>
+    /// <param name="output">Frame buffer of the message box.</param>
+    /// <param name="offset">Position of the element.</param>
+    /// <param name="elapsed">Time since the previous call.</param>
+    /// <returns><see langword="true"/> when the animation moved on and was painted.</returns>
+    public override bool Update(PixelBuffer output, Point offset, TimeSpan elapsed)
+    {
+        int before = _animation.FrameNumber;
+
+        _animation.Advance(elapsed);
+
+        if (_animation.FrameNumber == before)
+        {
+            return false;
+        }
+
+        Draw(output, offset);
+
+        return true;
+    }
+}
+
+/// <summary>
+/// A creature on the stone plate of an army slot, <c>MonsterDialogElement</c>
+/// (<c>ui_dialog.h:348-363</c>, <c>ui_dialog.cpp:904-935</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The reference builds the plate from <c>ICN::STRIP</c> frame 12, calls <c>renderMonsterFrame()</c>
+/// (<c>ui_monster.cpp:31-59</c>) to paint the race background and the dwelling picture six pixels into it,
+/// and copies the result out. The port takes the three sprites from the caller, like the other elements:
+/// the dwelling pictures live behind <c>MonsterIcnIds.GetDwellingIcn()</c>, and
+/// <c>ui_monster.cpp</c> itself is not ported yet.
+/// </para>
+/// <para>
+/// Both clicks open the army info window in the reference; the port returns the popup text its owner has
+/// to show, because the army info window is not ported yet either.
+/// </para>
+/// </remarks>
+public sealed class MonsterDialogElement : DialogElement
+{
+    /// <summary>Frame of <c>ICN::STRIP</c> the plate is cut from, <c>ICN::STRIP, 12</c>.</summary>
+    public const int PlateFrame = 12;
+
+    /// <summary>Where the race background and the picture start inside the plate, the <c>{ 6, 6 }</c>.</summary>
+    public const int PortraitOffset = 6;
+
+    private readonly Sprite _plate;
+    private readonly Sprite? _racePlate;
+    private readonly Sprite? _portrait;
+    private readonly string _popupHeader;
+    private readonly string _popupBody;
+
+    /// <summary>Builds a creature element.</summary>
+    /// <param name="plate">
+    /// Frame <see cref="PlateFrame"/> of <c>ICN::STRIP</c>; its transform layer is ignored, the reference
+    /// calls <c>_disableTransformLayer()</c> before painting into it.
+    /// </param>
+    /// <param name="racePlate">Race background, frame <c>4 + race</c> of <c>ICN::STRIP</c>; may be missing.</param>
+    /// <param name="portrait">Dwelling picture of the creature, frame 0 of its <c>MONH####</c> file.</param>
+    /// <param name="popupHeader">Header of the popup the clicks ask for.</param>
+    /// <param name="popupBody">Body of the popup the clicks ask for.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="plate"/> is <see langword="null"/>.</exception>
+    public MonsterDialogElement(Sprite plate, Sprite? racePlate, Sprite? portrait, string popupHeader, string popupBody)
+    {
+        ArgumentNullException.ThrowIfNull(plate);
+
+        _plate = plate;
+        _racePlate = racePlate;
+        _portrait = portrait;
+        _popupHeader = popupHeader ?? string.Empty;
+        _popupBody = popupBody ?? string.Empty;
+
+        Area = new Size(plate.Width, plate.Height);
+    }
+
+    /// <summary>Draws the plate with the race background and the creature picture on it.</summary>
+    /// <param name="output">Frame buffer of the message box.</param>
+    /// <param name="offset">Position of the element.</param>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        // The plate is painted into on a copy, so a scene that repaints every frame starts from a clean
+        // one and the transform layer of the artwork never affects the result.
+        Sprite canvas = _plate.WithoutTransformLayer().Clone();
+        Point portraitPosition = new(PortraitOffset, PortraitOffset);
+
+        if (_racePlate is not null)
+        {
+            ImageOps.BlitSprite(canvas.Image, portraitPosition, _racePlate);
+        }
+
+        if (_portrait is not null)
+        {
+            ImageOps.BlitSprite(
+                canvas.Image,
+                new Point(
+                    portraitPosition.X + _portrait.OffsetX,
+                    portraitPosition.Y + _portrait.OffsetY),
+                _portrait);
+        }
+
+        ImageOps.BlitSprite(output, offset, canvas);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>Both the right click and the left one ask for the creature info, like the reference.</remarks>
+    public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        Rect area = new(offset, Area);
+
+        if (!events.IsMouseRightButtonPressedInArea(area) && !events.MouseClickLeft(area))
+        {
+            return default;
+        }
+
+        return new DialogElementResult(false, new DialogPopup(_popupHeader, _popupBody));
+    }
+}
+
 /// <summary>A standard message the owner of a dialog has to open, the <c>showStandardTextMessage</c> of the reference.</summary>
 /// <param name="Header">Yellow header line.</param>
 /// <param name="Body">White body text.</param>

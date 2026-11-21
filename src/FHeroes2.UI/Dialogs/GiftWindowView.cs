@@ -176,7 +176,6 @@ public sealed class GiftWindowView
     /// <param name="funds">Treasury of the giving kingdom, <c>kingdom.GetFunds()</c>.</param>
     /// <param name="senderColor">Colour of the giving kingdom, <c>kingdom.GetColor()</c>.</param>
     /// <param name="recipientColors">Colours taking part, sender already removed.</param>
-    /// <param name="chrome">Border and background artwork of the stone window.</param>
     /// <param name="artwork">Sprites of the dialog.</param>
     /// <param name="fonts">Fonts of the captions and of the counts.</param>
     /// <param name="kingdomFunds">
@@ -186,12 +185,12 @@ public sealed class GiftWindowView
     /// <param name="screen">Screen to centre on; 640x480 when omitted.</param>
     /// <returns><see langword="null"/> when an argument is missing.</returns>
     public static GiftWindowView? TryCreate(in Funds funds, PlayerColor senderColor,
-        IReadOnlyList<PlayerColor>? recipientColors, StandardWindowChrome? chrome, GiftWindowArtwork? artwork,
+        IReadOnlyList<PlayerColor>? recipientColors, GiftWindowArtwork? artwork,
         GiftWindowFonts? fonts, Func<Funds>? kingdomFunds = null, Size? screen = null)
     {
         ArgumentNullException.ThrowIfNull(recipientColors);
 
-        if (chrome is null || artwork is null || fonts is null)
+        if (artwork is null || fonts is null)
         {
             return null;
         }
@@ -211,7 +210,7 @@ public sealed class GiftWindowView
             seen |= color;
         }
 
-        StandardWindow window = StandardWindow.CreateCentered(chrome, GiftWindowLayout.WindowSize, true, screen);
+        StandardWindow window = StandardWindow.CreateCentered(GiftWindowLayout.WindowSize, true, screen);
 
         ButtonSprite okButton = new(artwork.OkButton.Released, artwork.OkButton.Pressed);
         Point okPosition = GiftWindowLayout.BottomLeftButton(window.ActiveArea,

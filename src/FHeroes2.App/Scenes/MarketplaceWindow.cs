@@ -81,7 +81,6 @@ public sealed class MarketplaceWindow
         ArgumentNullException.ThrowIfNull(kingdom);
         ArgumentNullException.ThrowIfNull(fonts);
 
-        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(assets.TryReadIcn(FrameBoxChrome.AssetName)?.Sprites);
         IReadOnlyList<Sprite>? tradpost = Load(assets, IcnType.Tradpost);
         IReadOnlyList<Sprite>? marketplaceIcon = Load(assets, IcnType.MarketplaceIcon);
         IReadOnlyList<Sprite>? resourceIcons = Load(assets, IcnType.Resource);
@@ -104,11 +103,10 @@ public sealed class MarketplaceWindow
             giftButton,
             exitButton);
 
-        if (chrome is null || artwork is null)
+        if (artwork is null)
         {
             GameLog.Warn(
                 "The marketplace artwork is missing: "
-                + $"{FrameBoxChrome.AssetName}={(chrome is null ? "short" : "ok")}, "
                 + $"TRADPOST={tradpost?.Count.ToString() ?? "none"}, "
                 + $"MARKETPLACE_ICON={marketplaceIcon?.Count.ToString() ?? "none (h2d only)"}, "
                 + $"RESOURCE={resourceIcons?.Count.ToString() ?? "none"}, "
@@ -121,7 +119,6 @@ public sealed class MarketplaceWindow
 
         MarketplaceView? view = MarketplaceView.TryCreate(
             dialog,
-            chrome,
             artwork,
             new MarketplaceFonts(fonts.Small, fonts.Normal, fonts.Yellow),
             new Size(ScreenWidth, ScreenHeight));

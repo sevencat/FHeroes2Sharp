@@ -1,11 +1,14 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
@@ -19,6 +22,7 @@ namespace FHeroes2.UI.Tests;
 /// reference is readable in the expected numbers below. Peasants cost 20 gold and rangers 250 with archers at 150, so
 /// the treasury decides the maximum.
 /// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class RecruitWindowTests
 {
     private const byte BackgroundColour = 7;
@@ -153,14 +157,12 @@ public sealed class RecruitWindowTests
     {
         RecruitDialog dialog = CreateDialog(gold: 100, available: 10);
 
-        Assert.Null(RecruitWindowView.TryCreate(dialog, CreateChrome(), null, CreateFonts(), Screen));
-        Assert.Null(RecruitWindowView.TryCreate(dialog, CreateChrome(), CreateArtwork(arrows: 2), CreateFonts(), Screen));
+        Assert.Null(RecruitWindowView.TryCreate(dialog, null, CreateFonts(), Screen));
+        Assert.Null(RecruitWindowView.TryCreate(dialog, CreateArtwork(arrows: 2), CreateFonts(), Screen));
         Assert.Throws<ArgumentNullException>(
-            () => RecruitWindowView.TryCreate(null!, CreateChrome(), CreateArtwork(), CreateFonts(), Screen));
+            () => RecruitWindowView.TryCreate(null!, CreateArtwork(), CreateFonts(), Screen));
         Assert.Throws<ArgumentNullException>(
-            () => RecruitWindowView.TryCreate(dialog, null!, CreateArtwork(), CreateFonts(), Screen));
-        Assert.Throws<ArgumentNullException>(
-            () => RecruitWindowView.TryCreate(dialog, CreateChrome(), CreateArtwork(), null!, Screen));
+            () => RecruitWindowView.TryCreate(dialog, CreateArtwork(), null!, Screen));
     }
 
     [Fact]
@@ -169,7 +171,7 @@ public sealed class RecruitWindowTests
         RecruitWindowView view = CreateView(CreateDialog(gold: 100, available: 10));
         PixelBuffer target = new(Screen.Width, Screen.Height);
 
-        view.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(view, target));
 
         Assert.True(CountColour(target, TextColour, view.Layout.CountBoxArea) > 0);
         Assert.Equal("5", view.CountText);
@@ -457,7 +459,7 @@ public sealed class RecruitWindowTests
     }
 
     private static RecruitWindowView CreateView(RecruitDialog dialog, int windowOffsetY = 0) =>
-        RecruitWindowView.TryCreate(dialog, CreateChrome(), CreateArtwork(), CreateFonts(), Screen, windowOffsetY)!;
+        RecruitWindowView.TryCreate(dialog, CreateArtwork(), CreateFonts(), Screen, windowOffsetY)!;
 
     private static RecruitDialog CreateDialog(int gold, uint available) =>
         RecruitDialog.Create(MonsterType.Peasant, available, CreateKingdom(gold));
@@ -503,9 +505,37 @@ public sealed class RecruitWindowTests
         return count;
     }
 
-    private static StandardWindowChrome CreateChrome() =>
-        StandardWindowChrome.TryCreate([Filled(20, 10, ShadowColour)], [Filled(10, 10, ButtonColour)],
-            [Filled(8, 8, 3)])!;
+    /// <summary>Opens the game data the stone frame of the window is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+
+    /// <summary>Draws the dialog with the real window artwork.</summary>
+    /// <param name="view">Dialog to paint.</param>
+    /// <param name="target">Frame buffer to paint into.</param>
+    /// <returns><see langword="false"/> when the machine has no game data.</returns>
+    private static bool DrawWithTheWindowArtwork(RecruitWindowView view, PixelBuffer target)
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return false;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            view.Draw(target);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
+    }
 
     private static RecruitWindowFonts CreateFonts()
     {

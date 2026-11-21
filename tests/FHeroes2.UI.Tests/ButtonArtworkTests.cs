@@ -125,7 +125,13 @@ public sealed class ButtonArtworkTests
         Assert.Equal((byte)10, button.Image[10, 5]);
         Assert.Equal((byte)39, button.Image[12, 5]);
         Assert.Equal((byte)39, button.Image[8, 7]);
-        Assert.Equal((byte)39, button.Image[15, 4]);
+
+        // The second short streak starts on the pixel the basic shine had set to the last colour and
+        // repaints it; the last-colour dot sits one row below its end.
+        Assert.Equal((byte)10, button.Image[15, 4]);
+        Assert.Equal((byte)10, button.Image[14, 5]);
+        Assert.Equal((byte)10, button.Image[13, 6]);
+        Assert.Equal((byte)39, button.Image[12, 7]);
 
         // Right side, mirroring the left one.
         Assert.Equal((byte)10, button.Image[87, 4]);
@@ -165,6 +171,8 @@ public sealed class ButtonArtworkTests
         Assert.Equal((byte)15, button.Image[88, 3]);
         Assert.Equal((byte)15, button.Image[85, 3]);
         Assert.Equal((byte)16, button.Image[6, 11]);
+        Assert.Equal((byte)10, button.Image[15, 4]);
+        Assert.Equal((byte)16, button.Image[12, 7]);
     }
 
     [Fact]

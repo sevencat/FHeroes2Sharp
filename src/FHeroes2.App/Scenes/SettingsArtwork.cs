@@ -9,14 +9,13 @@ using FHeroes2.UI.Widgets;
 namespace FHeroes2.App.Scenes;
 
 /// <summary>
-/// The artwork the settings dialog is composed of: the stone frame of every Heroes II window and
-/// the standard OK button.
+/// The artwork the settings dialog is composed of: the standard OK button. The stone frame of the
+/// window is read by <see cref="StandardWindow"/> itself.
 /// </summary>
 /// <remarks>
-/// The ICN names live here rather than in <see cref="StandardWindowChrome"/> or in the UI layer,
-/// because <c>UNIFORM_GOOD_OKAY_BUTTON</c> is one of the many button tables the original keeps in
-/// <c>heroes2.agg</c>; the dialog itself only ever asks for a
-/// <see cref="DialogButtonArtwork"/>. Only the OK button is resolved - the reference settings
+/// The ICN names live here rather than in the UI layer, because <c>UNIFORM_GOOD_OKAY_BUTTON</c> is one
+/// of the many button tables the original keeps in <c>heroes2.agg</c>; the dialog itself only ever asks
+/// for a <see cref="DialogButtonArtwork"/>. Only the OK button is resolved - the reference settings
 /// dialog closes with OK and its Escape key, so there is no CANCEL pair to draw.
 /// </remarks>
 internal sealed class SettingsArtwork : IDialogButtonArtworkSource
@@ -36,15 +35,11 @@ internal sealed class SettingsArtwork : IDialogButtonArtworkSource
     private readonly Sprite _okayReleased;
     private readonly Sprite _okayPressed;
 
-    private SettingsArtwork(StandardWindowChrome chrome, Sprite okayReleased, Sprite okayPressed)
+    private SettingsArtwork(Sprite okayReleased, Sprite okayPressed)
     {
-        Chrome = chrome;
         _okayReleased = okayReleased;
         _okayPressed = okayPressed;
     }
-
-    /// <summary>Frame and background of the dialog window.</summary>
-    internal StandardWindowChrome Chrome { get; }
 
     /// <summary>Height of the OK button, which is what the window has to reserve at the bottom.</summary>
     internal int OkayHeight => _okayReleased.Height;
@@ -66,24 +61,16 @@ internal sealed class SettingsArtwork : IDialogButtonArtworkSource
 
         try
         {
-            IcnSpriteFile? horizontal = assets.TryReadIcn(StandardWindowChrome.HorizontalAssetName);
-            IcnSpriteFile? vertical = assets.TryReadIcn(StandardWindowChrome.VerticalAssetName);
-            IcnSpriteFile? background = assets.TryReadIcn(StandardWindowChrome.BackgroundAssetName);
             IcnSpriteFile? okay = assets.TryReadIcn(OkayAssetName);
 
-            StandardWindowChrome? chrome = StandardWindowChrome.TryCreate(
-                horizontal?.Sprites, vertical?.Sprites, background?.Sprites);
-
-            if (chrome is null || okay is null || okay.Count <= OkayPressedFrame)
+            if (okay is null || okay.Count <= OkayPressedFrame)
             {
                 GameLog.Warn(
-                    $"The settings dialog artwork is missing ('{StandardWindowChrome.HorizontalAssetName}', " +
-                    $"'{StandardWindowChrome.VerticalAssetName}', '{StandardWindowChrome.BackgroundAssetName}' " +
-                    $"or '{OkayAssetName}'); the settings door stays inactive.");
+                    $"The settings dialog artwork is missing ('{OkayAssetName}'); the settings door stays inactive.");
                 return null;
             }
 
-            return new SettingsArtwork(chrome, okay.Sprites[OkayReleasedFrame], okay.Sprites[OkayPressedFrame]);
+            return new SettingsArtwork(okay.Sprites[OkayReleasedFrame], okay.Sprites[OkayPressedFrame]);
         }
         catch (Exception exception) when (exception is BinaryFormatException or ArgumentException)
         {

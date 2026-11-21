@@ -85,7 +85,10 @@ public sealed class EditorScene : IScene
     private readonly Rect _radar;
     private readonly Rect _panel;
     private readonly EditorPanel? _panelView;
-    private readonly FrameBoxChrome? _infoChrome;
+
+    /// <summary>Whether the archive can provide the message frame of the information box.</summary>
+    private readonly bool _hasInfoFrame;
+
     private readonly byte _dark;
     private readonly byte _bright;
 
@@ -125,7 +128,7 @@ public sealed class EditorScene : IScene
         MapScrollController mouse,
         MapFrame mapFrame,
         EditorPanel? panelView,
-        FrameBoxChrome? infoChrome)
+        bool hasInfoFrame)
     {
         _frame = frame;
         _fonts = fonts;
@@ -135,7 +138,7 @@ public sealed class EditorScene : IScene
         _mouse = mouse;
         _mapFrame = mapFrame;
         _panelView = panelView;
-        _infoChrome = infoChrome;
+        _hasInfoFrame = hasInfoFrame;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
@@ -409,24 +412,26 @@ public sealed class EditorScene : IScene
             new MapScrollController(view),
             mapFrame,
             EditorPanel.TryCreate(mapFrame.Panel, assets),
-            LoadInfoChrome(assets));
+            HasInfoFrame(assets));
     }
 
     /// <summary>
-    /// Reads the frame of the information box, the dialogs of the reference use <c>BUYBUILD.ICN</c>.
+    /// Whether the frame of the information box can be composed; the dialogs of the reference use
+    /// <c>BUYBUILD.ICN</c>, which <see cref="FrameBox"/> reads itself.
     /// </summary>
     /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
-    /// <returns>The chrome, or <see langword="null"/> when the archive has none.</returns>
-    private static FrameBoxChrome? LoadInfoChrome(AssetBundle? assets)
+    /// <returns><see langword="true"/> when the frame can be drawn.</returns>
+    private static bool HasInfoFrame(AssetBundle? assets)
     {
-        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(assets?.TryReadIcn(FrameBoxChrome.AssetName)?.Sprites);
+        bool available = assets?.TryReadIcn(FrameBox.ArtworkFileName) is { } file &&
+            file.Count >= FrameBox.RequiredSpriteCount;
 
-        if (chrome is null)
+        if (!available)
         {
-            GameLog.Warn($"'{FrameBoxChrome.AssetName}' is not available, the editor draws no information box.");
+            GameLog.Warn($"'{FrameBox.ArtworkFileName}' is not available, the editor draws no information box.");
         }
 
-        return chrome;
+        return available;
     }
 
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
@@ -466,7 +471,7 @@ public sealed class EditorScene : IScene
     /// </summary>
     private void DrawObjectInfo()
     {
-        if (_infoTile is not { } tile || _fonts is null || _infoChrome is not { } chrome)
+        if (_infoTile is not { } tile || _fonts is null || !_hasInfoFrame)
         {
             return;
         }
@@ -475,7 +480,7 @@ public sealed class EditorScene : IScene
 
         if (_info is null || _infoKey != (tile, data))
         {
-            _info = ComposeObjectInfo(tile, data, chrome, _fonts.Small);
+            _info = ComposeObjectInfo(tile, data, _fonts.Small);
             _infoKey = (tile, data);
         }
 
@@ -489,10 +494,9 @@ public sealed class EditorScene : IScene
     /// </summary>
     /// <param name="tile">Tile to describe, must be inside the map.</param>
     /// <param name="data">Data word of the tile, read again by the caller to keep the box current.</param>
-    /// <param name="chrome">Frame of the box.</param>
     /// <param name="font">Font of the text.</param>
     /// <returns>The box, centred on the frame like every dialog of the reference.</returns>
-    private MessageBox ComposeObjectInfo(Point tile, int data, FrameBoxChrome chrome, IGlyphSource font)
+    private MessageBox ComposeObjectInfo(Point tile, int data, IGlyphSource font)
     {
         Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
         List<string> lines = [];
@@ -521,7 +525,7 @@ public sealed class EditorScene : IScene
 
         lines.Add(FormattableString.Invariant($"[{tile.X}; {tile.Y}]"));
 
-        return MessageBox.Create(DescribeTile(info), string.Join('\n', lines), chrome, font, font);
+        return MessageBox.Create(DescribeTile(info), string.Join('\n', lines), font, font);
     }
 
     /// <summary>

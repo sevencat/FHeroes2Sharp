@@ -1,3 +1,5 @@
+using FHeroes2.Core.Imaging;
+
 namespace FHeroes2.Game.Cursor;
 
 /// <summary>

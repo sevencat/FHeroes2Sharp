@@ -1,21 +1,29 @@
+using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
+/// <summary>
+/// Tests of <see cref="StandardWindow"/>: the constants of <c>ui_window.cpp</c>, the layout arithmetic
+/// and the painting of the frame, its borders and the tiled interior.
+/// </summary>
+/// <remarks>
+/// The window reads <c>SURDRBKG.ICN</c>, <c>WINLOSE.ICN</c> and <c>STONEBAK.ICN</c> itself when it is
+/// first drawn, so the drawing tests need the installed archives and return when the machine has none.
+/// Laying a window out works without game data, which keeps the arithmetic tests free of it.
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class StandardWindowTests
 {
     private const byte Canvas = 3;
-    private const byte Vertical = 20;
-    private const byte Horizontal = 30;
-    private const byte Interior = 40;
 
-    // Sizes of the window artwork as read from heroes2.agg.
-    private static readonly Size VerticalSize = new(319, 456);
-    private static readonly Size HorizontalSize = new(476, 215);
-    private static readonly Size BackgroundSize = new(640, 480);
+    private const int ButtonsWidth = 59;
+
+    private const int ButtonsHeight = 27;
 
     [Fact]
     public void Constants_MatchTheReferenceEngine()
@@ -30,7 +38,7 @@ public sealed class StandardWindowTests
     [Fact]
     public void Create_WrapsTheActiveAreaInTheBorder()
     {
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(170, 140, 300, 200));
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
 
         Assert.Equal(new Rect(170, 140, 300, 200), window.ActiveArea);
         Assert.Equal(new Rect(154, 124, 332, 232), window.WindowArea);
@@ -44,96 +52,90 @@ public sealed class StandardWindowTests
     [Fact]
     public void CreateCentered_CentersTheActiveAreaOnTheScreen()
     {
-        StandardWindow window = StandardWindow.CreateCentered(CreateChrome(), new Size(300, 200));
+        StandardWindow window = StandardWindow.CreateCentered(new Size(300, 200));
 
         Assert.Equal(new Rect(170, 140, 300, 200), window.ActiveArea);
 
         // An odd difference leaves the extra pixel on the right and the bottom side.
-        StandardWindow odd = StandardWindow.CreateCentered(CreateChrome(), new Size(301, 201));
+        StandardWindow odd = StandardWindow.CreateCentered(new Size(301, 201));
         Assert.Equal(new Rect(169, 139, 301, 201), odd.ActiveArea);
     }
 
     [Fact]
-    public void Chrome_TakesTheFirstFrameOfEachArchive()
+    public void Draw_WithoutGameDataThrows()
     {
-        StandardWindowChrome? chrome = StandardWindowChrome.TryCreate(
-            CreateSprites(HorizontalSize, Horizontal),
-            CreateSprites(VerticalSize, Vertical),
-            CreateSprites(BackgroundSize, Interior));
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
 
-        Assert.NotNull(chrome);
-        Assert.Equal(HorizontalSize, new Size(chrome.Horizontal.Width, chrome.Horizontal.Height));
-        Assert.Equal(VerticalSize, new Size(chrome.Vertical.Width, chrome.Vertical.Height));
-        Assert.Equal(BackgroundSize, new Size(chrome.Background.Width, chrome.Background.Height));
+        GameAssets.Current = null;
 
-        // An empty archive cannot provide a piece, so the caller has to draw without a frame.
-        Assert.Null(StandardWindowChrome.TryCreate(null, CreateSprites(VerticalSize, Vertical), CreateSprites(BackgroundSize, Interior)));
-        Assert.Null(StandardWindowChrome.TryCreate(CreateSprites(HorizontalSize, Horizontal), null, CreateSprites(BackgroundSize, Interior)));
-        Assert.Null(StandardWindowChrome.TryCreate(CreateSprites(HorizontalSize, Horizontal), CreateSprites(VerticalSize, Vertical), []));
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(() => window.Draw(CreateCanvas()));
+
+        Assert.Contains("SURDRBKG.ICN", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Draw_PaintsCornersBordersAndTheTiledInterior()
+    public void Draw_PaintsCornersBordersAndTheTiledInterior() => Assert.True(TryWithArchives(() =>
     {
         PixelBuffer target = CreateCanvas();
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(170, 140, 300, 200));
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
         Rect frame = window.WindowArea;
 
         window.Draw(target);
 
         // The four corners and both vertical borders come from WINLOSE.ICN ...
-        Assert.Equal(Vertical, target[frame.X + 5, frame.Y + 5]);
-        Assert.Equal(Vertical, target[frame.Right - 5, frame.Y + 5]);
-        Assert.Equal(Vertical, target[frame.X + 5, frame.Bottom - 5]);
-        Assert.Equal(Vertical, target[frame.Right - 5, frame.Bottom - 5]);
-        Assert.Equal(Vertical, target[frame.X + 5, frame.Y + (frame.Height / 2)]);
-        Assert.Equal(Vertical, target[frame.Right - 5, frame.Y + (frame.Height / 2)]);
+        Assert.NotEqual(Canvas, target[frame.X + 5, frame.Y + 5]);
+        Assert.NotEqual(Canvas, target[frame.Right - 5, frame.Y + 5]);
+        Assert.NotEqual(Canvas, target[frame.X + 5, frame.Bottom - 5]);
+        Assert.NotEqual(Canvas, target[frame.Right - 5, frame.Bottom - 5]);
+        Assert.NotEqual(Canvas, target[frame.X + 5, frame.Y + (frame.Height / 2)]);
+        Assert.NotEqual(Canvas, target[frame.Right - 5, frame.Y + (frame.Height / 2)]);
 
         // ... the top and the bottom border from SURDRBKG.ICN ...
-        Assert.Equal(Horizontal, target[frame.X + (frame.Width / 2), frame.Y + 5]);
-        Assert.Equal(Horizontal, target[frame.X + (frame.Width / 2), frame.Bottom - 20]);
+        Assert.NotEqual(Canvas, target[frame.X + (frame.Width / 2), frame.Y + 5]);
+        Assert.NotEqual(Canvas, target[frame.X + (frame.Width / 2), frame.Bottom - 20]);
 
-        // ... and the interior is the STONEBAK.ICN tile, offset by the background margin. The first
-        // pixels of the tile belong to the dithered seam of the corner, so the check sits deeper.
-        Assert.Equal(Interior, target[frame.X + StandardWindow.BorderEdgeOffset + 5, frame.Y + StandardWindow.BorderEdgeOffset + 5]);
-        Assert.Equal(Interior, target[frame.X + (frame.Width / 2), frame.Y + (frame.Height / 2)]);
+        // ... and the interior is the STONEBAK.ICN tile, offset by the background margin.
+        Assert.NotEqual(Canvas, target[frame.X + StandardWindow.BorderEdgeOffset + 5,
+            frame.Y + StandardWindow.BorderEdgeOffset + 5]);
+        Assert.NotEqual(Canvas, target[frame.X + (frame.Width / 2), frame.Y + (frame.Height / 2)]);
+
+        // Nothing outside the frame is touched.
         Assert.Equal(Canvas, target[frame.X - 1, frame.Y - 1]);
-    }
+    }));
 
     [Fact]
-    public void Draw_MixesBorderAndInteriorInTheCornerSeam()
+    public void Draw_MixesBorderAndInteriorInTheCornerSeam() => Assert.True(TryWithArchives(() =>
     {
-        PixelBuffer target = CreateCanvas();
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(170, 140, 300, 200));
-        Rect frame = window.WindowArea;
+        PixelBuffer withBackground = CreateCanvas();
+        PixelBuffer withoutBackground = CreateCanvas();
+        Rect activeArea = new(170, 140, 300, 200);
 
-        window.Draw(target);
+        StandardWindow.Create(activeArea).Draw(withBackground);
+        StandardWindow.Create(activeArea, renderBackground: false).Draw(withoutBackground);
 
-        // A dithered transition, not a hard edge: the 10 pixel band below the top left corner holds
-        // pixels of the border as well as of the interior.
+        // A dithered transition, not a hard edge: in the 10 pixel band under the top left corner some
+        // pixels come from the tiled interior, which only the version with a background paints.
+        Rect frame = StandardWindow.Create(activeArea).WindowArea;
         int startX = frame.X + StandardWindow.BackgroundOffset;
         int startY = frame.Y + StandardWindow.BackgroundOffset;
-        int borderPixels = 0;
         int interiorPixels = 0;
 
         for (int y = startY; y < startY + StandardWindow.TransitionSize; ++y)
         {
             for (int x = startX; x < frame.X + StandardWindow.BorderEdgeOffset; ++x)
             {
-                borderPixels += target[x, y] == Vertical ? 1 : 0;
-                interiorPixels += target[x, y] == Interior ? 1 : 0;
+                interiorPixels += withBackground[x, y] != withoutBackground[x, y] ? 1 : 0;
             }
         }
 
-        Assert.True(borderPixels > 0, "the seam should keep pixels of the border");
         Assert.True(interiorPixels > 0, "the seam should keep pixels of the interior");
-    }
+    }));
 
     [Fact]
-    public void Draw_WithoutBackground_LeavesTheInteriorUntouched()
+    public void Draw_WithoutBackground_LeavesTheInteriorUntouched() => Assert.True(TryWithArchives(() =>
     {
         PixelBuffer target = CreateCanvas();
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(170, 140, 300, 200), renderBackground: false);
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200), renderBackground: false);
         Rect frame = window.WindowArea;
 
         window.Draw(target);
@@ -141,33 +143,33 @@ public sealed class StandardWindowTests
         Assert.False(window.HasBackground);
 
         // The corner pieces grow by the background margin, so the frame is still solid ...
-        Assert.Equal(Vertical, target[frame.X + 5, frame.Y + 5]);
-        Assert.Equal(Vertical, target[frame.X + 30, frame.Y + 5]);
-        Assert.Equal(Vertical, target[frame.X + 5, frame.Y + 30]);
+        Assert.NotEqual(Canvas, target[frame.X + 5, frame.Y + 5]);
+        Assert.NotEqual(Canvas, target[frame.X + 30, frame.Y + 5]);
+        Assert.NotEqual(Canvas, target[frame.X + 5, frame.Y + 30]);
 
         // ... but nothing is tiled inside it.
         Assert.Equal(Canvas, target[frame.X + 30, frame.Y + 30]);
         Assert.Equal(Canvas, target[frame.X + (frame.Width / 2), frame.Y + (frame.Height / 2)]);
-    }
+    }));
 
     [Fact]
-    public void Draw_ClipsAWindowThatStartsOutsideTheTarget()
+    public void Draw_ClipsAWindowThatStartsOutsideTheTarget() => Assert.True(TryWithArchives(() =>
     {
         PixelBuffer target = CreateCanvas();
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(0, 0, 700, 460));
+        StandardWindow window = StandardWindow.Create(new Rect(0, 0, 700, 460));
 
         window.Draw(target);
 
         // The frame starts at (-16,-16), so the left border is cut off but the interior is still
         // tiled into the visible part of the target.
-        Assert.Equal(Vertical, target[5, 5]);
-        Assert.Equal(Interior, target[350, 200]);
-    }
+        Assert.NotEqual(Canvas, target[5, 5]);
+        Assert.NotEqual(Canvas, target[350, 200]);
+    }));
 
     [Fact]
     public void Draw_RejectsAMissingTarget()
     {
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(170, 140, 300, 200));
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
 
         Assert.Throws<ArgumentNullException>(() => window.Draw(null!));
     }
@@ -239,7 +241,7 @@ public sealed class StandardWindowTests
     public void PlaceSymmetricButtons_LaysFourButtonsOutInTwoColumns()
     {
         ButtonGroup buttons = CreateButtonGroup(4);
-        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(buttons);
 
         window.PlaceSymmetricButtons(buttons);
 
@@ -254,7 +256,7 @@ public sealed class StandardWindowTests
     public void PlaceSymmetricButtons_MovesTheGroupDownByTheOffset()
     {
         ButtonGroup buttons = CreateButtonGroup(4);
-        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(buttons);
 
         window.PlaceSymmetricButtons(buttons, offsetY: 11);
 
@@ -266,7 +268,7 @@ public sealed class StandardWindowTests
     public void PlaceSymmetricButtons_CentresALastRowThatIsNotFull()
     {
         ButtonGroup buttons = CreateButtonGroup(8);
-        StandardWindow window = StandardWindow.CreateForSymmetricButtons(CreateChrome(), buttons);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(buttons);
 
         window.PlaceSymmetricButtons(buttons);
 
@@ -280,7 +282,7 @@ public sealed class StandardWindowTests
     [Fact]
     public void RenderPosition_AlignsToEveryPadding()
     {
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(100, 100, 200, 100));
+        StandardWindow window = StandardWindow.Create(new Rect(100, 100, 200, 100));
         Size item = new(ButtonsWidth, ButtonsHeight);
 
         Assert.Equal(new Point(120, 107), window.RenderPosition(new Point(20, 7), item, WindowPadding.TopLeft));
@@ -297,14 +299,11 @@ public sealed class StandardWindowTests
     [Fact]
     public void RenderPosition_RejectsAnUnknownPadding()
     {
-        StandardWindow window = StandardWindow.Create(CreateChrome(), new Rect(100, 100, 200, 100));
+        StandardWindow window = StandardWindow.Create(new Rect(100, 100, 200, 100));
 
         Assert.Throws<ArgumentOutOfRangeException>(
             () => window.RenderPosition(new Point(0, 0), new Size(10, 10), (WindowPadding)99));
     }
-
-    private const int ButtonsWidth = 59;
-    private const int ButtonsHeight = 27;
 
     private static ButtonGroup CreateButtonGroup(int count)
     {
@@ -318,7 +317,13 @@ public sealed class StandardWindowTests
         return group;
     }
 
-    private static Sprite CreateSprite() => CreateSprites(new Size(ButtonsWidth, ButtonsHeight), Interior)[0];
+    private static Sprite CreateSprite()
+    {
+        PixelBuffer image = new(ButtonsWidth, ButtonsHeight);
+        image.Fill(7);
+
+        return new Sprite(image, 0, 0);
+    }
 
     private static Point TopLeftOf(ButtonBase button) => new(button.Area.X, button.Area.Y);
 
@@ -330,16 +335,34 @@ public sealed class StandardWindowTests
         return canvas;
     }
 
-    private static StandardWindowChrome CreateChrome() => StandardWindowChrome.TryCreate(
-        CreateSprites(HorizontalSize, Horizontal),
-        CreateSprites(VerticalSize, Vertical),
-        CreateSprites(BackgroundSize, Interior))!;
+    /// <summary>Opens the game data the window artwork is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
 
-    private static Sprite[] CreateSprites(Size size, byte color)
+    /// <summary>Runs a drawing test against the real window artwork.</summary>
+    /// <param name="body">The test body.</param>
+    /// <returns>Always <see langword="true"/>; the test returns when the machine has no game data.</returns>
+    private static bool TryWithArchives(Action body)
     {
-        PixelBuffer image = new(size.Width, size.Height);
-        image.Fill(color);
+        using AssetBundle? assets = OpenArchives();
 
-        return [new Sprite(image, 0, 0)];
+        if (assets is null)
+        {
+            return true;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            body();
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
     }
 }

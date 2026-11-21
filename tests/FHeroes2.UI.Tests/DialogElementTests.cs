@@ -293,4 +293,177 @@ public sealed class DialogElementTests
         Assert.Equal(12, OptionItem.TitleVerticalOffset);
         Assert.Equal(6, OptionItem.ValueVerticalOffset);
     }
+
+    [Fact]
+    public void CustomAnimation_IsTheSizeOfTheStaticImageAndDrawsTheFirstFrameOverIt()
+    {
+        Sprite background = new(30, 20);
+        background.Image.Fill(FrameColor);
+
+        Sprite first = new(8, 6, 2, 3);
+        first.Image.Fill(IconColor);
+
+        var element = new CustomAnimationDialogElement(background, new Point(4, 5),
+            [first, new Sprite(1, 1)], firstFrame: 0, frameCount: 1, TimeSpan.FromMilliseconds(75));
+
+        Assert.Equal(new Size(30, 20), element.Area);
+        Assert.Equal(0, element.FrameNumber);
+
+        PixelBuffer output = new(60, 50);
+
+        element.Draw(output, new Point(10, 10));
+
+        // The static image covers the element.
+        Assert.Equal(FrameColor, output[10, 10]);
+        Assert.Equal(FrameColor, output[10 + 29, 10 + 19]);
+
+        // The frame sits at the animation position plus its own offset.
+        Assert.Equal(IconColor, output[10 + 4 + 2, 10 + 5 + 3]);
+        Assert.Equal(IconColor, output[10 + 4 + 2 + 7, 10 + 5 + 3 + 5]);
+    }
+
+    [Fact]
+    public void CustomAnimation_AdvancesOneFramePerDelayAndRepaints()
+    {
+        Sprite background = new(10, 10);
+        background.Image.Fill(FrameColor);
+
+        Sprite first = new(4, 4);
+        first.Image.Fill(IconColor);
+
+        Sprite second = new(4, 4);
+        second.Image.Fill(TextColor);
+
+        var element = new CustomAnimationDialogElement(background, new Point(0, 0),
+            [first, second], firstFrame: 0, frameCount: 2, TimeSpan.FromMilliseconds(50));
+
+        PixelBuffer output = new(20, 20);
+        element.Draw(output, new Point(0, 0));
+        Assert.Equal(IconColor, output[0, 0]);
+
+        Assert.True(element.Update(output, new Point(0, 0), TimeSpan.FromMilliseconds(50)));
+        Assert.Equal(1, element.FrameNumber);
+        Assert.Equal(TextColor, output[0, 0]);
+
+        // Less than a delay later nothing happens.
+        Assert.False(element.Update(output, new Point(0, 0), TimeSpan.FromMilliseconds(10)));
+        Assert.Equal(1, element.FrameNumber);
+
+        // The cycle wraps around to the first sprite.
+        Assert.True(element.Update(output, new Point(0, 0), TimeSpan.FromMilliseconds(50)));
+        Assert.Equal(0, element.FrameNumber);
+        Assert.Equal(IconColor, output[0, 0]);
+    }
+
+    [Fact]
+    public void CustomAnimation_RejectsMissingSpritesAndAnImpossibleRange()
+    {
+        Sprite background = new(10, 10);
+        Sprite frame = new(4, 4);
+        var duration = TimeSpan.FromMilliseconds(50);
+
+        Assert.Throws<ArgumentNullException>(() =>
+            new CustomAnimationDialogElement(null!, new Point(0, 0), [frame], 0, 1, duration));
+        Assert.Throws<ArgumentNullException>(() =>
+            new CustomAnimationDialogElement(background, new Point(0, 0), null!, 0, 1, duration));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new CustomAnimationDialogElement(background, new Point(0, 0), [frame], -1, 1, duration));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new CustomAnimationDialogElement(background, new Point(0, 0), [frame], 0, 0, duration));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new CustomAnimationDialogElement(background, new Point(0, 0), [frame], 0, 1, TimeSpan.Zero));
+        Assert.Throws<ArgumentException>(() =>
+            new CustomAnimationDialogElement(background, new Point(0, 0), [frame], 0, 2, duration));
+    }
+
+    [Fact]
+    public void Monster_IsTheSizeOfThePlateAndComposesTheRaceBackgroundSixPixelsInside()
+    {
+        Sprite plate = new(40, 44);
+        plate.Image.Fill(FrameColor);
+
+        Sprite race = new(20, 24);
+        race.Image.Fill(IconColor);
+
+        // The picture carries its own anchor, like the artwork of the archives.
+        Sprite portrait = new(10, 12, 3, 4);
+        portrait.Image.Fill(TextColor);
+
+        var element = new MonsterDialogElement(plate, race, portrait, "Pikeman", "A sturdy defender.");
+
+        Assert.Equal(new Size(40, 44), element.Area);
+        Assert.Equal(12, MonsterDialogElement.PlateFrame);
+        Assert.Equal(6, MonsterDialogElement.PortraitOffset);
+
+        PixelBuffer output = new(80, 80);
+
+        element.Draw(output, new Point(10, 10));
+
+        // The plate is the background of the element.
+        Assert.Equal(FrameColor, output[10, 10]);
+        Assert.Equal(FrameColor, output[10 + 39, 10 + 43]);
+
+        // The race background starts six pixels in, the picture six plus its own anchor.
+        Assert.Equal(IconColor, output[10 + 6, 10 + 6]);
+        Assert.Equal(IconColor, output[10 + 6 + 19, 10 + 6 + 23]);
+        Assert.Equal(TextColor, output[10 + 6 + 3, 10 + 6 + 4]);
+        Assert.Equal(TextColor, output[10 + 6 + 3 + 9, 10 + 6 + 4 + 11]);
+    }
+
+    [Fact]
+    public void Monster_DrawsOverACleanPlateEveryTime()
+    {
+        Sprite plate = new(20, 20);
+        plate.Image.Fill(FrameColor);
+
+        Sprite race = new(6, 6);
+        race.Image.Fill(IconColor);
+
+        var element = new MonsterDialogElement(plate, race, null, "Pikeman", "A sturdy defender.");
+
+        PixelBuffer output = new(40, 40);
+
+        element.Draw(output, new Point(0, 0));
+        element.Draw(output, new Point(20, 20));
+
+        // The second pass starts from the plate again: the artwork itself was never painted into.
+        Assert.Equal(FrameColor, output[20, 20]);
+        Assert.Equal(IconColor, output[20 + 6, 20 + 6]);
+        Assert.Equal(FrameColor, plate.Image[6, 6]);
+    }
+
+    [Fact]
+    public void Monster_ClicksAskForTheCreatureInfoAndClicksOutsideDoNothing()
+    {
+        Sprite plate = new(40, 44);
+        var element = new MonsterDialogElement(plate, null, null, "Pikeman", "A sturdy defender.");
+
+        LocalEvent rightClick = new(() => 0);
+        rightClick.OnMouseMotion(new Point(10, 10));
+        rightClick.OnMouseButton(true, MouseButtonType.Right, new Point(10, 10));
+
+        DialogElementResult result = element.ProcessEvents(rightClick, new Point(0, 0));
+
+        Assert.NotNull(result.Popup);
+        Assert.Equal("Pikeman", result.Popup!.Value.Header);
+        Assert.Equal("A sturdy defender.", result.Popup.Value.Body);
+        Assert.False(result.RequiresRedraw);
+
+        LocalEvent leftClick = new(() => 0);
+        leftClick.OnMouseMotion(new Point(10, 10));
+        leftClick.OnMouseButton(true, MouseButtonType.Left, new Point(10, 10));
+        leftClick.OnMouseButton(false, MouseButtonType.Left, new Point(10, 10));
+
+        Assert.NotNull(element.ProcessEvents(leftClick, new Point(0, 0)).Popup);
+
+        // The same click with the element somewhere else.
+        Assert.Null(element.ProcessEvents(rightClick, new Point(100, 100)).Popup);
+        Assert.Null(element.ProcessEvents(leftClick, new Point(100, 100)).Popup);
+    }
+
+    [Fact]
+    public void Monster_RejectsAMissingPlate()
+    {
+        Assert.Throws<ArgumentNullException>(() => new MonsterDialogElement(null!, null, null, "Pikeman", string.Empty));
+    }
 }

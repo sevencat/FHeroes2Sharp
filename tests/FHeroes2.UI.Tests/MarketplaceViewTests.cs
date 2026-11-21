@@ -1,3 +1,4 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
@@ -5,6 +6,7 @@ using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
 namespace FHeroes2.UI.Tests;
@@ -13,10 +15,15 @@ namespace FHeroes2.UI.Tests;
 /// The marketplace window, <c>Dialog::Marketplace()</c> and <c>TradeWindowGUI</c>
 /// (<c>dialog_marketplace.cpp:118-685</c>).
 /// </summary>
-public sealed class MarketplaceViewTests
+/// <remarks>
+/// The window is drawn in a <see cref="FrameBox"/>, which reads <c>BUYBUILD.ICN</c> itself, so the tests
+/// need the installed archives: the constructor opens them and keeps <c>GameAssets.Current</c> set for
+/// the whole test.
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
+public sealed class MarketplaceViewTests : IDisposable
 {
     private const byte Canvas = 0;
-    private const byte FrameColor = 33;
     private const byte ButtonColor = 44;
     private const byte BarColor = 60;
     private const byte SliderColor = 61;
@@ -35,6 +42,20 @@ public sealed class MarketplaceViewTests
     private static readonly Size TradeButtonSize = new(60, 25);
     private static readonly Size GiftButtonSize = new(60, 25);
 
+    private readonly AssetBundle? _assets;
+
+    public MarketplaceViewTests()
+    {
+        _assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+        GameAssets.Current = _assets;
+    }
+
+    public void Dispose()
+    {
+        GameAssets.Current = null;
+        _assets?.Dispose();
+    }
+
     [Fact]
     public void TryCreate_LaysOutTheFrame()
     {
@@ -50,10 +71,9 @@ public sealed class MarketplaceViewTests
     public void TryCreate_ReturnsNullWithoutArtwork()
     {
         Assert.Null(MarketplaceView.TryCreate(
-            CreateTradingPost(), CreateChrome(), null, CreateFonts()));
+            CreateTradingPost(), null, CreateFonts()));
         Assert.Null(MarketplaceView.TryCreate(
             CreateTradingPost(),
-            CreateChrome(),
             MarketplaceArtwork.TryCreate(CreateTradpost(14), CreateIcons(), CreateResources(), CreateButtonFrames(),
                 CreateButtonFrames(), CreateButtonFrames()),
             CreateFonts()));
@@ -63,17 +83,15 @@ public sealed class MarketplaceViewTests
     public void TryCreate_RejectsMissingArguments()
     {
         Assert.Throws<ArgumentNullException>(() => MarketplaceView.TryCreate(
-            null!, CreateChrome(), CreateArtwork(), CreateFonts()));
+            null!, CreateArtwork(), CreateFonts()));
         Assert.Throws<ArgumentNullException>(() => MarketplaceView.TryCreate(
-            CreateTradingPost(), null!, CreateArtwork(), CreateFonts()));
-        Assert.Throws<ArgumentNullException>(() => MarketplaceView.TryCreate(
-            CreateTradingPost(), CreateChrome(), CreateArtwork(), null!));
+            CreateTradingPost(), CreateArtwork(), null!));
     }
 
     [Fact]
     public void Cells_AreTwoRowsOfFourAndThree()
     {
-        MarketplaceLayout layout = MarketplaceLayout.Create(CreateChrome());
+        MarketplaceLayout layout = MarketplaceLayout.Create();
         Rect area = layout.Area;
 
         Assert.Equal(new Rect(area.X, area.Y + 190, 34, 34), layout.FromCell(0));
@@ -88,7 +106,7 @@ public sealed class MarketplaceViewTests
     [Fact]
     public void TitlesAndMessage_SitAboveTheRows()
     {
-        MarketplaceLayout layout = MarketplaceLayout.Create(CreateChrome());
+        MarketplaceLayout layout = MarketplaceLayout.Create();
         Rect area = layout.Area;
 
         Assert.Equal(new Point(area.X, area.Y + 175), layout.FromTitle);
@@ -103,7 +121,7 @@ public sealed class MarketplaceViewTests
     [Fact]
     public void TradeArea_AnchorsToTheCentredArtwork()
     {
-        MarketplaceLayout layout = MarketplaceLayout.Create(CreateChrome());
+        MarketplaceLayout layout = MarketplaceLayout.Create();
 
         Assert.Equal(new Point(layout.Area.X + 2, layout.Area.Y + 128), layout.TradeBar(BarSize));
         Assert.Equal(new Rect(layout.Area.X + 26, layout.Area.Y + 131, 187, 11), layout.SliderArea(BarSize));
@@ -172,7 +190,9 @@ public sealed class MarketplaceViewTests
 
         view.Draw(target);
 
-        Assert.Equal(FrameColor, Pixel(target, view.Layout.Area.X, view.Layout.Area.Y + 60));
+        // The frame is the real BUYBUILD.ICN artwork, so it is enough that it is no longer the empty
+        // black canvas there.
+        Assert.NotEqual(Canvas, Pixel(target, view.Layout.Area.X, view.Layout.Area.Y + 60));
 
         for (int index = 0; index < MarketplaceLayout.ResourceCount; ++index)
         {
@@ -243,7 +263,9 @@ public sealed class MarketplaceViewTests
 
         view.Draw(target);
 
-        Assert.Equal(FrameColor, Pixel(target, view.TradeButton.ReleasedArea.X + 30, view.TradeButton.ReleasedArea.Y + 12));
+        // Nothing of the button is painted over the frame artwork.
+        Assert.NotEqual(TradeButtonColor,
+            Pixel(target, view.TradeButton.ReleasedArea.X + 30, view.TradeButton.ReleasedArea.Y + 12));
     }
 
     [Fact]
@@ -503,7 +525,7 @@ public sealed class MarketplaceViewTests
         CreateView(MarketplaceDialog.Create(kingdom, tradingPost, players));
 
     private static MarketplaceView CreateView(MarketplaceDialog dialog) =>
-        MarketplaceView.TryCreate(dialog, CreateChrome(), CreateArtwork(), CreateFonts())!;
+        MarketplaceView.TryCreate(dialog, CreateArtwork(), CreateFonts())!;
 
     private static MarketplaceDialog CreateTradingPost(int wood = 0, int gold = 0, int ore = 0, int players = 1) =>
         MarketplaceDialog.Create(CreateKingdom(wood, gold, ore), true, players);
@@ -579,18 +601,6 @@ public sealed class MarketplaceViewTests
         new Sprite(Filled(TradeButtonSize, color)),
         new Sprite(Filled(TradeButtonSize, ButtonColor), 1, 1),
     ];
-
-    private static FrameBoxChrome CreateChrome()
-    {
-        Sprite[] frames = new Sprite[FrameBoxChrome.RequiredSpriteCount];
-
-        for (int index = 0; index < frames.Length; ++index)
-        {
-            frames[index] = new Sprite(Filled(new Size(160, index % 3 == 1 ? 35 : 99), FrameColor));
-        }
-
-        return FrameBoxChrome.TryCreate(frames)!;
-    }
 
     private static PixelBuffer Filled(Size size, byte color)
     {

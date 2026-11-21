@@ -13,6 +13,10 @@ using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Interface;
 
+// The ported Interface::ButtonsPanel lives next to the self drawn one this scene still uses; the alias pins the latter
+// until the scene is replaced by Interface::AdventureMap.
+using ButtonsPanel = FHeroes2.Game.AdventureMap.ButtonsPanel;
+
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.App.Scenes;
@@ -64,7 +68,7 @@ public sealed class AdventureMapScene : IScene
     private readonly IconSpriteSet? _iconSprites;
     private readonly ButtonsPanel _buttons;
     private readonly ButtonSpriteSet? _buttonSprites;
-    private readonly StatusPanel? _statusPanel;
+    private readonly StatusPanelPainter? _statusPanel;
     private readonly Rect _statusArea;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
@@ -101,7 +105,7 @@ public sealed class AdventureMapScene : IScene
         MapFrame mapFrame,
         IconSpriteSet? iconSprites,
         ButtonSpriteSet? buttonSprites,
-        StatusPanel? statusPanel,
+        StatusPanelPainter? statusPanel,
         AdventureOptionsView? optionsArtwork,
         IViewWorldSpriteSource? viewWorldSprites,
         Sprite? quickInfoFrame,
@@ -132,7 +136,7 @@ public sealed class AdventureMapScene : IScene
         // The stone panel hangs under the buttons down to the bottom border, the _statusPanel.SetPosition
         // of the reference (game_interface.cpp), which leaves 480 - 392 - 16 = 72 pixels, one frame of
         // STONBACK.ICN.
-        _statusArea = StatusPanel.AreaFor(mapFrame.Panel, _buttons.Area, frame.Size.Height, MapFrame.BorderWidth);
+        _statusArea = StatusPanelPainter.AreaFor(mapFrame.Panel, _buttons.Area, frame.Size.Height, MapFrame.BorderWidth);
 
         // The status line goes on the bottom border, where the frame art leaves the strip empty; the
         // panel bay above it belongs to the interface buttons of later milestones.
@@ -271,7 +275,7 @@ public sealed class AdventureMapScene : IScene
                 mapFrame,
                 IconSpriteSet.TryCreate(assets),
                 ButtonSpriteSet.TryCreate(assets),
-                StatusPanel.TryCreate(assets),
+                StatusPanelPainter.TryCreate(assets),
                 AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
                 QuickInfoArtwork.TryCreate(assets),
@@ -877,7 +881,8 @@ public sealed class AdventureMapScene : IScene
             movement,
             IsMovementEnabled: canWalk || canVisit,
             IsSpellEnabled: hero.IsActive && hero.HasSpellBook && hero.SpellPoints > 0,
-            IsNextHeroEnabled: hasMobileHero);
+            IsNextHeroEnabled: hasMobileHero,
+            HasValidPath: hasRoute);
     }
 
     /// <summary>Rolls the map with the wheel by whole tiles, one tile per notch.</summary>

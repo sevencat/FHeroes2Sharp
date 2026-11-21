@@ -1,6 +1,7 @@
 using FHeroes2.Assets;
 using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Cursor;
 
 namespace FHeroes2.Game;
 

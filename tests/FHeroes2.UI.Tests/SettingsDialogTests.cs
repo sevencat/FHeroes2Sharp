@@ -1,14 +1,17 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
 /// <summary>
 /// The settings dialog: the row layout, the value cycling and the button interaction.
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class SettingsDialogTests
 {
     private static readonly Rect Content = new(100, 100, 200, 120);
@@ -111,7 +114,7 @@ public sealed class SettingsDialogTests
         SettingsDialog dialog = CreateDialog(["Language"], out Rect okayArea);
 
         PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
-        dialog.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(dialog, target));
 
         // The title font is solid colour 1 and the option font solid colour 2, so the regions can be
         // told apart even though every glyph looks the same.
@@ -145,7 +148,7 @@ public sealed class SettingsDialogTests
         SettingsDialog dialog = CreateDialog(["Language"], out _);
 
         PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
-        dialog.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(dialog, target));
 
         // The tip of '<' is on the left of its area, the tip of '>' on the right; the arms are
         // ChevronWidth - 1 rows above and below the centre.
@@ -168,7 +171,7 @@ public sealed class SettingsDialogTests
         Assert.True(dialog.RightChevron(0).IsEmpty);
 
         PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
-        dialog.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(dialog, target));
     }
 
     [Fact]
@@ -190,7 +193,7 @@ public sealed class SettingsDialogTests
             [new string('W', 40)], out _, values: [new string('W', 40)]);
 
         PixelBuffer target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height);
-        dialog.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(dialog, target));
 
         Rect row = dialog.OptionArea(0);
         for (int y = row.Y; y < row.Bottom; ++y)
@@ -231,7 +234,7 @@ public sealed class SettingsDialogTests
         IGlyphSource optionFont = new FakeGlyphSource(2);
 
         Rect content = new(Content.X, Content.Y, width, Content.Height);
-        StandardWindow window = StandardWindow.Create(CreateChrome(), content);
+        StandardWindow window = StandardWindow.Create(content);
 
         ButtonGroup buttons = ButtonGroup.CreateStandard(content, DialogButton.Ok, new FixedArtwork());
 
@@ -245,15 +248,31 @@ public sealed class SettingsDialogTests
         return dialog;
     }
 
-    /// <summary>Flat sprites of the sizes the window needs, so drawing the frame does not crash.</summary>
-    private static StandardWindowChrome CreateChrome()
+    /// <summary>Draws the dialog with the real window artwork.</summary>
+    /// <param name="dialog">Dialog to paint.</param>
+    /// <param name="target">Frame buffer to paint into.</param>
+    /// <returns><see langword="false"/> when the machine has no game data.</returns>
+    private static bool DrawWithTheWindowArtwork(SettingsDialog dialog, PixelBuffer target)
     {
-        // Sizes of the artwork as read from heroes2.agg.
-        Sprite horizontal = new(new PixelBuffer(476, 215));
-        Sprite vertical = new(new PixelBuffer(319, 456));
-        Sprite background = new(new PixelBuffer(640, 480));
+        using AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
 
-        return StandardWindowChrome.TryCreate([horizontal], [vertical], [background])!;
+        if (assets is null)
+        {
+            return false;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            dialog.Draw(target);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
     }
 
     private sealed class FixedArtwork : IDialogButtonArtworkSource

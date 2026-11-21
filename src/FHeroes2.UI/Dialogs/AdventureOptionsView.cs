@@ -84,14 +84,13 @@ public sealed class AdventureOptionsView
     /// <summary>
     /// Composes the dialog from the archive frames.
     /// </summary>
-    /// <param name="chrome">Border and background artwork of the stone window.</param>
     /// <param name="buttonFrames">Frames of <see cref="ButtonsAssetName"/>, eight of them.</param>
     /// <param name="systemFrames">Frames of <see cref="CancelAssetName"/>, two at least.</param>
     /// <returns><see langword="null"/> when an input is missing or too short.</returns>
-    public static AdventureOptionsView? TryCreate(StandardWindowChrome? chrome,
+    public static AdventureOptionsView? TryCreate(
         IReadOnlyList<Sprite>? buttonFrames, IReadOnlyList<Sprite>? systemFrames)
     {
-        if (chrome is null || buttonFrames is null || systemFrames is null)
+        if (buttonFrames is null || systemFrames is null)
         {
             return null;
         }
@@ -104,7 +103,7 @@ public sealed class AdventureOptionsView
         ButtonGroup buttons = ButtonGroup.CreateFromFrames(
             [.. buttonFrames.Take(ButtonsFrameCount)], ButtonValues);
 
-        StandardWindow window = StandardWindow.CreateForSymmetricButtons(chrome, buttons);
+        StandardWindow window = StandardWindow.CreateForSymmetricButtons(buttons);
         window.PlaceSymmetricButtons(buttons);
 
         ButtonSprite cancel = new(systemFrames[CancelReleasedFrame], systemFrames[CancelPressedFrame]);

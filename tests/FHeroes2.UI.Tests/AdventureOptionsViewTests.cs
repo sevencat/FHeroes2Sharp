@@ -1,15 +1,15 @@
+using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class AdventureOptionsViewTests
 {
     private const byte Canvas = 3;
-    private const byte Vertical = 20;
-    private const byte Horizontal = 30;
-    private const byte Interior = 40;
     private const byte Button = 50;
     private const byte CancelButton = 60;
 
@@ -61,15 +61,11 @@ public sealed class AdventureOptionsViewTests
     [Fact]
     public void TryCreate_ReturnsNullWithoutTheButtons()
     {
-        StandardWindowChrome chrome = CreateChrome();
-
-        Assert.Null(AdventureOptionsView.TryCreate(chrome, null, CreateSprites(5, CancelSize, CancelButton)));
+        Assert.Null(AdventureOptionsView.TryCreate(null, CreateSprites(5, CancelSize, CancelButton)));
         Assert.Null(AdventureOptionsView.TryCreate(
-            chrome, CreateSprites(6, ButtonSize, Button), CreateSprites(5, CancelSize, CancelButton)));
+            CreateSprites(6, ButtonSize, Button), CreateSprites(5, CancelSize, CancelButton)));
         Assert.Null(AdventureOptionsView.TryCreate(
-            chrome, CreateSprites(8, ButtonSize, Button), CreateSprites(4, CancelSize, CancelButton)));
-        Assert.Null(AdventureOptionsView.TryCreate(
-            null, CreateSprites(8, ButtonSize, Button), CreateSprites(5, CancelSize, CancelButton)));
+            CreateSprites(8, ButtonSize, Button), CreateSprites(4, CancelSize, CancelButton)));
     }
 
     [Fact]
@@ -79,15 +75,32 @@ public sealed class AdventureOptionsViewTests
         PixelBuffer canvas = new(640, 480);
         canvas.Fill(Canvas);
 
-        view.Draw(canvas);
+        // The stone frame of the window comes from the archive, so the game data has to be open.
+        using AssetBundle? assets = OpenArchives();
 
-        // The frame is 16 pixels thick from (205,151); the interior is tiled stone. The first button
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            view.Draw(canvas);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        // The frame is 16 pixels thick from (205,151) and the interior is tiled stone. The first button
         // covers (251,182)-(309,208) and the cancel button (297,280)-(341,301).
-        Assert.Equal(Vertical, canvas[206, 300]);
+        Assert.NotEqual(Canvas, canvas[206, 300]);
+        Assert.NotEqual(Canvas, canvas[250, 170]);
         Assert.Equal(Button, canvas[270, 195]);
         Assert.Equal(CancelButton, canvas[310, 290]);
         Assert.Equal(Canvas, canvas[0, 0]);
-        Assert.True(CountColor(canvas, Interior) > 10000);
     }
 
     [Fact]
@@ -149,12 +162,12 @@ public sealed class AdventureOptionsViewTests
 
     private static AdventureOptionsView CreateView() =>
         AdventureOptionsView.TryCreate(
-            CreateChrome(), CreateSprites(8, ButtonSize, Button), CreateSprites(5, CancelSize, CancelButton))!;
+            CreateSprites(8, ButtonSize, Button), CreateSprites(5, CancelSize, CancelButton))!;
 
-    private static StandardWindowChrome CreateChrome() => StandardWindowChrome.TryCreate(
-        CreateSprites(1, new Size(476, 215), Horizontal),
-        CreateSprites(1, new Size(319, 456), Vertical),
-        CreateSprites(1, new Size(640, 480), Interior))!;
+    /// <summary>Opens the game data the stone frame of the window is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
 
     private static Sprite[] CreateSprites(int count, Size size, byte color)
     {
@@ -171,22 +184,4 @@ public sealed class AdventureOptionsViewTests
     }
 
     private static Point TopLeftOf(Widgets.ButtonBase button) => new(button.Area.X, button.Area.Y);
-
-    private static int CountColor(PixelBuffer canvas, byte color)
-    {
-        int count = 0;
-
-        for (int y = 0; y < canvas.Height; ++y)
-        {
-            for (int x = 0; x < canvas.Width; ++x)
-            {
-                if (canvas[x, y] == color)
-                {
-                    ++count;
-                }
-            }
-        }
-
-        return count;
-    }
 }

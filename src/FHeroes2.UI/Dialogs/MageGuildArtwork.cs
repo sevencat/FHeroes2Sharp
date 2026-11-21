@@ -153,7 +153,7 @@ public sealed class MageGuildArtwork
     }
 
     /// <summary>
-    /// Collects the window's sprites, the counterpart of <c>StandardWindowChrome.TryCreate</c>.
+    /// Collects the sprites of the dialog; the stone window frame is read by <see cref="StandardWindow"/>.
     /// </summary>
     /// <param name="background">Frames of <see cref="GetBackgroundIcn"/>; only frame 0 is used.</param>
     /// <param name="bar">Frames of <c>SMALLBAR</c>; five of them.</param>

@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 
 namespace FHeroes2.Game.System;
 
@@ -416,6 +417,21 @@ public sealed class Settings
     /// <summary>The speed of the controller pointer, <c>ControllerPointerSpeed()</c>.</summary>
     public int ControllerPointerSpeed { get; private set; } = 10;
 
+    /// <summary>
+    /// The floating position of the status panel, <c>_posStatus</c> (<c>settings.h</c>, <c>settings.cpp:88</c>).
+    /// </summary>
+    /// <remarks>
+    /// Only the interface saves this, through <c>StatusPanel::SavePosition()</c>; the configuration writer is not
+    /// ported, so the value lives for the session only.
+    /// </remarks>
+    public Point PosStatus { get; private set; }
+
+    /// <summary>
+    /// The floating position of the radar, <c>_posRadar</c> (<c>settings.h</c>, <c>settings.cpp:87</c>).
+    /// </summary>
+    /// <remarks>Same lifetime as <see cref="PosStatus"/>: the interface saves it, nothing writes it to disk yet.</remarks>
+    public Point PosRadar { get; private set; }
+
     /// <summary>Whether the game is a campaign, <c>isCampaignGameType()</c>.</summary>
     public bool IsCampaignGameType => (GameType & GameTypes.Campaign) != 0;
 
@@ -642,6 +658,14 @@ public sealed class Settings
     /// <summary>Switches the hidden adventure interface, <c>setHideInterface()</c>.</summary>
     /// <param name="enable">True to hide it.</param>
     public void SetHideInterface(bool enable) => SetGameOption(GameOptions.HideInterface, enable);
+
+    /// <summary>Stores the floating position of the status panel, <c>SetPosStatus()</c>.</summary>
+    /// <param name="position">Left-top corner of the floating window.</param>
+    public void SetPosStatus(Point position) => PosStatus = position;
+
+    /// <summary>Stores the floating position of the radar, <c>SetPosRadar()</c>.</summary>
+    /// <param name="position">Left-top corner of the floating window.</param>
+    public void SetPosRadar(Point position) => PosRadar = position;
 
     /// <summary>Switches the battle grid, <c>SetBattleGrid()</c>.</summary>
     /// <param name="enable">True to draw it.</param>

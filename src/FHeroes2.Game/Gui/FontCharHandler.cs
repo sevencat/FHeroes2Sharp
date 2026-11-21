@@ -39,6 +39,10 @@ public sealed class FontCharHandler
     /// <remarks>参考在加载时往前补 32 个空帧，让「字符码」直接当「帧号」用；C# 侧直接按 <c>character - GlyphFrameOffset</c> 查原始帧。</remarks>
     public const uint GlyphFrameOffset = 0x20;
 
+    /// <summary><c>cursorChar</c>: the glyph that marks the caret of a text input.</summary>
+    /// <remarks>参考：<c>src/fheroes2/gui/ui_text.cpp:40</c> <c>const char cursorChar = '|'</c>。文字输入与光标图共用它。</remarks>
+    public const byte CursorChar = (byte)'|';
+
     private static readonly Sprite ErrorImage = new(0, 0);
 
     private readonly FontType _fontType;
@@ -211,4 +215,37 @@ public sealed class FontCharHandler
 
         return FontGlyphTable.Get(fontType.Size, fontType.Color, frame) ?? ErrorImage;
     }
+
+    /// <summary><c>isFontAvailable</c>: whether every character of the text can be drawn in the font.</summary>
+    /// <param name="text">Bytes of the text.</param>
+    /// <param name="fontType">Glyph size and colour.</param>
+    /// <returns><see langword="true"/> for an empty text, or when no byte falls outside the font.</returns>
+    /// <remarks>
+    /// 参考：<c>src/fheroes2/gui/ui_text.cpp:1398</c>。按字节而不是按字符判断——参考的文本本来就是一字节一字符。
+    /// </remarks>
+    public static bool IsFontAvailable(ReadOnlySpan<byte> text, in FontType fontType)
+    {
+        if (text.IsEmpty)
+        {
+            return true;
+        }
+
+        FontCharHandler charHandler = new(fontType);
+
+        foreach (byte character in text)
+        {
+            if (!charHandler.IsAvailable(character))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary><c>getCursorSprite</c>: the caret glyph of a font.</summary>
+    /// <param name="fontType">Glyph size and colour.</param>
+    /// <returns>The glyph of <c>'|'</c>; empty when the face has none.</returns>
+    /// <remarks>参考：<c>src/fheroes2/gui/ui_text.cpp:1425</c>，用它的是 <c>TextInputField</c>（<c>ui_tool.cpp:212</c>）。</remarks>
+    public static Sprite GetCursorSprite(in FontType fontType) => new FontCharHandler(fontType).GetSprite(CursorChar);
 }

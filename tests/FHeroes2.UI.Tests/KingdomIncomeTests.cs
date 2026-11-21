@@ -1,8 +1,10 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -11,6 +13,11 @@ namespace FHeroes2.UI.Tests;
 /// <see cref="ResourceDialogElement"/> measures its amount with <c>FHeroes2.Game.Gui.Text</c>, which needs the real
 /// archive, so a box with a non zero amount is covered by the game tests instead.
 /// </summary>
+/// <remarks>
+/// The box is drawn in a <see cref="FrameBox"/>, which reads <c>BUYBUILD.ICN</c> itself, so creating one
+/// needs the installed archives; the tests return when the machine has none.
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class KingdomIncomeTests
 {
     [Fact]
@@ -36,27 +43,28 @@ public sealed class KingdomIncomeTests
     }
 
     [Fact]
-    public void Create_WithoutIncomeIsATextOnlyBox()
-    {
-        MessageBox box = KingdomIncome.Create(default, CreateIcons(), CreateChrome(), Font, Font);
+    public void Create_WithoutIncomeIsATextOnlyBox() => Assert.True(TryWithArchives(
+        () => KingdomIncome.Create(default, CreateIcons(), Font, Font),
+        box =>
+        {
+            Assert.Equal(KingdomIncome.Header, box.Header);
+            Assert.Equal(KingdomIncome.Body, box.Body);
+            Assert.Empty(box.Elements);
+            Assert.Empty(box.ElementAreas);
 
-        Assert.Equal(KingdomIncome.Header, box.Header);
-        Assert.Equal(KingdomIncome.Body, box.Body);
-        Assert.Empty(box.Elements);
-        Assert.Empty(box.ElementAreas);
-
-        // The smallest box: the 25 pixel title block plus the 25 pixel body block do not reach the 70 pixel minimum.
-        Assert.Equal(70, box.Area.Height);
-    }
+            // The smallest box: the 25 pixel title block plus the 25 pixel body block do not reach the
+            // 70 pixel minimum.
+            Assert.Equal(70, box.Area.Height);
+        }));
 
     [Fact]
-    public void Create_AcceptsTranslatedText()
-    {
-        MessageBox box = KingdomIncome.Create(default, CreateIcons(), CreateChrome(), Font, Font, "入", "每天");
-
-        Assert.Equal("入", box.Header);
-        Assert.Equal("每天", box.Body);
-    }
+    public void Create_AcceptsTranslatedText() => Assert.True(TryWithArchives(
+        () => KingdomIncome.Create(default, CreateIcons(), Font, Font, "入", "每天"),
+        box =>
+        {
+            Assert.Equal("入", box.Header);
+            Assert.Equal("每天", box.Body);
+        }));
 
     [Fact]
     public void Create_RejectsIncompleteResourceArtwork()
@@ -64,18 +72,16 @@ public sealed class KingdomIncomeTests
         List<Sprite> icons = CreateIcons();
         icons.RemoveAt(0);
 
-        Assert.Throws<ArgumentException>(() => KingdomIncome.Create(default, icons, CreateChrome(), Font, Font));
+        Assert.Throws<ArgumentException>(() => KingdomIncome.Create(default, icons, Font, Font));
     }
 
     [Fact]
     public void Create_RejectsNullArguments()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            KingdomIncome.Create(default, null!, CreateChrome(), Font, Font));
+            KingdomIncome.Create(default, null!, Font, Font));
         Assert.Throws<ArgumentNullException>(() =>
-            KingdomIncome.Create(default, CreateIcons(), null!, Font, Font));
-        Assert.Throws<ArgumentNullException>(() =>
-            KingdomIncome.Create(default, CreateIcons(), CreateChrome(), null!, Font));
+            KingdomIncome.Create(default, CreateIcons(), null!, Font));
     }
 
     private static List<Sprite> CreateIcons()
@@ -92,24 +98,36 @@ public sealed class KingdomIncomeTests
         return icons;
     }
 
-    private static FrameBoxChrome CreateChrome()
-    {
-        // Only the geometry of BUYBUILD.ICN matters here, so every piece is a flat colour.
-        Size[] sizes =
-        [
-            new(144, 99), new(145, 45), new(144, 81), new(251, 20),
-            new(160, 99), new(161, 45), new(161, 81),
-        ];
+    /// <summary>Opens the game data the message frame is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
 
-        Sprite[] pieces = new Sprite[sizes.Length];
-        for (int index = 0; index < sizes.Length; ++index)
+    /// <summary>Builds a box against the real frame artwork.</summary>
+    /// <param name="create">Builds the box.</param>
+    /// <param name="assert">Checks it.</param>
+    /// <returns>Always <see langword="true"/>; the test returns when the machine has no game data.</returns>
+    private static bool TryWithArchives(Func<MessageBox> create, Action<MessageBox> assert)
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
         {
-            PixelBuffer image = new(sizes[index].Width, sizes[index].Height);
-            image.Fill(7);
-            pieces[index] = new Sprite(image, 0, 0);
+            return true;
         }
 
-        return FrameBoxChrome.TryCreate(pieces)!;
+        GameAssets.Current = assets;
+
+        try
+        {
+            assert(create());
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
     }
 
     /// <summary>A glyph source with the metrics of <c>FONT.ICN</c> whose glyphs are solid blocks.</summary>

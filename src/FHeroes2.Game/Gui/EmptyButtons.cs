@@ -16,9 +16,9 @@ namespace FHeroes2.Game.Gui;
 /// <see cref="Build"/>，命中就用现场拼出来的两帧（释放态、按下态）。
 /// </para>
 /// <para>
-/// 未搬：<c>EMPTY_VERTICAL_GOOD_BUTTON</c>（<c>HSBTNS</c> 帧 + <c>ExtractCommonPattern</c>）和
-/// <c>EMPTY_MAP_SELECT_BUTTON</c>（<c>NGEXTRA</c> 帧）；用到它们的高分榜与地图选择窗口还没移植，
-/// 等搬到那两个窗口时再一起补。
+/// 这几张表里最麻烦的是 <c>EMPTY_VERTICAL_GOOD_BUTTON</c>：它靠
+/// <see cref="ImageOps.ExtractCommonPattern"/> 取 <c>HSBTNS</c> 释放/按下两帧的公共部分当透明层，
+/// 于是两帧不同的地方（按钮文字）自然被擦掉，参考就是这么做「去掉原有标签」的。
 /// </para>
 /// </remarks>
 public static class EmptyButtons
@@ -34,6 +34,12 @@ public static class EmptyButtons
 
     /// <summary>The name <c>EMPTY_GUILDWELL_BUTTON</c> is cached under.</summary>
     public const string GuildWellFileName = "EMPTY_GUILDWELL_BUTTON.ICN";
+
+    /// <summary>The name <c>EMPTY_VERTICAL_GOOD_BUTTON</c> is cached under.</summary>
+    public const string VerticalGoodFileName = "EMPTY_VERTICAL_GOOD_BUTTON.ICN";
+
+    /// <summary>The name <c>EMPTY_MAP_SELECT_BUTTON</c> is cached under.</summary>
+    public const string MapSelectFileName = "EMPTY_MAP_SELECT_BUTTON.ICN";
 
     /// <summary>Archive entry holding the raw game palette the button colours are resolved against.</summary>
     private const string GamePaletteName = "KB.PAL";
@@ -55,6 +61,21 @@ public static class EmptyButtons
 
     /// <summary>Width of one <c>X_CMPBTN</c> frame, used for the pixel the button colour is read from.</summary>
     private const int PolFrameWidth = 94;
+
+    /// <summary>Released frame of <c>HSBTNS</c>, the tall side button of the hero and castle dialogs.</summary>
+    private const int VerticalReleasedFrame = 2;
+
+    /// <summary>Pressed frame of <c>HSBTNS</c>.</summary>
+    private const int VerticalPressedFrame = 3;
+
+    /// <summary>Frame of <c>HSBTNS</c> the bottom border of the vertical button is restored from.</summary>
+    private const int VerticalDismissFrame = 0;
+
+    /// <summary>Released frame of <c>NGEXTRA</c> the map select button is built from.</summary>
+    private const int MapSelectFirstFrame = 64;
+
+    /// <summary>Pressed frame of <c>NGEXTRA</c>.</summary>
+    private const int MapSelectLastFrame = 65;
 
     /// <summary>
     /// Builds the two frames of a synthetic button table.
@@ -88,6 +109,16 @@ public static class EmptyButtons
         if (string.Equals(fileName, GuildWellFileName, StringComparison.OrdinalIgnoreCase))
         {
             return BuildGuildWellButton();
+        }
+
+        if (string.Equals(fileName, VerticalGoodFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildVerticalGoodButton();
+        }
+
+        if (string.Equals(fileName, MapSelectFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildMapSelectButton();
         }
 
         return null;
@@ -380,5 +411,182 @@ public static class EmptyButtons
         }
 
         return frames;
+    }
+
+    /// <summary>
+    /// <c>ICN::EMPTY_VERTICAL_GOOD_BUTTON</c>: <c>HSBTNS</c> frames 2 and 3, widened by one pixel,
+    /// shortened by one row so that the height divides by five in <c>resizeButton()</c>, with the label
+    /// erased through the transform layer and the borders of <c>HSBTNS</c> frame 0 restored
+    /// (<c>game_assets.cpp:4977-5042</c>).
+    /// </summary>
+    /// <remarks>
+    /// 擦字这一手值得记一笔：释放/按下两帧只有文字部分不同，所以两帧的「公共部分」
+    /// （<see cref="ImageOps.ExtractCommonPattern"/>）正好是按钮的外框；把它反转成透明层贴回去，
+    /// 文字区的像素就成了透明的，而外框保持不透明。参考之后又手工补了几条被公共部分漏掉的边线。
+    /// </remarks>
+    private static Sprite?[]? BuildVerticalGoodButton()
+    {
+        string originalName = IcnCatalog.GetFileName(IcnType.Hsbtns);
+
+        if (Assets.GetImageCount(originalName) < 9)
+        {
+            return null;
+        }
+
+        if (Assets.GetImage(originalName, VerticalReleasedFrame) is not { } originalReleased ||
+            Assets.GetImage(originalName, VerticalPressedFrame) is not { } originalPressed)
+        {
+            return null;
+        }
+
+        if (originalReleased.Width <= 2 || originalReleased.Height <= 2 ||
+            originalPressed.Width <= 2 || originalPressed.Height <= 2)
+        {
+            return null;
+        }
+
+        // One pixel wider so that resizeButton() divides the width by three, one row shorter so that it
+        // divides the height by five. The last seven rows are copied one row higher for that.
+        Sprite released = new(originalReleased.Width + 1, originalReleased.Height);
+        Sprite pressed = new(originalPressed.Width + 1, originalPressed.Height);
+        released.Reset();
+        pressed.Reset();
+
+        int releasedBody = originalReleased.Height - 7;
+        int pressedBody = originalPressed.Height - 7;
+
+        ImageOps.Copy(originalReleased, new Rect(0, 0, originalReleased.Width, releasedBody), released, new Point(1, 0));
+        ImageOps.Copy(originalPressed, new Rect(0, 0, originalPressed.Width, pressedBody), pressed, new Point(1, 0));
+        ImageOps.Copy(
+            originalReleased,
+            new Rect(0, releasedBody, originalReleased.Width, 7),
+            released,
+            new Point(1, originalReleased.Height - 8));
+        ImageOps.Copy(
+            originalPressed,
+            new Rect(0, pressedBody, originalPressed.Width, 7),
+            pressed,
+            new Point(1, originalPressed.Height - 8));
+
+        ImageOps.FillTransform(released, new Rect(1, 4, 1, released.Height - 4), 1);
+
+        // The carried over transform layer of the original vertical button is broken: take the common
+        // part of the two states and patch what ExtractCommonPattern() missed.
+        Sprite commonMask = ImageOps.ExtractCommonPattern(new[] { released, pressed });
+
+        if (commonMask.Image.IsEmpty)
+        {
+            return null;
+        }
+
+        ImageOps.FillTransform(commonMask, new Rect(4, 2, 1, 114), 1);
+        ImageOps.FillTransform(commonMask, new Rect(5, 115, 1, 2), 1);
+        ImageOps.FillTransform(commonMask, new Rect(6, 116, 17, 1), 1);
+        ImageOps.FillTransform(commonMask, new Rect(commonMask.Width - 4, 113, 1, 2), 1);
+
+        InvertTransparency(commonMask);
+
+        // Make the extended width and height lines transparent.
+        ImageOps.FillTransform(commonMask, new Rect(0, 0, 1, commonMask.Height), 1);
+        ImageOps.FillTransform(commonMask, new Rect(commonMask.Width - 4, commonMask.Height - 1, 4, 1), 1);
+
+        released = ImageOps.CopyTransformLayer(commonMask, released);
+        pressed = ImageOps.CopyTransformLayer(commonMask, pressed);
+
+        if (Assets.GetImage(originalName, VerticalDismissFrame) is not { } originalDismiss)
+        {
+            return null;
+        }
+
+        // Restore the dark brown lines on the left and bottom borders of the button backgrounds.
+        ImageOps.Copy(originalReleased, new Rect(0, 4, 1, originalReleased.Height - 4), released, new Point(1, 4));
+        ImageOps.Copy(
+            originalDismiss,
+            new Rect(6, originalDismiss.Height - 7, 22, 1),
+            released,
+            new Point(2, originalReleased.Height - 1));
+        ImageOps.Copy(originalPressed, new Rect(0, 4, 1, originalPressed.Height - 4), pressed, new Point(1, 4));
+        ImageOps.Copy(
+            originalDismiss,
+            new Rect(6, originalDismiss.Height - 7, 22, 1),
+            pressed,
+            new Point(2, originalPressed.Height - 1));
+
+        // Clean the text areas of both states.
+        ImageOps.FillSprite(released, new Rect(6, 4, 18, 110), GetButtonFillingColor(true));
+        ImageOps.FillSprite(pressed, new Rect(5, 5, 18, 110), GetButtonFillingColor(false));
+
+        // Make the pressed background transparent by removing the remaining red parts.
+        ImageOps.FillTransform(pressed, new Rect(5, 0, 21, 1), 1);
+        ImageOps.FillTransform(pressed, new Rect(pressed.Width - 3, 1, 2, 1), 1);
+        ImageOps.FillTransform(pressed, new Rect(pressed.Width - 2, 2, 2, 1), 1);
+        ImageOps.FillTransform(pressed, new Rect(pressed.Width - 1, 3, 1, originalPressed.Height - 5), 1);
+
+        return new Sprite?[] { released, pressed };
+    }
+
+    /// <summary>
+    /// <c>ICN::EMPTY_MAP_SELECT_BUTTON</c>: <c>NGEXTRA</c> frames 64 and 65, widened by one pixel so that
+    /// the width divides by three, with the label area painted over (<c>game_assets.cpp:5044-5069</c>).
+    /// </summary>
+    private static Sprite?[]? BuildMapSelectButton()
+    {
+        string originalName = IcnCatalog.GetFileName(IcnType.Ngextra);
+
+        if (Assets.GetImageCount(originalName) < MapSelectLastFrame + 1)
+        {
+            return null;
+        }
+
+        Sprite?[] frames = new Sprite?[2];
+
+        for (int state = 0; state < frames.Length; ++state)
+        {
+            if (Assets.GetImage(originalName, MapSelectFirstFrame + state) is not { } original ||
+                original.Width <= 6)
+            {
+                return null;
+            }
+
+            // One pixel wider so that resizeButton() divides the width by three.
+            Sprite output = new(original.Width + 1, original.Height);
+
+            ImageOps.Copy(original, new Rect(0, 0, original.Width - 5, original.Height), output, Point.Zero);
+            ImageOps.Copy(
+                original,
+                new Rect(original.Width - 6, 0, 6, original.Height),
+                output,
+                new Point(original.Width - 5, 0));
+
+            ImageOps.FillSprite(output, new Rect(6 - state, 2 + (2 * state), 72, 15 - state), GetButtonFillingColor(state == 0));
+
+            frames[state] = output;
+        }
+
+        return frames;
+    }
+
+    /// <summary>
+    /// Swaps the transparent and the opaque meaning of a transform layer, <c>invertTransparency()</c>
+    /// (<c>game_assets.cpp:505</c>): <c>0</c> becomes <c>1</c> and back, other values are left alone.
+    /// </summary>
+    private static void InvertTransparency(Sprite target)
+    {
+        if (target.Transform is not { } transform)
+        {
+            return;
+        }
+
+        for (int index = 0; index < transform.Length; ++index)
+        {
+            if (transform[index] == 0)
+            {
+                transform[index] = 1;
+            }
+            else if (transform[index] == 1)
+            {
+                transform[index] = 0;
+            }
+        }
     }
 }

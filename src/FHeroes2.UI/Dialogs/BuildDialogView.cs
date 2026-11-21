@@ -103,7 +103,10 @@ public sealed class BuildDialogView
     /// <param name="normalFont">Font of the description and the requirement, <c>FontType::normalWhite()</c>.</param>
     /// <param name="smallFont">Font of the name and the amounts, <c>FontType::smallWhite()</c>.</param>
     /// <param name="buttonArtwork">OK and CANCEL artwork.</param>
-    /// <returns>The dialog, or <see langword="null"/> when a text is too tall for the frame.</returns>
+    /// <returns>
+    /// The dialog, or <see langword="null"/> when a text is too tall for the frame or the archive has no
+    /// message frame.
+    /// </returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     public static BuildDialogView? TryCreate(
         BuildingInfo info,
@@ -117,6 +120,11 @@ public sealed class BuildDialogView
         ArgumentNullException.ThrowIfNull(normalFont);
         ArgumentNullException.ThrowIfNull(smallFont);
         ArgumentNullException.ThrowIfNull(buttonArtwork);
+
+        if (!FrameBox.IsArtworkAvailable)
+        {
+            return null;
+        }
 
         string description = info.Description;
 
@@ -155,7 +163,7 @@ public sealed class BuildDialogView
             costHeight,
             requirement is not null);
 
-        FrameBox box = FrameBox.Create(artwork.Chrome, contentHeight, showButtons: true);
+        FrameBox box = FrameBox.Create(contentHeight, showButtons: true);
 
         int spriteIndex = CastleBuildingInfo.GetSpriteIndex(info.Type);
         Sprite? image = spriteIndex >= 0 && spriteIndex < artwork.BuildingImages.Count

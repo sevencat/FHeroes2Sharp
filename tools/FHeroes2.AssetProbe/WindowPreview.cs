@@ -11,10 +11,15 @@ namespace FHeroes2.AssetProbe;
 /// <remarks>
 /// <para>
 /// <c>tools/reference/fh2_reference.exe window</c> runs the coordinate arithmetic of
-/// <c>ui_window.cpp</c> on the same three sprites and writes files with the same names, so a
+/// <c>ui_window.cpp</c> on the same sprites and writes files with the same names, so a
 /// SHA-256 comparison covers every pixel of the frame: the corners, the repeated borders, the
 /// dithered seams, the tiled interior and the shadow.
 /// <c>tools/scripts/CompareWindowWithReference.ps1</c> runs both sides.
+/// </para>
+/// <para>
+/// <see cref="StandardWindow"/> reads <c>SURDRBKG.ICN</c>, <c>WINLOSE.ICN</c> and
+/// <c>STONEBAK.ICN</c> itself through <c>GameAssets.Current</c>, so the caller must open the game
+/// data and set it before rendering.
 /// </para>
 /// <para>
 /// The canvas fill is the formula of <see cref="EffectsPreview"/>, so the pixels a shadow darkens
@@ -37,16 +42,15 @@ internal static class WindowPreview
     ];
 
     /// <summary>Renders one canvas per case, in the order the reference writes them.</summary>
-    public static IReadOnlyList<(string Name, PixelBuffer Image)> Render(StandardWindowChrome chrome)
+    /// <exception cref="InvalidOperationException">The archive has no window artwork.</exception>
+    public static IReadOnlyList<(string Name, PixelBuffer Image)> Render()
     {
-        ArgumentNullException.ThrowIfNull(chrome);
-
         List<(string, PixelBuffer)> images = new(Cases.Length);
 
         foreach ((string name, Rect activeArea, bool background) in Cases)
         {
             PixelBuffer canvas = CreateCanvas();
-            StandardWindow.Create(chrome, activeArea, background).Draw(canvas);
+            StandardWindow.Create(activeArea, background).Draw(canvas);
             images.Add((name, canvas));
         }
 

@@ -1,5 +1,8 @@
+using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.System;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Dialogs;
 
@@ -9,18 +12,24 @@ namespace FHeroes2.UI.Dialogs;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The frame is built from the two columns of <see cref="FrameBoxChrome"/>: the top and the bottom
-/// are single 99 and 81 pixel tall pieces, the middle is a 35 pixel tall slice of the column art
-/// (taken from row 10 of the sprite, where the pattern starts) repeated as often as the requested
-/// height needs. The columns are placed on both sides of the 244 pixel wide text area, so the
-/// artwork - not a nine slice grid - decides what the box looks like.
+/// The frame is built from the two columns of <c>BUYBUILD.ICN</c>: the top and the bottom are single
+/// 99 and 81 pixel tall pieces, the middle is a 35 pixel tall slice of the column art (taken from row
+/// 10 of the sprite, where the pattern starts) repeated as often as the requested height needs. The
+/// columns are placed on both sides of the 244 pixel wide text area, so the artwork - not a nine slice
+/// grid - decides what the box looks like.
 /// </para>
 /// <para>
 /// The layout is the arithmetic of the reference, including its asymmetries: the columns are 161 and
-/// 145 pixels wide, therefore the seam sits one pixel left of the middle of a 288 pixel window and
-/// the text area starts at <c>x = 198</c> on a 640 pixel wide screen. <see cref="Area"/> never
-/// shrinks below two middle slices (70 pixels), which is why a one line message still gets the
-/// smallest box the original has.
+/// 145 pixels wide, therefore the seam sits one pixel left of the middle of a 288 pixel window and the
+/// text area starts at <c>x = 198</c> on a 640 pixel wide screen. <see cref="Area"/> never shrinks
+/// below two middle slices (70 pixels), which is why a one line message still gets the smallest box the
+/// original has.
+/// </para>
+/// <para>
+/// Like the reference (<c>topHeight()</c>, <c>leftWidth()</c>, <c>redraw()</c> of <c>dialog_box.cpp</c>)
+/// the six pieces are read from the archive by the frame itself, <c>BUYBUILE.ICN</c> when the evil
+/// interface is enabled. Nothing is cached: every frame asks <see cref="GameAssets.GetImage"/>, which
+/// keeps its own cache.
 /// </para>
 /// </remarks>
 public sealed class FrameBox
@@ -52,6 +61,15 @@ public sealed class FrameBox
     /// <summary>Smallest text area height: the two slices that are always drawn.</summary>
     public const int MinimumAreaHeight = ActiveAreaHeight * 2;
 
+    /// <summary>Frame of the right column's top piece; the middle and the bottom follow it.</summary>
+    public const int RightFrame = 0;
+
+    /// <summary>Frame of the left column's top piece; the middle and the bottom follow it.</summary>
+    public const int LeftFrame = 4;
+
+    /// <summary>Number of sprites the table must have: the left column ends at <c>6</c>.</summary>
+    public const int RequiredSpriteCount = LeftFrame + 3;
+
     private readonly Piece[] _pieces;
 
     private FrameBox(Rect area, Rect frameArea, Point origin, int middleFragmentCount, int middleFragmentHeight,
@@ -81,9 +99,22 @@ public sealed class FrameBox
     public int MiddleFragmentHeight { get; }
 
     /// <summary>
+    /// Whether the archive holds <c>BUYBUILD.ICN</c> (or <c>BUYBUILE.ICN</c> for the evil interface) with
+    /// every column piece, i.e. whether <see cref="Create"/> can compose a frame.
+    /// </summary>
+    public static bool IsArtworkAvailable =>
+        GameAssets.GetImageCount(ArtworkFileName) >= RequiredSpriteCount;
+
+    /// <summary>
+    /// Archive entry the pieces are read from, <c>ICN::BUYBUILD</c> (<c>ICN::BUYBUILE</c> while the evil
+    /// interface is enabled). Callers that want to know whether a frame can be drawn read it from here.
+    /// </summary>
+    public static string ArtworkFileName =>
+        IcnCatalog.GetFileName(Settings.Get().IsEvilInterfaceEnabled ? IcnType.Buybuile : IcnType.Buybuild);
+
+    /// <summary>
     /// Composes a frame for a text area of <paramref name="height"/> pixels.
     /// </summary>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c>.</param>
     /// <param name="height">Requested text area height; the result is never shorter than <see cref="MinimumAreaHeight"/>.</param>
     /// <param name="showButtons">
     /// Reserves <see cref="ButtonAreaHeight"/> pixels for a row of buttons, like
@@ -94,12 +125,13 @@ public sealed class FrameBox
     /// frame on the screen (the default of the reference).
     /// </param>
     /// <param name="screen">Screen the frame is centered on; 640x480 when omitted.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="chrome"/> is <see langword="null"/>.</exception>
-    public static FrameBox Create(
-        FrameBoxChrome chrome, int height, bool showButtons = false, int startY = -1, Size? screen = null)
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no frame artwork, i.e. <see cref="GameAssets.Current"/> is not set or holds no
+    /// usable <see cref="ArtworkFileName"/>. The reference asserts in <c>Assets::getImage</c>.
+    /// </exception>
+    public static FrameBox Create(int height, bool showButtons = false, int startY = -1, Size? screen = null)
     {
-        ArgumentNullException.ThrowIfNull(chrome);
-
+        Columns chrome = Columns.Load();
         Size surface = screen ?? ScreenBuffer.DefaultSize;
         int contentHeight = Math.Max(height, 0) + (showButtons ? ButtonAreaHeight : 0);
 
@@ -193,4 +225,66 @@ public sealed class FrameBox
 
     /// <summary>One blit of the composition: a sprite local rectangle and the screen pixel it lands on.</summary>
     private readonly record struct Piece(Sprite Sprite, Rect Source, Point Destination);
+
+    /// <summary>
+    /// The six pieces of the frame and the widths the layout is computed from, i.e. the
+    /// <c>topHeight()</c>, <c>bottomHeight()</c>, <c>leftWidth()</c> and <c>rightWidth()</c> helpers of
+    /// <c>dialog_box.cpp</c>.
+    /// </summary>
+    private sealed class Columns
+    {
+        private Columns(Sprite rightTop, Sprite rightMiddle, Sprite rightBottom, Sprite leftTop,
+            Sprite leftMiddle, Sprite leftBottom)
+        {
+            RightTop = rightTop;
+            RightMiddle = rightMiddle;
+            RightBottom = rightBottom;
+            LeftTop = leftTop;
+            LeftMiddle = leftMiddle;
+            LeftBottom = leftBottom;
+        }
+
+        public Sprite RightTop { get; }
+
+        public Sprite RightMiddle { get; }
+
+        public Sprite RightBottom { get; }
+
+        public Sprite LeftTop { get; }
+
+        public Sprite LeftMiddle { get; }
+
+        public Sprite LeftBottom { get; }
+
+        /// <summary>Width of the left column, <c>leftWidth()</c>: the widest of its three pieces.</summary>
+        public int LeftWidth => Math.Max(LeftTop.Width, Math.Max(LeftMiddle.Width, LeftBottom.Width));
+
+        /// <summary>Width of the right column, <c>rightWidth()</c>.</summary>
+        public int RightWidth => Math.Max(RightTop.Width, Math.Max(RightMiddle.Width, RightBottom.Width));
+
+        /// <summary>Height of the top row of pieces, the <c>topHeight()</c> of the reference.</summary>
+        public int TopHeight => Math.Max(LeftTop.Height, RightTop.Height);
+
+        /// <summary>Height of the bottom row of pieces, the <c>bottomHeight()</c> of the reference.</summary>
+        public int BottomHeight => Math.Max(LeftBottom.Height, RightBottom.Height);
+
+        /// <summary>Reads the six pieces the way <c>redraw()</c> does: frames 0-2 and 4-6 of the table.</summary>
+        /// <exception cref="InvalidOperationException">The archive has no usable frame artwork.</exception>
+        public static Columns Load()
+        {
+            string fileName = ArtworkFileName;
+
+            Sprite LoadFrame(int frame) => GameAssets.GetImage(fileName, frame) ?? throw new InvalidOperationException(
+                $"The message frame {fileName} frame {frame} is not available: open the game data before " +
+                "creating a frame box.");
+
+            return new Columns(
+                LoadFrame(RightFrame),
+                LoadFrame(RightFrame + 1),
+                LoadFrame(RightFrame + 2),
+                LoadFrame(LeftFrame),
+                LoadFrame(LeftFrame + 1),
+                LoadFrame(LeftFrame + 2));
+        }
+    }
 }

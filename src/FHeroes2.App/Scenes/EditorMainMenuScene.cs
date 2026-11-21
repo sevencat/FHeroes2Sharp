@@ -109,7 +109,7 @@ public sealed class EditorMainMenuScene : IScene
     private readonly Sprite _tile;
     private readonly Rect _backgroundArea;
     private readonly StandardWindow _window;
-    private readonly FrameBoxChrome? _messageChrome;
+    private readonly bool _hasMessageFrame;
     private readonly GameFonts _fonts;
     private readonly ButtonSprite _newMap;
     private readonly ButtonSprite _loadMap;
@@ -132,7 +132,7 @@ public sealed class EditorMainMenuScene : IScene
         Sprite background,
         Sprite tile,
         StandardWindow window,
-        FrameBoxChrome? messageChrome,
+        bool hasMessageFrame,
         GameFonts fonts,
         ButtonSprite newMap,
         ButtonSprite loadMap,
@@ -148,7 +148,7 @@ public sealed class EditorMainMenuScene : IScene
         _tile = tile;
         _backgroundArea = new Rect(background.OffsetX, background.OffsetY, background.Width, background.Height);
         _window = window;
-        _messageChrome = messageChrome;
+        _hasMessageFrame = hasMessageFrame;
         _fonts = fonts;
         _newMap = newMap;
         _loadMap = loadMap;
@@ -197,12 +197,7 @@ public sealed class EditorMainMenuScene : IScene
             IcnSpriteFile? mainButtons = assets.TryReadIcn(MainButtonAssetName);
             IcnSpriteFile? newMapButtons = assets.TryReadIcn(NewMapButtonAssetName);
             IcnSpriteFile? sizeButtons = assets.TryReadIcn(MapSizeButtonAssetName);
-            IcnSpriteFile? horizontal = assets.TryReadIcn(StandardWindowChrome.HorizontalAssetName);
-            IcnSpriteFile? vertical = assets.TryReadIcn(StandardWindowChrome.VerticalAssetName);
-            IcnSpriteFile? windowBackground = assets.TryReadIcn(StandardWindowChrome.BackgroundAssetName);
-
-            StandardWindowChrome? chrome = StandardWindowChrome.TryCreate(
-                horizontal?.Sprites, vertical?.Sprites, windowBackground?.Sprites);
+            IcnSpriteFile? stoneBackground = assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Stonebak));
 
             // The reference assembles the twenty frames of the button table from the editor's own
             // artwork and only generates the two labels it has no frames for; see the
@@ -211,19 +206,20 @@ public sealed class EditorMainMenuScene : IScene
 
             if (background is not { Count: > 0 } || mainButtons is not { Count: >= 4 } ||
                 newMapButtons is not { Count: >= 4 } || sizeButtons is not { Count: >= 8 } ||
-                chrome is null)
+                stoneBackground is not { Count: > 0 })
             {
                 GameLog.Warn(
                     $"The editor main menu artwork is missing: '{BackgroundAssetName}' " +
                     $"({background?.Count ?? 0} frames), '{MainButtonAssetName}' " +
                     $"({mainButtons?.Count ?? 0} frames), '{NewMapButtonAssetName}' " +
                     $"({newMapButtons?.Count ?? 0} frames), '{MapSizeButtonAssetName}' " +
-                    $"({sizeButtons?.Count ?? 0} frames), stone window " +
-                    (chrome is null ? "missing." : "ok."));
+                    $"({sizeButtons?.Count ?? 0} frames), stone plate " +
+                    (stoneBackground is null ? "missing." : "ok."));
                 return null;
             }
 
-            List<Sprite> buttonFrames = BuildButtonFrames(mainButtons, newMapButtons, sizeButtons, chrome.Background);
+            List<Sprite> buttonFrames = BuildButtonFrames(
+                mainButtons, newMapButtons, sizeButtons, stoneBackground.Sprites[0]);
 
             if (buttonFrames.Count < RequiredFrames)
             {
@@ -231,7 +227,7 @@ public sealed class EditorMainMenuScene : IScene
                 return null;
             }
 
-            FrameBoxChrome? messageChrome = CreateMessageChrome(assets);
+            bool hasMessageFrame = HasMessageFrame(assets);
 
             // The two buttons the window is sized around, exactly like the reference: they are created
             // first, placed by the window and only then do the other buttons take their position.
@@ -253,7 +249,7 @@ public sealed class EditorMainMenuScene : IScene
                 activeArea.Width,
                 activeArea.Height);
 
-            StandardWindow window = StandardWindow.Create(chrome, placed);
+            StandardWindow window = StandardWindow.Create(placed);
             window.PlaceSymmetricButtons(mainModeButtons, 0, true);
 
             newMapArea = newMap.Area;
@@ -284,7 +280,7 @@ public sealed class EditorMainMenuScene : IScene
             }
 
             EditorMainMenuScene scene = new(
-                frame, assets, background.Sprites[0], chrome.Background, window, messageChrome, fonts,
+                frame, assets, background.Sprites[0], stoneBackground.Sprites[0], window, hasMessageFrame, fonts,
                 newMap, loadMap, mainMenu, back, scratch, random, sizes);
 
             GameLog.Info(
@@ -293,7 +289,7 @@ public sealed class EditorMainMenuScene : IScene
                 $"({placed.X}, {placed.Y}), {RequiredFrames} button frames from " +
                 $"'{MainButtonAssetName}', '{NewMapButtonAssetName}', '{MapSizeButtonAssetName}' and " +
                 $"'{BlankButtonAssetName}', " +
-                (messageChrome is null ? "no tooltips." : "right click tooltips."));
+                (hasMessageFrame ? "right click tooltips." : "no tooltips."));
 
             return scene;
         }
@@ -724,7 +720,7 @@ public sealed class EditorMainMenuScene : IScene
     /// </summary>
     private MessageBox? CreateTip()
     {
-        if (_messageChrome is null || _cursor is not { } cursor)
+        if (!_hasMessageFrame || _cursor is not { } cursor)
         {
             return null;
         }
@@ -753,7 +749,7 @@ public sealed class EditorMainMenuScene : IScene
             return null;
         }
 
-        return MessageBox.Create(tip.Header, tip.Body, _messageChrome, _fonts.Yellow, _fonts.Normal);
+        return MessageBox.Create(tip.Header, tip.Body, _fonts.Yellow, _fonts.Normal);
     }
 
     private (string Header, string Body)? SizeTip(Point cursor)
@@ -781,19 +777,21 @@ public sealed class EditorMainMenuScene : IScene
         return null;
     }
 
-    /// <summary>Loads the message frame, which only costs the tooltips when it is missing.</summary>
-    private static FrameBoxChrome? CreateMessageChrome(AssetBundle assets)
+    /// <summary>
+    /// Whether the message frame can be composed; only the tooltips are lost when it cannot.
+    /// </summary>
+    private static bool HasMessageFrame(AssetBundle assets)
     {
-        IcnSpriteFile? file = assets.TryReadIcn(FrameBoxChrome.AssetName);
-        FrameBoxChrome? chrome = FrameBoxChrome.TryCreate(file?.Sprites);
+        bool available = assets.TryReadIcn(FrameBox.ArtworkFileName) is { } file &&
+            file.Count >= FrameBox.RequiredSpriteCount;
 
-        if (chrome is null)
+        if (!available)
         {
             GameLog.Warn(
-                $"'{FrameBoxChrome.AssetName}' is missing or has fewer than " +
-                $"{FrameBoxChrome.RequiredSpriteCount} sprites; the editor menu will not show tooltips.");
+                $"'{FrameBox.ArtworkFileName}' is missing or has fewer than " +
+                $"{FrameBox.RequiredSpriteCount} sprites; the editor menu will not show tooltips.");
         }
 
-        return chrome;
+        return available;
     }
 }

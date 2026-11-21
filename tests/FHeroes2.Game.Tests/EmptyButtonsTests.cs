@@ -175,6 +175,91 @@ public sealed class EmptyButtonsTests
     }
 
     [Fact]
+    public void VerticalGoodButtonErasesTheLabelOfItsSource()
+    {
+        using AssetBundle? assets = GameData.TryOpen();
+        if (assets is null)
+        {
+            return;
+        }
+
+        Assets.Current = assets;
+        try
+        {
+            Sprite? sourceReleased = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Hsbtns), 2);
+            Sprite? sourcePressed = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Hsbtns), 3);
+            if (sourceReleased is null || sourcePressed is null)
+            {
+                return;
+            }
+
+            Sprite? released = Assets.GetImage(EmptyButtons.VerticalGoodFileName, 0);
+            Sprite? pressed = Assets.GetImage(EmptyButtons.VerticalGoodFileName, 1);
+
+            Assert.NotNull(released);
+            Assert.NotNull(pressed);
+
+            // One column wider so that resizeButton() divides the width by three, the same height as the
+            // source after the last seven rows are copied one row higher.
+            Assert.Equal(sourceReleased.Width + 1, released!.Width);
+            Assert.Equal(sourceReleased.Height, released.Height);
+            Assert.Equal(sourcePressed.Width + 1, pressed!.Width);
+            Assert.Equal(sourcePressed.Height, pressed.Height);
+
+            // Both states are labelled in the source and blank in the generated table.
+            Assert.True(released.HasTransformLayer);
+            Assert.Equal(EmptyButtons.GetButtonFillingColor(isReleasedState: true), released.Image[6, 4]);
+            Assert.Equal(EmptyButtons.GetButtonFillingColor(isReleasedState: true), released.Image[23, 30]);
+            Assert.Equal(EmptyButtons.GetButtonFillingColor(isReleasedState: false), pressed.Image[5, 5]);
+
+            // The right column of the pressed state is dropped to the mask.
+            Assert.Equal(1, pressed.Transform![(3 * pressed.Width) + pressed.Width - 1]);
+        }
+        finally
+        {
+            Assets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void MapSelectButtonIsOnePixelWiderThanItsSource()
+    {
+        using AssetBundle? assets = GameData.TryOpen();
+        if (assets is null)
+        {
+            return;
+        }
+
+        Assets.Current = assets;
+        try
+        {
+            Sprite? sourceReleased = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Ngextra), 64);
+            Sprite? sourcePressed = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Ngextra), 65);
+            if (sourceReleased is null || sourcePressed is null)
+            {
+                return;
+            }
+
+            Sprite? released = Assets.GetImage(EmptyButtons.MapSelectFileName, 0);
+            Sprite? pressed = Assets.GetImage(EmptyButtons.MapSelectFileName, 1);
+
+            Assert.NotNull(released);
+            Assert.NotNull(pressed);
+            Assert.Equal(sourceReleased.Width + 1, released!.Width);
+            Assert.Equal(sourceReleased.Height, released.Height);
+            Assert.Equal(sourcePressed.Width + 1, pressed!.Width);
+
+            // The label area of the source is painted over with the button background.
+            Assert.Equal(EmptyButtons.GetButtonFillingColor(isReleasedState: true), released.Image[6, 2]);
+            Assert.Equal(EmptyButtons.GetButtonFillingColor(isReleasedState: false), pressed.Image[5, 4]);
+        }
+        finally
+        {
+            Assets.Current = null;
+        }
+    }
+
+    [Fact]
     public void FramesAreCachedSoTheTableIsAssembledOnce()
     {
         using AssetBundle? assets = GameData.TryOpen();

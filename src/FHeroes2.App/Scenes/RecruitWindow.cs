@@ -119,10 +119,8 @@ public sealed class RecruitWindow
         IReadOnlyList<Sprite>? switchLeft = TryBuildSwitchArrows(arrows, 0);
         IReadOnlyList<Sprite>? switchRight = TryBuildSwitchArrows(arrows, 2);
 
-        StandardWindowChrome? chrome = TryCreateChrome(assets);
-
         if (background is null || title is null || arrows is null || resourceIcons is null || monsterSprite is null
-            || okay is null || cancel is null || max is null || min is null || chrome is null
+            || okay is null || cancel is null || max is null || min is null
             || switchLeft is null || switchRight is null)
         {
             GameLog.Warn(
@@ -137,8 +135,7 @@ public sealed class RecruitWindow
                 + $"MAX={(max is null ? "none" : "ok")}, "
                 + $"MIN={(min is null ? "none" : "ok")}, "
                 + $"SWITCH_LEFT={(switchLeft is null ? "none" : "ok")}, "
-                + $"SWITCH_RIGHT={(switchRight is null ? "none" : "ok")}, "
-                + $"chrome={(chrome is null ? "none" : "ok")}.");
+                + $"SWITCH_RIGHT={(switchRight is null ? "none" : "ok")}.");
 
             return null;
         }
@@ -169,7 +166,6 @@ public sealed class RecruitWindow
         RecruitDialog dialog = RecruitDialog.Create(monster, available, kingdom, allowDowngradedMonster: true);
         RecruitWindowView? view = RecruitWindowView.TryCreate(
             dialog,
-            chrome,
             artwork,
             new RecruitWindowFonts(fonts.White, fonts.Yellow, fonts.Small),
             new Size(ScreenWidth, ScreenHeight),
@@ -268,15 +264,6 @@ public sealed class RecruitWindow
         ArgumentNullException.ThrowIfNull(target);
 
         _view.Draw(target);
-    }
-
-    private static StandardWindowChrome? TryCreateChrome(AssetBundle assets)
-    {
-        IReadOnlyList<Sprite>? horizontal = Load(assets, IcnType.Surdrbkg);
-        IReadOnlyList<Sprite>? corner = Load(assets, IcnType.Winlose);
-        IReadOnlyList<Sprite>? stone = Load(assets, IcnType.Stonebak);
-
-        return StandardWindowChrome.TryCreate(horizontal, corner, stone);
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Text;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Gui;
@@ -8,7 +9,8 @@ namespace FHeroes2.UI.Widgets;
 /// <summary>
 /// Builds a button out of an empty plate, the free functions of <c>ui_button.cpp</c>:
 /// <c>getCustomNormalButton()</c>, <c>getTextAdaptedSprite()</c>, <c>makeButtonSprites()</c>,
-/// <c>makeSymmetricBackgroundSprites()</c> and <c>renderTextOnButton()</c>.
+/// <c>makeSymmetricBackgroundSprites()</c>, <c>renderTextOnButton()</c>, <c>getSupportedText()</c>,
+/// <c>makeButtonWithBackground()</c> and <c>makeButtonWithShadow()</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,9 +19,8 @@ namespace FHeroes2.UI.Widgets;
 /// text of a generated button could drift away from the one of a dialog label.
 /// </para>
 /// <para>
-/// Not ported yet: <c>getSupportedText()</c> (it asks the localisation subsystem whether the font of
-/// the current language holds every glyph) and <c>makeButtonWithBackground()</c> /
-/// <c>makeButtonWithShadow()</c> (both return a <c>ButtonSprite</c>, a type no port window uses yet).
+/// 参考里这些函数都是 <c>ui_button.cpp</c> 的匿名命名空间函数，唯一的外部使用者是
+/// <c>ButtonSprite</c> 的构造与 <c>ButtonGroup</c>；端口把它们集中在这里，返回值用元组/精灵对表示。
 /// </para>
 /// </remarks>
 public static class ButtonFactory
@@ -37,10 +38,10 @@ public static class ButtonFactory
     public const string GuildWellBlankAssetName = EmptyButtons.GuildWellFileName;
 
     /// <summary><c>EMPTY_MAP_SELECT_BUTTON</c>, the plate of the map size buttons.</summary>
-    public const string MapSelectBlankAssetName = "EMPTY_MAP_SELECT_BUTTON.ICN";
+    public const string MapSelectBlankAssetName = EmptyButtons.MapSelectFileName;
 
     /// <summary><c>EMPTY_VERTICAL_GOOD_BUTTON</c>, the plate of a vertical button.</summary>
-    public const string VerticalGoodBlankAssetName = "EMPTY_VERTICAL_GOOD_BUTTON.ICN";
+    public const string VerticalGoodBlankAssetName = EmptyButtons.VerticalGoodFileName;
 
     /// <summary>Smallest width <c>getCustomNormalButton()</c> stretches a plate to.</summary>
     public const int MinimumWidth = 16;
@@ -397,4 +398,174 @@ public static class ButtonFactory
 
         return sprite;
     }
+
+    /// <summary>
+    /// The label a button is drawn with when the current language may not cover every glyph,
+    /// <c>getSupportedText()</c> (<c>ui_button.cpp:959</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的签名只有一个 <c>untranslatedText</c>，翻译在函数里做（<c>_()</c>）。端口的翻译层还没搬，
+    /// 所以把「译好的」和「原文」都交给调用方传进来，这里只保留参考的判断：译文里只要有一个字在按钮
+    /// 字体里没有字形，就退回原文——这是参考对付半翻译语言（比如俄文版里的英文按钮）的办法。
+    /// </para>
+    /// <para>
+    /// 参考检查的是译文/原文各自的 UTF-8 字节序列，端口用同样的编码（<see cref="Text"/> 也是 UTF-8）。
+    /// </para>
+    /// </remarks>
+    /// <param name="translatedText">Label in the language of the current build.</param>
+    /// <param name="untranslatedText">Original label, used when the font cannot draw the translation.</param>
+    /// <param name="fontType">Font the label will be drawn with.</param>
+    /// <returns>
+    /// <paramref name="translatedText"/> when every glyph of it is available, otherwise
+    /// <paramref name="untranslatedText"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">A text is <see langword="null"/>.</exception>
+    public static string GetSupportedText(string translatedText, string untranslatedText, in FontType fontType)
+    {
+        ArgumentNullException.ThrowIfNull(translatedText);
+        ArgumentNullException.ThrowIfNull(untranslatedText);
+
+        return FontCharHandler.IsFontAvailable(Encoding.UTF8.GetBytes(translatedText), fontType)
+            ? translatedText
+            : untranslatedText;
+    }
+
+    /// <summary>
+    /// Combines the two states of a button with the piece of a background texture they sit on,
+    /// <c>makeButtonWithBackground()</c> (<c>ui_button.cpp:739</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 结果三张图都是「背景 + 按钮」：释放态、按下态，以及把释放态压暗得到的禁用态。参考总是给三张图
+    /// 带上与背景相同的层数（背景是单层图时按钮也退化成单层），这样贴图时不至于把背景的变换值盖掉。
+    /// </para>
+    /// <para>
+    /// 裁剪位置就是按钮在屏幕上的位置：<paramref name="offsetX"/> / <paramref name="offsetY"/> 会被原样
+    /// 交给返回的 <see cref="ButtonSprite"/>，而三张合成图的锚点是 <c>(0, 0)</c>。
+    /// </para>
+    /// </remarks>
+    /// <param name="offsetX">Horizontal position of the button on the background.</param>
+    /// <param name="offsetY">Vertical position of the button on the background.</param>
+    /// <param name="released">Released look of the button.</param>
+    /// <param name="pressed">Pressed look of the button.</param>
+    /// <param name="background">Texture the button is pasted on, usually the dialog background.</param>
+    /// <returns>The button, anchored at <c>(offsetX, offsetY)</c>.</returns>
+    /// <exception cref="ArgumentNullException">A sprite is <see langword="null"/>.</exception>
+    public static ButtonSprite MakeButtonWithBackground(
+        int offsetX,
+        int offsetY,
+        Sprite released,
+        Sprite pressed,
+        Sprite background)
+    {
+        ArgumentNullException.ThrowIfNull(released);
+        ArgumentNullException.ThrowIfNull(pressed);
+        ArgumentNullException.ThrowIfNull(background);
+
+        Sprite croppedBackground = ImageOps.Crop(background, offsetX, offsetY, released.Width, released.Height);
+
+        Sprite releasedWithBackground = CopyLayers(croppedBackground);
+        ImageOps.BlitSprite(releasedWithBackground, new Point(released.OffsetX, released.OffsetY), released);
+
+        Sprite pressedWithBackground = CopyLayers(croppedBackground);
+        ImageOps.BlitSprite(pressedWithBackground, new Point(pressed.OffsetX, pressed.OffsetY), pressed);
+
+        // `Sprite disabled( released )` is a copy constructor: the darkened look keeps the anchor of
+        // the released sprite, so it lands on the same pixels of the composite as the button itself.
+        Sprite disabled = released.Clone();
+        ImageOps.ApplyPalette(disabled.Image, PaletteId.Darkening);
+
+        // The reference moves the crop into the disabled state and resets its anchor to (0, 0): no copy.
+        Sprite disabledWithBackground = new(croppedBackground.Image, 0, 0, croppedBackground.Transform);
+        ImageOps.BlitSprite(disabledWithBackground, new Point(disabled.OffsetX, disabled.OffsetY), disabled);
+
+        return new ButtonSprite(releasedWithBackground, pressedWithBackground, disabledWithBackground, offsetX, offsetY);
+    }
+
+    /// <summary>
+    /// Combines the two states of a button with the piece of a background texture they sit on, shifted by
+    /// the shadow the button casts, <c>makeButtonWithShadow()</c> (<c>ui_button.cpp:770</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="MakeButtonWithBackground"/> 的区别只有裁剪原点：这里多出阴影的位置，裁剪出的背景
+    /// 先被阴影盖一层，按钮再按 <c>-shadow</c> 的偏移贴上去，于是按钮的三张图都比背景的左上角更靠下。
+    /// </remarks>
+    /// <param name="offsetX">Horizontal position of the button on the background.</param>
+    /// <param name="offsetY">Vertical position of the button on the background.</param>
+    /// <param name="released">Released look of the button.</param>
+    /// <param name="pressed">Pressed look of the button.</param>
+    /// <param name="background">Texture the button is pasted on, usually the dialog background.</param>
+    /// <param name="shadowOffset">Displacement of the shadow, relative to the button.</param>
+    /// <returns>The button, anchored at the shadow's corner.</returns>
+    /// <exception cref="ArgumentNullException">A sprite is <see langword="null"/>.</exception>
+    public static ButtonSprite MakeButtonWithShadow(
+        int offsetX,
+        int offsetY,
+        Sprite released,
+        Sprite pressed,
+        Sprite background,
+        Point shadowOffset)
+    {
+        ArgumentNullException.ThrowIfNull(released);
+        ArgumentNullException.ThrowIfNull(pressed);
+        ArgumentNullException.ThrowIfNull(background);
+
+        Sprite shadow = ImageOps.MakeShadow(released, shadowOffset, ShadowTransformId);
+
+        Sprite croppedBackground = ImageOps.Crop(
+            background,
+            offsetX + shadow.OffsetX,
+            offsetY + shadow.OffsetY,
+            shadow.Width,
+            shadow.Height);
+
+        ImageOps.BlitSprite(croppedBackground, Point.Zero, shadow);
+
+        Sprite releasedWithBackground = CopyLayers(croppedBackground);
+        ImageOps.BlitSprite(
+            releasedWithBackground,
+            new Point(released.OffsetX - shadow.OffsetX, released.OffsetY - shadow.OffsetY),
+            released);
+
+        Sprite pressedWithBackground = CopyLayers(croppedBackground);
+        ImageOps.BlitSprite(
+            pressedWithBackground,
+            new Point(pressed.OffsetX - shadow.OffsetX, pressed.OffsetY - shadow.OffsetY),
+            pressed);
+
+        // `Sprite disabled( released )` is a copy constructor: the darkened look keeps the anchor of
+        // the released sprite, so it lands on the same pixels of the composite as the button itself.
+        Sprite disabled = released.Clone();
+        ImageOps.ApplyPalette(disabled.Image, PaletteId.Darkening);
+
+        // The reference moves the crop into the disabled state and resets its anchor to (0, 0): no copy.
+        Sprite disabledWithBackground = new(croppedBackground.Image, 0, 0, croppedBackground.Transform);
+        ImageOps.BlitSprite(
+            disabledWithBackground,
+            new Point(disabled.OffsetX - shadow.OffsetX, disabled.OffsetY - shadow.OffsetY),
+            disabled);
+
+        return new ButtonSprite(
+            releasedWithBackground,
+            pressedWithBackground,
+            disabledWithBackground,
+            offsetX + shadow.OffsetX,
+            offsetY + shadow.OffsetY);
+    }
+
+    /// <summary>Transform id the button shadow is drawn with, <c>makeShadow( released, offset, 3 )</c>.</summary>
+    private const byte ShadowTransformId = 3;
+
+    /// <summary>
+    /// Copies both layers of a sprite into a fresh one anchored at <c>(0, 0)</c>,
+    /// <c>Copy( const Image &amp;, Image &amp; )</c>: the reference relies on the destination being a default
+    /// constructed sprite, so the composites carry no anchor and only the <see cref="ButtonSprite"/>
+    /// offset positions them.
+    /// </summary>
+    private static Sprite CopyLayers(Sprite source) => new(
+        source.Image.Clone(),
+        0,
+        0,
+        source.Transform is null ? null : (byte[])source.Transform.Clone());
 }

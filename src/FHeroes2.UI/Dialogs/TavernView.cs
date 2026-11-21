@@ -55,32 +55,35 @@ public static class TavernView
     /// </summary>
     /// <param name="dialog">The rumor to tell and the single OK button.</param>
     /// <param name="tavwin">Sprites of <c>TAVWIN.ICN</c>, in file order.</param>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c> for the frame.</param>
     /// <param name="headerFont">Font of the title, <c>FontType::normalYellow()</c> in the reference.</param>
     /// <param name="bodyFont">Font of the body, <c>FontType::normalWhite()</c> in the reference.</param>
     /// <param name="buttonArtwork">Source of the OK sprite.</param>
     /// <param name="startY">Top of the frame, or a negative value to center it on the screen.</param>
     /// <param name="screen">Screen the frame is centered on; 640x480 when omitted.</param>
-    /// <returns>The window, or <see langword="null"/> when <paramref name="tavwin"/> has no animation frames.</returns>
+    /// <returns>
+    /// The window, or <see langword="null"/> when <paramref name="tavwin"/> has no animation frames or the
+    /// archive has no message frame.
+    /// </returns>
     /// <exception cref="ArgumentNullException">
-    /// <paramref name="dialog"/>, <paramref name="tavwin"/>, <paramref name="chrome"/>,
-    /// <paramref name="headerFont"/>, <paramref name="bodyFont"/> or <paramref name="buttonArtwork"/> is
-    /// <see langword="null"/>.
+    /// <paramref name="dialog"/>, <paramref name="tavwin"/>, <paramref name="headerFont"/>,
+    /// <paramref name="bodyFont"/> or <paramref name="buttonArtwork"/> is <see langword="null"/>.
     /// </exception>
-    public static MessageBox? TryCreate(TavernDialog dialog, IReadOnlyList<Sprite> tavwin, FrameBoxChrome chrome,
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no message frame, see <see cref="FrameBox.Create"/>.
+    /// </exception>
+    public static MessageBox? TryCreate(TavernDialog dialog, IReadOnlyList<Sprite> tavwin,
         IGlyphSource headerFont, IGlyphSource bodyFont, IDialogButtonArtworkSource buttonArtwork, int startY = -1,
         Size? screen = null)
     {
         ArgumentNullException.ThrowIfNull(dialog);
         ArgumentNullException.ThrowIfNull(tavwin);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(headerFont);
         ArgumentNullException.ThrowIfNull(bodyFont);
         ArgumentNullException.ThrowIfNull(buttonArtwork);
 
         int frameCount = Math.Min(AnimatedFrameCount, tavwin.Count - FirstAnimatedFrame);
 
-        if (frameCount <= 0)
+        if (frameCount <= 0 || !FrameBox.IsArtworkAvailable)
         {
             return null;
         }
@@ -92,7 +95,7 @@ public static class TavernView
         text.Add(new Text(TavernDialog.Lead + "\n\n", FontType.NormalWhite()));
         text.Add(new Text(dialog.Rumor.Text, FontType.NormalWhite()));
 
-        return MessageBox.Create(TavernDialog.Title, string.Empty, chrome, headerFont, bodyFont,
+        return MessageBox.Create(TavernDialog.Title, string.Empty, headerFont, bodyFont,
             [barkeep, new TextDialogElement(text)], startY, screen, dialog.Buttons, buttonArtwork);
     }
 }

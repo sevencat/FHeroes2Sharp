@@ -1,10 +1,13 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
 using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -12,6 +15,7 @@ namespace FHeroes2.UI.Tests;
 /// The gift dialog of <c>Dialog::MakeGiftResource()</c>: geometry, the recipient boxes, the two resource rows, the
 /// count requests and the OKAY/CANCEL answers.
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class GiftWindowTests
 {
     private const byte TradpostColorBase = 100;
@@ -58,21 +62,19 @@ public sealed class GiftWindowTests
     public void TryCreate_RejectsTheSenderAndRepeatedColours()
     {
         Assert.Throws<ArgumentException>(() =>
-            GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Red], CreateChrome(), CreateArtwork(),
+            GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Red], CreateArtwork(),
                 Fonts));
         Assert.Throws<ArgumentException>(() =>
             GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue, PlayerColor.Blue],
-                CreateChrome(), CreateArtwork(), Fonts));
+                CreateArtwork(), Fonts));
     }
 
     [Fact]
     public void TryCreate_WithoutArtworkReturnsNull()
     {
-        Assert.Null(GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue], null, CreateArtwork(),
+        Assert.Null(GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue], null,
             Fonts));
-        Assert.Null(GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue], CreateChrome(), null,
-            Fonts));
-        Assert.Null(GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue], CreateChrome(),
+        Assert.Null(GiftWindowView.TryCreate(FundsOf(0), PlayerColor.Red, [PlayerColor.Blue],
             CreateArtwork(), null));
     }
 
@@ -263,7 +265,7 @@ public sealed class GiftWindowTests
         PixelBuffer target = new(640, 480);
         target.Fill(0);
 
-        view.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(view, target));
 
         Rect first = view.RecipientBoxes[0];
         Rect second = view.RecipientBoxes[1];
@@ -303,7 +305,7 @@ public sealed class GiftWindowTests
 
         PixelBuffer target = new(640, 480);
         target.Fill(0);
-        view.Draw(target);
+        Assert.True(DrawWithTheWindowArtwork(view, target));
 
         // Both rows still show a glyph where the count goes, and the icon of the treasury row is untouched by the
         // count: the row is drawn from the funds record, not from the selected cell.
@@ -322,7 +324,6 @@ public sealed class GiftWindowTests
             FundsOf(gold, wood),
             PlayerColor.Red,
             recipientColors ?? [PlayerColor.Blue, PlayerColor.Green],
-            CreateChrome(),
             artwork,
             Fonts)!;
 
@@ -388,10 +389,36 @@ public sealed class GiftWindowTests
             [Filled(46, 22, CancelColor), Filled(46, 22, 0)])!;
     }
 
-    private static StandardWindowChrome CreateChrome()
+    /// <summary>Opens the game data the stone frame of the window is read from.</summary>
+    /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+
+    /// <summary>Draws the dialog with the real window artwork.</summary>
+    /// <param name="view">Dialog to paint.</param>
+    /// <param name="target">Frame buffer to paint into.</param>
+    /// <returns><see langword="false"/> when the machine has no game data.</returns>
+    private static bool DrawWithTheWindowArtwork(GiftWindowView view, PixelBuffer target)
     {
-        // Only the geometry matters: 20 pixel horizontal, 10 pixel vertical borders and an 8 pixel background.
-        return StandardWindowChrome.TryCreate([Filled(20, 10, 1)], [Filled(10, 10, 2)], [Filled(8, 8, 3)])!;
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return false;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            view.Draw(target);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+
+        return true;
     }
 
     private static Sprite Filled(int width, int height, byte color)

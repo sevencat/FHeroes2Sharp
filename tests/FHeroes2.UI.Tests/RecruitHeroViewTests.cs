@@ -6,6 +6,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Heroes;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -15,6 +16,7 @@ namespace FHeroes2.UI.Tests;
 /// <remarks>
 /// 需要 AGG 数据的几条在缺数据时直接返回；布局与按钮的几条不依赖资产，任何环境都会跑。
 /// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class RecruitHeroViewTests
 {
     private const byte HeaderColor = 90;
@@ -48,13 +50,13 @@ public sealed class RecruitHeroViewTests
     [Fact]
     public void TheButtonsFollowWhetherTheTownMayHire()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
 
-        RecruitHeroView mayHire = CreateView(assets, CreateDialog(canRecruit: true));
+        RecruitHeroView mayHire = CreateView(scope.Assets, CreateDialog(canRecruit: true));
 
         Assert.True(mayHire.OkayEnabled);
         Assert.True(mayHire.Buttons[0].IsEnabled);
@@ -62,7 +64,7 @@ public sealed class RecruitHeroViewTests
         Assert.Equal(RecruitHeroDialog.Title, RecruitHeroDialog.Title);
         Assert.Equal(2, mayHire.Buttons.Count);
 
-        RecruitHeroView mayNot = CreateView(assets, CreateDialog(canRecruit: false));
+        RecruitHeroView mayNot = CreateView(scope.Assets, CreateDialog(canRecruit: false));
 
         Assert.False(mayNot.OkayEnabled);
         Assert.False(mayNot.Buttons[0].IsEnabled);
@@ -72,13 +74,13 @@ public sealed class RecruitHeroViewTests
     [Fact]
     public void OkayUnderThePointerAnswersOk()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
 
-        RecruitHeroView view = CreateView(assets, CreateDialog(canRecruit: true));
+        RecruitHeroView view = CreateView(scope.Assets, CreateDialog(canRecruit: true));
         Point okay = Middle(view.Buttons[0].Area);
         Point cancel = Middle(view.Buttons[1].Area);
 
@@ -95,13 +97,13 @@ public sealed class RecruitHeroViewTests
     [Fact]
     public void TheDialogIsPaintedInsideItsFrame()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
 
-        RecruitHeroView view = CreateView(assets, CreateDialog(canRecruit: true));
+        RecruitHeroView view = CreateView(scope.Assets, CreateDialog(canRecruit: true));
         PixelBuffer target = new(640, 480);
         target.Fill(0);
 
@@ -128,13 +130,13 @@ public sealed class RecruitHeroViewTests
     [Fact]
     public void TheFrameIsCentredInTheDialog()
     {
-        using AssetBundle? assets = OpenArchives();
-        if (assets is null)
+        using ArchiveScope scope = ArchiveScope.Open();
+        if (!scope.HasData)
         {
             return;
         }
 
-        RecruitHeroView view = CreateView(assets, CreateDialog(canRecruit: true));
+        RecruitHeroView view = CreateView(scope.Assets, CreateDialog(canRecruit: true));
         RecruitHeroLayout layout = view.Layout;
 
         Assert.Equal(view.Area.X + ((view.Area.Width - 111) / 2), layout.Frame.X);
@@ -176,8 +178,34 @@ public sealed class RecruitHeroViewTests
 
     private static Point Middle(Rect area) => new(area.X + (area.Width / 2), area.Y + (area.Height / 2));
 
-    private static AssetBundle? OpenArchives() =>
-        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+    /// <summary>
+    /// Opens the game data and points <see cref="GameAssets.Current"/> at it: the dialog frame reads
+    /// <c>BUYBUILD.ICN</c> itself, so <see cref="RecruitHeroView.TryCreate"/> needs it.
+    /// </summary>
+    private sealed class ArchiveScope : IDisposable
+    {
+        private readonly AssetBundle? _assets;
+
+        private ArchiveScope(AssetBundle? assets) => _assets = assets;
+
+        public bool HasData => _assets is not null;
+
+        public AssetBundle Assets => _assets!;
+
+        public static ArchiveScope Open()
+        {
+            AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+            GameAssets.Current = assets;
+
+            return new ArchiveScope(assets);
+        }
+
+        public void Dispose()
+        {
+            GameAssets.Current = null;
+            _assets?.Dispose();
+        }
+    }
 
     /// <summary>A glyph source with the metrics of <c>FONT.ICN</c> (15 pixel line, 6 pixel advance).</summary>
     private sealed class FakeGlyphSource : IGlyphSource

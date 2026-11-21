@@ -323,6 +323,8 @@ public static class ButtonArtwork
             ImageOps.DrawLine(button, new Point(12, 5), new Point(9, 8), lastColor);
             ImageOps.DrawLine(button, new Point(8, 9), new Point(7, 10), firstColor);
             ImageOps.SetPixel(button, 6, 11, lastColor);
+            ImageOps.DrawLine(button, new Point(15, 4), new Point(13, 6), firstColor);
+            ImageOps.SetPixel(button, 12, 7, lastColor);
 
             // Longer right-side shine.
             ImageOps.SetPixel(button, buttonWidth - 10, 2, firstColor);

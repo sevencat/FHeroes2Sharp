@@ -11,9 +11,10 @@ namespace FHeroes2.UI.Dialogs;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 参考只用到四样东西：<c>BLDGXTRA.ICN</c> 帧 0（135x70 的建筑相框）、种族建筑图
-/// （<c>IcnCatalog.GetBuildingIcnId()</c> 的整包，按 <c>CastleBuildingInfo.GetSpriteIndex()</c> 取帧）、
-/// <c>RESOURCE.ICN</c> 的 0~6 帧（价格框），以及 <c>BUYBUILD.ICN</c> 的六块边框。
+/// 参考只用到三样东西：<c>BLDGXTRA.ICN</c> 帧 0（135x70 的建筑相框）、种族建筑图
+/// （<c>IcnCatalog.GetBuildingIcnId()</c> 的整包，按 <c>CastleBuildingInfo.GetSpriteIndex()</c> 取帧）和
+/// <c>RESOURCE.ICN</c> 的 0~6 帧（价格框）。窗框的六块 <c>BUYBUILD.ICN</c> 由 <see cref="FrameBox"/>
+/// 自己从档案读，和参考的 <c>Dialog::FrameBox</c> 一样。
 /// </para>
 /// <para>
 /// 相框底下的「允许/拒绝」色条与角标是城镇屏建筑格子的东西（<c>BuildingInfo::Redraw()</c>），
@@ -28,13 +29,11 @@ public sealed class BuildDialogArtwork
     private BuildDialogArtwork(
         Sprite frame,
         IReadOnlyList<Sprite> buildingImages,
-        IReadOnlyList<Sprite> resourceIcons,
-        FrameBoxChrome chrome)
+        IReadOnlyList<Sprite> resourceIcons)
     {
         Frame = frame;
         BuildingImages = buildingImages;
         ResourceIcons = resourceIcons;
-        Chrome = chrome;
     }
 
     /// <summary>The 135x70 frame of <c>BLDGXTRA.ICN</c>.</summary>
@@ -45,9 +44,6 @@ public sealed class BuildDialogArtwork
 
     /// <summary>The first seven frames of <c>RESOURCE.ICN</c>.</summary>
     public IReadOnlyList<Sprite> ResourceIcons { get; }
-
-    /// <summary>Pieces of the dialog frame, <c>BUYBUILD.ICN</c>.</summary>
-    public FrameBoxChrome Chrome { get; }
 
     /// <summary>
     /// Loads the artwork.
@@ -80,16 +76,9 @@ public sealed class BuildDialogArtwork
             return null;
         }
 
-        if (assets.TryReadIcn(FrameBoxChrome.AssetName) is not { } chromeFile ||
-            FrameBoxChrome.TryCreate(chromeFile.Sprites) is not { } chrome)
-        {
-            return null;
-        }
-
         return new BuildDialogArtwork(
             frameFile.Sprites[FrameIndex],
             buildings.Sprites,
-            resources.Sprites,
-            chrome);
+            resources.Sprites);
     }
 }

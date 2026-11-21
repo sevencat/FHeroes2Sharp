@@ -229,7 +229,6 @@ public sealed class RecruitWindowView
     /// Builds the window, or returns <see langword="null"/> when the artwork is incomplete.
     /// </summary>
     /// <param name="dialog">The state to show and to change.</param>
-    /// <param name="chrome">Pieces of the standard window, <c>SURDRBKG</c>/<c>WINLOSE</c>/<c>STONEBAK</c>.</param>
     /// <param name="artwork">The sprites; <see langword="null"/> is the same as incomplete.</param>
     /// <param name="fonts">The three text faces.</param>
     /// <param name="screen">Screen the window is centred on.</param>
@@ -238,11 +237,10 @@ public sealed class RecruitWindowView
     /// </param>
     /// <returns>The window, or <see langword="null"/>.</returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
-    public static RecruitWindowView? TryCreate(RecruitDialog dialog, StandardWindowChrome chrome,
+    public static RecruitWindowView? TryCreate(RecruitDialog dialog,
         RecruitWindowArtwork? artwork, RecruitWindowFonts fonts, Size? screen = null, int windowOffsetY = 0)
     {
         ArgumentNullException.ThrowIfNull(dialog);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(fonts);
 
         if (artwork is null)
@@ -258,7 +256,7 @@ public sealed class RecruitWindowView
             RecruitWindowLayout.WindowSize.Width,
             RecruitWindowLayout.WindowSize.Height);
 
-        StandardWindow window = StandardWindow.Create(chrome, activeArea);
+        StandardWindow window = StandardWindow.Create(activeArea);
         RecruitWindowLayout layout = RecruitWindowLayout.Create(activeArea);
 
         return new RecruitWindowView(dialog, artwork, fonts, window, layout);

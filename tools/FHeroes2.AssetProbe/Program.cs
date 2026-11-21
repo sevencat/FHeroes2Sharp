@@ -10,6 +10,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.UI.Dialogs;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.AssetProbe;
 
@@ -313,20 +314,27 @@ internal static class Program
         using AssetArchive archive = OpenArchive(arguments);
         Palette palette = LoadPalette(archive, arguments.PaletteName);
 
-        StandardWindowChrome? chrome = StandardWindowChrome.TryCreate(
-            ReadSprites(archive, StandardWindowChrome.HorizontalAssetName),
-            ReadSprites(archive, StandardWindowChrome.VerticalAssetName),
-            ReadSprites(archive, StandardWindowChrome.BackgroundAssetName));
+        // The window reads SURDRBKG/WINLOSE/STONEBAK itself, the same way ui_window.cpp does.
+        using AssetBundle assets = AssetBundle.Open(arguments.DataDirectory);
+        IReadOnlyList<(string Name, PixelBuffer Image)> images;
 
-        if (chrome is null)
+        GameAssets.Current = assets;
+
+        try
         {
-            Console.Error.WriteLine("error: the window artwork is missing from the archive.");
+            images = WindowPreview.Render();
+        }
+        catch (InvalidOperationException exception)
+        {
+            Console.Error.WriteLine($"error: {exception.Message}");
             return 3;
+        }
+        finally
+        {
+            GameAssets.Current = null;
         }
 
         Directory.CreateDirectory(outputDirectory);
-
-        IReadOnlyList<(string Name, PixelBuffer Image)> images = WindowPreview.Render(chrome);
 
         foreach ((string name, PixelBuffer image) in images)
         {

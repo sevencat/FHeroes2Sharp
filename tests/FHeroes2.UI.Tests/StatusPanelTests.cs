@@ -1,370 +1,488 @@
-using FHeroes2.Assets.Fonts;
+using FHeroes2.Assets;
+using FHeroes2.Assets.Icn;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
+using FHeroes2.Game.Army;
+using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.System;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
+
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
 /// <summary>
-/// The stone panel under the adventure screen buttons, <c>Interface::StatusPanel</c>
-/// (<c>src/fheroes2/gui/interface_status.cpp:218-436</c>).
+/// <see cref="StatusPanel"/>, <c>Interface::StatusPanel</c> (<c>gui/interface_status.cpp:55-524</c>).
 /// </summary>
 public sealed class StatusPanelTests
 {
-    /// <summary>Where the panel of the reference layout starts: under the buttons, at y = 392.</summary>
-    private static readonly Point Origin = new(480, 392);
-
-    /// <summary>The panel bay of a 640x480 screen, <c>MapFrame.Panel</c>.</summary>
-    private static readonly Rect PanelBay = new(480, 160, StatusPanel.Width, 320);
-
-    /// <summary>Where the eight buttons of the panel bay are, <c>ButtonsPanel.Area</c>.</summary>
-    private static readonly Rect ButtonsArea = new(480, 320, StatusPanel.Width, 72);
+    public StatusPanelTests() => Settings.Reset();
 
     [Fact]
-    public void DrawBackground_StretchesTheFrameWithItsTopAndBottomBands()
+    public void Constructor_RejectsNulls()
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
+        PixelBuffer display = new(800, 600);
+        World world = WorldWith();
+        StubSprites sprites = new();
+        StubMonsters monsters = new();
+        StubInterface stub = new(display);
 
-        panel.DrawBackground(target, Origin, 88);
-
-        // Top 11 pixels are the top of the artwork, the bottom 61 are glued to the end of the panel and therefore cover
-        // the lower part of the single middle band ( interface_status.cpp:411-431, count = ( 88 - 26 ) / 46 = 1 ).
-        for (int y = 0; y < StatusPanel.BackgroundHeadHeight; ++y)
-        {
-            Assert.Equal((byte)(y + 1), target.Row(Origin.Y + y)[Origin.X]);
-        }
-
-        int bottomHeight = 72 - StatusPanel.BackgroundHeadHeight;
-        int bottomTop = 88 - bottomHeight;
-
-        // The middle band is only visible where the bottom band does not cover it: rows 11 to 26.
-        for (int y = StatusPanel.BackgroundHeadHeight; y < bottomTop; ++y)
-        {
-            Assert.Equal((byte)(y + 1), target.Row(Origin.Y + y)[Origin.X]);
-        }
-
-        for (int y = 0; y < bottomHeight; ++y)
-        {
-            Assert.Equal((byte)(11 + y + 1), target.Row(Origin.Y + bottomTop + y)[Origin.X]);
-        }
+        Assert.Throws<ArgumentNullException>(() => new StatusPanel(null!, display, world, sprites, monsters));
+        Assert.Throws<ArgumentNullException>(() => new StatusPanel(stub, null!, world, sprites, monsters));
+        Assert.Throws<ArgumentNullException>(() => new StatusPanel(stub, display, null!, sprites, monsters));
+        Assert.Throws<ArgumentNullException>(() => new StatusPanel(stub, display, world, null!, monsters));
+        Assert.Throws<ArgumentNullException>(() => new StatusPanel(stub, display, world, sprites, null!));
     }
 
     [Fact]
-    public void DrawBackground_RejectsAPanelTooShortForTheBands()
+    public void SetPos_StretchesThePanelToTheBottom()
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
+        (StatusPanel panel, _, _, PixelBuffer display) = CreatePanel();
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => panel.DrawBackground(target, Origin, 25));
-    }
+        panel.SetPos(0, 100);
 
-    [Theory]
-    [InlineData(1, 1, 1, 0)]
-    [InlineData(1, 2, 1, 2)]
-    [InlineData(1, 3, 1, 3)]
-    [InlineData(1, 4, 1, 4)]
-    [InlineData(1, 5, 1, 1)]
-    [InlineData(1, 2, 2, 0)]
-    public void DrawDate_ShowsTheMoonPhaseOfTheFirstDayOfTheWeek(int month, int week, int day, int expectedFrame)
-    {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-
-        panel.DrawDate(
-            target,
-            Origin,
-            new StatusPanelDate(month, week, day),
-            new FakeGlyphSource(200),
-            new FakeGlyphSource(201));
-
-        // Every moon frame is a solid block of its own value, so the phase can be read back from the panel.
-        Assert.Equal((byte)(10 + expectedFrame), target.Row(Origin.Y + 1)[Origin.X]);
+        Assert.Equal(new Rect(0, 100, StatusPanel.Width, display.Height - 100 - 16), panel.Area);
     }
 
     [Fact]
-    public void DrawDate_WritesBothLinesCentredInThePanel()
+    public void SetPos_KeepsOneStateWhenTheInterfaceIsHidden()
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
+        (StatusPanel panel, _, _, _) = CreatePanel();
 
-        panel.DrawDate(target, Origin, new StatusPanelDate(1, 2, 3), new FakeGlyphSource(200), new FakeGlyphSource(201));
+        panel.HideInterfaceEnabled = true;
+        panel.SetPos(10, 20);
 
-        // The small font starts at y + 32, the normal one at y + 48. A centred line that starts at column c and is w wide
-        // leaves c columns of background on the left and 144 - c - w on the right, so the outer columns of both lines
-        // are mirror images of each other: their sum plus one is the width of the panel.
-        (int first, int last) = FirstAndLastColumn(target, 32, 200);
-        Assert.Equal(144, first + last + 1);
-
-        (first, last) = FirstAndLastColumn(target, 48, 201);
-        Assert.Equal(144, first + last + 1);
-
-        // «Month: 1 Week: 2» is sixteen 6 pixel cells wide, so it starts 24 pixels into the panel.
-        Assert.Equal(24, FirstAndLastColumn(target, 32, 200).First);
+        Assert.Equal(new Rect(10 + 16, 20 + 16, StatusPanel.Width, StatusPanel.Height), panel.Area);
     }
 
-    /// <summary>The leftmost and the rightmost column of the panel that hold <paramref name="color"/> on a row.</summary>
-    private static (int First, int Last) FirstAndLastColumn(PixelBuffer target, int offsetY, byte color)
+    [Fact]
+    public void SetRedraw_AddsTheStatusBit()
     {
-        int first = -1;
-        int last = -1;
+        (StatusPanel panel, StubInterface stub, _, _) = CreatePanel();
 
-        for (int x = 0; x < StatusPanel.Width; ++x)
+        panel.SetRedraw(Redraw.None);
+        Assert.Equal(Redraw.Status, stub.GetRedrawMask());
+
+        panel.SetRedraw(Redraw.Status);
+        Assert.Equal(Redraw.Status, stub.GetRedrawMask());
+
+        panel.SetRedraw();
+        Assert.Equal(Redraw.Status, stub.GetRedrawMask());
+    }
+
+    [Fact]
+    public void SetRedraw_RejectsOtherBits()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.SetRedraw(Redraw.Buttons));
+        Assert.Throws<ArgumentOutOfRangeException>(() => panel.SetRedraw(Redraw.Status | Redraw.Radar));
+    }
+
+    [Fact]
+    public void SetState_RejectsTheResourceState()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.SetState(StatusType.Day);
+        Assert.Equal(StatusType.Day, panel.State);
+
+        Assert.Throws<ArgumentException>(() => panel.SetState(StatusType.Resource));
+    }
+
+    [Fact]
+    public void SetState_DoesNotReplaceAPendingResourceMessage()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.SetResource(Resource.Gold, 500);
+        panel.SetState(StatusType.Army);
+
+        Assert.Equal(StatusType.Resource, panel.State);
+    }
+
+    [Fact]
+    public void SetResource_StartsTheMessage()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.SetResource(Resource.Crystal, 7);
+
+        Assert.Equal(StatusType.Resource, panel.State);
+        Assert.Equal(Resource.Crystal, panel.LastResource);
+        Assert.Equal(7u, panel.LastResourceCount);
+    }
+
+    [Fact]
+    public void NextState_CyclesThroughTheStatesWithoutFocus()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.Reset();
+        Assert.Equal(StatusType.Day, panel.State);
+
+        panel.NextState();
+        Assert.Equal(StatusType.Funds, panel.State);
+
+        panel.NextState();
+        Assert.Equal(StatusType.Day, panel.State);
+    }
+
+    [Fact]
+    public void NextState_LeavesTheResourceMessage()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.SetResource(Resource.Wood, 3);
+        panel.NextState();
+
+        Assert.Equal(StatusType.Army, panel.State);
+    }
+
+    [Fact]
+    public void TimerEventProcessing_KeepsTheMessageUntilTheDelayPasses()
+    {
+        long now = 0;
+        (StatusPanel panel, StubInterface stub, _, _) = CreatePanel(() => now);
+
+        panel.SetResource(Resource.Gold, 100);
+        stub.Clear();
+
+        now = StatusPanel.ResourceMessageDelayMs - 1;
+        panel.TimerEventProcessing();
+        Assert.Equal(StatusType.Resource, panel.State);
+        Assert.Equal(Redraw.None, stub.GetRedrawMask());
+
+        now = StatusPanel.ResourceMessageDelayMs;
+        panel.TimerEventProcessing();
+        Assert.Equal(StatusType.Day, panel.State);
+        Assert.Equal(Redraw.Status, stub.GetRedrawMask());
+    }
+
+    [Fact]
+    public void QueueEventProcessing_DoesNothingOutsideThePanel()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+        LocalEvent events = new();
+
+        events.OnMouseMotion(new Point(700, 500));
+
+        Assert.Equal(StatusPanelAction.None, panel.QueueEventProcessing(events));
+    }
+
+    [Fact]
+    public void QueueEventProcessing_CyclesTheStateOnLeftClick()
+    {
+        (StatusPanel panel, StubInterface stub, _, _) = CreatePanel();
+        LocalEvent events = new();
+        Point inside = new(10, 10);
+
+        panel.Reset();
+        panel.SetPos(0, 0);
+        stub.Clear();
+
+        events.OnMouseMotion(inside);
+        events.OnMouseButton(true, MouseButtonType.Left, inside);
+        events.OnMouseButton(false, MouseButtonType.Left, inside);
+
+        Assert.Equal(StatusPanelAction.StateCycled, panel.QueueEventProcessing(events));
+        Assert.Equal(StatusType.Funds, panel.State);
+        Assert.Equal(Redraw.Status, stub.GetRedrawMask());
+    }
+
+    [Fact]
+    public void QueueEventProcessing_AsksForTheTooltipOnRightClick()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+        LocalEvent events = new();
+        Point inside = new(10, 10);
+
+        panel.SetPos(0, 0);
+
+        events.OnMouseMotion(inside);
+        events.OnMouseButton(true, MouseButtonType.Right, inside);
+
+        Assert.Equal(StatusPanelAction.ShowTooltip, panel.QueueEventProcessing(events));
+    }
+
+    [Fact]
+    public void RedrawStatus_SkipsEverythingWhenHiddenAndNotShown()
+    {
+        (StatusPanel panel, _, _, PixelBuffer display) = CreatePanel();
+
+        display.Fill(0);
+        panel.HideInterfaceEnabled = true;
+        panel.ShowStatus = false;
+        panel.SetPos(0, 0);
+        panel.RedrawStatus();
+
+        Assert.Equal(0, display[20, 20]);
+    }
+
+    [Fact]
+    public void RedrawStatus_PaintsTheBackgroundWithoutADate()
+    {
+        (StatusPanel panel, _, _, PixelBuffer display) = CreatePanel(new World());
+
+        display.Fill(0);
+        panel.SetPos(0, 0);
+        panel.RedrawStatus();
+
+        Assert.NotEqual(0, display[20, 20]);
+    }
+
+    [Fact]
+    public void RedrawStatus_PaintsTheDateWithRealAssets()
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
         {
-            if (target.Row(Origin.Y + offsetY)[Origin.X + x] != color)
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            PixelBuffer display = new(800, 600);
+            StatusPanel panel = CreateAssetPanel(assets, display);
+
+            display.Fill(0);
+            panel.SetPos(0, 100);
+            panel.Reset();
+            panel.RedrawStatus();
+
+            Assert.True(HasPaintedPixels(display));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void RedrawStatus_PaintsTheResourceMessageWithRealAssets()
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            PixelBuffer display = new(800, 600);
+            StatusPanel panel = CreateAssetPanel(assets, display);
+
+            display.Fill(0);
+            panel.SetPos(0, 100);
+            panel.SetResource(Resource.Gold, 250);
+            panel.RedrawStatus();
+
+            Assert.True(HasPaintedPixels(display));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void RedrawStatus_PaintsTheAiTurnHourglassWithRealAssets()
+    {
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            PixelBuffer display = new(800, 600);
+            StatusPanel panel = CreateAssetPanel(assets, display);
+
+            Settings.Get().Players.SetCurrentColor(PlayerColor.Blue);
+
+            display.Fill(0);
+            panel.SetPos(0, 100);
+            panel.SetState(StatusType.AiTurn);
+            panel.RedrawStatus();
+
+            Assert.True(HasPaintedPixels(display));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void Reset_ReturnsToTheDateState()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.SetResource(Resource.Gold, 1);
+        panel.Reset();
+
+        Assert.Equal(StatusType.Day, panel.State);
+        Assert.Equal(Resource.Unknown, panel.LastResource);
+        Assert.Equal(0u, panel.LastResourceCount);
+    }
+
+    [Fact]
+    public void DrawAiTurnProgress_RepaintsTheStatus()
+    {
+        (StatusPanel panel, StubInterface stub, _, _) = CreatePanel();
+
+        stub.Clear();
+        panel.DrawAiTurnProgress(1);
+
+        Assert.Equal(Redraw.Status, stub.GetRenderedMask());
+    }
+
+    [Fact]
+    public void SavePosition_StoresTheFloatingPosition()
+    {
+        (StatusPanel panel, _, _, _) = CreatePanel();
+
+        panel.HideInterfaceEnabled = true;
+        panel.SetPos(30, 40);
+        panel.SavePosition();
+
+        Assert.Equal(new Point(30, 40), Settings.Get().PosStatus);
+    }
+
+    private static (StatusPanel Panel, StubInterface Stub, StubSprites Sprites, PixelBuffer Display) CreatePanel(Func<long>? clockMs = null) =>
+        CreatePanel(WorldWith(), clockMs);
+
+    private static (StatusPanel Panel, StubInterface Stub, StubSprites Sprites, PixelBuffer Display) CreatePanel(
+        World world, Func<long>? clockMs = null)
+    {
+        PixelBuffer display = new(800, 600);
+        StubInterface stub = new(display);
+        StubSprites sprites = new();
+
+        sprites.Add(IcnType.Stonback, 0, PaintedSprite(StatusPanel.Width, StatusPanel.Height));
+        sprites.Add(IcnType.Stonbake, 0, PaintedSprite(StatusPanel.Width, StatusPanel.Height));
+        sprites.Add(IcnType.Ressmall, 0, PaintedSprite(70, 27));
+        sprites.Add(IcnType.Sunmoon, 0, PaintedSprite(30, 30));
+
+        StatusPanel panel = new(stub, display, world, sprites, new StubMonsters(), clockMs);
+
+        return (panel, stub, sprites, display);
+    }
+
+    private static StatusPanel CreateAssetPanel(AssetBundle assets, PixelBuffer display)
+    {
+        IMiniMonsterSprites monsters = Mons32Sprites.TryCreate(assets) ?? (IMiniMonsterSprites)new StubMonsters();
+
+        return new StatusPanel(new StubInterface(display), display, WorldWith(),
+            new IcnViewWorldSpriteSource(assets), monsters);
+    }
+
+    private static Sprite PaintedSprite(int width, int height)
+    {
+        Sprite sprite = new(width, height);
+        sprite.Image.Fill(1);
+
+        return sprite;
+    }
+
+    private static AssetBundle? OpenArchives() =>
+        AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+
+    private static bool HasPaintedPixels(PixelBuffer display)
+    {
+        for (int y = 0; y < display.Height; ++y)
+        {
+            for (int x = 0; x < display.Width; ++x)
             {
-                continue;
+                if (display[x, y] != 0)
+                {
+                    return true;
+                }
             }
-
-            first = first < 0 ? x : first;
-            last = x;
         }
 
-        return (first, last);
+        return false;
     }
 
-    [Fact]
-    public void DrawKingdom_PutsTheCountsUnderTheirIcons()
+    private static World WorldWith()
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
+        World world = new();
+        world.GenerateUninitializedMap(72);
+        world.NewDay();
 
-        var funds = new Funds();
-        funds.Gold = 12500;
-        funds.Wood = 7;
-
-        panel.DrawKingdom(
-            target, Origin, new StatusPanelKingdom(2, 5, funds), new FakeGlyphSource(202));
-
-        // The icon strip is 3 pixels below the top, the first count row 27 below that and the second 30 below that.
-        Assert.Equal((byte)30, target.Row(Origin.Y + 3)[Origin.X + 6]);
-
-        int firstRow = Origin.Y + 3 + StatusPanel.KingdomRowStep;
-        int secondRow = firstRow + StatusPanel.ResourceRowStep;
-
-        Assert.Equal((byte)202, target.Row(firstRow)[Origin.X + 26]);
-        Assert.Equal((byte)202, target.Row(secondRow)[Origin.X + 15]);
+        return world;
     }
 
-    [Fact]
-    public void AreaFor_LeavesExactlyOneFrameUnderTheButtons()
+    /// <summary>The sprites a test needs, and only those.</summary>
+    private sealed class StubSprites : IViewWorldSpriteSource
     {
-        // The reference layout: the buttons end at 392 and the frame border is 16, so the stone gets 480 - 392 - 16.
-        Rect area = StatusPanel.AreaFor(PanelBay, ButtonsArea, 480, 16);
+        private readonly Dictionary<(IcnType Icn, int Index), Sprite> _sprites = [];
 
-        Assert.Equal(ButtonsArea.X, area.X);
-        Assert.Equal(ButtonsArea.Bottom, area.Y);
-        Assert.Equal(StatusPanel.Width, area.Width);
-        Assert.Equal(StatusPanel.SegmentHeight, area.Height);
+        public void Add(IcnType icn, int index, Sprite sprite) => _sprites[(icn, index)] = sprite;
+
+        public Sprite? GetSprite(IcnType icn, int index) =>
+            _sprites.TryGetValue((icn, index), out Sprite? sprite) ? sprite : null;
     }
 
-    [Fact]
-    public void Draw_ShowsTheDateInAOneFramePanel()
+    /// <summary>A monster set that draws nothing.</summary>
+    private sealed class StubMonsters : IMiniMonsterSprites
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-        Rect area = StatusPanel.AreaFor(PanelBay, ButtonsArea, 480, 16);
-
-        panel.Draw(
-            target,
-            area,
-            StatusPanelState.Day,
-            new StatusPanelDate(1, 2, 1),
-            CreateKingdom(),
-            new FakeGlyphSource(200),
-            new FakeGlyphSource(201));
-
-        // The stone is the stretched STONBACK, the moon goes one pixel below its top and the date text below that.
-        Assert.Equal((byte)1, target.Row(area.Y)[area.X]);
-        Assert.Equal((byte)12, target.Row(area.Y + 1)[area.X]);
-        Assert.Equal((byte)200, target.Row(area.Y + 32)[area.X + 24]);
-        Assert.Equal((byte)201, target.Row(area.Y + 48)[area.X + 54]);
-
-        // The panel is one state tall, so the kingdom strip stays off the screen.
-        Assert.NotEqual((byte)30, target.Row(area.Y + 3)[area.X + 6]);
+        public Sprite? GetMiniMonster(MonsterType monster) => null;
     }
 
-    [Fact]
-    public void Draw_ShowsTheKingdomInAOneFramePanel()
+    /// <summary>An interface that records what the panel asks of its owner.</summary>
+    private sealed class StubInterface : BaseInterface
     {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-        Rect area = StatusPanel.AreaFor(PanelBay, ButtonsArea, 480, 16);
+        private Redraw _rendered;
 
-        panel.Draw(
-            target,
-            area,
-            StatusPanelState.Funds,
-            new StatusPanelDate(1, 2, 1),
-            CreateKingdom(),
-            new FakeGlyphSource(200),
-            new FakeGlyphSource(201));
-
-        // The icon strip sits three pixels below the top, the moon does not, and the last row is the untouched artwork.
-        // Column 3 holds no number in either state, so the row of the date line is stone and not text.
-        Assert.Equal((byte)30, target.Row(area.Y + 3)[area.X + 6]);
-        Assert.Equal((byte)71, target.Row(area.Y + 70)[area.X]);
-        Assert.Equal((byte)33, target.Row(area.Y + 32)[area.X + 3]);
-    }
-
-    [Fact]
-    public void Draw_LeavesTheStoneBareWhenTheGameHasNotStarted()
-    {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-        Rect area = StatusPanel.AreaFor(PanelBay, ButtonsArea, 480, 16);
-
-        panel.Draw(
-            target,
-            area,
-            StatusPanelState.Unknown,
-            new StatusPanelDate(1, 1, 1),
-            CreateKingdom(),
-            new FakeGlyphSource(200),
-            new FakeGlyphSource(201));
-
-        for (int y = 0; y < area.Height; ++y)
+        public StubInterface(PixelBuffer display)
+            : base(isEditor: false, display)
         {
-            Assert.Equal((byte)(y + 1), target.Row(area.Y + y)[area.X]);
-        }
-    }
-
-    [Fact]
-    public void Draw_PutsTheKingdomUnderTheDateInATwoFramePanel()
-    {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-        Rect area = new(Origin.X, Origin.Y, StatusPanel.Width, (StatusPanel.SegmentHeight * 2) + 15);
-
-        panel.Draw(
-            target,
-            area,
-            StatusPanelState.Funds,
-            new StatusPanelDate(1, 2, 1),
-            CreateKingdom(),
-            new FakeGlyphSource(200),
-            new FakeGlyphSource(201));
-
-        // The date owns the first frame and the kingdom starts 5 pixels into the second, so its strip is at 72 + 5 + 3.
-        Assert.Equal((byte)12, target.Row(area.Y + 1)[area.X]);
-        Assert.Equal((byte)30, target.Row(area.Y + StatusPanel.SegmentHeight + 8)[area.X + 6]);
-    }
-
-    [Fact]
-    public void Draw_AbbreviatesTheResourcesButNotTheGold()
-    {
-        StatusPanel panel = CreatePanel();
-        PixelBuffer target = new(640, 720);
-        Rect area = StatusPanel.AreaFor(PanelBay, ButtonsArea, 480, 16);
-
-        var funds = new Funds();
-        funds.Gold = 12500;
-        funds.Wood = 12500;
-        funds.Ore = 999;
-
-        panel.Draw(
-            target,
-            area,
-            StatusPanelState.Funds,
-            new StatusPanelDate(1, 2, 1),
-            new StatusPanelKingdom(0, 0, funds),
-            new FakeGlyphSource(202),
-            new FakeGlyphSource(203));
-
-        // 12500 wood is «12K» — three 6 pixel cells — while 12500 gold is written out in full; a five digit pile is 30
-        // pixels wide and is the reason the resource columns are 22 pixels apart: the number is centred, not left aligned.
-        int goldRow = Origin.Y + 3 + StatusPanel.KingdomRowStep;
-
-        Assert.Equal(30, GlyphWidth(target, area, goldRow, 95, 144));
-
-        int resourceRow = goldRow + StatusPanel.ResourceRowStep;
-
-        Assert.Equal(18, GlyphWidth(target, area, resourceRow, 0, 32));
-    }
-
-    /// <summary>The width the glyphs of <paramref name="row"/> cover between two columns of the panel.</summary>
-    private static int GlyphWidth(PixelBuffer target, Rect area, int row, int from, int to)
-    {
-        int first = -1;
-        int last = -1;
-
-        for (int x = from; x < to; ++x)
-        {
-            if (target.Row(row)[area.X + x] != 202)
-            {
-                continue;
-            }
-
-            first = first < 0 ? x : first;
-            last = x;
         }
 
-        return last - first + 1;
-    }
-
-    /// <summary>A kingdom of two castles, five towns and a pile of every resource below four digits.</summary>
-    private static StatusPanelKingdom CreateKingdom()
-    {
-        var funds = new Funds();
-        funds.Gold = 12500;
-        funds.Wood = 7;
-
-        return new StatusPanelKingdom(2, 5, funds);
-    }
-
-    /// <summary>
-    /// A panel whose background is a value ramp, the moon five solid blocks and the resource strip a solid 30x17 block,
-    /// so every position can be checked by reading a single pixel.
-    /// </summary>
-    private static StatusPanel CreatePanel()
-    {
-        Sprite background = new(144, 72);
-
-        for (int y = 0; y < background.Height; ++y)
+        public void Clear()
         {
-            background.Image.Row(y).Fill((byte)(y + 1));
+            SetRedraw(Redraw.None);
+            _rendered = Redraw.None;
         }
 
-        List<Sprite> sunMoon = new(5);
+        public Redraw GetRenderedMask() => _rendered;
 
-        for (int frame = 0; frame < 5; ++frame)
+        public override void RedrawInterface(Redraw force) => _rendered |= force;
+
+        public override void MouseCursorAreaClickLeft(int tileIndex)
         {
-            Sprite moon = new(144, 56);
-            moon.Image.Fill((byte)(10 + frame));
-            sunMoon.Add(moon);
         }
 
-        Sprite smallResources = new(30, 17);
-        smallResources.Image.Fill(30);
-
-        return new StatusPanel(background, sunMoon, smallResources);
-    }
-
-    /// <summary>Solid 6x15 blocks, the metrics of <c>FONT.ICN</c>.</summary>
-    private sealed class FakeGlyphSource : IGlyphSource
-    {
-        private readonly Sprite _glyph;
-
-        public FakeGlyphSource(byte color)
+        public override void MouseCursorAreaPressRight(int tileIndex)
         {
-            PixelBuffer image = new(6, LineHeight);
-            image.Fill(color);
-            _glyph = new Sprite(image, 0, 0);
         }
 
-        public int LineHeight => 15;
-
-        public int SpaceWidth => 6;
-
-        public bool IsAvailable(char character) => true;
-
-        public int GetAdvance(char character) => character == GlyphText.SpaceCharacter ? SpaceWidth : 6;
-
-        public bool TryGetGlyph(char character, out Sprite glyph)
+        public override void MouseCursorAreaLongPressLeft(int tileIndex)
         {
-            glyph = _glyph;
-            return true;
+        }
+
+        public override void Reset()
+        {
+        }
+
+        public override void UpdateCursor(int tileIndex)
+        {
         }
     }
 }

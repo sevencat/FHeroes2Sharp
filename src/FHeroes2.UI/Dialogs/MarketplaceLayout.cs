@@ -123,11 +123,13 @@ public sealed class MarketplaceLayout
     public Rect Area { get; }
 
     /// <summary>Creates the layout of a frame area, <c>Dialog::FrameBox( 297, true )</c>'s area.</summary>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c>.</param>
     /// <param name="screen">Screen the frame is centered on.</param>
     /// <returns>The layout.</returns>
-    public static MarketplaceLayout Create(FrameBoxChrome chrome, Size? screen = null) =>
-        new(FrameBox.Create(chrome, 297, showButtons: true, startY: -1, screen).Area);
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no message frame, see <see cref="FrameBox.Create"/>.
+    /// </exception>
+    public static MarketplaceLayout Create(Size? screen = null) =>
+        new(FrameBox.Create(297, showButtons: true, startY: -1, screen).Area);
 
     /// <summary>One cell of the "your resources" row, <c>rectsFrom[i]</c>.</summary>
     /// <param name="index">Index of the resource in the icon table, 0 to 6.</param>

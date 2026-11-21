@@ -199,30 +199,32 @@ public sealed class MarketplaceView
 
     /// <summary>Builds the window.</summary>
     /// <param name="dialog">The state to show and to forward clicks to.</param>
-    /// <param name="chrome">Pieces of <c>BUYBUILD.ICN</c>.</param>
     /// <param name="artwork">The sprites.</param>
     /// <param name="fonts">The three text faces.</param>
     /// <param name="screen">Screen the frame is centered on.</param>
-    /// <returns>The window, or <see langword="null"/> when the artwork is incomplete.</returns>
+    /// <returns>
+    /// The window, or <see langword="null"/> when the artwork is incomplete - the message frame included.
+    /// </returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no message frame, see <see cref="FrameBox.Create"/>.
+    /// </exception>
     public static MarketplaceView? TryCreate(
         MarketplaceDialog dialog,
-        FrameBoxChrome chrome,
         MarketplaceArtwork? artwork,
         MarketplaceFonts fonts,
         Size? screen = null)
     {
         ArgumentNullException.ThrowIfNull(dialog);
-        ArgumentNullException.ThrowIfNull(chrome);
         ArgumentNullException.ThrowIfNull(fonts);
 
-        if (artwork is null)
+        if (artwork is null || !FrameBox.IsArtworkAvailable)
         {
             return null;
         }
 
-        MarketplaceLayout layout = MarketplaceLayout.Create(chrome, screen);
-        FrameBox frame = FrameBox.Create(chrome, 297, showButtons: true, startY: -1, screen);
+        MarketplaceLayout layout = MarketplaceLayout.Create(screen);
+        FrameBox frame = FrameBox.Create(297, showButtons: true, startY: -1, screen);
 
         return new MarketplaceView(dialog, layout, artwork, fonts, frame);
     }

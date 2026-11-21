@@ -116,7 +116,7 @@ internal sealed class EditorPanel
     /// File of the texture the bay is painted with, the <c>STONEBAK</c> the reference passes to
     /// <c>StandardWindow::renderBackgroundImage()</c> in <c>makeInstrumentPanelBackground()</c>.
     /// </summary>
-    public const string BackgroundFileName = StandardWindowChrome.BackgroundAssetName;
+    public const string BackgroundFileName = "STONEBAK.ICN";
 
     /// <summary>The nine grounds of the picker, in the order the reference draws them.</summary>
     public static readonly IReadOnlyList<MapGround> Grounds =

@@ -62,7 +62,7 @@ public sealed class CastleScene : IScene
     private PlayerColor _captainPortraitColor;
     private bool _captainPortraitTried;
     private MessageBox? _message;
-    private FrameBoxChrome? _messageChrome;
+    private bool? _hasMessageFrame;
     private IReadOnlyList<Sprite>? _messageResourceIcons;
     private bool _messageHeldByRightButton;
     private MessageBox? _tavern;
@@ -868,9 +868,9 @@ public sealed class CastleScene : IScene
             return false;
         }
 
-        if (MessageChrome() is not { } chrome)
+        if (!HasMessageFrame())
         {
-            GameLog.Warn("The tavern window needs the frame of BUYBUILD.ICN, and it is missing.");
+            GameLog.Warn($"The tavern window needs the frame of {FrameBox.ArtworkFileName}, and it is missing.");
 
             return false;
         }
@@ -889,7 +889,7 @@ public sealed class CastleScene : IScene
             return false;
         }
 
-        MessageBox? window = TavernView.TryCreate(TavernDialog.Create(_world), tavwin.Sprites, chrome,
+        MessageBox? window = TavernView.TryCreate(TavernDialog.Create(_world), tavwin.Sprites,
             _fonts.Yellow, _fonts.Normal, buttons);
 
         if (window is null)
@@ -1575,15 +1575,15 @@ public sealed class CastleScene : IScene
             case ConstructionHelpTarget.Building:
             case ConstructionHelpTarget.SpreadFormation:
             case ConstructionHelpTarget.GroupedFormation:
-                if (MessageChrome() is not { } chrome)
+                if (!HasMessageFrame())
                 {
-                    GameLog.Warn("The construction help window needs BUYBUILD, and it was not loaded.");
+                    GameLog.Warn("The construction help window needs the message frame, and it was not loaded.");
 
                     return;
                 }
 
                 ShowMessage(
-                    MessageBox.Create(help.Title, help.Text, chrome, _fonts.Yellow, _fonts.Normal),
+                    MessageBox.Create(help.Title, help.Text, _fonts.Yellow, _fonts.Normal),
                     heldByRightButton: true);
                 break;
 
@@ -1616,15 +1616,15 @@ public sealed class CastleScene : IScene
     /// <param name="build">The dialog whose OKAY is under the pointer.</param>
     private void ShowBuildOkayHelp(BuildWindow build)
     {
-        if (MessageChrome() is not { } chrome)
+        if (!HasMessageFrame())
         {
-            GameLog.Warn("The building help window needs BUYBUILD, and it was not loaded.");
+            GameLog.Warn("The building help window needs the message frame, and it was not loaded.");
 
             return;
         }
 
         ShowMessage(
-            MessageBox.Create("Okay", build.Info.GetConditionDescription(), chrome, _fonts.Yellow, _fonts.Normal),
+            MessageBox.Create("Okay", build.Info.GetConditionDescription(), _fonts.Yellow, _fonts.Normal),
             heldByRightButton: true);
 
         GameLog.Info($"Showing the condition of '{build.Info.Type}'.");
@@ -1637,9 +1637,9 @@ public sealed class CastleScene : IScene
     /// </summary>
     private void ShowBuildCancelHelp()
     {
-        if (MessageChrome() is not { } chrome)
+        if (!HasMessageFrame())
         {
-            GameLog.Warn("The cancel help window needs BUYBUILD, and it was not loaded.");
+            GameLog.Warn("The cancel help window needs the message frame, and it was not loaded.");
 
             return;
         }
@@ -1648,7 +1648,6 @@ public sealed class CastleScene : IScene
             MessageBox.Create(
                 "Cancel",
                 "Exit this menu without doing anything.",
-                chrome,
                 _fonts.Yellow,
                 _fonts.Normal),
             heldByRightButton: true);
@@ -1754,13 +1753,13 @@ public sealed class CastleScene : IScene
             _ => default,
         };
 
-        if (help.Title is null || MessageChrome() is not { } chrome)
+        if (help.Title is null || !HasMessageFrame())
         {
             return;
         }
 
         ShowMessage(
-            MessageBox.Create(help.Title, help.Text, chrome, _fonts.Yellow, _fonts.Normal),
+            MessageBox.Create(help.Title, help.Text, _fonts.Yellow, _fonts.Normal),
             heldByRightButton: true);
     }
 
@@ -1931,15 +1930,15 @@ public sealed class CastleScene : IScene
     /// </summary>
     private void ShowThievesGuildExitHelp()
     {
-        if (MessageChrome() is not { } chrome)
+        if (!HasMessageFrame())
         {
-            GameLog.Warn("The exit help window needs BUYBUILD, and it was not loaded.");
+            GameLog.Warn("The exit help window needs the message frame, and it was not loaded.");
 
             return;
         }
 
         ShowMessage(
-            MessageBox.Create("Exit", ThievesGuildView.ExitHelpText, chrome, _fonts.Yellow, _fonts.Normal),
+            MessageBox.Create("Exit", ThievesGuildView.ExitHelpText, _fonts.Yellow, _fonts.Normal),
             heldByRightButton: true);
     }
 
@@ -1962,16 +1961,16 @@ public sealed class CastleScene : IScene
             return;
         }
 
-        if (MessageResourceIcons() is not { } icons || MessageChrome() is not { } chrome)
+        if (MessageResourceIcons() is not { } icons || !HasMessageFrame())
         {
-            GameLog.Warn("The income window needs RESOURCE and BUYBUILD, and they were not loaded.");
+            GameLog.Warn("The income window needs RESOURCE and the message frame, and they were not loaded.");
 
             return;
         }
 
         Funds income = kingdom.GetIncome(resource => _world.CountCapturedMines(resource, kingdom.Color));
 
-        ShowMessage(KingdomIncome.Create(income, icons, chrome, _fonts.Yellow, _fonts.Normal), heldByRightButton);
+        ShowMessage(KingdomIncome.Create(income, icons, _fonts.Yellow, _fonts.Normal), heldByRightButton);
 
         GameLog.Info($"Showing the daily income of '{Castle.Name}'.");
     }
@@ -1988,9 +1987,9 @@ public sealed class CastleScene : IScene
             return;
         }
 
-        if (MessageChrome() is not { } chrome)
+        if (!HasMessageFrame())
         {
-            GameLog.Warn("The exchange rate window needs BUYBUILD, and it was not loaded.");
+            GameLog.Warn("The exchange rate window needs the message frame, and it was not loaded.");
 
             return;
         }
@@ -1999,7 +1998,6 @@ public sealed class CastleScene : IScene
             MessageBox.Create(
                 MarketplaceView.HeaderText,
                 market.Dialog.ExchangeRateText,
-                chrome,
                 _fonts.Yellow,
                 _fonts.Normal),
             heldByRightButton: false);
@@ -2014,15 +2012,19 @@ public sealed class CastleScene : IScene
         _messageHeldByRightButton = heldByRightButton;
     }
 
-    /// <summary>Pieces of <c>BUYBUILD.ICN</c>, loaded once for every message box.</summary>
-    private FrameBoxChrome? MessageChrome()
+    /// <summary>
+    /// Whether the archive can provide the message frame every box is drawn in, checked once. The
+    /// pieces themselves are read by <see cref="FrameBox"/>.
+    /// </summary>
+    private bool HasMessageFrame()
     {
-        if (_messageChrome is null && _assets is { } assets)
+        if (_hasMessageFrame is null && _assets is { } assets)
         {
-            _messageChrome = FrameBoxChrome.TryCreate(assets.TryReadIcn(FrameBoxChrome.AssetName)?.Sprites);
+            _hasMessageFrame = assets.TryReadIcn(FrameBox.ArtworkFileName) is { } file &&
+                file.Count >= FrameBox.RequiredSpriteCount;
         }
 
-        return _messageChrome;
+        return _hasMessageFrame == true;
     }
 
     /// <summary>Frames of <c>RESOURCE.ICN</c>, loaded once for the income box.</summary>

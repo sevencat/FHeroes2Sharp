@@ -1,6 +1,9 @@
+using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Gui;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -84,6 +87,111 @@ public sealed class ButtonFactoryTests
     }
 
     [Fact]
+    public void MakeButtonWithBackground_PastesTheButtonOntoTheCroppedBackground()
+    {
+        Sprite released = CreateFilledSprite(40, 20, ButtonColor, offsetX: 3, offsetY: 4);
+        Sprite pressed = CreateFilledSprite(40, 20, ButtonColor, offsetX: 2, offsetY: 5);
+
+        ButtonSprite button = ButtonFactory.MakeButtonWithBackground(
+            50,
+            30,
+            released,
+            pressed,
+            CreateFilledSprite(200, 100, StoneColor));
+
+        // The composite keeps the size of the button and sits where the caller asked for.
+        Assert.Equal(50, button.OffsetX);
+        Assert.Equal(30, button.OffsetY);
+        Assert.Equal(40, button.Released.Width);
+        Assert.Equal(20, button.Released.Height);
+
+        // The button lands where its own anchor points inside the cropped background.
+        Assert.Equal(StoneColor, button.Released.Image[2, 3]);
+        Assert.Equal(ButtonColor, button.Released.Image[3, 4]);
+        Assert.Equal(ButtonColor, button.Pressed.Image[2, 5]);
+    }
+
+    [Fact]
+    public void MakeButtonWithBackground_DarkensTheDisabledState()
+    {
+        Sprite released = CreateFilledSprite(40, 20, ButtonColor, offsetX: 3, offsetY: 4);
+
+        ButtonSprite button = ButtonFactory.MakeButtonWithBackground(
+            50,
+            30,
+            released,
+            released,
+            CreateFilledSprite(200, 100, StoneColor));
+
+        button.Disable();
+
+        PixelBuffer canvas = new(120, 60);
+        Assert.True(button.Draw(canvas));
+
+        // The disabled state is the released composite with its button pixel pushed through the DARKENING
+        // palette, while the rest of the composite stays the stone texture.
+        Sprite probe = CreateFilledSprite(1, 1, ButtonColor);
+        ImageOps.ApplyPalette(probe.Image, PaletteId.Darkening);
+
+        Assert.Equal(probe.Image[0, 0], canvas[53, 34]);
+        Assert.NotEqual(ButtonColor, canvas[53, 34]);
+        Assert.Equal(StoneColor, canvas[50, 30]);
+    }
+
+    [Fact]
+    public void MakeButtonWithShadow_ShiftsTheCompositeByTheShadowAnchor()
+    {
+        Sprite released = CreateFilledSprite(40, 20, ButtonColor, offsetX: 3, offsetY: 4);
+
+        ButtonSprite button = ButtonFactory.MakeButtonWithShadow(
+            50,
+            30,
+            released,
+            released,
+            CreateFilledSprite(200, 100, StoneColor),
+            new Point(-2, 3));
+
+        // makeShadow() puts its anchor at (sprite + offset): the composite follows, two pixels to the
+        // left and four rows down.
+        Assert.Equal(50 + 1, button.OffsetX);
+        Assert.Equal(30 + 4, button.OffsetY);
+
+        // The shadow is two pixels wider and three rows taller than the button.
+        Assert.Equal(42, button.Released.Width);
+        Assert.Equal(23, button.Released.Height);
+
+        // The button is drawn at (anchor - shadow anchor) inside the composite.
+        Assert.Equal(ButtonColor, button.Released.Image[3 + 2, 4]);
+    }
+
+    [Fact]
+    public void GetSupportedText_FallsBackToTheOriginalLabelWhenTheFontMissesGlyphs()
+    {
+        using AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+        try
+        {
+            FontType font = FontType.ButtonReleasedWhite();
+
+            Assert.Equal("OKAY", ButtonFactory.GetSupportedText("OKAY", "OKAY", font));
+
+            // The button font only holds the Latin alphabet, so a translated label of another script
+            // falls back to the original one, which is what the reference does for a half translated
+            // build.
+            Assert.Equal("OKAY", ButtonFactory.GetSupportedText("确定", "OKAY", font));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
     public void GetBlankAssetName_NamesThePlateOfEveryTemplate()
     {
         Assert.Equal("EMPTY_GOOD_BUTTON.ICN", ButtonFactory.GetBlankAssetName(DialogButtonTemplate.Good));
@@ -119,7 +227,7 @@ public sealed class ButtonFactoryTests
 
     private static Sprite CreateBlankButton() => CreateFilledSprite(BlankWidth, BlankHeight, ButtonColor);
 
-    private static Sprite CreateFilledSprite(int width, int height, byte color)
+    private static Sprite CreateFilledSprite(int width, int height, byte color, int offsetX = 0, int offsetY = 0)
     {
         PixelBuffer image = new(width, height);
 
@@ -131,6 +239,6 @@ public sealed class ButtonFactoryTests
             }
         }
 
-        return new Sprite(image, 0, 0, new byte[width * height]);
+        return new Sprite(image, offsetX, offsetY, new byte[width * height]);
     }
 }

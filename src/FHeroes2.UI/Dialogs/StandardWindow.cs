@@ -2,7 +2,9 @@ using FHeroes2.Assets;
 using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Dialogs;
 
@@ -13,24 +15,25 @@ namespace FHeroes2.UI.Dialogs;
 /// <remarks>
 /// <para>
 /// A standard window is not a nine slice frame: the four corners are 22 pixel squares cut out of
-/// <see cref="StandardWindowChrome.Vertical"/>, another 21 pixels of the same artwork continue each
-/// corner along the border (<see cref="BorderEdgeOffset"/> is the point where the repeatable part of
-/// the border starts), and the interior is filled by tiling
-/// <see cref="StandardWindowChrome.Background"/>. The seams between the corner pieces, the border and
-/// the background are broken up by <see cref="ImageOps.CreateDitheringTransition"/>, and the whole
-/// window is dropped on an <see cref="ImageOps.AddGradientShadowForArea"/> shadow that hangs 16
-/// pixels off the left and the bottom side - that asymmetry is why <see cref="WindowArea"/> and
-/// <see cref="TotalArea"/> differ on the left only.
+/// <c>ICN::WINLOSE</c>, another 21 pixels of the same artwork continue each corner along the border
+/// (<see cref="BorderEdgeOffset"/> is the point where the repeatable part of the border starts), and
+/// the interior is filled by tiling the frame of <c>ICN::STONEBAK</c>. The seams between the corner
+/// pieces, the border and the background are broken up by
+/// <see cref="ImageOps.CreateDitheringTransition"/>, and the whole window is dropped on an
+/// <see cref="ImageOps.AddGradientShadowForArea"/> shadow that hangs 16 pixels off the left and the
+/// bottom side - that asymmetry is why <see cref="WindowArea"/> and <see cref="TotalArea"/> differ on
+/// the left only.
+/// </para>
+/// <para>
+/// The artwork is read from the archive the way <c>StandardWindow::render()</c>
+/// (<c>ui_window.cpp:145-267</c>) reads it, evil interface included
+/// (<c>SURDRBKE</c>, <c>WINLOSEE</c>, <c>STONEBAK_EVIL</c>). Only the horizontal sprite of
+/// <c>SURDRBKG</c> is used, for the shadow strip along the bottom edge.
 /// </para>
 /// <para>
 /// The reference renders in its constructor and restores the covered pixels when the object dies.
 /// The port does not need a restorer: scenes redraw the whole frame every time, so a window is just
-/// a layout plus a <see cref="Draw"/> call.
-/// </para>
-/// <para>
-/// Only the good interface artwork is supported, because the port has no interface type setting yet;
-/// the evil variants (<c>SURDRBKE</c>, <c>WINLOSEE</c>, <c>STONEBAK_EVIL</c>) plug into the same
-/// <see cref="StandardWindowChrome"/> once it exists.
+/// a layout plus a <see cref="Draw"/> call, and the artwork is loaded on the first <see cref="Draw"/>.
 /// </para>
 /// </remarks>
 public sealed class StandardWindow
@@ -56,21 +59,20 @@ public sealed class StandardWindow
     /// <summary>Space between the rows of a symmetric button group, <c>buttonsVerticalGap</c>.</summary>
     public const int ButtonsVerticalGap = 10;
 
-    private readonly StandardWindowChrome _chrome;
     private readonly bool _hasBackground;
 
-    private StandardWindow(StandardWindowChrome chrome, Rect activeArea, Rect windowArea, Rect totalArea,
-        bool hasBackground)
+    private Sprite? _horizontalSprite;
+    private Sprite? _verticalSprite;
+    private Sprite? _backgroundSprite;
+    private bool _isEvilInterface;
+
+    private StandardWindow(Rect activeArea, Rect windowArea, Rect totalArea, bool hasBackground)
     {
-        _chrome = chrome;
         _hasBackground = hasBackground;
         ActiveArea = activeArea;
         WindowArea = windowArea;
         TotalArea = totalArea;
     }
-
-    /// <summary>Artwork the window is composed of.</summary>
-    public StandardWindowChrome Chrome => _chrome;
 
     /// <summary>
     /// Whether the interior is filled with the stone texture. Without it the corner pieces grow by the
@@ -91,15 +93,11 @@ public sealed class StandardWindow
     /// Creates a window around an explicit area, the
     /// <c>StandardWindow( x, y, width, height, renderBackground, output )</c> constructor.
     /// </summary>
-    /// <param name="chrome">Border and background artwork.</param>
     /// <param name="activeArea">Area the caller wants to draw into.</param>
     /// <param name="renderBackground">Whether the stone interior is tiled.</param>
     /// <returns>The laid out window; <see cref="Draw"/> paints it.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="chrome"/> is <see langword="null"/>.</exception>
-    public static StandardWindow Create(StandardWindowChrome chrome, Rect activeArea, bool renderBackground = true)
+    public static StandardWindow Create(Rect activeArea, bool renderBackground = true)
     {
-        ArgumentNullException.ThrowIfNull(chrome);
-
         Rect windowArea = new(
             activeArea.X - BorderWidth,
             activeArea.Y - BorderWidth,
@@ -112,7 +110,7 @@ public sealed class StandardWindow
             windowArea.Width + BorderWidth,
             windowArea.Height + BorderWidth);
 
-        return new StandardWindow(chrome, activeArea, windowArea, totalArea, renderBackground);
+        return new StandardWindow(activeArea, windowArea, totalArea, renderBackground);
     }
 
     /// <summary>
@@ -121,17 +119,13 @@ public sealed class StandardWindow
     /// an odd difference between the screen and the window size leaves the extra pixel on the right and
     /// the bottom side.
     /// </summary>
-    /// <param name="chrome">Border and background artwork.</param>
     /// <param name="size">Size of the area the caller wants to draw into.</param>
     /// <param name="renderBackground">Whether the stone interior is tiled.</param>
     /// <param name="screen">Screen to center on, <see cref="ScreenBuffer.DefaultSize"/> when omitted.</param>
     /// <returns>The laid out window; <see cref="Draw"/> paints it.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="chrome"/> is <see langword="null"/>.</exception>
-    public static StandardWindow CreateCentered(StandardWindowChrome chrome, Size size, bool renderBackground = true,
+    public static StandardWindow CreateCentered(Size size, bool renderBackground = true,
         Size? screen = null)
     {
-        ArgumentNullException.ThrowIfNull(chrome);
-
         Size bounds = screen ?? ScreenBuffer.DefaultSize;
         Rect activeArea = new(
             (bounds.Width - size.Width) / 2,
@@ -139,7 +133,7 @@ public sealed class StandardWindow
             size.Width,
             size.Height);
 
-        return Create(chrome, activeArea, renderBackground);
+        return Create(activeArea, renderBackground);
     }
 
     /// <summary>
@@ -223,18 +217,16 @@ public sealed class StandardWindow
     /// <c>StandardWindow( ButtonGroup &amp;, isSingleColumn, extraHeight, output )</c> constructor
     /// (<c>ui_window.cpp:129-143</c>).
     /// </summary>
-    /// <param name="chrome">Border and background artwork.</param>
     /// <param name="buttons">Group the dialog is sized around; <see cref="PlaceSymmetricButtons"/> lays it out.</param>
     /// <param name="isSingleColumn">Whether the group is arranged in one column.</param>
     /// <param name="extraHeight">Room for a header or another element above the buttons.</param>
     /// <param name="screen">Screen to centre on, <see cref="ScreenBuffer.DefaultSize"/> when omitted.</param>
     /// <returns>The laid out window, with the stone interior like the reference.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="chrome"/> or <paramref name="buttons"/> is
-    /// <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="buttons"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The group has no buttons.</exception>
-    public static StandardWindow CreateForSymmetricButtons(StandardWindowChrome chrome, ButtonGroup buttons,
+    public static StandardWindow CreateForSymmetricButtons(ButtonGroup buttons,
         bool isSingleColumn = false, int extraHeight = 0, Size? screen = null) =>
-        Create(chrome, ActiveAreaForSymmetricButtons(buttons, isSingleColumn, extraHeight, screen));
+        Create(ActiveAreaForSymmetricButtons(buttons, isSingleColumn, extraHeight, screen));
 
     /// <summary>
     /// Places the buttons of a symmetric group inside <see cref="ActiveArea"/>, the
@@ -396,12 +388,19 @@ public sealed class StandardWindow
     /// </summary>
     /// <param name="target">Indexed frame buffer of the scene.</param>
     /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The archive has no window border or background art, i.e. <see cref="GameAssets.Current"/> is not
+    /// set. The reference asserts on a missing image; the port cannot lay out a window without knowing
+    /// the artwork is there, so it says so.
+    /// </exception>
     public void Draw(PixelBuffer target)
     {
         ArgumentNullException.ThrowIfNull(target);
 
-        Sprite horizontalSprite = _chrome.Horizontal;
-        Sprite verticalSprite = _chrome.Vertical;
+        EnsureArtwork();
+
+        Sprite horizontalSprite = _horizontalSprite!;
+        Sprite verticalSprite = _verticalSprite!;
 
         // Offset from the window edges to the copied background, and the size of the corners.
         int cornerSize = _hasBackground ? BackgroundOffset : BorderWidth;
@@ -619,16 +618,83 @@ public sealed class StandardWindow
     }
 
     /// <summary>
+    /// Darkens an area of the target so that text stands out on it, the static
+    /// <c>StandardWindow::applyTextBackgroundShading( Image &amp; output, const Rect &amp; roi )</c>
+    /// (<c>ui_window.cpp:337-364</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把背景压暗两级（变换表 3 与 5，强度 2 太深），再套一圈由外到内的边框，边框的强度依次是
+    /// 9、4、3、2（3 像素厚）、3、4、5，最外一圈反而更亮，看起来像一块凹进去的玻璃。
+    /// </para>
+    /// <para>
+    /// 差异：参考的成员版本收的是不带输出的 roi，并先与 <c>_activeArea</c> 求交。端口每帧从干净缓冲重画，
+    /// 窗口不再自己持有输出，所以只提供静态版本，调用方自己把区域裁进窗口。
+    /// </para>
+    /// </remarks>
+    /// <param name="output">Frame buffer to darken.</param>
+    /// <param name="area">Area to darken; the part outside <paramref name="output"/> is ignored.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="output"/> is <see langword="null"/>.</exception>
+    public static void ApplyTextBackgroundShading(PixelBuffer output, in Rect area)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        Rect roi = area.Intersect(output.Bounds);
+        if (roi.Width < 4 || roi.Height < 4)
+        {
+            return;
+        }
+
+        // The text background is darker than the original background. Strength 2 is too much,
+        // so two shading transforms are applied: 3 and 5.
+        ImageOps.ApplyTransform(output, roi.X + 2, roi.Y + 2, roi.Width - 4, roi.Height - 4, 3);
+        ImageOps.ApplyTransform(output, roi.X + 2, roi.Y + 2, roi.Width - 4, roi.Height - 4, 5);
+
+        // The border of the text background is made of rectangles with different shading strengths.
+        void ApplyRectangle(int offset, int size, int transformId)
+        {
+            int width = roi.Width - (2 * offset);
+            int height = roi.Height - (2 * offset);
+
+            // Top horizontal line.
+            ImageOps.ApplyTransform(output, roi.X + offset, roi.Y + offset, width, size, transformId);
+
+            // Left vertical line without the pixels that belong to the horizontal lines.
+            ImageOps.ApplyTransform(output, roi.X + offset, roi.Y + offset + size, size,
+                height - (2 * size), transformId);
+
+            // Bottom horizontal line.
+            ImageOps.ApplyTransform(output, roi.X + offset, roi.Y + roi.Height - offset - size, width, size,
+                transformId);
+
+            // Right vertical line without the pixels that belong to the horizontal lines.
+            ImageOps.ApplyTransform(output, roi.X + roi.Width - offset - size, roi.Y + offset + size, size,
+                height - (2 * size), transformId);
+        }
+
+        // The outer rectangle is slightly brighter.
+        ApplyRectangle(0, 1, 9);
+
+        // The following rectangles are shaded with these strengths: 4, 3, 2, 2, 2, 3, 4, 5.
+        ApplyRectangle(1, 1, 4);
+        ApplyRectangle(2, 1, 3);
+        ApplyRectangle(3, 3, 2);
+        ApplyRectangle(6, 1, 3);
+        ApplyRectangle(7, 1, 4);
+        ApplyRectangle(8, 1, 5);
+    }
+
+    /// <summary>
     /// Draws the four small gems into the frame of the window, the
     /// <c>StandardWindow::applyGemDecoratedCorners()</c> of <c>ui_window.cpp:366-398</c>.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The gem is a 9x9 square cut out of <c>REDBACK.ICN</c> at (20, 2) and blitted four times along the
-    /// frame, 4 pixels from the left and 2 from the top, mirrored vertically at the bottom edge. The
-    /// original switches to <c>EVIL_DIALOG_PLAIN_CORNERS</c> and <c>WINLOSEE.ICN</c> when the evil
-    /// interface is enabled; the port has no interface type setting (see <see cref="StandardWindowChrome"/>),
-    /// so only the good look is drawn.
+    /// frame, 4 pixels from the left and 2 from the top, mirrored vertically at the bottom edge. With the
+    /// evil interface the reference first covers each corner with a 43x43 square of
+    /// <c>EVIL_DIALOG_PLAIN_CORNERS</c> and then cuts the gem out of <c>WINLOSEE.ICN</c> at (32, 2),
+    /// turning the four corner pixels into transparent ones so the rounded corners of the window show.
     /// </para>
     /// <para>
     /// Called after <see cref="Draw"/>, because the gems sit on top of the frame the window just painted.
@@ -636,7 +702,7 @@ public sealed class StandardWindow
     /// </remarks>
     /// <param name="target">Indexed frame buffer the window was drawn into.</param>
     /// <param name="assets">Game data the gem artwork is read from.</param>
-    /// <returns><see langword="false"/> when the archive has no usable <c>REDBACK.ICN</c>.</returns>
+    /// <returns><see langword="false"/> when the archive has no usable gem artwork.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="target"/> or <paramref name="assets"/> is <see langword="null"/>.
     /// </exception>
@@ -645,38 +711,134 @@ public sealed class StandardWindow
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(assets);
 
-        if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Redback)) is not { Count: > 0 } file)
-        {
-            return false;
-        }
-
         const int GemSideLength = 9;
-        const int GemSourceX = 20;
-        const int GemSourceY = 2;
 
-        Sprite gem = file.Sprites[0];
+        bool isEvilInterface = Settings.Get().IsEvilInterfaceEnabled;
 
-        if (gem.Width < GemSourceX + GemSideLength || gem.Height < GemSourceY + GemSideLength)
+        Sprite gem = new(GemSideLength, GemSideLength);
+
+        if (!isEvilInterface)
+        {
+            const int GemSourceX = 20;
+            const int GemSourceY = 2;
+
+            if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Redback)) is not { Count: > 0 } file
+                || !TryCutGem(file.Sprites[0], GemSourceX, GemSourceY, gem))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            const int CornerSideLength = 43;
+
+            if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.EvilDialogPlainCorners)) is not { Count: > 0 } cornersFile)
+            {
+                return false;
+            }
+
+            Sprite corners = cornersFile.Sprites[0];
+            Rect area = WindowArea;
+
+            if (corners.Width < CornerSideLength * 2 || corners.Height < CornerSideLength * 2)
+            {
+                return false;
+            }
+
+            Blit(target, corners, 0, 0, area.X, area.Y, CornerSideLength, CornerSideLength);
+            Blit(target, corners, CornerSideLength, 0, area.X + area.Width - CornerSideLength, area.Y,
+                CornerSideLength, CornerSideLength);
+            Blit(target, corners, 0, CornerSideLength, area.X, area.Y + area.Height - CornerSideLength,
+                CornerSideLength, CornerSideLength);
+            Blit(target, corners, CornerSideLength, CornerSideLength,
+                area.X + area.Width - CornerSideLength, area.Y + area.Height - CornerSideLength,
+                CornerSideLength, CornerSideLength);
+
+            if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Winlosee)) is not { Count: > 0 } evilFile
+                || !TryCutGem(evilFile.Sprites[0], 32, 2, gem))
+            {
+                return false;
+            }
+
+            // Rounded corners: the four corner pixels of the gem are blended out.
+            ImageOps.ApplyTransform(gem.Image, 0, 0, 1, 1, 1);
+            ImageOps.ApplyTransform(gem.Image, GemSideLength - 1, 0, 1, 1, 1);
+            ImageOps.ApplyTransform(gem.Image, 0, GemSideLength - 1, 1, 1, 1);
+            ImageOps.ApplyTransform(gem.Image, GemSideLength - 1, GemSideLength - 1, 1, 1, 1);
+        }
+
+        Rect window = WindowArea;
+        int leftX = window.X + 4;
+        int rightX = window.X + window.Width - 2 - GemSideLength;
+        int topY = window.Y + 2;
+        int bottomY = window.Y + window.Height - GemSideLength - 4;
+
+        Blit(target, gem, 0, 0, leftX, topY, GemSideLength, GemSideLength);
+        Blit(target, gem, 0, 0, rightX, topY, GemSideLength, GemSideLength);
+        Blit(target, gem, 0, 0, leftX, bottomY, GemSideLength, GemSideLength);
+        Blit(target, gem, 0, 0, rightX, bottomY, GemSideLength, GemSideLength);
+
+        return true;
+    }
+
+    /// <summary>Copies a square piece of artwork into <paramref name="gem"/>, the <c>Copy()</c> of the reference.</summary>
+    /// <param name="source">Artwork the gem is cut out of.</param>
+    /// <param name="sourceX">Left edge of the square inside <paramref name="source"/>.</param>
+    /// <param name="sourceY">Top edge of the square inside <paramref name="source"/>.</param>
+    /// <param name="gem">Sprite the square is copied into; its size is the size of the square.</param>
+    /// <returns><see langword="false"/> when <paramref name="source"/> is too small for the square.</returns>
+    private static bool TryCutGem(Sprite source, int sourceX, int sourceY, Sprite gem)
+    {
+        if (sourceX + gem.Width > source.Width || sourceY + gem.Height > source.Height)
         {
             return false;
         }
 
-        Rect area = WindowArea;
-        int leftX = area.X + 4;
-        int rightX = area.X + area.Width - 2 - GemSideLength;
-        int topY = area.Y + 2;
-        int bottomY = area.Y + area.Height - GemSideLength - 4;
-
-        Blit(target, gem, GemSourceX, GemSourceY, leftX, topY, GemSideLength, GemSideLength);
-        Blit(target, gem, GemSourceX, GemSourceY, rightX, topY, GemSideLength, GemSideLength);
-        Blit(target, gem, GemSourceX, GemSourceY, leftX, bottomY, GemSideLength, GemSideLength);
-        Blit(target, gem, GemSourceX, GemSourceY, rightX, bottomY, GemSideLength, GemSideLength);
+        ImageOps.Blit(gem.Image, new Point(0, 0), source.Image, new Rect(sourceX, sourceY, gem.Width, gem.Height));
 
         return true;
     }
 
     /// <summary>
-    /// Tiles <see cref="StandardWindowChrome.Background"/> into the interior, the
+    /// Loads the three window sprites the first time the window is drawn, the
+    /// <c>Assets::getImage()</c> calls of <c>StandardWindow::render()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference reads the global cache inside the constructor; the port reads it the first time it
+    /// paints, so a window can be laid out without the game data being open. The evil interface switches
+    /// the artwork, exactly like the reference, and a changed setting is picked up on the next draw.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The archive has no window artwork.</exception>
+    private void EnsureArtwork()
+    {
+        bool isEvilInterface = Settings.Get().IsEvilInterfaceEnabled;
+
+        if (_isEvilInterface == isEvilInterface && _horizontalSprite is not null
+            && _verticalSprite is not null && _backgroundSprite is not null)
+        {
+            return;
+        }
+
+        _isEvilInterface = isEvilInterface;
+        _horizontalSprite = LoadWindowArtwork(isEvilInterface ? IcnType.Surdrbke : IcnType.Surdrbkg);
+        _verticalSprite = LoadWindowArtwork(isEvilInterface ? IcnType.Winlosee : IcnType.Winlose);
+        _backgroundSprite = LoadWindowArtwork(isEvilInterface ? IcnType.StonebakEvil : IcnType.Stonebak);
+    }
+
+    /// <summary>Reads the first frame of a window artwork file.</summary>
+    /// <param name="type">Archive the frame is read from.</param>
+    /// <returns>The first frame of the archive.</returns>
+    /// <exception cref="InvalidOperationException">The archive is not open or has no such file.</exception>
+    private static Sprite LoadWindowArtwork(IcnType type)
+    {
+        string fileName = IcnCatalog.GetFileName(type);
+
+        return GameAssets.GetImage(fileName, 0) ?? throw new InvalidOperationException(
+            $"The window artwork {fileName} is not available: open the game data before drawing a standard window.");
+    }
+
+    /// <summary>
+    /// Tiles the stone background into the interior, the
     /// <c>StandardWindow::renderBackgroundImage()</c> of the reference.
     /// </summary>
     /// <remarks>
@@ -686,7 +848,7 @@ public sealed class StandardWindow
     /// </remarks>
     private void RenderBackgroundImage(PixelBuffer target, Rect area, int borderOffset)
     {
-        Sprite backgroundSprite = _chrome.Background;
+        Sprite backgroundSprite = _backgroundSprite!;
         int backgroundSpriteWidth = backgroundSprite.Width;
         int backgroundSpriteHeight = backgroundSprite.Height;
 

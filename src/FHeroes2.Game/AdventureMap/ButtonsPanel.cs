@@ -60,6 +60,11 @@ public enum HeroMovementIcon
 /// <param name="IsMovementEnabled">Whether the movement button reacts to a click.</param>
 /// <param name="IsSpellEnabled">Whether the spell button reacts to a click.</param>
 /// <param name="IsNextHeroEnabled">Whether the next hero button reacts to a click.</param>
+/// <param name="HasValidPath">
+/// Whether the focus hero has a path at all, <c>GetPath().isValidForMovement()</c>: the reference checks it a second
+/// time before it accepts a long press on the movement button, to keep the long press delay from firing for a hero
+/// without a path.
+/// </param>
 /// <remarks>
 /// The other five buttons are never disabled by the reference, so they do not need a flag.
 /// </remarks>
@@ -67,7 +72,8 @@ public readonly record struct AdventureButtonStatus(
     HeroMovementIcon Movement,
     bool IsMovementEnabled,
     bool IsSpellEnabled,
-    bool IsNextHeroEnabled)
+    bool IsNextHeroEnabled,
+    bool HasValidPath = false)
 {
     /// <summary>
     /// The status without a focused hero: every branch of <c>_setButtonStatus</c> that tests

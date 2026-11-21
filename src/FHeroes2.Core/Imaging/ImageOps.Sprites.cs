@@ -703,4 +703,203 @@ public static partial class ImageOps
             }
         }
     }
+
+    /// <summary>
+    /// Cuts a rectangle out of <paramref name="source"/>, the <c>fheroes2::Crop()</c> of
+    /// <c>src/engine/image.cpp:1779</c>: the result keeps the layers of the source and carries
+    /// <c>(x, y)</c> as its anchor, like the reference's <c>setPosition( x, y )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考对越界的 <c>x</c>/<c>y</c>/<c>width</c>/<c>height</c> 逐条夹取，夹到空就返回空图；这里照抄，
+    /// 空图用零尺寸 <see cref="Sprite"/> 表示（<see cref="PixelBuffer"/> 允许零尺寸）。
+    /// </remarks>
+    /// <param name="source">Sprite to cut from.</param>
+    /// <param name="x">Left column of the area inside <paramref name="source"/>.</param>
+    /// <param name="y">Top row of the area inside <paramref name="source"/>.</param>
+    /// <param name="width">Width of the area.</param>
+    /// <param name="height">Height of the area.</param>
+    /// <returns>The cut out area, anchored at <c>(x, y)</c>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.</exception>
+    public static Sprite Crop(Sprite source, int x, int y, int width, int height)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (source.Image.IsEmpty || width <= 0 || height <= 0)
+        {
+            return new Sprite(0, 0);
+        }
+
+        if (x < 0)
+        {
+            int offsetX = -x;
+            if (offsetX >= width)
+            {
+                return new Sprite(0, 0);
+            }
+
+            x = 0;
+            width -= offsetX;
+        }
+
+        if (y < 0)
+        {
+            int offsetY = -y;
+            if (offsetY >= height)
+            {
+                return new Sprite(0, 0);
+            }
+
+            y = 0;
+            height -= offsetY;
+        }
+
+        if (x > source.Width || y > source.Height)
+        {
+            return new Sprite(0, 0);
+        }
+
+        if (x + width > source.Width)
+        {
+            width -= x + width - source.Width;
+        }
+
+        if (y + height > source.Height)
+        {
+            height -= y + height - source.Height;
+        }
+
+        Sprite output = new(
+            new PixelBuffer(width, height),
+            x,
+            y,
+            source.Transform is null ? null : new byte[checked(width * height)]);
+
+        Copy(source, new Rect(x, y, width, height), output, Point.Zero);
+
+        return output;
+    }
+
+    /// <summary>
+    /// The pixels every input image agrees on, the <c>fheroes2::ExtractCommonPattern()</c> of
+    /// <c>src/engine/image.cpp:2172</c>: a pixel is kept only when the colour layer and, where both images
+    /// have one, the transform layer match. Everything else is left transparent (transform <c>1</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考返回 <c>Image</c>（双层，未命中的像素 <c>reset()</c> 后是「颜色 0 + 变换 1」），这里返回同样
+    /// 语义的 <see cref="Sprite"/>。输入尺寸不一致或列表为空时参考返回空图。
+    /// </para>
+    /// <para>
+    /// 唯一的使用者是把 <c>HSBTNS</c> 的释放/按下两帧拼成 <c>EMPTY_VERTICAL_GOOD_BUTTON</c>：两帧不同的
+    /// 地方就是按钮文字区，正是要被擦掉的部分。
+    /// </para>
+    /// </remarks>
+    /// <param name="sources">Images to intersect, all of the same size.</param>
+    /// <returns>The common part, transparent where the images differ.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="sources"/> or one of its entries is <see langword="null"/>.</exception>
+    public static Sprite ExtractCommonPattern(IReadOnlyList<Sprite> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+
+        if (sources.Count == 0)
+        {
+            return new Sprite(0, 0);
+        }
+
+        Sprite first = sources[0] ?? throw new ArgumentNullException(nameof(sources));
+
+        if (sources.Count == 1)
+        {
+            return first.Clone();
+        }
+
+        if (first.Image.IsEmpty)
+        {
+            return new Sprite(0, 0);
+        }
+
+        foreach (Sprite source in sources)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            if (source.Width != first.Width || source.Height != first.Height)
+            {
+                return new Sprite(0, 0);
+            }
+        }
+
+        Sprite output = new(first.Width, first.Height);
+        output.Reset();
+
+        int stride = first.Image.Stride;
+        byte[]? firstTransform = first.Transform;
+
+        for (int y = 0; y < first.Height; ++y)
+        {
+            ReadOnlySpan<byte> firstRow = first.Image.Row(y);
+
+            for (int x = 0; x < first.Width; ++x)
+            {
+                byte color = firstRow[x];
+                byte? transform = firstTransform?[((y * stride) + x)];
+                bool isEqual = true;
+
+                for (int index = 1; index < sources.Count; ++index)
+                {
+                    Sprite source = sources[index];
+                    byte[]? sourceTransform = source.Transform;
+
+                    if (source.Image[x, y] != color ||
+                        (firstTransform is not null && sourceTransform is not null && sourceTransform[(y * stride) + x] != transform))
+                    {
+                        isEqual = false;
+                        break;
+                    }
+                }
+
+                if (!isEqual)
+                {
+                    continue;
+                }
+
+                output.Image[x, y] = color;
+                output.Transform![(y * stride) + x] = transform ?? (byte)0;
+            }
+        }
+
+        return output;
+    }
+
+    /// <summary>
+    /// Gives <paramref name="destination"/> the transform layer of <paramref name="source"/>, the
+    /// <c>fheroes2::copyTransformLayer( const Image &amp;, Image &amp; )</c> of
+    /// <c>src/engine/image.cpp:1434</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在尺寸不一致或源是单层图时断言；这里抛 <see cref="ArgumentException"/>。目标是单层图时参考会
+    /// 先补出一层再整层拷过去——<see cref="Sprite"/> 的两层在构造时定死，所以这里返回一个新的 sprite，
+    /// 调用方要接住返回值。
+    /// </remarks>
+    /// <param name="source">Sprite whose transform layer is taken.</param>
+    /// <param name="destination">Sprite whose colour layer is kept.</param>
+    /// <returns><paramref name="destination"/> with the transform layer of <paramref name="source"/>.</returns>
+    /// <exception cref="ArgumentNullException">Either sprite is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The sizes differ or <paramref name="source"/> has no transform layer.</exception>
+    public static Sprite CopyTransformLayer(Sprite source, Sprite destination)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        if (source.Transform is not { } sourceTransform)
+        {
+            throw new ArgumentException("The source has no transform layer to copy.", nameof(source));
+        }
+
+        if (source.Width != destination.Width || source.Height != destination.Height)
+        {
+            throw new ArgumentException("Both sprites must have the same size.", nameof(source));
+        }
+
+        return new Sprite(destination.Image, destination.OffsetX, destination.OffsetY, (byte[])sourceTransform.Clone());
+    }
 }

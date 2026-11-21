@@ -91,7 +91,7 @@ Dispose() → 逆序释放全部 IDisposable（文本、呈现器、归档、TTF
 |---|---|---|
 | `World & world` | `Game.World.Current`（`WorldMap`） | 待建：PLAN「还差的主干」第 3 条，随 `world.cpp` / `world_loadmap.cpp` 一起进来（M5） |
 | `Settings::Get()` | `Game.Settings.Current`（`SettingsData`） | 待建；`CommandLineOptions` 目前只覆盖命令行开关 |
-| `Cursor::Get()` | `Game.Cursor.Current`（`CursorState`） | 待建；光标状态现在由各场景自己持有 |
+| `Cursor::Get()` | `CursorState.Current`（`Game.Cursor`） | 状态机已就位；`ICursorRenderer` 的 App 实现（软件光标）待补 |
 | `LocalEvent` / `CampaignSaveData` | 同名门面 | 待建：键鼠事件现在由 `GameHost` 直接分派给场景；战役解析尚未开始 |
 | `AdventureMap::Get()` | `App.AdventureMapScene`（实例，构造传参） | 已有；参考的 `redraw()` 对应场景的脏标记 |
 | `EditorInterface::Get()` | `App.EditorScene`（实例） | 已有 |

@@ -29,9 +29,12 @@ namespace FHeroes2.UI.Widgets;
 /// <para>
 /// <see cref="CreateStandard"/> ports the constructor that places the standard OK/CANCEL, YES/NO and
 /// single button rows, and <see cref="CreateFromFrames"/> the one that reads a whole button table of an
-/// ICN. The constructor that builds a group from a list of texts is not ported yet: it needs the
-/// text-button factory of <c>ui_button.cpp</c>, which needs the label side of
-/// <see cref="ButtonTemplateMetrics"/> to be turned into sprites.
+/// ICN. The constructor that builds a group from a list of texts
+/// (<c>makeSymmetricBackgroundSprites( sprites, texts, evil, 86 )</c>) is not ported yet: its only
+/// caller in the reference is the TOWN/CASTLE row of <c>dialog_selectitems.cpp</c>, which is not
+/// ported, and it hands out the plain indices <c>0..n-1</c> as button values where this port needs a
+/// <see cref="DialogButton"/>. The sprite side it builds on is ready -
+/// <see cref="ButtonFactory.MakeSymmetricBackgroundSprites"/>.
 /// </para>
 /// </remarks>
 public sealed class ButtonGroup

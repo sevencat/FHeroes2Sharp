@@ -82,7 +82,10 @@ public sealed class RecruitHeroView
     /// <param name="descriptionFont">Font of the sentence, <c>FontType::normalWhite()</c>.</param>
     /// <param name="smallFont">Font of the amounts, <c>FontType::smallWhite()</c>.</param>
     /// <param name="buttonArtwork">OK and CANCEL artwork.</param>
-    /// <returns>The dialog, or <see langword="null"/> when the text is too tall for the frame.</returns>
+    /// <returns>
+    /// The dialog, or <see langword="null"/> when the text is too tall for the frame or the archive has
+    /// no message frame.
+    /// </returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     public static RecruitHeroView? TryCreate(
         RecruitHeroDialog dialog,
@@ -100,6 +103,11 @@ public sealed class RecruitHeroView
         ArgumentNullException.ThrowIfNull(smallFont);
         ArgumentNullException.ThrowIfNull(buttonArtwork);
 
+        if (!FrameBox.IsArtworkAvailable)
+        {
+            return null;
+        }
+
         string description = dialog.Description;
         int descriptionHeight =
             GlyphText.WrapLines(descriptionFont, description, FrameBox.AreaWidth).Count * descriptionFont.LineHeight;
@@ -109,7 +117,7 @@ public sealed class RecruitHeroView
         int contentHeight = RecruitHeroLayout.GetContentHeight(
             titleHeight, artwork.Frame.Height, descriptionHeight, costHeight);
 
-        FrameBox box = FrameBox.Create(artwork.Chrome, contentHeight, showButtons: true);
+        FrameBox box = FrameBox.Create(contentHeight, showButtons: true);
 
         RecruitHeroLayout layout = RecruitHeroLayout.Create(
             box.Area, new Size(artwork.Frame.Width, artwork.Frame.Height), titleHeight, descriptionHeight);
