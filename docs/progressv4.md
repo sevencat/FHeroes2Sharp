@@ -1319,4 +1319,102 @@ G1 骨架与 `StatusPanelPainter` 之后，状态栏按 `interface_status.cpp` �
 
 全量 **4 925 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 123），构建 0 错误 0 警告。
 
-G2 剩余：`interface_icons.cpp`（`Widgets/ItemsBarLayout.cs`）。
+## 2026-11-22 G2（3/3）：`Interface::IconsPanel`
+
+图标栏按 `interface_icons.cpp` 整块重写成 `UI/Interface/IconsPanel.cs`（G2 收尾）。
+
+| 参考 | 端口 |
+| --- | --- |
+| `Interface::IconsBar`（`gui/interface_icons.h:30-240`）、`HeroesIcons` / `CastleIcons` | `IconsPanel` 内的 `abstract IconsBar<TRow> : ListBox<TRow>` 与 `HeroIcons` / `CastleIcons` |
+| `Interface::IconsPanel`（`interface_icons.cpp:135-540`） | `IconsPanel` + `HeroesCastlesIcons` / `IconsPanelAction` |
+
+布局按参考是**左右两列**：英雄列 `(x, y)`、城堡列 `(x+72, y)`，每列 56×32 的槽、46×22 的头像内缩 5 像素；
+滚动槽 `(x+59, y+19, 10, 槽数*32-38)`，上下按钮 `(x+57, y+1)` 与 `(x+57, y+槽数*32-15)`；
+`setPos` 先把当前选中存下来，重设 `SetAreaItems` / 滑块 / 按钮后重建列表内容再把选中恢复。
+`resetIcons` 在「AI 控制且未授权自动模式」时直接返回。换序走 `Kingdom.MoveHeroToFront` + `MoveRowToFront`，
+两侧 `Select()` 都会清掉另一侧的选中。背景仍是 `ADVBORD` 中段 `(w-160, 176, 72, 32)` 的重复 + 底部切片 + `LOCATORS` 空槽。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 全局 `world`、`Display::instance()`、`Assets::getImage()` | `World`、`PixelBuffer`、`IViewWorldSpriteSource` 构造注入 |
+| `isEvilInterfaceEnabled()` / `ShowIcons()` / `isHideInterfaceEnabled()` / 拖动存全局 `_border` | `EvilInterface` / `ShowIconsEnabled` / `HideInterfaceEnabled` 属性，拖动返回 `IconsPanelAction.StartedDragging` |
+| 双击/右键直接开对话框、`WORLD_MOVE_HERO_PORTRAIT_UP_MODIFIER` 由主循环查询 | 事件返回 `IconsPanelAction`（`OpenHeroDialog` / `OpenCastleDialog` / `ShowHeroQuickInfo` / `ShowCastleQuickInfo` / `FocusHero` / `FocusCastle`），修饰键状态由宿主经 `QueueEventProcessing(events, moveHeroPortraitPressed)` 传入 |
+| `Hero::PortraitRedraw( PORT_SMALL )` 画头像 | 按 `PORTXTRA` 底 + `MINIPORT[PortraitId-1]` + `MOBILITY` / `MANA` / `MISC4[14]` 手绘（`Hero::PortraitRedraw` 尚未移植） |
+| `SavePosition()` 写 `.fh2config` | 写进 `Settings.PosIcons`（新增 `PosIcons` / `SetPosIcons`），落盘等配置写入器 |
+| 隐藏界面时的浮动石框 | 无石框：九宫格边框图没有可用的取图源，同 `Radar` / `StatusPanel` |
+
+顺带修掉两个真 bug：骨架原先把两个列表**上下堆叠**、滚动槽 16 宽且 y 偏移 1，与参考的「左右两列 + 10 宽槽」
+不符，已整段按参考重写；`SetIconsCount` 原先顺手调 `SetAreaMaxItems`，而那会 `Reset()` 清掉选中，导致
+`setPos` 里的「保存-恢复选中」永远拿不到选中项——改为只记数量（参考 `setIconsCount` 也只赋值）。
+另外 `ResetIcons` 不再自行请求重绘（参考调用方自己重绘），选中标记只在 `Show` 时画，`ActionCurrentDn` 也报焦点。
+
+测试 `IconsPanelTests`（20 条）：构造参数校验、可见性设置、左右两列几何、640/736/768 三种屏高的 4/7/8 槽、
+隐藏界面 2 槽、滚动槽位置与滑块、`SetPos` 保留选中、`SavePosition`、`ResetIcons` 填充与取消选中、
+两侧 `Select` 互斥、单击报焦点、双击开英雄/城堡对话框、右键快捷信息、带修饰键的单击换序、`IsVisible` 三态、
+`HideIcons` 只影响一列（选中框颜色查 `KB.PAL`，所以整个类加入 `GlobalArchiveCollection` 串行执行，缺数据则跳过）。
+
+全量 **4 945 绿**（Core 283 + Assets 416 + Game 3 103 + UI 1 143），构建 0 错误 0 警告。
+
+G2 完成。下一步 G3：`interface_gamearea.cpp`（1 053 行，滚动、绘制、tooltip 命中）。
+
+## 2026-11-22 G3 前置：`maps_tiles_render` 接口骨架（ADR-197）
+
+开工 G3 前先核了依赖：`interface_gamearea.cpp` 的 `Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` /
+`generateUltimateArtifactAreaSurface` 四个绘制入口全部调用尚未移植的 `maps/maps_tiles_render.cpp`（1 327 行），
+而现有 `Game/AdventureMap/AdventureMapView.cs` 是 `Mp2Map`/`Mp2TileInfo` 的过渡渲染器，不是 `Maps::Tile` 部件
+模型的移植，不能当等价物。按用户决定（选 C，2026-11-22）走「被依赖文件先落接口骨架」：
+
+| 新增 | 内容 |
+| --- | --- |
+| `UI/Interface/TileRendering.cs` | `maps_tiles_render.cpp` 的 16 个入口，签名 + 文档注释，方法体抛 `NotImplementedException` |
+| `Game/Maps/ObjectRenderingInfo.cs` | `gui/ui_object_rendering.h` 的 DTO，参考即 header 内实现，故直接写全（H 行「`+ui_object_rendering.h`」提前完成） |
+
+`TileRendering` 收的是 `redrawEmptyTile` / `redrawFlyingGhostsOnMap` / `redrawTopLayerObject` / `drawFog` /
+`redrawPassable` / `redrawBottomLayerObjects` / `drawByObjectIcnType` / `getMonsterSpritesPerTile` /
+`getMonsterShadowSpritesPerTile` / `getBoatSpritesPerTile` / `getBoatShadowSpritesPerTile` /
+`getMineGuardianSpritesPerTile` / `getHeroSpritesPerTile` / `getHeroShadowSpritesPerTile` /
+`getEditorHeroSpritesPerTile` / `getTileSurface`，每个都标了参考行号；十个匿名命名空间助手属实现细节，骨架里不出现
+死代码。两处结构偏差（`TileRendering` 落 UI 层、`icnId` 换成 `IcnType`）写在类注释与 ADR-197 里。
+
+顺带把两个「小到能直接写完」的前置件按参考落了实现，不给 G3 留桩：
+
+| 新增 | 参考 | 内容 |
+| --- | --- | --- |
+| `Core/Timing/Time.cs` | `engine/timing.h:31-60` | `getMs` / `getS` / `reset`，时钟可注入（与 `TimeDelay` 同款） |
+| `UI/Widgets/ScrollInertia.cs` | `ui_tool.h:348-407`、`ui_tool.cpp:950-1076` | `UIScrollInertia` 全量：100 ms 窗口、1/256 px/ms 定点的释放速度、`(200-dt)/200` 衰减、5929 / 169 两个阈值、撞边单轴归零 |
+
+`ScrollInertia.Update(getPosition, setPosition)` 保持参考的双回调形状，G3 直接把自己取/设中心的两个方法传进去即可。
+
+这条处理方式已按用户要求固化成规矩：`docs/PLAN.md` 总体原则第 6 条的「依赖先落接口」补了「对目录内单个文件同样成立」，
+ADR-197 记为后续同类情况的标准做法。
+
+构建 0 错误 0 警告；测试基线不变（4 945 绿）。下一步：G3 本体（几何 / 滚动 / 事件 / 命中）与 `TileRendering` 的实现一起推进。
+
+## 2026-11-22 G3 前半：`GameArea` 几何、滚动与输入
+
+`gui/interface_gamearea.cpp` 拆成两半，先落**不依赖瓦片绘制**的那一半（参考 328-408、862-1072、1072-1285 的几何与事件，
+加头文件里的内联成员）：
+
+| 已实现 | 说明 |
+| --- | --- |
+| `Generate` / `SetAreaPosition` / `SetCenter` / `SetCenterInPixels` / `SetCenterToTile` | 视口放置与夹取；`_visibleTileCount` 多留一格；世界小于窗口时居中 |
+| `VisibleTileRoi` / `GetStartTile` / `GetValidTileIdFromPoint` / `GetRelativeTilePosition` / `GetInternalPosition` / `ShiftCenter` | 像素↔瓦片换算，负偏移走 floor 修正 |
+| `Scroll` / `SetScroll` / `GetScrollCursor` / `NeedScroll` | 四向边缘滚动，速度按 `AdventureMapScrollSpeed` 位移 `2 << speed`；惯性运行时拒绝边缘滚动 |
+| `QueueEventProcessing` | 拖动阈值 10 px、平滑滚动把位移交给 `ScrollInertia`、点击/右键/长按交给接口、光标只在瓦片变化时更新 |
+| `UpdateInertia` / `SetFastScrollStatus` / `MouseIndicatesFastScroll` | 快速滚动死区 3 px，参考的「参考点跟着光标走」逻辑照搬 |
+| `AddObjectAnimationInfo` / `GetObjectAlphaValue`×2 | 动画队列与不透明度查询 |
+| `UpdateMapFogDirections` + `Game/Maps/TileFog.cs` | `maps_tiles_helper.cpp:2086-2212` 的一格缓存扫描，直接写全（不是桩） |
+
+**依旧抛 `NotImplementedException`**：`Redraw` / `RedrawOnlyFog` / `RenderTileAreaSelect` / `BlitOnTile`×2 / `DrawTile` /
+`GenerateUltimateArtifactAreaSurface` / `RunSingleObjectAnimation`——整块 `TileUnfitRenderObjectInfo` 分层逻辑要吃
+`TileRendering` 的输出，等它实现一起落。`updateObjectAnimationInfo` 属同一批（只有 `Redraw` 推进动画队列）。
+
+三处记在类注释里的偏差：`mouseIndicatesFastScroll` 的屏幕尺寸改由 `Generate` 记住（无 `Display::instance()`）；
+控制面板遮挡改问 `BaseInterface.ControlPanelAreaForInput`（`AdventureMap` 属 G5）；`TileFog` 的 `worldHeight` 用
+`World.Height` 而非参考笔误的 `world.w()`。`QueueEventProcessing` 里参考把 `_windowROI.x` 用在 Y 分量上，原样保留
+并注明（两种布局下上下左右边框相同）。
+
+`RadarTests.RedrawCursor_AsksTheGameAreaWithoutAnExplicitRectangle` 之前断言视口未移植，现在改成断言雷达真的画出
+视口框。构建 0 错误 0 警告，全量 **4 945 绿**。

@@ -276,7 +276,7 @@
 | `interface_events.cpp` | 535 | `AdventureMapScene`/`AdventureMapView` 自建事件 | ②未移植 |
 | `interface_focus.cpp` | 237 | 无 | ②未移植 |
 | `interface_gamearea.cpp` | 1053 | `UI/Interface/GameArea.cs` 骨架 + `AdventureMapScene` 自建滚动与绘制 | ①部分：类型/枚举/动画队列已声明，几何与绘制待 G3 |
-| `interface_icons.cpp` | 433 | 无 | ②未移植 |
+| `interface_icons.cpp` | 433 | `UI/Interface/IconsPanel.cs` | ①完成（隐藏界面时无浮动石框，同 `Radar`；`SavePosition` 只写会话内 Settings；英雄头像按 `PORTXTRA` + `MINIPORT` + 移动力/法力/睡眠标记手绘，未复用 `Hero::PortraitRedraw` 的 `PORT_SMALL`） |
 | `interface_itemsbar.h` | 460 | `Widgets/ItemsBarLayout.cs`（自建） | ②未移植 |
 | `interface_list.h` | 540 | `Widgets/ListBox.cs`、`ListBoxBase.cs` | 已 1:1（保留） |
 | `interface_radar.cpp` | 459 | `UI/Interface/Radar.cs` | ①完成（View World 的拷贝构造 / `RedrawForViewWorld` / `QueueEventProcessingForWorldView` 待 H 的 `ViewWorld::ZoomROIs`；`SavePosition` 待 Settings 位置持久化） |
@@ -305,7 +305,7 @@
 | F | `ui_button.cpp` 剩余：透明背景按钮、`makeButtonWithBackground/Shadow`、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` | `ui_button.cpp:1-813` | 删 `DialogButtonArtwork`、`ButtonArtwork` 自算段 |
 | G1 | `interface_base.cpp` / `interface_cpanel.cpp` / `interface_buttons.cpp` / `interface_border.cpp` | 共 822 行 | 冒险地图面板由参考类绘制 |
 | G2 | `interface_radar.cpp` / `interface_status.cpp` / `interface_icons.cpp` | 共 1 332 行 | 雷达、状态栏、图标条 |
-| G3 | `interface_gamearea.cpp`（滚动、绘制、tooltip 命中） | 1 053 行 | 删 `AdventureMapScene` 自建视口 |
+| G3 | `interface_gamearea.cpp`（滚动、绘制、tooltip 命中）；被它依赖的 `maps/maps_tiles_render.cpp`（1 327 行，1 118 非空行）按 ADR-197 先落接口骨架。几何 / 滚动 / 事件 / 命中已移植，绘制层待 `TileRendering` 实现 | 1 285 行 | 删 `AdventureMapScene` 自建视口 |
 | G4 | `interface_events.cpp` / `interface_focus.cpp` | 共 772 行 | 删 `AdventureMapView` 自建事件 |
 | G5 | 收口：`AdventureMapScene` 只留场景装配 | — | 自建面板代码全部删除 |
 | H | `player_info.cpp`、`skill_bar.cpp`、`statusbar.cpp`、`ui_kingdom.cpp`、`ui_campaign.cpp`、`ui_monster.cpp`、`ui_mage_guild.cpp`、`ui_map_object.cpp`(+`ui_object_rendering.h`)、`ui_map_interface.cpp`、`ui_base.cpp`、`ui_constants.h` | 共 2 300 行 | 各自有 1:1 文件 |
@@ -327,12 +327,23 @@ G1 完成（4/4，2026-11-22）：`interface_border.cpp` 已全部转完（`UI/I
 （方法体抛 `NotImplementedException`，随 G3 / G2 填）；`interface_cpanel.cpp` 已全部转完
 （`UI/Interface/ControlPanel.cs`，连带 `Core/Imaging/ImageOps.AlphaBlit.cs`）；`interface_buttons.cpp` 已全部转完
 （`UI/Interface/ButtonsPanel.cs`，仅 `SavePosition` 待 Settings 的位置持久化）。
-G2 已开工（2/3，2026-11-22）：`interface_radar.cpp` 已全部转完（`UI/Interface/Radar.cs`，成像 / 光标 /
+G2 已完成（3/3，2026-11-22）：`interface_radar.cpp` 已全部转完（`UI/Interface/Radar.cs`，成像 / 光标 /
 事件 / 调色板查表，View World 的拷贝构造、`RedrawForViewWorld`、`QueueEventProcessingForWorldView` 与无参
 `RedrawCursor` 分别待 H 的 `ViewWorld::ZoomROIs` 与 G3 的 `GameArea.VisibleTileRoi`）；`interface_status.cpp` 已全部
 转完（`UI/Interface/StatusPanel.cs`，五态绘制 / 三段布局 / 左键循环 / 「找到资源」计时 / AI 回合沙漏，隐藏界面时
-无浮动石框，同 `Radar`）。两者 `SavePosition` 都已写进 `Settings.PosRadar` / `Settings.PosStatus`，落盘等配置写入器。
-下一步 G2：`interface_icons.cpp`（`Widgets/ItemsBarLayout.cs`）。
+无浮动石框，同 `Radar`）；`interface_icons.cpp` 已全部转完（`UI/Interface/IconsPanel.cs`，左右两列 56×32 槽 /
+两个 `IconsBar` 子类 / 选中框 / 换序 / 拖动转发，英雄头像与浮动石框两处偏差见上表）。三者 `SavePosition` 都已写进
+`Settings.PosRadar` / `Settings.PosStatus` / `Settings.PosIcons`，落盘等配置写入器。
+G3 前置已完成（2026-11-22）：`interface_gamearea.cpp` 的 `Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` /
+`generateUltimateArtifactAreaSurface` 全部踩在尚未移植的 `maps/maps_tiles_render.cpp` 上（`docs/PLAN.md` 记的
+`maps` 目录最后一块），按 ADR-197 先把被依赖文件的接口骨架落下来：`UI/Interface/TileRendering.cs` 收全 16 个入口
+（`redrawEmptyTile` / `redrawFlyingGhostsOnMap` / `redrawTopLayerObject` / `drawFog` / `redrawPassable` /
+`redrawBottomLayerObjects` / `drawByObjectIcnType` / 怪物·空船·矿守卫·英雄的四组精灵清单 / `getTileSurface`），
+签名与参考一致、方法体抛 `NotImplementedException`；顺带提前落 `Game/Maps/ObjectRenderingInfo.cs`
+（`gui/ui_object_rendering.h` 的 DTO，参考里本来就是 header 内实现，所以直接写全，H 行的「`+ui_object_rendering.h`」
+这一半已完成）。G3 的几何 / 滚动 / 惯性 / 拖动 / 点击命中那一半也已落地（`GameArea` 328-408、862-1285 各行），
+剩下 `Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` / `GenerateUltimateArtifactAreaSurface` 与 `TileRendering`
+的实现一起推进。
 
 ### 5.4 自建删除台账（`gui/` 范围）
 

@@ -64,6 +64,15 @@ public sealed partial class Hero : ISpellBookOwner
     public uint GetMaxSpellPoints() => 10 * (uint)GetKnowledge();
 
     /// <summary>
+    /// 法力条的 MANA 帧号，<c>HeroBase::getManaIndexSprite()</c>（<c>heroes_base.cpp:138-149</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 五点法力一像素；没有法力回 0（空槽），封顶 25 帧。
+    /// </remarks>
+    /// <returns>0 到 25 之间的帧号。</returns>
+    public uint GetManaIndexSprite() => _spellPoints == 0 ? 0u : Math.Min((_spellPoints / 5u) + 1u, 25u);
+
+    /// <summary>
     /// Whether the hero carries the spell book, <c>HaveSpellBook()</c> (<c>heroes_base.h:145-148</c>).
     /// </summary>
     /// <remarks>

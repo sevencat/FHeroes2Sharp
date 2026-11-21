@@ -22,6 +22,8 @@
    不许留半个目录就跳走。
    * **依赖先落接口**：待转目录依赖尚未转的目录时，先去被依赖目录把接口（签名 + 文档注释）写好，
      方法体照旧抛 `NotImplementedException`；禁止在调用方写临时替代或兜底。
+     这条对**目录内的单个文件**同样成立：已转目录里的文件若踩到同目录还没转的文件（例：`interface_gamearea.cpp`
+     踩 `maps_tiles_render.cpp`，见 ADR-197），一样先把被依赖文件的骨架落下，调用方按参考逐行写调用，实现随后补。
    * **第一遍只求转完**：每个目录转完只做「能编译、0 警告」的最低限度验证，不补测试、不做数值核对。
    * **核对与测试放最后**：全部目录转完后，再统一做一遍与参考的逐函数核对，并按目录补齐行为测试。
    * **`editor/` 最后实现**：编辑器不在这一轮，等内核目录全部转完再动。
@@ -797,7 +799,7 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 | `gui` 冒险界面外壳 | 14 个 4 385：`ui_keyboard` 1 146、`interface_events` 535、`interface_icons` 433、`skill_bar` 394、`player_info` 380、`ui_map_object` 316、`interface_buttons` 249、`interface_focus` 237 … | 4 385 | `MapFrame`/`StatusPanel`/`ButtonsPanel`/`Radar` 已落；缺的是这些面板本体与事件细化。`ui_castle`（271）已从这一包移走：ADR-165~194 之后只剩 `AlphaBlit`，不算未转 |
 | 设置窗口 | 7 个 1 907：`dialog_hotkeys` 384、`dialog_system_options` 379、`dialog_resolution` 274、`dialog_graphics_settings` 252、`dialog_interface_settings` 221、`dialog_audio` 212、`dialog_random_map_generator` 205 | 1 907 | **不卡 `OptionButtonGroup`**：当前参考改用 `drawOption` 网格（`ui_option_item.cpp`），端口的 `OptionItem` 已在；每个窗口是一次网格绘制 + 点击映射 |
 | `dialog_selectitems` | 1 777 | 1 777 | 卡 `TextBox` 与滚动列表 |
-| `maps` 剩余 | `maps_tiles_render` 1 118、随机地图三件 2 121 | 3 239 | 地形绘制端口还没有等价物；随机地图是旁支 |
+| `maps` 剩余 | `maps_tiles_render` 1 118、随机地图三件 2 121 | 3 239 | 地形绘制端口已按 ADR-197 落接口骨架（`UI/Interface/TileRendering.cs` 16 个入口 + `Game/Maps/ObjectRenderingInfo.cs`），实现随 G3 补；随机地图是旁支 |
 | 城堡屏 | `castle_dialog` 859（布局、资源面板、建筑绘制、整屏合成与点击分派、场景循环、魔法塔/水井/酒馆三个模态、船长像与速览、旗帜配色都已落，剩 ≈90 的说明框分支）、`castle_town` 772（招募框余支）、`castle_building` 的 `AlphaBlit`、`buildinginfo` 的红黑角标与 `BUILD_STRUCTURE` | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel`/`CastleScene`/`MageGuildDialog`/`WellDialog`/`TavernView`/`CastleScreenPainter`/`CastleFlagPalette` 都已落；**各建筑窗口都有入口**（`OpenBuilding` + `--town-window`），只差 `AlphaBlit` 的淡入 |
 | `heroes` 剩余 | `heroes_meeting` 695、`heroes_spell` 333、`heroes_indicator` 269、`direction` 186 | 1 483 | 会面窗口依赖已落的 `ArmyInfo` |
 | `campaign` | 3 个 1 874 | 1 874 | 旁支，等 P6 |

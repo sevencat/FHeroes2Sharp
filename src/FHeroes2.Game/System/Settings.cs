@@ -432,6 +432,12 @@ public sealed class Settings
     /// <remarks>Same lifetime as <see cref="PosStatus"/>: the interface saves it, nothing writes it to disk yet.</remarks>
     public Point PosRadar { get; private set; }
 
+    /// <summary>
+    /// The floating position of the icons panel, <c>_posIcons</c> (<c>settings.h</c>, <c>settings.cpp:86</c>).
+    /// </summary>
+    /// <remarks>Same lifetime as <see cref="PosStatus"/>: the interface saves it, nothing writes it to disk yet.</remarks>
+    public Point PosIcons { get; private set; }
+
     /// <summary>Whether the game is a campaign, <c>isCampaignGameType()</c>.</summary>
     public bool IsCampaignGameType => (GameType & GameTypes.Campaign) != 0;
 
@@ -666,6 +672,10 @@ public sealed class Settings
     /// <summary>Stores the floating position of the radar, <c>SetPosRadar()</c>.</summary>
     /// <param name="position">Left-top corner of the floating window.</param>
     public void SetPosRadar(Point position) => PosRadar = position;
+
+    /// <summary>Stores the floating position of the icons panel, <c>SetPosIcons()</c>.</summary>
+    /// <param name="position">Left-top corner of the floating window.</param>
+    public void SetPosIcons(Point position) => PosIcons = position;
 
     /// <summary>Switches the battle grid, <c>SetBattleGrid()</c>.</summary>
     /// <param name="enable">True to draw it.</param>

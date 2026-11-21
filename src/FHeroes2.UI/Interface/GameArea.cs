@@ -1,6 +1,12 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Core.Timing;
+using FHeroes2.Game;
+using FHeroes2.Game.Maps;
+using FHeroes2.Game.System;
+using FHeroes2.UI.Input;
+using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Interface;
 
@@ -167,48 +173,87 @@ public sealed class ObjectFadingInInfo : BaseObjectAnimationInfo
 }
 
 /// <summary>
-/// The scrolling map viewport, <c>Interface::GameArea</c> (<c>gui/interface_gamearea.h:144-320</c>).
+/// The scrolling map viewport, <c>Interface::GameArea</c> (<c>gui/interface_gamearea.h:152-320</c>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Status: signature-only.</b> The class is declared so that <see cref="BaseInterface"/> and the panels can be
-/// written against it; the geometry of <c>gui/interface_gamearea.cpp</c> lands with G3. What is implemented here is
-/// the part the reference defines inline and that needs nothing but the viewport rectangle: the ROI bookkeeping, the
-/// pending scroll direction and the animation queue.
+/// <b>Status: geometry, scrolling and input ported; the render passes are not.</b> What lives here is everything
+/// that turns a frame position into a tile and moves the viewport: the placement and clamping of
+/// <c>SetAreaPosition</c>, the tile arithmetic of <c>GetValidTileIdFromPoint</c> / <c>GetRelativeTilePosition</c>,
+/// the edge scroll of <c>Scroll</c> / <c>SetScroll</c>, the drag and inertia handling of
+/// <c>QueueEventProcessing</c> / <c>updateInertia</c>, the object animation queue, and the fog recomputation of
+/// <c>updateMapFogDirections</c>.
 /// </para>
 /// <para>
-/// Several members still throw even though the reference spells them inline (<c>isDragScroll()</c>,
-/// <c>getCurrentCenterInPixels()</c> and friends): they read state that only <c>generate()</c> and the scroll code
-/// fill in, and a field that nothing writes yet is a compile error in this project. They land with G3.
+/// <b>Still throwing:</b> <see cref="Redraw"/>, <see cref="RedrawOnlyFog"/>, <see cref="RenderTileAreaSelect"/>,
+/// both <see cref="BlitOnTile(PixelBuffer, Sprite, int, int, Point, bool, byte)"/> overloads,
+/// <see cref="DrawTile"/>, <see cref="GenerateUltimateArtifactAreaSurface"/> and
+/// <see cref="RunSingleObjectAnimation"/>. They are the reference's <c>TileUnfitRenderObjectInfo</c> layering
+/// machinery, which consumes <see cref="TileRendering"/> — that class is still a signature skeleton (ADR-197), so
+/// these bodies land together with it in the next pass.
+/// </para>
+/// <para>
+/// <b>Deviations.</b> <c>mouseIndicatesFastScroll</c> reads <c>Display::instance()</c> in the reference for the
+/// frame edges; the port has no display singleton, so <see cref="Generate"/> remembers the frame size instead — the
+/// same choice <see cref="BaseInterface"/> made for its scroll helpers. The control panel guard of
+/// <c>QueueEventProcessing</c> reads <c>AdventureMap::Get().getControlPanel().GetArea()</c>, which has no owner in
+/// the port yet, so it asks the interface through <see cref="BaseInterface.ControlPanelAreaForInput"/>.
 /// </para>
 /// </remarks>
 public sealed class GameArea
 {
-    private readonly List<BaseObjectAnimationInfo> _animationInfo = [];
+    /// <summary>How far the mouse travels before a press becomes a drag, <c>minimalRequiredDraggingMovement</c>.</summary>
+    private const int MinimalRequiredDraggingMovement = 10;
 
-    private int _windowX;
-    private int _windowY;
-    private int _windowWidth;
-    private int _windowHeight;
+    /// <summary>Travel that re-arms fast scrolling while the cursor sits on a side border.</summary>
+    private const int FastScrollDeadZone = 3;
+
+    private readonly BaseInterface _interface;
+    private readonly List<BaseObjectAnimationInfo> _animationInfo = [];
+    private readonly ScrollInertia _inertiaHandler = new();
+    private readonly Time _scrollTime = new();
+
+    private Rect _windowRoi;
+    private Point _topLeftTileOffset;
+    private Size _screenSize;
+
+    private int _minLeftOffset;
+    private int _maxLeftOffset;
+    private int _minTopOffset;
+    private int _maxTopOffset;
+
+    private Size _visibleTileCount;
+
+    private int _prevIndexPos;
     private ScrollingType _scrollDirection;
+    private bool _updateCursor;
+
+    private Point _lastMouseDragPosition;
+    private Point _mousePositionForFastScroll;
+    private bool _mouseDraggingInitiated;
+    private bool _mouseDraggingMovement;
+    private bool _needRedrawByMouseDragging;
+    private bool _isFastScrollEnabled;
+    private bool _resetMousePositionForFastScroll;
 
     /// <summary>Wraps the interface the viewport belongs to, <c>GameArea( BaseInterface &amp; )</c>.</summary>
-    /// <param name="interface">Owner of the viewport.</param>
+    /// <param name="interface">Owner of the viewport, used for the redraw and cursor callbacks.</param>
     /// <exception cref="ArgumentNullException"><paramref name="interface"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// The reference keeps the reference for the settings and the redraw calls of the viewport; the port uses it once
-    /// <c>generate()</c> is ported, so nothing is stored yet.
-    /// </remarks>
     public GameArea(BaseInterface @interface)
     {
         ArgumentNullException.ThrowIfNull(@interface);
+
+        _interface = @interface;
     }
 
     /// <summary>The visible part of the map window, <c>GetROI()</c>.</summary>
-    public Rect Roi => new(_windowX, _windowY, _windowWidth, _windowHeight);
+    public Rect Roi => _windowRoi;
 
     /// <summary>Middle of the viewport in pixels, <c>_middlePoint()</c>.</summary>
-    public Point MiddlePoint => new(_windowWidth / 2, _windowHeight / 2);
+    public Point MiddlePoint => new(_windowRoi.Width / 2, _windowRoi.Height / 2);
+
+    /// <summary>Center of the viewport in pixels, <c>getCurrentCenterInPixels()</c>.</summary>
+    public Point CurrentCenterInPixels => _topLeftTileOffset + MiddlePoint;
 
     /// <summary>Whether a scroll request is pending, <c>NeedScroll()</c>.</summary>
     public bool NeedScroll => _scrollDirection != ScrollingType.None;
@@ -238,75 +283,220 @@ public sealed class GameArea
     /// <param name="height">Height of the viewport.</param>
     public void SetAreaPosition(int x, int y, int width, int height)
     {
-        _windowX = x;
-        _windowY = y;
-        _windowWidth = width;
-        _windowHeight = height;
+        _windowRoi = new Rect(x, y, width, height);
+
+        int worldWidth = World.Current.Width * GameBorder.TileWidth;
+        int worldHeight = World.Current.Height * GameBorder.TileWidth;
+
+        if (worldWidth > width)
+        {
+            _minLeftOffset = -(width / 2) - (GameBorder.TileWidth / 2);
+            _maxLeftOffset = worldWidth - (width / 2);
+        }
+        else
+        {
+            _minLeftOffset = -(width - worldWidth) / 2;
+            _maxLeftOffset = _minLeftOffset;
+        }
+
+        if (worldHeight > height)
+        {
+            _minTopOffset = -(height / 2) - (GameBorder.TileWidth / 2);
+            _maxTopOffset = worldHeight - (height / 2);
+        }
+        else
+        {
+            _minTopOffset = -(height - worldHeight) / 2;
+            _maxTopOffset = _minTopOffset;
+        }
+
+        // One extra tile on both axes, so tiles cut by the window edge are drawn as well.
+        _visibleTileCount = new Size(
+            ((width + GameBorder.TileWidth - 1) / GameBorder.TileWidth) + 1,
+            ((height + GameBorder.TileWidth - 1) / GameBorder.TileWidth) + 1);
+
+        SetCenterToTile(new Point(World.Current.Width / 2, World.Current.Height / 2));
     }
 
     /// <summary>The tiles the viewport shows, <c>GetVisibleTileROI()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public Rect VisibleTileRoi => throw new NotImplementedException("GameArea::GetVisibleTileROI lands with G3.");
+    /// <remarks>The reference warns not to call this in heavy loops: the start tile is recomputed every time.</remarks>
+    public Rect VisibleTileRoi => new(GetStartTile(), _visibleTileCount);
 
     /// <summary>Builds the viewport for the given frame size, <c>generate()</c>.</summary>
     /// <param name="screenSize">Size of the frame.</param>
     /// <param name="withoutBorders">Whether the border of the adventure screen is hidden.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void Generate(Size screenSize, bool withoutBorders) => throw new NotImplementedException("GameArea::generate lands with G3.");
+    public void Generate(Size screenSize, bool withoutBorders)
+    {
+        _screenSize = screenSize;
+
+        if (withoutBorders)
+        {
+            SetAreaPosition(0, 0, screenSize.Width, screenSize.Height);
+        }
+        else
+        {
+            SetAreaPosition(
+                GameBorder.BorderWidth,
+                GameBorder.BorderWidth,
+                screenSize.Width - GameBorder.RadarWidth - (3 * GameBorder.BorderWidth),
+                screenSize.Height - (2 * GameBorder.BorderWidth));
+        }
+    }
 
     /// <summary>Whether the map is being dragged with the mouse, <c>isDragScroll()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public bool IsDragScroll() => throw new NotImplementedException("GameArea::isDragScroll lands with G3.");
+    public bool IsDragScroll() => _mouseDraggingMovement;
 
     /// <summary>Whether a drag left a frame to repaint, <c>needDragScrollRedraw()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public bool NeedDragScrollRedraw() => throw new NotImplementedException("GameArea::needDragScrollRedraw lands with G3.");
+    public bool NeedDragScrollRedraw() => _needRedrawByMouseDragging;
 
     /// <summary>Whether the cursor is far enough out to scroll fast, <c>isFastScrollEnabled()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public bool IsFastScrollEnabled() => throw new NotImplementedException("GameArea::isFastScrollEnabled lands with G3.");
-
-    /// <summary>Center of the viewport in pixels, <c>getCurrentCenterInPixels()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public Point GetCurrentCenterInPixels() => throw new NotImplementedException("GameArea::getCurrentCenterInPixels lands with G3.");
+    public bool IsFastScrollEnabled() => _isFastScrollEnabled;
 
     /// <summary>Places a point of the frame on the map, <c>getInternalPosition()</c>.</summary>
-    /// <param name="position">Position relative to the viewport.</param>
+    /// <param name="position">Position relative to the frame.</param>
     /// <returns>Position in map pixels.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public Point GetInternalPosition(Point position) => throw new NotImplementedException("GameArea::getInternalPosition lands with G3.");
+    public Point GetInternalPosition(Point position) => _topLeftTileOffset + position - new Point(_windowRoi.X, _windowRoi.Y);
 
     /// <summary>Shifts the center of the viewport in pixels, <c>ShiftCenter()</c>.</summary>
     /// <param name="offset">Offset in pixels.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void ShiftCenter(Point offset) => throw new NotImplementedException("GameArea::ShiftCenter lands with G3.");
+    public void ShiftCenter(Point offset) => SetCenterInPixels(_topLeftTileOffset + MiddlePoint + offset);
 
     /// <summary>Asks for a cursor update on the next frame, <c>SetUpdateCursor()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void SetUpdateCursor() => throw new NotImplementedException("GameArea::SetUpdateCursor lands with G3.");
+    public void SetUpdateCursor() => _updateCursor = true;
 
     /// <summary>Asks for a repaint of the viewport, <c>SetRedraw()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void SetRedraw() => throw new NotImplementedException("GameArea::SetRedraw lands with G3.");
+    public void SetRedraw() => _interface.SetRedraw(FHeroes2.UI.Interface.Redraw.GameArea);
 
     /// <summary>Scrolls one step in the requested direction, <c>Scroll()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void Scroll() => throw new NotImplementedException("GameArea::Scroll lands with G3.");
+    public void Scroll()
+    {
+        AdventureMapScrollSpeed scrollSpeed = Settings.Get().ScrollSpeed;
+
+        if (scrollSpeed == AdventureMapScrollSpeed.None)
+        {
+            // No scrolling.
+            _scrollDirection = ScrollingType.None;
+
+            return;
+        }
+
+        int shift = 2 << (int)scrollSpeed;
+
+        int offsetX = 0;
+        int offsetY = 0;
+
+        if ((_scrollDirection & ScrollingType.Left) == ScrollingType.Left)
+        {
+            offsetX = -shift;
+        }
+        else if ((_scrollDirection & ScrollingType.Right) == ScrollingType.Right)
+        {
+            offsetX = shift;
+        }
+
+        if ((_scrollDirection & ScrollingType.Top) == ScrollingType.Top)
+        {
+            offsetY = -shift;
+        }
+        else if ((_scrollDirection & ScrollingType.Bottom) == ScrollingType.Bottom)
+        {
+            offsetY = shift;
+        }
+
+        ShiftCenter(new Point(offsetX, offsetY));
+
+        _scrollDirection = ScrollingType.None;
+    }
 
     /// <summary>Requests a scroll, <c>SetScroll( direction )</c>.</summary>
     /// <param name="direction">Direction to scroll towards.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void SetScroll(ScrollingType direction) => throw new NotImplementedException("GameArea::SetScroll lands with G3.");
+    public void SetScroll(ScrollingType direction)
+    {
+        // The reference asserts !isDragScroll() here: a drag scroll and an edge scroll never overlap.
+
+        // Edge scrolling is not allowed while inertia is running.
+        if (_inertiaHandler.IsActive)
+        {
+            return;
+        }
+
+        if ((direction & ScrollingType.Left) == ScrollingType.Left)
+        {
+            if (_topLeftTileOffset.X > _minLeftOffset)
+            {
+                _scrollDirection |= direction;
+                _updateCursor = true;
+            }
+        }
+        else if ((direction & ScrollingType.Right) == ScrollingType.Right)
+        {
+            if (_topLeftTileOffset.X < _maxLeftOffset)
+            {
+                _scrollDirection |= direction;
+                _updateCursor = true;
+            }
+        }
+
+        if ((direction & ScrollingType.Top) == ScrollingType.Top)
+        {
+            if (_topLeftTileOffset.Y > _minTopOffset)
+            {
+                _scrollDirection |= direction;
+                _updateCursor = true;
+            }
+        }
+        else if ((direction & ScrollingType.Bottom) == ScrollingType.Bottom)
+        {
+            if (_topLeftTileOffset.Y < _maxTopOffset)
+            {
+                _scrollDirection |= direction;
+                _updateCursor = true;
+            }
+        }
+
+        _scrollTime.Reset();
+    }
 
     /// <summary>Cursor of the scroll request, <c>GetScrollCursor()</c>.</summary>
     /// <returns>Cursor theme id the reference hands to its cursor layer.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public int GetScrollCursor() => throw new NotImplementedException("GameArea::GetScrollCursor lands with G3.");
+    public int GetScrollCursor()
+    {
+        switch (_scrollDirection)
+        {
+            case ScrollingType.Left | ScrollingType.Top:
+                return (int)CursorTheme.ScrollTopLeft;
+            case ScrollingType.Left | ScrollingType.Bottom:
+                return (int)CursorTheme.ScrollBottomLeft;
+            case ScrollingType.Right | ScrollingType.Top:
+                return (int)CursorTheme.ScrollTopRight;
+            case ScrollingType.Right | ScrollingType.Bottom:
+                return (int)CursorTheme.ScrollBottomRight;
+            case ScrollingType.Top:
+                return (int)CursorTheme.ScrollTop;
+            case ScrollingType.Bottom:
+                return (int)CursorTheme.ScrollBottom;
+            case ScrollingType.Right:
+                return (int)CursorTheme.ScrollRight;
+            case ScrollingType.Left:
+                return (int)CursorTheme.ScrollLeft;
+            default:
+                break;
+        }
+
+        return (int)CursorTheme.None;
+    }
 
     /// <summary>Centers the viewport on a pixel position, <c>SetCenterInPixels()</c>.</summary>
     /// <param name="point">Position in map pixels.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void SetCenterInPixels(Point point) => throw new NotImplementedException("GameArea::SetCenterInPixels lands with G3.");
+    public void SetCenterInPixels(Point point)
+    {
+        Point middlePos = MiddlePoint;
+
+        int offsetX = Math.Clamp(point.X - middlePos.X, _minLeftOffset, _maxLeftOffset);
+        int offsetY = Math.Clamp(point.Y - middlePos.Y, _minTopOffset, _maxTopOffset);
+
+        _topLeftTileOffset = new Point(offsetX, offsetY);
+    }
 
     /// <summary>Repaints the viewport, <c>Redraw()</c>.</summary>
     /// <param name="dst">Frame buffer.</param>
@@ -364,12 +554,129 @@ public sealed class GameArea
         => throw new NotImplementedException("GameArea::DrawTile lands with G3.");
 
     /// <summary>Recomputes the fog directions of the whole map, <c>updateMapFogDirections()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public static void UpdateMapFogDirections() => throw new NotImplementedException("GameArea::updateMapFogDirections lands with G3.");
+    public static void UpdateMapFogDirections()
+    {
+        PlayerColor friendColors = Players.FriendColors();
+
+        TileFog.UpdateFogDirectionsInArea(
+            new Point(),
+            new Point(World.Current.Width - 1, World.Current.Height - 1),
+            friendColors);
+    }
 
     /// <summary>Processes the events of the viewport, <c>QueueEventProcessing()</c>.</summary>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void QueueEventProcessing() => throw new NotImplementedException("GameArea::QueueEventProcessing lands with G3.");
+    public void QueueEventProcessing()
+    {
+        LocalEvent localEvent = LocalEvent.Current;
+        Point mousePosition = localEvent.CursorPosition;
+        Settings settings = Settings.Get();
+
+        if (!localEvent.IsMouseLeftButtonPressed)
+        {
+            if (_mouseDraggingMovement && settings.IsMapSmoothScrollingEnabled)
+            {
+                _inertiaHandler.CommitRelease();
+            }
+
+            _mouseDraggingInitiated = false;
+            _mouseDraggingMovement = false;
+            _needRedrawByMouseDragging = false;
+        }
+        else if (_interface.UseMouseDragMovement)
+        {
+            if (!_mouseDraggingInitiated)
+            {
+                _mouseDraggingInitiated = true;
+                _lastMouseDragPosition = mousePosition;
+                _inertiaHandler.Reset();
+            }
+            else if (Math.Abs(_lastMouseDragPosition.X - mousePosition.X) > MinimalRequiredDraggingMovement
+                     || Math.Abs(_lastMouseDragPosition.Y - mousePosition.Y) > MinimalRequiredDraggingMovement)
+            {
+                _mouseDraggingMovement = true;
+            }
+        }
+
+        if (_mouseDraggingMovement && localEvent.IsMouseLeftButtonPressedInArea(_windowRoi))
+        {
+            if (_lastMouseDragPosition == mousePosition)
+            {
+                _needRedrawByMouseDragging = false;
+            }
+            else
+            {
+                Point delta = _lastMouseDragPosition - mousePosition;
+
+                if (settings.IsMapSmoothScrollingEnabled)
+                {
+                    _inertiaHandler.AddMovementStep(delta);
+                }
+
+                // Move the center first: the reference only redraws when the mouse actually moved.
+                _needRedrawByMouseDragging = true;
+                SetCenterInPixels(CurrentCenterInPixels + delta);
+                _lastMouseDragPosition = mousePosition;
+            }
+
+            return;
+        }
+
+        int index = GetValidTileIdFromPoint(mousePosition);
+
+        if (!IsValidAbsIndex(index))
+        {
+            // Change the cursor image when it leaves the map or when a cursor update was requested.
+            if (_updateCursor || index != _prevIndexPos)
+            {
+                _interface.UpdateCursor(index);
+
+                _prevIndexPos = index;
+                _updateCursor = false;
+            }
+
+            return;
+        }
+
+        if (settings.IsHideInterface && settings.ShowControlPanel && _interface.ControlPanelAreaForInput is { } panelArea
+            && localEvent.IsMouseCursorPosInArea(panelArea))
+        {
+            return;
+        }
+
+        Point tileOffset = GetInternalPosition(mousePosition);
+
+        // The reference uses _windowROI.x for both components here. Both edges of the frame are equal in every layout
+        // the port has, so the value stays correct and the quirk is kept on purpose.
+        Point tilePos = new(
+            ((tileOffset.X / GameBorder.TileWidth) * GameBorder.TileWidth) - _topLeftTileOffset.X + _windowRoi.X,
+            ((tileOffset.Y / GameBorder.TileWidth) * GameBorder.TileWidth) - _topLeftTileOffset.Y + _windowRoi.X);
+
+        Rect tileRoi = new(tilePos.X, tilePos.Y, GameBorder.TileWidth, GameBorder.TileWidth);
+
+        if (localEvent.MouseClickLeft(tileRoi))
+        {
+            _interface.MouseCursorAreaClickLeft(index);
+        }
+        else if (localEvent.IsMouseRightButtonPressedInArea(tileRoi))
+        {
+            _interface.MouseCursorAreaPressRight(index);
+        }
+        else if (localEvent.MouseLongPressLeft(tileRoi))
+        {
+            _interface.MouseCursorAreaLongPressLeft(index);
+        }
+
+        // The cursor may have moved while the click was handled.
+        index = GetValidTileIdFromPoint(localEvent.CursorPosition);
+
+        if (_updateCursor || index != _prevIndexPos)
+        {
+            _interface.UpdateCursor(index);
+
+            _prevIndexPos = index;
+            _updateCursor = false;
+        }
+    }
 
     /// <summary>Renders the area around an ultimate artifact, <c>GenerateUltimateArtifactAreaSurface()</c>.</summary>
     /// <param name="index">Tile index of the artifact.</param>
@@ -382,54 +689,192 @@ public sealed class GameArea
     /// <summary>Tile under a point of the frame, <c>GetValidTileIdFromPoint()</c>.</summary>
     /// <param name="point">Position in the frame.</param>
     /// <returns>The tile id, or <c>-1</c> outside the map.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public int GetValidTileIdFromPoint(Point point) => throw new NotImplementedException("GameArea::GetValidTileIdFromPoint lands with G3.");
+    public int GetValidTileIdFromPoint(Point point)
+    {
+        Point offset = GetInternalPosition(point);
+
+        if (offset.X < 0 || offset.Y < 0)
+        {
+            return -1;
+        }
+
+        int x = offset.X / GameBorder.TileWidth;
+        int y = offset.Y / GameBorder.TileWidth;
+
+        if (x >= World.Current.Width || y >= World.Current.Height)
+        {
+            return -1;
+        }
+
+        return (y * World.Current.Width) + x;
+    }
 
     /// <summary>Position of a tile in the frame, <c>GetRelativeTilePosition()</c>.</summary>
     /// <param name="tileId">Tile id as a point.</param>
     /// <returns>Top-left corner of the tile relative to the frame.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public Point GetRelativeTilePosition(Point tileId) => throw new NotImplementedException("GameArea::GetRelativeTilePosition lands with G3.");
+    public Point GetRelativeTilePosition(Point tileId) =>
+        new(
+            (tileId.X * GameBorder.TileWidth) - _topLeftTileOffset.X + _windowRoi.X,
+            (tileId.Y * GameBorder.TileWidth) - _topLeftTileOffset.Y + _windowRoi.Y);
 
     /// <summary>Opacity an object is currently drawn with, <c>getObjectAlphaValue()</c>.</summary>
     /// <param name="tileId">Tile the object stands on.</param>
     /// <param name="type">Kind of the object.</param>
     /// <returns>Opacity, <c>255</c> when the object is not animating.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
     public byte GetObjectAlphaValue(int tileId, Mp2ObjectType type)
-        => throw new NotImplementedException("GameArea::getObjectAlphaValue lands with G3.");
+    {
+        foreach (BaseObjectAnimationInfo info in _animationInfo)
+        {
+            if (info.TileId == tileId && info.Type == type)
+            {
+                return info.AlphaValue;
+            }
+        }
+
+        return 255;
+    }
 
     /// <summary>Opacity an object is currently drawn with, <c>getObjectAlphaValue()</c> by uid.</summary>
     /// <param name="uid">Unique id of the map object.</param>
     /// <returns>Opacity, <c>255</c> when the object is not animating.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public byte GetObjectAlphaValue(uint uid) => throw new NotImplementedException("GameArea::getObjectAlphaValue lands with G3.");
+    public byte GetObjectAlphaValue(uint uid)
+    {
+        foreach (BaseObjectAnimationInfo info in _animationInfo)
+        {
+            if (info.Uid == uid)
+            {
+                return info.AlphaValue;
+            }
+        }
+
+        return 255;
+    }
 
     /// <summary>Runs one animation to its end, <c>runSingleObjectAnimation()</c>.</summary>
     /// <param name="info">Animation to run.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
+    /// <exception cref="NotImplementedException">Not ported yet.</exception>
+    /// <remarks>
+    /// The reference owns a blocking loop here (wait for a delay, handle events, render the display). The port has no
+    /// display singleton — the frame loop belongs to the caller — so this lands with the render passes, where the same
+    /// order can be expressed without blocking.
+    /// </remarks>
     public void RunSingleObjectAnimation(BaseObjectAnimationInfo info)
-        => throw new NotImplementedException("GameArea::runSingleObjectAnimation lands with G3.");
+        => throw new NotImplementedException("GameArea::runSingleObjectAnimation is not ported yet (interface_gamearea.cpp:1216).");
 
     /// <summary>Advances the inertia scroll or drag scroll by one frame, <c>updateInertia()</c>.</summary>
     /// <returns><see langword="true"/> when the frame has to be repainted.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3, needs <c>UIScrollInertia</c>).</exception>
-    public bool UpdateInertia() => throw new NotImplementedException("GameArea::updateInertia lands with G3, together with UIScrollInertia.");
+    public bool UpdateInertia() => _inertiaHandler.Update(() => CurrentCenterInPixels, SetCenterInPixels);
 
     /// <summary>Turns the fast scroll mode on or off, <c>setFastScrollStatus()</c>.</summary>
     /// <param name="enable">Whether the cursor is far enough out to scroll fast.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void SetFastScrollStatus(bool enable) => throw new NotImplementedException("GameArea::setFastScrollStatus lands with G3.");
+    public void SetFastScrollStatus(bool enable)
+    {
+        _isFastScrollEnabled = enable;
+        _resetMousePositionForFastScroll = true;
+    }
 
     /// <summary>Whether the cursor asks for a fast scroll, <c>mouseIndicatesFastScroll()</c>.</summary>
     /// <param name="mousePosition">Cursor position in the frame.</param>
     /// <returns><see langword="true"/> when the cursor is in the fast scroll margin.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
     public bool MouseIndicatesFastScroll(Point mousePosition)
-        => throw new NotImplementedException("GameArea::mouseIndicatesFastScroll lands with G3.");
+    {
+        // Remember the reference point the current status was decided from.
+        if (_resetMousePositionForFastScroll)
+        {
+            _mousePositionForFastScroll = mousePosition;
+            _resetMousePositionForFastScroll = false;
+        }
+
+        if (BaseInterface.IsScrollLeft(_mousePositionForFastScroll))
+        {
+            if (mousePosition.X > _mousePositionForFastScroll.X)
+            {
+                // Moving away from the border: the reference point follows the cursor.
+                _mousePositionForFastScroll = mousePosition;
+            }
+            else if (mousePosition.X < _mousePositionForFastScroll.X
+                     || (Math.Abs(mousePosition.Y - _mousePositionForFastScroll.Y) > FastScrollDeadZone
+                         && mousePosition.X <= 0))
+            {
+                // Towards the border, or along it past the dead zone: fast scrolling can be re-enabled.
+                return true;
+            }
+        }
+        else if (BaseInterface.IsScrollRight(_mousePositionForFastScroll, _screenSize))
+        {
+            if (mousePosition.X < _mousePositionForFastScroll.X)
+            {
+                _mousePositionForFastScroll = mousePosition;
+            }
+            else if (mousePosition.X > _mousePositionForFastScroll.X
+                     || (Math.Abs(mousePosition.Y - _mousePositionForFastScroll.Y) > FastScrollDeadZone
+                         && mousePosition.X >= _screenSize.Width - 1))
+            {
+                return true;
+            }
+        }
+        else if (BaseInterface.IsScrollTop(_mousePositionForFastScroll))
+        {
+            if (mousePosition.Y > _mousePositionForFastScroll.Y)
+            {
+                _mousePositionForFastScroll = mousePosition;
+            }
+            else if (mousePosition.Y < _mousePositionForFastScroll.Y
+                     || (Math.Abs(mousePosition.X - _mousePositionForFastScroll.X) > FastScrollDeadZone
+                         && mousePosition.Y <= 0))
+            {
+                return true;
+            }
+        }
+        else if (BaseInterface.IsScrollBottom(_mousePositionForFastScroll, _screenSize))
+        {
+            if (mousePosition.Y < _mousePositionForFastScroll.Y)
+            {
+                _mousePositionForFastScroll = mousePosition;
+            }
+            else if (mousePosition.Y > _mousePositionForFastScroll.Y
+                     || (Math.Abs(mousePosition.X - _mousePositionForFastScroll.X) > FastScrollDeadZone
+                         && mousePosition.Y >= _screenSize.Height - 1))
+            {
+                return true;
+            }
+        }
+        else
+        {
+            // Outside every scroll border: fast scrolling is definitely allowed again.
+            return true;
+        }
+
+        // Still on a border, and the movement does not ask for a fast scroll yet.
+        return false;
+    }
 
     /// <summary>Centers the viewport on the middle of a tile, <c>_setCenterToTile()</c>.</summary>
     /// <param name="tile">Tile id as a point of tile coordinates.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    private void SetCenterToTile(Point tile) => throw new NotImplementedException("GameArea::_setCenterToTile lands with G3.");
+    private void SetCenterToTile(Point tile) =>
+        SetCenterInPixels(new Point(
+            (tile.X * GameBorder.TileWidth) + (GameBorder.TileWidth / 2),
+            (tile.Y * GameBorder.TileWidth) + (GameBorder.TileWidth / 2)));
+
+    /// <summary>Whether a tile id addresses a tile of the map, <c>Maps::isValidAbsIndex()</c>.</summary>
+    /// <param name="index">Tile id to check.</param>
+    /// <returns><see langword="true"/> when the id is inside the map.</returns>
+    private static bool IsValidAbsIndex(int index) => index >= 0 && index < World.Current.Width * World.Current.Height;
+
+    /// <summary>First drawn tile, <c>_getStartTileId()</c>.</summary>
+    /// <returns>The tile of the top-left corner, negative on the left or top edge of the map.</returns>
+    private Point GetStartTile()
+    {
+        // Both languages truncate towards zero, but the reference wants floor for negative offsets, hence the
+        // one-tile adjustment.
+        int x = _topLeftTileOffset.X < 0
+            ? (_topLeftTileOffset.X - GameBorder.TileWidth - 1) / GameBorder.TileWidth
+            : _topLeftTileOffset.X / GameBorder.TileWidth;
+
+        int y = _topLeftTileOffset.Y < 0
+            ? (_topLeftTileOffset.Y - GameBorder.TileWidth - 1) / GameBorder.TileWidth
+            : _topLeftTileOffset.Y / GameBorder.TileWidth;
+
+        return new Point(x, y);
+    }
 }

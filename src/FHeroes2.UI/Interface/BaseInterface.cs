@@ -46,6 +46,18 @@ public abstract class BaseInterface
     /// <summary>Whether this is the map editor interface, <c>isEditor()</c>.</summary>
     public bool IsEditor => _isEditor;
 
+    /// <summary>
+    /// Area of the control panel that swallows map clicks while the interface is hidden,
+    /// <c>AdventureMap::Get().getControlPanel().GetArea()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference reaches the panel through the adventure-map singleton, which the port does not have yet
+    /// (<c>AdventureMap</c> is G5). <see cref="GameArea.QueueEventProcessing"/> only needs to know whether the cursor is
+    /// over the panel, so the interface answers for itself and the default — no panel — stays correct until the
+    /// adventure map overrides it.
+    /// </remarks>
+    public virtual Rect? ControlPanelAreaForInput => null;
+
     /// <summary>Whether something is queued for a repaint, <c>needRedraw()</c>.</summary>
     public bool NeedRedraw => _redraw != Redraw.None;
 

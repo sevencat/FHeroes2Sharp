@@ -202,6 +202,17 @@ public sealed partial class Hero
     }
 
     /// <summary>
+    /// 移动力条的 MOBILITY 帧号，<c>Heroes::GetMobilityIndexSprite()</c>（<c>heroes.cpp:863-873</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 走不动时回 0（空槽），否则每 100 点一帧、四舍五入，封顶 25 帧。
+    /// </remarks>
+    /// <param name="world">英雄脚下的地图。</param>
+    /// <returns>0 到 25 之间的帧号。</returns>
+    public uint GetMobilityIndexSprite(World world) =>
+        !CanMove(world) ? 0u : Math.Min((MovePoints + 50u) / 100u, 25u);
+
+    /// <summary>
     /// Whether the hero still has something to do today, <c>Heroes::MayStillMove( ignorePath, ignoreSleeper )</c>
     /// (<c>heroes.cpp:1922</c>).
     /// </summary>

@@ -656,6 +656,33 @@ public sealed partial class Kingdom
     }
 
     /// <summary>
+    /// 把英雄挪到名册最前，<c>interface_icons.cpp:106-124</c> 里对 <c>GetHeroes()</c> 的 <c>std::rotate</c>。
+    /// </summary>
+    /// <remarks>
+    /// 图标栏按住 <c>WORLD_MOVE_HERO_PORTRAIT_UP_MODIFIER</c> 点击头像时靠它换序；参考直接改 <c>GetHeroes()</c>
+    /// 的向量，端口的 <see cref="Heroes"/> 是只读视图，所以这里单开一个方法。名册里没有这个英雄、或它已经在最前时
+    /// 什么也不做。
+    /// </remarks>
+    /// <param name="hero">要挪到最前的英雄。</param>
+    /// <returns>名册的顺序是否变了。</returns>
+    public bool MoveHeroToFront(Hero hero)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+
+        int index = _heroes.IndexOf(hero);
+
+        if (index <= 0)
+        {
+            return false;
+        }
+
+        _heroes.RemoveAt(index);
+        _heroes.Insert(0, hero);
+
+        return true;
+    }
+
+    /// <summary>
     /// How many towns of the kingdom have their fort, <c>GetCountCastle()</c>.
     /// </summary>
     /// <remarks>参考：<c>kingdom.cpp:344</c>，谓词是 <c>Castle::PredicateIsCastle</c>（<c>isCastle()</c>）。</remarks>

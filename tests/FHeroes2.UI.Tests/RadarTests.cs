@@ -205,11 +205,16 @@ public sealed class RadarTests
     [Fact]
     public void RedrawCursor_AsksTheGameAreaWithoutAnExplicitRectangle()
     {
-        Radar radar = CreateRadar();
+        StubInterface stub = new(new PixelBuffer(800, 600));
+        Radar radar = stub.GetRadar();
         radar.Build(WorldWith(72));
 
-        // The viewport is a G3 port; until it lands the radar cannot know what to outline.
-        Assert.Throws<NotImplementedException>(() => radar.RedrawCursor());
+        stub.GetGameArea().Generate(new Size(800, 600), withoutBorders: false);
+
+        radar.RedrawCursor();
+
+        // The viewport shows less than the whole map, so the radar has a frame to draw.
+        Assert.NotNull(radar.CursorArea);
     }
 
     [Fact]

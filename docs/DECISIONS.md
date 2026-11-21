@@ -7411,3 +7411,37 @@ B5 的 `ai_planner_hero.cpp` 依赖其中五个，所以必须先收。
 随批补 `Hero.CanCastSpell`、`Hero.DimensionDoorUses`、`Difficulty.GetDimensionDoorLimitForAi`。
 Game 测试 2991 → 3003，全量 4 530 条全绿；全解决方案 0 警告。`world_pathfinding` 的 AI 侧不再有占位，
 B5 只剩对象价值表（X2）。
+
+
+## ADR-197：被依赖文件先落接口骨架（`maps_tiles_render` 先行，G3 才动 `GameArea`） ✅
+
+
+**背景**：G3 是 `gui/interface_gamearea.cpp`（1 053 行），但它的四个绘制入口——`Redraw`、`redrawOnlyFog`、
+`renderTileAreaSelect`、`generateUltimateArtifactAreaSurface`——全部踩在 `maps/maps_tiles_render.cpp`
+（1 327 行 / 1 118 非空行）上（`getTileSurface`、`drawFog`、`redrawBottomLayerObjects`、
+`getMonsterSpritesPerTile` 等）。`docs/PLAN.md` 的「还差的主干」一直把这个文件记成 `maps` 目录最后一块
+「地形绘制端口还没有等价物」。现有 `Game/AdventureMap/AdventureMapView.cs` 走的是 `Mp2Map`/`Mp2TileInfo`
+的过渡渲染器（ADR-035/036），不是 `Maps::Tile` 部件模型的移植，不能当等价物。
+
+**决定**（用户 2026-11-22 明确）：
+
+1. **依赖顺序不破**：先把被依赖文件的**接口骨架**落下（签名 + 文档注释，方法体抛 `NotImplementedException`），
+   再写调用方；调用方按参考逐行写调用，不写兜底，也不复制一份「先能跑」的近似实现。
+2. **这条对目录内的单个文件同样成立**，不只对目录。今后凡是「已转目录里的文件踩到还没转的文件」，一律照此
+   办理：被依赖文件先落骨架、调用方照参考写、实现随后补。已写进 `docs/PLAN.md` 总体原则第 6 条的「依赖先落接口」。
+3. **落地**：`UI/Interface/TileRendering.cs` = `maps_tiles_render.cpp` 的 16 个入口（空瓦片 / 飞行幽灵 / 顶层部件 /
+   雾 / 可通行性 / 四层地面部件 / 按 ICN 类型绘制 / 怪物·空船·矿守卫·英雄的四组精灵清单 / `getTileSurface`），
+   名字、参数顺序、含义与参考一致，`Maps::` 限定符按端口命名空间去掉；`Game/Maps/ObjectRenderingInfo.cs` =
+   `gui/ui_object_rendering.h` 的 DTO（参考本来就是 header 内实现，所以直接写全，不是桩，H 行
+   「`+ui_object_rendering.h`」这一半提前完成）。
+
+**记在骨架里的两处结构偏差**：
+
+- **`TileRendering` 落在 UI 层**：参考文件在 `maps/`，但每个入口都收 `const Interface::GameArea &`，而端口的
+  `GameArea` 属 `FHeroes2.UI`、`FHeroes2.Game` 不引用 `FHeroes2.UI`。`editor/` 阶段若要复用
+  （`redrawPassable` 等），届时再定第二处落点，或改成显式几何参数——不在本批预先抽象。
+- **`ObjectRenderingInfo.icnId` 用 `IcnType` 而非 `int`**：端口有 `ICN::` 枚举（`agg/icn.h` 的 1:1 表），参考的
+  默认值 `-1` 对应 `IcnType.Unknown`（`IcnCatalog` 唯一没有文件名的成员）。
+
+**后果**：G3 可以整段按参考写调用并能编译（运行时抛「未移植」，不会把过渡渲染器当结果）；`TileRendering` 的十个
+匿名命名空间助手属实现细节，骨架里不出现死代码。构建 0 错误 0 警告，测试基线不变（4 945 绿）。
