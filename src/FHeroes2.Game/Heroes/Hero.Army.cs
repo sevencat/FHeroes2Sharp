@@ -84,6 +84,10 @@ public sealed partial class Hero
     /// <param name="movePoints">Points left.</param>
     public void SetMovePoints(uint movePoints) => _movePoints = movePoints;
 
+    /// <summary>Spends the whole day's movement, <c>ResetMovePoints()</c> (<c>heroes.h</c>).</summary>
+    /// <remarks>Digging for the ultimate artifact is the one action that costs a hero his whole day.</remarks>
+    public void ResetMovePoints() => _movePoints = 0;
+
     /// <summary>
     /// Adds movement points, <c>IncreaseMovePoints()</c>. No clamping: the reference does not clamp either,
     /// which is how the Stables bonus can push a hero above his daily maximum.

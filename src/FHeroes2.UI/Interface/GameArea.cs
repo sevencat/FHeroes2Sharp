@@ -3,6 +3,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Input;
@@ -140,6 +141,31 @@ public sealed class ObjectFadingOutInfo : BaseObjectAnimationInfo
 
     /// <inheritdoc />
     public override bool IsAnimationCompleted => AlphaValue == 0;
+
+    /// <summary>
+    /// Takes the faded object off its tile, the body of <c>~ObjectFadingOutInfo()</c>
+    /// (<c>gui/interface_gamearea.cpp:1278-1285</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference relies on the destructor, which runs when the animation queue drops its <c>shared_ptr</c>. The
+    /// port has no deterministic finaliser and the queue keeps plain instances, so
+    /// <see cref="UpdateObjectAnimationInfo"/> calls this method at the point the reference destroys the entry.
+    /// </remarks>
+    public void RemoveObjectFromTile()
+    {
+        if (TileId < 0)
+        {
+            // The reference always builds a fading entry for a real tile; the port's default is -1.
+            return;
+        }
+
+        Tile tile = World.Current.GetTile(TileId);
+
+        if (tile.MainObjectType == Type)
+        {
+            tile.RemoveMainObject(World.Current);
+        }
+    }
 }
 
 /// <summary>
@@ -177,20 +203,15 @@ public sealed class ObjectFadingInInfo : BaseObjectAnimationInfo
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Status: geometry, scrolling and input ported; the render passes are not.</b> What lives here is everything
-/// that turns a frame position into a tile and moves the viewport: the placement and clamping of
-/// <c>SetAreaPosition</c>, the tile arithmetic of <c>GetValidTileIdFromPoint</c> / <c>GetRelativeTilePosition</c>,
-/// the edge scroll of <c>Scroll</c> / <c>SetScroll</c>, the drag and inertia handling of
-/// <c>QueueEventProcessing</c> / <c>updateInertia</c>, the object animation queue, and the fog recomputation of
-/// <c>updateMapFogDirections</c>.
-/// </para>
-/// <para>
-/// <b>Still throwing:</b> <see cref="Redraw"/>, <see cref="RedrawOnlyFog"/>, <see cref="RenderTileAreaSelect"/>,
-/// both <see cref="BlitOnTile(PixelBuffer, Sprite, int, int, Point, bool, byte)"/> overloads,
-/// <see cref="DrawTile"/>, <see cref="GenerateUltimateArtifactAreaSurface"/> and
-/// <see cref="RunSingleObjectAnimation"/>. They are the reference's <c>TileUnfitRenderObjectInfo</c> layering
-/// machinery, which consumes <see cref="TileRendering"/> — that class is still a signature skeleton (ADR-197), so
-/// these bodies land together with it in the next pass.
+/// <b>Status: complete.</b> This file holds everything that turns a frame position into a tile and moves the
+/// viewport: the placement and clamping of <c>SetAreaPosition</c>, the tile arithmetic of
+/// <c>GetValidTileIdFromPoint</c> / <c>GetRelativeTilePosition</c>, the edge scroll of <c>Scroll</c> /
+/// <c>SetScroll</c>, the drag and inertia handling of <c>QueueEventProcessing</c> / <c>updateInertia</c>, the
+/// object animation queue, and the fog recomputation of <c>updateMapFogDirections</c>. The render passes of
+/// <c>gui/interface_gamearea.cpp</c> — <see cref="Redraw"/>, <see cref="RedrawOnlyFog"/>,
+/// <see cref="RenderTileAreaSelect"/>, <see cref="GenerateUltimateArtifactAreaSurface"/>,
+/// <see cref="RunSingleObjectAnimation"/> and their <c>TileUnfitRenderObjectInfo</c> helpers — live in
+/// <c>GameArea.Render.cs</c>.
 /// </para>
 /// <para>
 /// <b>Deviations.</b> <c>mouseIndicatesFastScroll</c> reads <c>Display::instance()</c> in the reference for the
@@ -200,7 +221,7 @@ public sealed class ObjectFadingInInfo : BaseObjectAnimationInfo
 /// the port yet, so it asks the interface through <see cref="BaseInterface.ControlPanelAreaForInput"/>.
 /// </para>
 /// </remarks>
-public sealed class GameArea
+public sealed partial class GameArea
 {
     /// <summary>How far the mouse travels before a press becomes a drag, <c>minimalRequiredDraggingMovement</c>.</summary>
     private const int MinimalRequiredDraggingMovement = 10;
@@ -498,28 +519,6 @@ public sealed class GameArea
         _topLeftTileOffset = new Point(offsetX, offsetY);
     }
 
-    /// <summary>Repaints the viewport, <c>Redraw()</c>.</summary>
-    /// <param name="dst">Frame buffer.</param>
-    /// <param name="flag">Parts of the map to draw, <see cref="RedrawLevelType"/>.</param>
-    /// <param name="isPuzzleDraw">Whether the puzzle map is being drawn.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void Redraw(PixelBuffer dst, RedrawLevelType flag, bool isPuzzleDraw = false)
-        => throw new NotImplementedException("GameArea::Redraw lands with G3.");
-
-    /// <summary>Repaints only the fog of war, <c>redrawOnlyFog()</c>.</summary>
-    /// <param name="dst">Frame buffer.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void RedrawOnlyFog(PixelBuffer dst) => throw new NotImplementedException("GameArea::redrawOnlyFog lands with G3.");
-
-    /// <summary>Draws the selection of a tile area, <c>renderTileAreaSelect()</c>.</summary>
-    /// <param name="dst">Frame buffer.</param>
-    /// <param name="startTile">First tile of the area.</param>
-    /// <param name="endTile">Last tile of the area.</param>
-    /// <param name="isActionObject">Whether the area belongs to an action object.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void RenderTileAreaSelect(PixelBuffer dst, int startTile, int endTile, bool isActionObject)
-        => throw new NotImplementedException("GameArea::renderTileAreaSelect lands with G3.");
-
     /// <summary>Blits an image on a tile, <c>BlitOnTile()</c>.</summary>
     /// <param name="dst">Frame buffer.</param>
     /// <param name="src">Image to blit.</param>
@@ -528,9 +527,12 @@ public sealed class GameArea
     /// <param name="mp">Tile position.</param>
     /// <param name="flip">Whether the image is mirrored.</param>
     /// <param name="alpha">Opacity of the blit.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
     public void BlitOnTile(PixelBuffer dst, Sprite src, int ox, int oy, Point mp, bool flip, byte alpha)
-        => throw new NotImplementedException("GameArea::BlitOnTile lands with G3.");
+    {
+        ArgumentNullException.ThrowIfNull(src);
+
+        BlitOnTile(dst, src, src.Image.Bounds, ox, oy, mp, flip, alpha);
+    }
 
     /// <summary>Blits a part of an image on a tile, <c>BlitOnTile()</c> with a source rectangle.</summary>
     /// <param name="dst">Frame buffer.</param>
@@ -541,17 +543,49 @@ public sealed class GameArea
     /// <param name="mp">Tile position.</param>
     /// <param name="flip">Whether the image is mirrored.</param>
     /// <param name="alpha">Opacity of the blit.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
+    /// <remarks>
+    /// The sprite is anchored by the source rectangle, not by its top-left corner: the reference shifts
+    /// <paramref name="srcRoi"/> by the offsets and then blits that area to the tile position, which is what makes
+    /// a multi-tile object line up with its own tile.
+    /// </remarks>
     public void BlitOnTile(PixelBuffer dst, Sprite src, Rect srcRoi, int ox, int oy, Point mp, bool flip, byte alpha)
-        => throw new NotImplementedException("GameArea::BlitOnTile lands with G3.");
+    {
+        ArgumentNullException.ThrowIfNull(dst);
+
+        Rect shifted = new(srcRoi.X + ox, srcRoi.Y + oy, srcRoi.Width, srcRoi.Height);
+        Point dstPos = GetRelativeTilePosition(mp);
+
+        if (alpha < 255 && MapSprites.GamePalette is not { } gamePalette)
+        {
+            // The reference blends through the global palette of the display; without one the blend would have to be
+            // guessed, and a guessed colour is worse than a loud failure.
+            throw new InvalidOperationException("MapSprites.Initialize must be given the game palette before alpha blits.");
+        }
+
+        ImageOps.AlphaBlitSpriteClipped(
+            dst,
+            dstPos,
+            src,
+            shifted,
+            _windowRoi,
+            alpha,
+            flip,
+            MapSprites.GamePalette!);
+    }
 
     /// <summary>Draws a terrain tile, <c>DrawTile()</c>.</summary>
-    /// <param name="src">Terrain image.</param>
     /// <param name="dst">Frame buffer.</param>
+    /// <param name="src">Terrain image.</param>
     /// <param name="mp">Tile position.</param>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public void DrawTile(PixelBuffer src, PixelBuffer dst, Point mp)
-        => throw new NotImplementedException("GameArea::DrawTile lands with G3.");
+    public void DrawTile(PixelBuffer dst, PixelBuffer src, Point mp)
+    {
+        ArgumentNullException.ThrowIfNull(dst);
+        ArgumentNullException.ThrowIfNull(src);
+
+        Point dstPos = GetRelativeTilePosition(mp);
+
+        ImageOps.Blit(dst, dstPos, src, src.Bounds);
+    }
 
     /// <summary>Recomputes the fog directions of the whole map, <c>updateMapFogDirections()</c>.</summary>
     public static void UpdateMapFogDirections()
@@ -678,14 +712,6 @@ public sealed class GameArea
         }
     }
 
-    /// <summary>Renders the area around an ultimate artifact, <c>GenerateUltimateArtifactAreaSurface()</c>.</summary>
-    /// <param name="index">Tile index of the artifact.</param>
-    /// <param name="offset">Offset of the area to render.</param>
-    /// <returns>The rendered map fragment.</returns>
-    /// <exception cref="NotImplementedException">Not ported yet (G3).</exception>
-    public static PixelBuffer GenerateUltimateArtifactAreaSurface(int index, Point offset)
-        => throw new NotImplementedException("GameArea::GenerateUltimateArtifactAreaSurface lands with G3.");
-
     /// <summary>Tile under a point of the frame, <c>GetValidTileIdFromPoint()</c>.</summary>
     /// <param name="point">Position in the frame.</param>
     /// <returns>The tile id, or <c>-1</c> outside the map.</returns>
@@ -749,17 +775,6 @@ public sealed class GameArea
 
         return 255;
     }
-
-    /// <summary>Runs one animation to its end, <c>runSingleObjectAnimation()</c>.</summary>
-    /// <param name="info">Animation to run.</param>
-    /// <exception cref="NotImplementedException">Not ported yet.</exception>
-    /// <remarks>
-    /// The reference owns a blocking loop here (wait for a delay, handle events, render the display). The port has no
-    /// display singleton — the frame loop belongs to the caller — so this lands with the render passes, where the same
-    /// order can be expressed without blocking.
-    /// </remarks>
-    public void RunSingleObjectAnimation(BaseObjectAnimationInfo info)
-        => throw new NotImplementedException("GameArea::runSingleObjectAnimation is not ported yet (interface_gamearea.cpp:1216).");
 
     /// <summary>Advances the inertia scroll or drag scroll by one frame, <c>updateInertia()</c>.</summary>
     /// <returns><see langword="true"/> when the frame has to be repainted.</returns>

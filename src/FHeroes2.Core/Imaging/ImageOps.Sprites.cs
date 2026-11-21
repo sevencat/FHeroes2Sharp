@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FHeroes2.Core.Geometry;
 
 namespace FHeroes2.Core.Imaging;
@@ -902,4 +903,105 @@ public static partial class ImageOps
 
         return new Sprite(destination.Image, destination.OffsetX, destination.OffsetY, (byte[])sourceTransform.Clone());
     }
+
+    /// <summary>
+    /// Cuts a sprite into tile sized squares, <c>fheroes2::DivideImageBySquares()</c>
+    /// (<c>src/engine/image.cpp:2127-2170</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference fills two parallel vectors — the id of every square the sprite touches and, for each square,
+    /// the offset the piece carries inside that square plus the piece's rectangle inside the sprite. The port
+    /// returns the same pairs as one list, which is also what the only callers (the per tile sprite functions of
+    /// <c>maps_tiles_render.cpp</c>) walk it as.
+    /// </para>
+    /// <para>
+    /// The square ids are relative to the tile the sprite is anchored on: a sprite that reaches above or to the
+    /// left of its anchor gets negative ids. The reference rounds the anchor <i>down</i> with an explicit
+    /// correction, because C++ truncates a negative quotient towards zero; the port keeps that correction so the
+    /// result matches on every anchor.
+    /// </para>
+    /// </remarks>
+    /// <param name="spriteOffset">Offset of the sprite from the anchor tile, the reference's <c>spriteOffset</c>.</param>
+    /// <param name="original">The sprite to cut.</param>
+    /// <param name="squareSize">Edge of a square in pixels, <c>tileWidthPx</c> at every call site.</param>
+    /// <returns>One entry per square the sprite touches, in row major order; empty for an empty sprite.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="original"/> is <see langword="null"/>.</exception>
+    public static List<DividedSquare> DivideImageBySquares(Point spriteOffset, Sprite original, int squareSize)
+    {
+        ArgumentNullException.ThrowIfNull(original);
+
+        var result = new List<DividedSquare>();
+
+        if (original.Width <= 0 || original.Height <= 0)
+        {
+            return result;
+        }
+
+        if (squareSize <= 0)
+        {
+            Debug.Assert(false, "The square size must be positive.");
+            return result;
+        }
+
+        Point offset = new(spriteOffset.X / squareSize, spriteOffset.Y / squareSize);
+
+        // The start of a square must be before the image offset, so a negative offset needs the square id lowered.
+        if (spriteOffset.X < 0 && (offset.X * squareSize) != spriteOffset.X)
+        {
+            offset = new Point(offset.X - 1, offset.Y);
+        }
+
+        if (spriteOffset.Y < 0 && (offset.Y * squareSize) != spriteOffset.Y)
+        {
+            offset = new Point(offset.X, offset.Y - 1);
+        }
+
+        Point spriteRelativeOffset = new(
+            spriteOffset.X - (offset.X * squareSize),
+            spriteOffset.Y - (offset.Y * squareSize));
+
+        int stepX = (original.Width + spriteRelativeOffset.X + squareSize - 1) / squareSize;
+        int stepY = (original.Height + spriteRelativeOffset.Y + squareSize - 1) / squareSize;
+
+        Debug.Assert(stepX > 0 && stepY > 0);
+
+        Rect relativeRoi = new(spriteRelativeOffset.X, spriteRelativeOffset.Y, original.Width, original.Height);
+
+        for (int y = 0; y < stepY; ++y)
+        {
+            for (int x = 0; x < stepX; ++x)
+            {
+                Rect square = new(x * squareSize, y * squareSize, squareSize, squareSize);
+                Rect intersection = relativeRoi.Intersect(square);
+
+                Debug.Assert(!intersection.IsEmpty);
+
+                if (intersection.IsEmpty)
+                {
+                    continue;
+                }
+
+                result.Add(new DividedSquare(
+                    offset + new Point(x, y),
+                    new Point(intersection.X - square.X, intersection.Y - square.Y),
+                    new Rect(
+                        intersection.X - spriteRelativeOffset.X,
+                        intersection.Y - spriteRelativeOffset.Y,
+                        intersection.Width,
+                        intersection.Height)));
+            }
+        }
+
+        return result;
+    }
 }
+
+/// <summary>
+/// One square sized piece of a cut up sprite, the element pair of
+/// <c>fheroes2::DivideImageBySquares()</c> (<c>src/engine/image.cpp:2127</c>).
+/// </summary>
+/// <param name="SquareId">Id of the square, relative to the tile the sprite is anchored on.</param>
+/// <param name="ImageOffset">Offset of the piece inside that square.</param>
+/// <param name="Area">The piece's rectangle inside the sprite.</param>
+public readonly record struct DividedSquare(Point SquareId, Point ImageOffset, Rect Area);

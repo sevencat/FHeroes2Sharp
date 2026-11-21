@@ -30,8 +30,8 @@ public enum GameFocus
 /// <remarks>
 /// <para>
 /// The reference also owns the focus <b>setters</b> (<c>Interface::AdventureMap::SetFocus()</c> and the
-/// <c>ResetFocus()</c> overloads). They belong to the adventure map orchestrator, which is not ported yet, so only
-/// the getters live here; the mutating half arrives with <see cref="AdventureMapInterface"/>.
+/// <c>ResetFocus()</c> overloads). They are members of <see cref="AdventureMap"/>, because setting the focus scrolls
+/// the game area, repaints the panels and restarts the music; only the getters live here.
 /// </para>
 /// <para>
 /// The focus itself is already modelled by <see cref="PlayerFocus"/> on the current <see cref="Player"/>, so these

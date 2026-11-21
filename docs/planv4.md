@@ -273,9 +273,9 @@
 | `interface_border.cpp` | 428 | `UI/Interface/GameBorder.cs`、`UI/Interface/BorderWindow.cs` | ①完成（拖动循环改为宿主驱动的 `BorderDrag`） |
 | `interface_buttons.cpp` | 249 | `UI/Interface/ButtonsPanel.cs` | ①完成（点击返回 `ButtonsPanelAction`，事件由编排器执行；`SavePosition` 待 Settings 位置持久化） |
 | `interface_cpanel.cpp` | 100 | `UI/Interface/ControlPanel.cs` | ①完成（点击返回 `ControlPanelButton`，事件由编排器执行） |
-| `interface_events.cpp` | 535 | `AdventureMapScene`/`AdventureMapView` 自建事件 | ②未移植 |
-| `interface_focus.cpp` | 237 | 无 | ②未移植 |
-| `interface_gamearea.cpp` | 1053 | `UI/Interface/GameArea.cs` 骨架 + `AdventureMapScene` 自建滚动与绘制 | ①部分：类型/枚举/动画队列已声明，几何与绘制待 G3 |
+| `interface_events.cpp` | 535 | `UI/Interface/AdventureMap.Events.cs`（25 个 `Event*` + 3 个移动辅助）+ `UI/Interface/AdventureMapHost.cs`（`AdventureEventResult` / `AdventureOption` / `IAdventureHost`） | ①完成（2026-11-22） |
+| `interface_focus.cpp` | 237 | `UI/Interface/AdventureMap.cs`（`SetFocus` / `ResetFocus` / `UpdateFocus` / `RedrawFocus`）+ `Game/Audio/AdventureSounds.cs`（焦点音景） | ①完成（2026-11-22） |
+| `interface_gamearea.cpp` | 1053 | `UI/Interface/GameArea.cs` + `UI/Interface/GameArea.Render.cs` | ①完成：几何/滚动/拖动/惯性/命中在 `GameArea.cs`，`Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` / `GenerateUltimateArtifactAreaSurface` 与 tile-unfit 分层在 `GameArea.Render.cs`；只剩 `AdventureMapScene` 的接线（G5） |
 | `interface_icons.cpp` | 433 | `UI/Interface/IconsPanel.cs` | ①完成（隐藏界面时无浮动石框，同 `Radar`；`SavePosition` 只写会话内 Settings；英雄头像按 `PORTXTRA` + `MINIPORT` + 移动力/法力/睡眠标记手绘，未复用 `Hero::PortraitRedraw` 的 `PORT_SMALL`） |
 | `interface_itemsbar.h` | 460 | `Widgets/ItemsBarLayout.cs`（自建） | ②未移植 |
 | `interface_list.h` | 540 | `Widgets/ListBox.cs`、`ListBoxBase.cs` | 已 1:1（保留） |
@@ -305,8 +305,9 @@
 | F | `ui_button.cpp` 剩余：透明背景按钮、`makeButtonWithBackground/Shadow`、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` | `ui_button.cpp:1-813` | 删 `DialogButtonArtwork`、`ButtonArtwork` 自算段 |
 | G1 | `interface_base.cpp` / `interface_cpanel.cpp` / `interface_buttons.cpp` / `interface_border.cpp` | 共 822 行 | 冒险地图面板由参考类绘制 |
 | G2 | `interface_radar.cpp` / `interface_status.cpp` / `interface_icons.cpp` | 共 1 332 行 | 雷达、状态栏、图标条 |
-| G3 | `interface_gamearea.cpp`（滚动、绘制、tooltip 命中）；被它依赖的 `maps/maps_tiles_render.cpp`（1 327 行，1 118 非空行）按 ADR-197 先落接口骨架。几何 / 滚动 / 事件 / 命中已移植，绘制层待 `TileRendering` 实现 | 1 285 行 | 删 `AdventureMapScene` 自建视口 |
+| G3 | `interface_gamearea.cpp`（滚动、绘制、tooltip 命中）；被它依赖的 `maps/maps_tiles_render.cpp`（1 327 行，1 118 非空行）按 ADR-197 先落接口骨架。已全部完成（2026-11-22） | 1 285 行 | 删 `AdventureMapScene` 自建视口 |
 | G4 | `interface_events.cpp` / `interface_focus.cpp` | 共 772 行 | 删 `AdventureMapView` 自建事件 |
+| | 进度：`interface_focus.cpp` 与 `interface_events.cpp` 均已完成（2026-11-22）。事件通过 `IAdventureHost` 契约把对话框交给场景层，未见 `fheroes2::GameMode` 全局枚举（改用 `AdventureEventResult`，与 `FileOptionsResult` 一致）；把事件接到 `AdventureMapScene` 仍属 G5 | | |
 | G5 | 收口：`AdventureMapScene` 只留场景装配 | — | 自建面板代码全部删除 |
 | H | `player_info.cpp`、`skill_bar.cpp`、`statusbar.cpp`、`ui_kingdom.cpp`、`ui_campaign.cpp`、`ui_monster.cpp`、`ui_mage_guild.cpp`、`ui_map_object.cpp`(+`ui_object_rendering.h`)、`ui_map_interface.cpp`、`ui_base.cpp`、`ui_constants.h` | 共 2 300 行 | 各自有 1:1 文件 |
 | I | `ui_font.cpp` 对拍（字形、断词、语言字符表） | 6 317 行 | 所有绘制经由参考 `Font` |
@@ -326,7 +327,7 @@ G1 完成（4/4，2026-11-22）：`interface_border.cpp` 已全部转完（`UI/I
 `UI/Interface/BaseInterface.cs`、以及它持有的 `UI/Interface/GameArea.cs` / `UI/Interface/Radar.cs` 签名骨架
 （方法体抛 `NotImplementedException`，随 G3 / G2 填）；`interface_cpanel.cpp` 已全部转完
 （`UI/Interface/ControlPanel.cs`，连带 `Core/Imaging/ImageOps.AlphaBlit.cs`）；`interface_buttons.cpp` 已全部转完
-（`UI/Interface/ButtonsPanel.cs`，仅 `SavePosition` 待 Settings 的位置持久化）。
+（`UI/Interface/ButtonsPanel.cs`；`SavePosition` 已写进 `Settings.PosButtons`，落盘等配置写入器）。
 G2 已完成（3/3，2026-11-22）：`interface_radar.cpp` 已全部转完（`UI/Interface/Radar.cs`，成像 / 光标 /
 事件 / 调色板查表，View World 的拷贝构造、`RedrawForViewWorld`、`QueueEventProcessingForWorldView` 与无参
 `RedrawCursor` 分别待 H 的 `ViewWorld::ZoomROIs` 与 G3 的 `GameArea.VisibleTileRoi`）；`interface_status.cpp` 已全部
@@ -342,8 +343,43 @@ G3 前置已完成（2026-11-22）：`interface_gamearea.cpp` 的 `Redraw` / `re
 签名与参考一致、方法体抛 `NotImplementedException`；顺带提前落 `Game/Maps/ObjectRenderingInfo.cs`
 （`gui/ui_object_rendering.h` 的 DTO，参考里本来就是 header 内实现，所以直接写全，H 行的「`+ui_object_rendering.h`」
 这一半已完成）。G3 的几何 / 滚动 / 惯性 / 拖动 / 点击命中那一半也已落地（`GameArea` 328-408、862-1285 各行），
-剩下 `Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` / `GenerateUltimateArtifactAreaSurface` 与 `TileRendering`
-的实现一起推进。
+`BlitOnTile`×2 / `DrawTile` 也已接通裁剪 blit。
+
+`TileRendering` 的实体实现（2026-11-22 第一批）：`redrawEmptyTile` / `redrawPassable` / `redrawFlyingGhostsOnMap` /
+`redrawTopLayerObject` / `redrawBottomLayerObjects` / `drawByObjectIcnType` / `drawFog` / `getTileSurface` 已写全，
+连带 `renderObjectPart` / `renderMainObject` / 两个 direct-rendering 判定 / `MP2::isHiddenForPuzzle` 四个私有助手，
+以及进程级图集 `Game/AdventureMap/MapSprites.cs`（参考的 `Assets::getImage` 全局表）。
+八个 `getMonsterSpritesPerTile` / `getMonsterShadowSpritesPerTile` / `getBoatSpritesPerTile` /
+`getBoatShadowSpritesPerTile` / `getMineGuardianSpritesPerTile` / `getHeroSpritesPerTile` /
+`getHeroShadowSpritesPerTile` / `getEditorHeroSpritesPerTile` 与配套的 `DivideImageBySquares`（Core）、
+`GetMonsterSpriteIndices`、`getHeroSpriteInfo`/`getFlagSpriteInfo`/`getShadowSpriteInfo`/`getFrothSpriteInfo`
+也已写完（2026-11-22 第二批），`maps_tiles_render.cpp` 到此整文件落地。
+
+G3 已完成（2026-11-22）：消费方落地在新文件 `UI/Interface/GameArea.Render.cs`（`GameArea` 改 `partial`）——
+`Redraw`（地形 → 下层 3/1 → tile-unfit 底部背景 → 阴影 → tile-unfit 阴影 → 英雄下半身 → 低优先级 → level 0 →
+tile-unfit 中间 → 高优先级 → 顶层 tall 延后 → 飞鬼 → 路线 → 通行性/雾+城镇剪影）、`redrawOnlyFog`、
+`renderTileAreaSelect`、`GenerateUltimateArtifactAreaSurface`、`runSingleObjectAnimation`（只入队，阻塞循环交给场景）
+与 `updateObjectAnimationInfo`，连同七个桶的 `TileUnfitRenderObjectInfo` 与
+`populateStaticTileUnfitObjectInfo` / `populateStaticTileUnfitBackgroundObjectInfo` / `populateHeroObjectInfo` /
+`isTallTopLayerObject` / `renderImagesOnTiles` 五个私有助手。`ObjectFadingOutInfo` 另补 `RemoveObjectFromTile`
+承接参考析构函数的摘除逻辑（C# 无确定性析构）。`interface_gamearea.cpp` 至此全部成员都有实体实现，
+`GameArea.cs` 不再有 `NotImplementedException`。偏差见 `docs/progressv4.md` 的 G3 收尾一节。
+
+G5 前半（2026-11-22）：`game/game_interface.cpp` 的三个函数与 `game/game_startgame.cpp` 的光标选择落地——
+`AdventureMap.RedrawInterface`（掩码合并 + 六段绘制，锁定时只收集）、`AdventureMap.Reset`（隐藏界面模式取
+`Settings.Pos*`，四个位置都有效才照搬，否则从左上角堆叠；普通模式排右边栏）、`AdventureMap.RedrawLocker`（RAII）；
+光标部分落在 `UI/Interface/AdventureMap.Cursor.cs`（`GetCursorFocusCastle` / `GetCursorFocusShipmaster` /
+`GetCursorFocusHeroes` / `GetCursorNoFocus` / `GetCursorTileIndex` / `UpdateCursor`），连带的
+`World.IsCaptureObjectProtected`（`maps_tiles_helper.cpp:1836-1856`）、`IconsPanel.RedrawIcons`、`ButtonsPanel.SavePosition`
+与 `Settings.Pos*` 的 `(-1, -1)` 初值也已补齐。`BaseInterface.UpdateCursor(int)` 与参考的双参数版本之间用
+`UpdateCursor(tileIndex, false)` 转接。G5 中段（同日）：`game_startgame.cpp:1615-1736` 的三个鼠标处理落在
+`UI/Interface/AdventureMap.Mouse.cs`（左键按光标主题分派、右键三选一速览、长按转 `EventSwitchFocusedHero`），
+`IAdventureHost` 补三个 `ShowQuickInfo()` 重载。G5 收口第一步：`AdventureMap` 改成参考的自建装配——`public`
+构造收成私有，`TryCreate( display, assets, audio, host )` 按 `isEvilInterfaceEnabled()` 选
+`ADVBTNS`/`ADVEBTNS` 造四个面板并加载 `ADVBORD.ICN` 边框（`game_interface.cpp:38-61`），另补
+`ControlPanelAreaForInput` 覆写。`MapSprites.Initialize` 已在 `GameHost.LoadGameData()` 里接上，`AdventureMapTests`
+用两个整屏绘制用例（经典布局 / 隐藏界面）证明整屏能画出，并钉住 `Radar.Build()` 与调色板两条前置。**剩余**：App 侧
+`IAdventureHost` 实现（前置是英雄对话框 / 法术书 / 王国总览 / 拼图），最后接管 `AdventureMapScene` 并删自建面板。
 
 ### 5.4 自建删除台账（`gui/` 范围）
 

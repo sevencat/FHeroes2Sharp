@@ -3,6 +3,9 @@ using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 
+// "Castle" is both a namespace (FHeroes2.Game.Castle) and the type inside it, so the type needs an alias.
+using CastleTown = FHeroes2.Game.Castle.Castle;
+
 // "Army" is both a namespace (FHeroes2.Game.Army) and the type inside it, so the type needs an alias.
 using ArmyUnit = FHeroes2.Game.Army.Army;
 
@@ -270,6 +273,51 @@ public sealed partial class World
     public bool IsTileUnderProtection(int tileIndex) =>
         GetTile(tileIndex).GetMainObjectType(this) == Mp2ObjectType.ActionMonster
         || GetMonstersProtectingTile(tileIndex).Count > 0;
+
+    /// <summary>
+    /// Whether a capturable object still has a garrison, <c>Maps::isCaptureObjectProtected()</c>
+    /// (<c>maps_tiles_helper.cpp:1836-1856</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only the object's own garrison counts here, not the monsters that guard the tile: those are
+    /// <see cref="IsTileUnderProtection"/>. The two answers are combined by the caller (the adventure map's
+    /// fight cursor), because a tile can be both guarded and garrisoned.
+    /// </para>
+    /// <para>
+    /// <b>The action bit is kept.</b> <c>MP2::isCaptureObject()</c> compares the value the tile stores, which is the
+    /// action one (<c>OBJ_MINE</c> rather than <c>OBJ_NON_ACTION_MINE</c>), so the type is read with
+    /// <see cref="Tile.GetMainObjectType(World, bool)"/> and not folded through
+    /// <see cref="Mp2ObjectTypes.NonActionType"/>.
+    /// </para>
+    /// <para>
+    /// A town is asked through its gate rather than through the footprint tile: the reference looks up
+    /// <c>OBJ_CASTLE</c> with <c>world.getCastleEntrance( tile.GetCenter() )</c> and reads the defending army of
+    /// the town. The port <b>names a gate twice</b> — the loaders store <see cref="Mp2ObjectType.Castle"/> while
+    /// <see cref="Mp2ObjectTypes.IsCaptureObject"/> lists the reference spelling
+    /// <see cref="Mp2ObjectType.ActionCastle"/> — so both are accepted here. The town is then asked for with
+    /// <c>Castle.GetActualArmy</c> without a guest hero, since the reference does not pass one either.
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">Index of the tile carrying the object.</param>
+    /// <returns><see langword="true"/> when the object cannot be taken without a fight.</returns>
+    public bool IsCaptureObjectProtected(int tileIndex)
+    {
+        Tile tile = GetTile(tileIndex);
+        Mp2ObjectType objectType = tile.GetMainObjectType(this, false);
+
+        if (objectType is Mp2ObjectType.Castle or Mp2ObjectType.ActionCastle)
+        {
+            // getCastleEntrance() first so a town is never taken from a tile of its footprint; the second lookup is
+            // for the reference spelling of the gate, which isValidCastleEntrance() does not accept.
+            CastleTown? castle = GetCastleEntrance(tile.GetCenter(this)) ?? GetCastle(tileIndex);
+
+            // The reference asserts here: a town footprint without a town behind it is a broken map.
+            return castle is not null && castle.GetActualArmy(null).IsValid;
+        }
+
+        return Mp2ObjectTypes.IsCaptureObject(objectType) && tile.GetTroop(this).IsValid;
+    }
 
     /// <summary>
     /// Whether some monster that guards a tile is stronger than <paramref name="strength"/>,

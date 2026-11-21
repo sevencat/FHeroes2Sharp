@@ -422,21 +422,29 @@ public sealed class Settings
     /// </summary>
     /// <remarks>
     /// Only the interface saves this, through <c>StatusPanel::SavePosition()</c>; the configuration writer is not
-    /// ported, so the value lives for the session only.
+    /// ported, so the value lives for the session only. The initial <c>(-1, -1)</c> is the default the reference
+    /// passes to <c>Config::PointParams()</c> for a configuration without the key, and the adventure screen reads it
+    /// as "never moved" (<c>AdventureMap::reset()</c>).
     /// </remarks>
-    public Point PosStatus { get; private set; }
+    public Point PosStatus { get; private set; } = new(-1, -1);
 
     /// <summary>
     /// The floating position of the radar, <c>_posRadar</c> (<c>settings.h</c>, <c>settings.cpp:87</c>).
     /// </summary>
-    /// <remarks>Same lifetime as <see cref="PosStatus"/>: the interface saves it, nothing writes it to disk yet.</remarks>
-    public Point PosRadar { get; private set; }
+    /// <remarks>Same lifetime and initial value as <see cref="PosStatus"/>.</remarks>
+    public Point PosRadar { get; private set; } = new(-1, -1);
 
     /// <summary>
     /// The floating position of the icons panel, <c>_posIcons</c> (<c>settings.h</c>, <c>settings.cpp:86</c>).
     /// </summary>
-    /// <remarks>Same lifetime as <see cref="PosStatus"/>: the interface saves it, nothing writes it to disk yet.</remarks>
-    public Point PosIcons { get; private set; }
+    /// <remarks>Same lifetime and initial value as <see cref="PosStatus"/>.</remarks>
+    public Point PosIcons { get; private set; } = new(-1, -1);
+
+    /// <summary>
+    /// The floating position of the buttons panel, <c>_posButtons</c> (<c>settings.h</c>, <c>settings.cpp:89</c>).
+    /// </summary>
+    /// <remarks>Same lifetime and initial value as <see cref="PosStatus"/>.</remarks>
+    public Point PosButtons { get; private set; } = new(-1, -1);
 
     /// <summary>Whether the game is a campaign, <c>isCampaignGameType()</c>.</summary>
     public bool IsCampaignGameType => (GameType & GameTypes.Campaign) != 0;
@@ -676,6 +684,10 @@ public sealed class Settings
     /// <summary>Stores the floating position of the icons panel, <c>SetPosIcons()</c>.</summary>
     /// <param name="position">Left-top corner of the floating window.</param>
     public void SetPosIcons(Point position) => PosIcons = position;
+
+    /// <summary>Stores the floating position of the buttons panel, <c>SetPosButtons()</c>.</summary>
+    /// <param name="position">Left-top corner of the floating window.</param>
+    public void SetPosButtons(Point position) => PosButtons = position;
 
     /// <summary>Switches the battle grid, <c>SetBattleGrid()</c>.</summary>
     /// <param name="enable">True to draw it.</param>

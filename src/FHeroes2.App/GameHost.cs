@@ -11,6 +11,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
+using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
@@ -1674,11 +1675,20 @@ public sealed class GameHost : IDisposable
         if (paletteData is null || paletteData.Length < Palette.RawPaletteSize)
         {
             GameLog.Warn("KB.PAL is missing or truncated; using the fallback grayscale palette.");
+
+            // The tile renderer can still decode and blit the opaque terrain sprites without a palette; only the
+            // alpha blended objects need one, and those fail loudly.
+            MapSprites.Initialize(_assets, gamePalette: null);
+
             return;
         }
 
         _palette = Palette.FromGamePalette(paletteData);
         GameLog.Info($"Palette loaded from KB.PAL ({paletteData.Length} bytes, 6 bit VGA normalized).");
+
+        // The map renderer of maps_tiles_render.cpp takes no bundle and no palette (game_assets.cpp / agg.cpp keep
+        // them as globals there too), so the composition root installs them once, here, next to Assets.Current.
+        MapSprites.Initialize(_assets, _palette);
     }
 
     /// <summary>

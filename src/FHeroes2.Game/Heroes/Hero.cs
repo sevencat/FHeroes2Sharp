@@ -295,6 +295,37 @@ public sealed partial class Hero
     }
 
     /// <summary>
+    /// Opacity the hero is drawn with, <c>Heroes::getAlphaValue()</c> (<c>heroes.h:679-682</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只在英雄传送进出地图（<c>heroes_move.cpp</c> 的淡入淡出）时改写它，那一半还没转，所以现在恒为 255。
+    /// </remarks>
+    public byte AlphaValue { get; private set; } = 255;
+
+    /// <summary>
+    /// Sets the opacity the hero is drawn with, <c>Heroes::setAlphaValue()</c> (<c>heroes.h:684-687</c>).
+    /// </summary>
+    /// <param name="alphaValue">Opacity, <c>255</c> for a fully visible hero.</param>
+    public void SetAlphaValue(byte alphaValue) => AlphaValue = alphaValue;
+
+    /// <summary>
+    /// The tile of the monster this hero is about to attack, <c>Heroes::GetAttackedMonsterTileIndex()</c>
+    /// (<c>heroes.h:669-671</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只在攻击怪物前后改写它（<c>heroes_action.cpp:437</c> 置为目标格，<c>:495</c> 复位成 <c>-1</c>），
+    /// 而地图渲染用它给该格的怪物换朝向英雄的攻击帧。行动那一半还没转，所以现在没有写者，渲染读到的恒是 <c>-1</c>。
+    /// </remarks>
+    public int AttackedMonsterTileIndex { get; private set; } = -1;
+
+    /// <summary>
+    /// Records the monster the hero attacks, <c>Heroes::SetAttackedMonsterTileIndex()</c>
+    /// (<c>heroes.h:674-677</c>).
+    /// </summary>
+    /// <param name="tileIndex">Tile of the monster, <c>-1</c> when the attack is over.</param>
+    public void SetAttackedMonsterTileIndex(int tileIndex) => AttackedMonsterTileIndex = tileIndex;
+
+    /// <summary>
     /// The castle whose gate the hero stands on, <c>Heroes::inCastle()</c>/<c>inCastleMutable()</c>
     /// (<c>heroes.cpp:1245-1256</c>).
     /// </summary>

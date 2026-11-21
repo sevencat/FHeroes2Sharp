@@ -1,6 +1,8 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
 using Xunit;
 
 namespace FHeroes2.Game.Tests;
@@ -236,6 +238,63 @@ public sealed class WorldMapScanTests
         Assert.Empty(world.GetMonstersProtectingTile(MapSize * MapSize));
     }
 
+    [Fact]
+    public void APlainTileIsNotACaptureObject()
+    {
+        World world = CreateWorld();
+
+        Assert.False(world.IsCaptureObjectProtected(Center));
+    }
+
+    [Fact]
+    public void ACapturableObjectWithAGarrisonIsProtected()
+    {
+        World world = CreateWorld();
+        NumberTiles(world);
+
+        world.GetTile(Center).SetMainObjectType(Mp2ObjectType.ActionMine);
+        world.GetCapturedObject(Center).Guardians = new Troop(MonsterType.Peasant, 3);
+
+        Assert.True(world.IsCaptureObjectProtected(Center));
+    }
+
+    [Fact]
+    public void ACapturableObjectWithoutAGarrisonIsNotProtected()
+    {
+        World world = CreateWorld();
+        NumberTiles(world);
+
+        world.GetTile(Center).SetMainObjectType(Mp2ObjectType.ActionMine);
+
+        // A mine is taken by walking onto it: the empty table entry of a fresh object has no guards.
+        Assert.False(world.IsCaptureObjectProtected(Center));
+    }
+
+    [Fact]
+    public void GuardsOnAnotherTileDoNotProtectThisOne()
+    {
+        World world = CreateWorld();
+        NumberTiles(world);
+
+        world.GetTile(Center).SetMainObjectType(Mp2ObjectType.ActionMine);
+        world.GetTile(Index(4, 4)).SetMainObjectType(Mp2ObjectType.ActionMine);
+        world.GetCapturedObject(Index(4, 4)).Guardians = new Troop(MonsterType.Peasant, 3);
+
+        // The garrison is the object's own, unlike the monsters of IsTileUnderProtection: no neighbourhood here.
+        Assert.False(world.IsCaptureObjectProtected(Center));
+    }
+
+    [Fact]
+    public void ACastleFootprintWithoutATownIsNotProtected()
+    {
+        World world = CreateWorld();
+
+        // A town footprint whose town is not in the table is a broken map: the reference asserts and answers "no".
+        world.GetTile(Center).SetMainObjectType(Mp2ObjectType.Castle);
+
+        Assert.False(world.IsCaptureObjectProtected(Center));
+    }
+
     private static World CreateWorld(int size = MapSize)
     {
         var world = new World();
@@ -249,6 +308,18 @@ public sealed class WorldMapScanTests
         }
 
         return world;
+    }
+
+    /// <summary>
+    /// Gives every tile its index. <see cref="World.GenerateUninitializedMap"/> deliberately leaves them at zero,
+    /// and the captured-object table is keyed by the index the tile carries.
+    /// </summary>
+    private static void NumberTiles(World world)
+    {
+        for (int index = 0; index < MapSize * MapSize; ++index)
+        {
+            world.GetTile(index).Index = index;
+        }
     }
 
     private static void PutMonster(World world, int index) =>

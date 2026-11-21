@@ -324,6 +324,32 @@ public sealed class IconsPanel : BorderWindow
     }
 
     /// <summary>
+    /// Draws one half of the panel, <c>IconsPanel::_redrawIcons()</c> (<c>interface_icons.cpp:422-447</c>).
+    /// </summary>
+    /// <param name="type">Which list to draw; both bits draw both lists.</param>
+    /// <remarks>
+    /// Unlike <see cref="RedrawPanel"/> this repaints no border: it exists for the redraw mask, whose
+    /// <c>REDRAW_HEROES</c> / <c>REDRAW_CASTLES</c> bits mean "the rows of one list changed", not "the panel is dirty".
+    /// </remarks>
+    public void RedrawIcons(HeroesCastlesIcons type)
+    {
+        if (!IsVisible())
+        {
+            return;
+        }
+
+        if (type.HasFlag(HeroesCastlesIcons.Heroes))
+        {
+            _heroesIcons.Redraw(_display);
+        }
+
+        if (type.HasFlag(HeroesCastlesIcons.Castles))
+        {
+            _castleIcons.Redraw(_display);
+        }
+    }
+
+    /// <summary>
     /// Refills the lists from the current kingdom, <c>IconsPanel::resetIcons()</c>
     /// (<c>interface_icons.cpp:449-484</c>).
     /// </summary>
@@ -484,7 +510,13 @@ public sealed class IconsPanel : BorderWindow
         }
     }
 
-    private void SetRedraw(HeroesCastlesIcons type)
+    /// <summary>Queues both icon lists for a repaint, <c>setRedraw()</c> (<c>interface_icons.h:189-192</c>).</summary>
+    public void SetRedraw() => SetRedraw(HeroesCastlesIcons.Any);
+
+    /// <summary>Queues one icon list for a repaint, <c>setRedraw( const HeroesCastlesIcons )</c>.</summary>
+    /// <param name="type">The list to repaint.</param>
+    /// <remarks>参考：<c>interface_icons.cpp:353-372</c>。</remarks>
+    public void SetRedraw(HeroesCastlesIcons type)
     {
         if (!IsVisible())
         {

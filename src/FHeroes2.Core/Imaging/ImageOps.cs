@@ -251,6 +251,152 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Draws <paramref name="sourceArea"/> of <paramref name="sprite"/> onto <paramref name="destination"/> with a
+    /// constant <paramref name="alpha"/>, clipping the result to <paramref name="clip"/>: the equivalent of
+    /// <c>fheroes2::AlphaBlit( in, inX, inY, out, outX, outY, width, height, alpha, flip )</c> behind a
+    /// <c>FitToRoi</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The transform layer is honoured exactly as <see cref="BlitSprite(PixelBuffer, Point, Sprite, in Rect)"/> does
+    /// it: <c>0</c> draws the pixel, <c>1</c> leaves the destination alone, anything else converts the destination
+    /// through <see cref="PaletteTransformTable"/>. The difference is only how a drawn pixel is combined: the
+    /// reference mixes the sprite colour with the colour already on the display in proportion to
+    /// <paramref name="alpha"/> and looks the result up in <paramref name="gamePalette"/>, which cannot be expressed
+    /// as a palette table because the mix depends on the destination pixel.
+    /// </para>
+    /// <para>
+    /// <paramref name="alpha"/> of <c>255</c> degrades to the plain blit and <c>0</c> draws nothing, which is what the
+    /// reference does as well. <paramref name="flipHorizontally"/> mirrors the drawn segment of the row, i.e. the
+    /// <paramref name="sourceArea"/> columns are visited right to left.
+    /// </para>
+    /// </remarks>
+    /// <param name="destination">The display buffer.</param>
+    /// <param name="destinationPoint">Where the sprite's origin goes, in destination coordinates.</param>
+    /// <param name="sprite">The sprite to read.</param>
+    /// <param name="sourceArea">The part of the sprite to draw, in sprite local coordinates.</param>
+    /// <param name="clip">The only region of <paramref name="destination"/> the drawing may touch.</param>
+    /// <param name="alpha">Opacity of the sprite, <c>0</c> to <c>255</c>.</param>
+    /// <param name="flipHorizontally">Whether the sprite is drawn mirrored along the vertical axis.</param>
+    /// <param name="gamePalette">The palette the blended colours are looked up in.</param>
+    public static void AlphaBlitSpriteClipped(
+        PixelBuffer destination,
+        Point destinationPoint,
+        Sprite sprite,
+        in Rect sourceArea,
+        in Rect clip,
+        byte alpha,
+        bool flipHorizontally,
+        Palette gamePalette)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(sprite);
+        ArgumentNullException.ThrowIfNull(gamePalette);
+
+        if (alpha == 0)
+        {
+            return;
+        }
+
+        Rect area = sourceArea.Intersect(sprite.Image.Bounds);
+        if (area.IsEmpty)
+        {
+            return;
+        }
+
+        Rect visible = new Rect(destinationPoint.X, destinationPoint.Y, area.Width, area.Height)
+            .Clip(clip)
+            .Clip(destination.Bounds)
+            .Intersect(new Rect(destinationPoint.X, destinationPoint.Y, area.Width, area.Height));
+
+        if (visible.IsEmpty)
+        {
+            return;
+        }
+
+        int skipX = visible.X - destinationPoint.X;
+        int skipY = visible.Y - destinationPoint.Y;
+
+        ReadOnlySpan<byte> image = sprite.Image.AsSpan();
+        byte[]? transform = sprite.Transform;
+        int stride = sprite.Image.Stride;
+
+        // Column of the source row the left-most visible pixel reads. The mirrored case walks the area backwards.
+        int sourceStartX = flipHorizontally ? area.X + area.Width - 1 - skipX : area.X + skipX;
+        int sourceStep = flipHorizontally ? -1 : 1;
+
+        if (alpha == 255)
+        {
+            for (int y = 0; y < visible.Height; ++y)
+            {
+                int sourceRow = ((area.Y + skipY + y) * stride) + sourceStartX;
+                Span<byte> destinationRow = destination.Row(visible.Y + y);
+
+                for (int x = 0; x < visible.Width; ++x)
+                {
+                    int sourceIndex = sourceRow + (x * sourceStep);
+                    int destinationIndex = visible.X + x;
+                    byte transformId = transform is null ? (byte)0 : transform[sourceIndex];
+
+                    if (transformId == 0)
+                    {
+                        destinationRow[destinationIndex] = image[sourceIndex];
+                    }
+                    else if (transformId != 1 && transformId < PaletteTransformTable.TransformCount)
+                    {
+                        destinationRow[destinationIndex] =
+                            PaletteTransformTable.Apply(transformId, destinationRow[destinationIndex]);
+                    }
+                }
+            }
+
+            return;
+        }
+
+        ReadOnlySpan<byte> palette = gamePalette.ToRaw();
+        int behind = 255 - alpha;
+
+        for (int y = 0; y < visible.Height; ++y)
+        {
+            int sourceRow = ((area.Y + skipY + y) * stride) + sourceStartX;
+            Span<byte> destinationRow = destination.Row(visible.Y + y);
+
+            for (int x = 0; x < visible.Width; ++x)
+            {
+                int sourceIndex = sourceRow + (x * sourceStep);
+                int destinationIndex = visible.X + x;
+                byte transformId = transform is null ? (byte)0 : transform[sourceIndex];
+
+                if (transformId == 1)
+                {
+                    continue;
+                }
+
+                byte sourceValue = image[sourceIndex];
+                if (transformId > 1 && transformId < PaletteTransformTable.TransformCount)
+                {
+                    // The reference transforms the colour already on the display, not the sprite pixel.
+                    sourceValue = PaletteTransformTable.Apply(transformId, destinationRow[destinationIndex]);
+                }
+
+                byte destinationValue = destinationRow[destinationIndex];
+
+                // The palette is stored with eight bits per channel while the lookup works on six, exactly like the
+                // reference's RGB palette: the blend happens on the eight bit values and only the result is narrowed.
+                int red = (palette[(sourceValue * 3) + 0] * alpha) + (palette[(destinationValue * 3) + 0] * behind);
+                int green = (palette[(sourceValue * 3) + 1] * alpha) + (palette[(destinationValue * 3) + 1] * behind);
+                int blue = (palette[(sourceValue * 3) + 2] * alpha) + (palette[(destinationValue * 3) + 2] * behind);
+
+                destinationRow[destinationIndex] = PALColorId.Get(
+                    (byte)(red / 255),
+                    (byte)(green / 255),
+                    (byte)(blue / 255),
+                    palette);
+            }
+        }
+    }
+
+    /// <summary>
     /// Converts every pixel of <paramref name="target"/> through the recolouring
     /// <paramref name="palette"/>, the equivalent of <c>fheroes2::ApplyPalette( Image &amp;, ... )</c>.
     /// </summary>

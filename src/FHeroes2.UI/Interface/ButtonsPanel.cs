@@ -2,6 +2,7 @@ using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
@@ -25,8 +26,8 @@ namespace FHeroes2.UI.Interface;
 /// the events, like <see cref="ControlPanel"/> and <see cref="BorderDrag"/>. <c>_setButtonStatus()</c> asks
 /// <c>GetFocusHeroes()</c> and <c>world.GetKingdom()</c>, which the port models in the adventure session; the panel
 /// therefore takes the five answers as an <see cref="AdventureButtonStatus"/> through
-/// <see cref="SetButtonStatus"/> and never touches the game model. <c>SavePosition()</c> needs the panel offsets of
-/// <c>.fh2config</c>, which the port settings do not carry yet.
+/// <see cref="SetButtonStatus"/> and never touches the game model. <c>SavePosition()</c> keeps the offset in the
+/// settings of the session; writing it to <c>.fh2config</c> waits for the configuration writer.
 /// </para>
 /// </remarks>
 public sealed class ButtonsPanel : BorderWindow
@@ -192,12 +193,12 @@ public sealed class ButtonsPanel : BorderWindow
     /// <summary>
     /// Saves the panel position into the settings file, <c>SavePosition()</c>.
     /// </summary>
-    /// <exception cref="NotImplementedException">
-    /// Not ported: the reference stores the four panel offsets in <c>.fh2config</c>
-    /// (<c>Settings::SetPosButtons()</c>), and <see cref="FHeroes2.Game.System.Settings"/> has no such persistence yet.
-    /// </exception>
-    public override void SavePosition() =>
-        throw new NotImplementedException("ButtonsPanel::SavePosition needs Settings::SetPosButtons.");
+    /// <remarks>
+    /// The reference writes the four panel offsets to <c>.fh2config</c> later, when the configuration is saved; the
+    /// port keeps them in <see cref="FHeroes2.Game.System.Settings"/> for the session only, since the writer is not
+    /// ported yet.
+    /// </remarks>
+    public override void SavePosition() => Settings.Get().SetPosButtons(GetRect.Position);
 
     /// <summary>
     /// Enables, disables and re-artworks the buttons, <c>_setButtonStatus()</c>.

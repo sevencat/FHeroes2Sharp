@@ -69,6 +69,9 @@ public abstract class BaseInterface
     /// <param name="parts">Parts to repaint.</param>
     public void SetRedraw(Redraw parts) => _redraw |= parts;
 
+    /// <summary>Drops the queued parts, the <c>_redraw = 0</c> at the end of <c>redraw()</c>.</summary>
+    protected void ClearRedraw() => _redraw = Redraw.None;
+
     /// <summary>Whether the cursor is in the left scroll margin, <c>isScrollLeft()</c>.</summary>
     /// <param name="cursorPos">Cursor position in the frame.</param>
     /// <returns><see langword="true"/> inside the border strip.</returns>

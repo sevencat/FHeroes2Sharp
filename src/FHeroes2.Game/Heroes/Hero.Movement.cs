@@ -78,6 +78,20 @@ public sealed partial class Hero
     /// <summary>The route the hero is walking, <c>_path</c> (<c>heroes.h</c>, <c>Route::Path</c>).</summary>
     public HeroPath Path => _path;
 
+    /// <summary>Shows or hides the route on the map, <c>Heroes::ShowPath()</c> (<c>heroes.h:518-521</c>).</summary>
+    /// <param name="show">Whether the route should be drawn.</param>
+    public void ShowPath(bool show)
+    {
+        if (show)
+        {
+            _path.Show();
+        }
+        else
+        {
+            _path.Hide();
+        }
+    }
+
     /// <summary>Whether the hero may still move, <c>isMoveEnabled()</c> (<c>heroes.h:633</c>).</summary>
     public bool IsMoveEnabled => _modes.HasFlag(HeroModes.MoveEnabled);
 
@@ -118,6 +132,36 @@ public sealed partial class Hero
         }
 
         _path.SetPath(world.GetPath(this, destination));
+
+        if (!_path.IsValidForMovement(world.Size))
+        {
+            _path.Reset();
+        }
+    }
+
+    /// <summary>
+    /// Builds the route to a new destination, <c>Heroes::calculatePath( destinationIdx )</c> (<c>heroes.cpp:2158</c>).
+    /// </summary>
+    /// <param name="destinationIndex">The tile to walk to.</param>
+    /// <param name="world">Map the hero stands on.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The reference keeps no destination field of its own: <c>Path::GetDestinationIndex()</c> is the index of the
+    /// last step, so asking for a new destination means replacing the whole route. An unreachable or unaffordable
+    /// destination leaves an empty route, which is what the reference does too.
+    /// </remarks>
+    public void CalculatePath(int destinationIndex, WorldMap world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (destinationIndex < 0 || destinationIndex >= world.Size)
+        {
+            _path.Reset();
+
+            return;
+        }
+
+        _path.SetPath(world.GetPath(this, destinationIndex));
 
         if (!_path.IsValidForMovement(world.Size))
         {

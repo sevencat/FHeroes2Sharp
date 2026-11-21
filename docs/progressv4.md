@@ -1407,7 +1407,7 @@ ADR-197 记为后续同类情况的标准做法。
 | `AddObjectAnimationInfo` / `GetObjectAlphaValue`×2 | 动画队列与不透明度查询 |
 | `UpdateMapFogDirections` + `Game/Maps/TileFog.cs` | `maps_tiles_helper.cpp:2086-2212` 的一格缓存扫描，直接写全（不是桩） |
 
-**依旧抛 `NotImplementedException`**：`Redraw` / `RedrawOnlyFog` / `RenderTileAreaSelect` / `BlitOnTile`×2 / `DrawTile` /
+**依旧抛 `NotImplementedException`**：`Redraw` / `RedrawOnlyFog` / `RenderTileAreaSelect` /
 `GenerateUltimateArtifactAreaSurface` / `RunSingleObjectAnimation`——整块 `TileUnfitRenderObjectInfo` 分层逻辑要吃
 `TileRendering` 的输出，等它实现一起落。`updateObjectAnimationInfo` 属同一批（只有 `Redraw` 推进动画队列）。
 
@@ -1418,3 +1418,299 @@ ADR-197 记为后续同类情况的标准做法。
 
 `RadarTests.RedrawCursor_AsksTheGameAreaWithoutAnExplicitRectangle` 之前断言视口未移植，现在改成断言雷达真的画出
 视口框。构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G3 后半（一）：`TileRendering` 的对象与雾
+
+`maps/maps_tiles_render.cpp` 1 327 行按「先画一块完整的瓦片」切开，本轮落的是**不依赖精灵切分**的那一半：
+
+| 已实现 | 参考位置 / 说明 |
+| --- | --- |
+| `RedrawEmptyTile` | 1 200-1 240：`STON.TIL` 索引 `20/24/28/32` + 角点 `(|y|%4)*4 + |x|%4`；取不到图直接跳过（端口图集可以为空） |
+| `RedrawPassable` | 1 262-1 296：只在 `PassableDirections != ALL` 时叠 `PassableViewSurface`；游戏内用 `MP2::isInGameActionObject`，编辑器用 `isOffGameActionObject`（端口 `Mp2ObjectTypes.IsActionObject`） |
+| `GetPassableViewSurface`（私有） | 1 60-277 的等价实现：31×31、`quarter = 10`、`threeQuarters = 21`，红 `0xBA`、绿 `115`/`90`；`PassableViewSurfaces` 字典缓存 |
+| `RenderObjectPart` / `RenderMainObject`（私有） | 100-186：按 `part.Uid` 取不透明度、blit 本体、再按 `AnimationFrames` 叠动画帧；魔法花园被访问过后用整轮动画之后的那一帧（`metadata[1] == 0`） |
+| `IsObjectPartDirectRenderingRestricted` / `IsTileDirectRenderingRestricted`（私有） | 65-98：`UNKNOWN`/`BOAT32`/`MINIHERO`（主对象另有 `MONS32`，随机怪物除外）交给专用渲染器 |
+| `IsHiddenForPuzzle`（私有） | `mp2.cpp:186-222`：拼图地图只留地形与地标，篝火帧 `124-137` 单独判，其余问 `DiggingHole.IsSprite` |
+| `RedrawBottomLayerObjects` | 932-979：先画本层地面部件，再画主对象，最后补 `FLAG32`——旗帜在格式里是城堡的地面部件，但必须压在城堡上面；栈上 16 槽收集，超限只断言 |
+| `DrawByObjectIcnType` | 981-1000：编辑器改一格时按 ICN 重画该格的全部部件 |
+| `RedrawTopLayerObject` | 667-690：拼图地图先过滤；首行 `FLAG32` 且上方仍有雾时只画边框以下的部分 |
+| `DrawFog` | 692-913：`CLOF32` 整格（`(x+y)%4`）或 `CLOP32` 的 0-33 号边缘图，34 条方向判定按参考顺序逐条保留（掩码有重叠，顺序即格式），`revert` 负责左右镜像；没有命中的掩码按整格覆盖并 `GameLog.Warn`（参考是 `assert`） |
+| `RedrawFlyingGhostsOnMap` | 648-665：`OBJNHAUN` 的 `index % 15`；首行 `pos.y == 1` 且上方有雾时裁掉伸进边框的部分 |
+
+配套新增：
+
+* `Game/AdventureMap/MapSprites.cs`：参考的 `Assets::getImage` / `getTileImage` / `GetPalette` 是进程级全局表，
+  端口用静态类承担（渲染函数的签名里没有资源包可传）。`Initialize(AssetBundle?, Palette?)` 尚未在组合根接线。
+* `Core/Imaging/ImageOps.AlphaBlit.cs` 的 `AlphaBlitSpriteClipped`：一次覆盖 `FitToRoi` + `AlphaBlit` + `flip`
+  三种裁剪/镜像组合，`alpha == 0` 直接返回，`255` 走纯 blit。
+* `GameArea.BlitOnTile`×2 / `DrawTile`：直接落到上面的裁剪 blit 与 `ImageOps.Blit`，不再抛异常。
+
+**仍然抛 `NotImplementedException`**：无（详见下一节，八个 `Get*SpritesPerTile` 已在第二批补齐）。
+
+构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G3 后半（二）：`TileRendering` 的精灵切分
+
+`maps_tiles_render.cpp` 的第二半——把精灵切成瓦片大小再分格输出。至此该文件的**全部**入口都有实体实现。
+
+| 已实现 | 参考位置 / 说明 |
+| --- | --- |
+| `GetMonsterSpritesPerTile` / `GetMonsterShadowSpritesPerTile` | 1 002-1 085：怪物帧号 `monsterIndex * 9`；被英雄攻击时 +7 并按方向再加 1，否则叠共享动画序列 `MonsterAnimationSequence.Frames[15]` |
+| `GetBoatSpritesPerTile` / `GetBoatShadowSpritesPerTile` | 1 088-1 143：`IcnIndex == 255` 时按 18 号空船画；`index > 128` 判定右半侧镜像，锚点 `TileWidth + 1 - x - width`，纵向 `TileWidth - 11` |
+| `GetMineGuardianSpritesPerTile` | 1 146-1 181：`OBJNXTRA` 的 `spellId - SetEGuardian`，即四种守卫在枚举里必须连续 |
+| `GetHeroSpritesPerTile` | 1 184-1 263：本体 + 旗帜 + 深水船首浪花；站立的英雄旗帜走冒险地图动画帧，乘船时旗帜不单独摆动 |
+| `GetHeroShadowSpritesPerTile` | 1 266-1 295：乘船抬 11 px，阴影图集里左向行与英雄图集顺序不同（`45/54/63` vs `77/68/59`） |
+| `GetEditorHeroSpritesPerTile` | 1 298-1 321：`MINIHERO`，锚点 `(0, 32 - 50)` |
+| `GetMonsterSpriteIndices`（私有） | 292-334：先 `ScanAroundObject(ActionHero, false)` 找攻击者，再按 `Hero.AttackedMonsterTileIndex` 匹配 |
+| `DoesHeroImageNeedToBeReflected` / `GetHeroSpriteInfo` / `GetFlagSpriteInfo` / `GetShadowSpriteInfo` / `GetFrothSpriteInfo`（私有） | 336-624：种族→图集、颜色→旗帜图集、四个站立旗帜偏移表（9 帧）全部照搬 |
+| `AppendDividedSprite` / `AppendMonsterSpritePieces`（私有） | 精灵切分与追加的公共体；参考把这两段在八个函数里各抄了一遍，端口合并成两处 |
+
+配套新增：
+
+* `Core/Imaging/ImageOps.Sprites.cs` 的 `ImageOps.DivideImageBySquares` + `DividedSquare` 记录：
+  `engine/image.cpp:2127-2170`，含负偏移时把格号向下取整的修正（C++ 负数整除向零截断，C# 相同，所以修正是必要的），
+  空图返回空列表——参考里空图同样什么也不输出。
+* `Game/Heroes/Hero.cs` 的 `Hero.AttackedMonsterTileIndex` / `SetAttackedMonsterTileIndex`（`heroes.h:669-677`）：
+  参考只在 `heroes_action.cpp` 攻击前后写它，那一半还没转，所以现在恒为 `-1`，怪物渲染恒走动画序列分支。
+
+偏差（已写进代码注释）：
+
+* 参考 `DEBUG_LOG( DBG_GAME, DBG_WARN, ... )` 的几处未知值分支（未知种族/颜色/方向）在端口走 `GameLog.Warn`
+  并返回 `IcnType.Unknown`/零偏移；参考在 `assert( 0 )` 之外同样是「不画」。
+* `GetMonsterSpriteIndices` 里 `mp.x * mp.y` 在参考是 uint32 乘法，端口用 `long` 承接后再取模，避免大地图溢出。
+
+构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G3 收尾：`GameArea` 的绘制层
+
+`gui/interface_gamearea.cpp` 的消费方落地，新文件 `src/FHeroes2.UI/Interface/GameArea.Render.cs`
+（`GameArea` 改为 `partial`），至此该参考文件**全部成员**都有实体实现。
+
+| 已实现 | 参考位置 / 说明 |
+| --- | --- |
+| `Redraw` | 408-805：地形 → 下层 level 3/1 → tile-unfit 底部背景 → 阴影 → tile-unfit 阴影 → 英雄下半身 → 低优先级 → level 0 → tile-unfit 中间 → 高优先级 → 顶层（tall 延后）→ 飞鬼 → 路线 → 通行性/雾+城镇剪影；最后 `updateObjectAnimationInfo()` |
+| `TileUnfitRenderObjectInfo` / `PopulateStaticTileUnfitObjectInfo` / `PopulateStaticTileUnfitBackgroundObjectInfo` / `PopulateHeroObjectInfo`（私有） | 72-293：七个桶的压入规则（`x < 0` 用 `emplace_front`，否则 `emplace_back`）、越界阴影丢弃、英雄移动方向决定高/低优先级、`imagePos.Y == 1/-1` 特例、英雄在城中时下半身改走 `bottomImages` |
+| `IsTallTopLayerObject`（私有） | 306-325：用下一行的 `TopObjectParts` 同 `Uid` 判定，排除 `Flag32` |
+| `RenderImagesOnTiles`（私有） | 295-304 |
+| `RedrawOnlyFog` | 807-835：`CLOF32` 整格 `(x + y) % 4` |
+| `RenderTileAreaSelect` | 837-863：`_windowROI ^ imageRoi` + 四条 `Fill`，颜色 115 / 181 |
+| `GenerateUltimateArtifactAreaSurface` | 908-937：448×448、`LEVEL_OBJECTS` + 拼图过滤、`ROUTE` 0 号 + 8 px、`PAL::TAN` |
+| `RunSingleObjectAnimation` | 1257-1276：入队 |
+| `UpdateObjectAnimationInfo`（私有） | 1223-1233 |
+| `ObjectFadingOutInfo.RemoveObjectFromTile` | 1278-1285：参考析构函数「淡出完成后把对象从格子上摘掉」 |
+
+偏差（已写进代码注释）：
+
+* `std::map<Point, deque>` 没有顺序对应物：七个桶是 `Dictionary<Point, LinkedList<...>>`，绘制前按
+  `OrderBy(key.Y).ThenBy(key.X)` 还原参考的先行后列顺序；`LinkedList` 同时承担 `emplace_front/back`。
+* 参考的 `DIRECTION_ALL` 在端口是 `Directions.All`（`Direction` 是枚举，常量放在 `Directions` 静态类）。
+* 参考雾中城镇剪影判 `OBJ_CASTLE || OBJ_NON_ACTION_CASTLE`，端口的等价对是
+  `Mp2ObjectType.Castle || Mp2ObjectType.ActionCastle`（`ActionObjectType = 128`）。
+* 参考 `( posY > 0 ) ? ( 上一格全雾 ) : true` 的两处（英雄在船上、空船）在端口写成 `posY == 0 || ...`，
+  保持首行「上一格视作有雾」的语义。
+* 取不到图集条目（`getTileSurface` / `CLOF32` / `ROUTE`）时端口直接跳过，参考对着必然存在的资源包不做判断。
+* `GenerateUltimateArtifactAreaSurface` 参考拷贝当前 `GameArea`，端口按同一 `BaseInterface` 新建一个（尺寸随即被
+  `SetAreaPosition` 覆盖，只有格偏移再被读）；参考的 `_disableTransformLayer()` 在端口无对应物
+  （`PixelBuffer` 就是参考的非变换形态）。
+* `runSingleObjectAnimation` 的阻塞循环（等延时 + 泵事件 + 提交显示）没有移植：端口由场景逐帧推进，
+  本轮只入队，已在 remarks 写明调用方需要在场景侧表达「播完再走」。
+* `updateObjectAnimationInfo` 里出队的条目要执行参考析构函数的摘除逻辑——C# 没有确定性析构，改为在
+  `RemoveAt` 之后显式调 `ObjectFadingOutInfo.RemoveObjectFromTile()`。
+
+**仍然抛 `NotImplementedException`**：无（`GameArea.cs` 与 `GameArea.Render.cs` 都已清空）。
+
+构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G4 前半：`interface_focus.cpp` 与它需要的承载类
+
+`gui/interface_focus.cpp`（287 行）全部落地，同时补上它必须挂靠的 `Interface::AdventureMap`。
+
+| 已实现 | 参考位置 / 说明 |
+| --- | --- |
+| `AdventureMap`（新文件 `UI/Interface/AdventureMap.cs`） | `game/game_interface.h:73-184`：`BaseInterface` 的具体子类，持有 `_iconsPanel` / `_statusPanel` / `AudioManager`，提供 `GetIconsPanel()` / `GetStatusPanel()` |
+| `SetFocus( Hero, bool )` | `interface_focus.cpp:45-86`：先隐藏旧焦点英雄的路线、人类英雄才 `calculatePath`、`ShowPath(true)`、`Focus.Set`、图标条选中、`GameArea.SetCenter`、状态栏切 ARMY、按 `UpdateSoundsOnFocusUpdate` 重算环境音并重启地形音乐 |
+| `SetFocus( Castle )` | `interface_focus.cpp:88-118`：隐藏英雄路线、`Focus.Set(castle)`、图标条选中城堡、居中、状态栏切 FUNDS、同样重算音景 |
+| `UpdateFocus()` | `interface_focus.cpp:120-144`：按 `Focus::first` 分派回两个 `SetFocus` |
+| `ResetFocus( int, bool )` | `interface_focus.cpp:146-221`：`FIRSTHERO` 找非 SLEEPER 英雄、`HEROES` / `CASTLE` 各三分支（旧焦点仍在 → 复用；否则取列表首个；列表空 → `Focus.Reset`），并按需重置图标条滚动位置 |
+| `RedrawFocus()` | `interface_focus.cpp:255-287`：图标条选中/取消选中随焦点同步，再置 `REDRAW_GAMEAREA｜REDRAW_RADAR_CURSOR` 与对应图标条、状态栏 |
+| `AdventureSounds`（新文件 `Game/Audio/AdventureSounds.cs`） | `game/game.cpp:155-163` + `194-325`：`Game::UpdateSoundsOnFocusUpdate()` 开关、`Game::EnvironmentSoundMixer()` 的 ±3 格扫描、按距离稳定排序、32−2 声道分配、同向同音合并取更近、`AudioManager.PlayLoopSoundsAsync` |
+| `Hero.ShowPath( bool )` | `heroes.h:518-521`（`HeroPath.Show()/Hide()` 端口本来就已存在，只缺英雄层入口） |
+| `IconsPanel.SetRedraw()` / 公开 `SetRedraw( HeroesCastlesIcons )` | `interface_icons.h:189-192`：端口原来把这个重载写成 private，`redrawFocus()` 需要无参版本 |
+
+偏差（已写进代码注释）：
+
+* 参考的构造函数用 `*this` 就地建面板（走全局资源包）；端口面板一律通过工厂参数拿已加载的贴图，所以 `AdventureMap` 改为注入已建好的 `IconsPanel` / `StatusPanel` / `AudioManager`。按钮条与控制面板等事件那一遍再用到，暂不进构造。
+* 参考是单例 `AdventureMap::Get()`；端口不加单例（测试要能独立构造），由场景层持有实例。`AdventureMapScene` 的接线在 G5。
+* 参考的 `assert( hero->GetColor() == Settings::Get().CurrentColor() )` 这类断言没有移植——越权调用是调用方的 bug，面板本身能容错。
+* 端口的 `Hero` / `Castle` 没有 `GetCenter()`，改用 `MapGeometry.GetPoint(index)`（与 `Hero.Fog.cs`、`Castle.Boats.cs` 现有写法一致）。
+* `Game::EnvironmentSoundMixer()` 落在 `Game/Audio/` 而不是 `game.cpp` 的等价文件（端口没有 `Game` 门面）；`fheroes2::tileWidthPx` 在端口无家，先作为该文件的私有常量，并注明 UI 侧的 `GameBorder.TileWidth` 不可跨程序集使用。
+* 参考 `std::lround( distance * 255 / maxDistance )` 的半数进位方向与 `Math.Round` 默认不同，改用 `MidpointRounding.AwayFromZero`；`std::stable_sort` 由 `OrderBy` 承接（LINQ 保证稳定）。
+* `std::map<M82Sound, vector<...>>` 用 `SortedDictionary<M82Sound, List<...>>` 构造，最后投影成 `IReadOnlyDictionary<M82Sound, IReadOnlyList<...>>` 再交给 `PlayLoopSoundsAsync`（后者参数是只读字典）。
+
+**仍然抛 `NotImplementedException`**：`AdventureMap.RedrawInterface` / `Reset`（`game/game_interface.cpp`）、
+`MouseCursorAreaClickLeft` / `MouseCursorAreaPressRight` / `MouseCursorAreaLongPressLeft` / `UpdateCursor`
+（`game/game_startgame.cpp`）——它们是 G5 的收口件。
+
+**未开工**：`interface_events.cpp`（641 行）。它的 25 个事件几乎都返回 `fheroes2::GameMode`，端口还没有这个枚举，
+也没有 `Dialog::AdventureOptions` / `Dialog::FileOptions` / `Game::OpenHeroesDialog` 这类门面，需要先落这两层骨架再搬事件体；
+`FileOptionsDialog` 目前自带一套 `NEW_GAME`/`LOAD_GAME` 结果枚举，届时统一到 `GameMode`。
+
+构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G4 后半：`interface_events.cpp`
+
+`gui/interface_events.cpp`（641 行）全部落地，作为 `AdventureMap` 的第二个 partial（`UI/Interface/AdventureMap.Events.cs`）。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `ShowPathOrStartMoveHero()` / `MoveHeroFromArrowKeys()` / `StartHeroMove()` | `interface_events.cpp:77-131`：新目标就 `calculatePath` + 置 `REDRAW_GAMEAREA｜REDRAW_BUTTONS`；目标没变且路线可用且 `MayStillMove` 就开走（`SetFocus`+`RedrawFocus`+`SetMove(true)`+`PassAnimationDelay(CURRENT_HERO_DELAY)`） |
+| `EventSwitchFocusedHero()` | `:133-141`：点的格子上的英雄属于当前玩家且不是当前焦点时才切 |
+| `EventNextHero()` | `:143-179`：从焦点英雄的下一个开始环形找 `MayStillMove(true,false)`；焦点英雄已不在列表时从第一个开始 |
+| `EventHeroMovement()` | `:181-198`：能走就走，否则可重访对象转 `EventDefaultAction`，否则路线有效时弹「英雄移动力用尽」 |
+| `EventResetHeroPath()` | `:200-210` |
+| `EventKingdomInfo()` | `:212-218` |
+| `EventCastSpell()` | `:220-242`：先把地图对准英雄，再开魔法书，`ActionSpellCast` 后 `ResetFocus(HEROES, true)` |
+| `EventEndTurn()` | `:244-261`：`HeroesMayStillMove` 时先问一句 |
+| `EventAdventureDialog()` | `:263-285`：WORLD/PUZZLE/INFO/DIG 四分支 |
+| `EventViewWorld()` / `EventFileDialog()` / `EventSystemDialog()` | `:287-300` |
+| `EventNextTown()` | `:302-320`：有焦点城堡就取列表的下一个（末尾回卷），否则 `ResetFocus(CASTLE, false)` |
+| `EventNewGame()` / `EventSaveGame()` / `EventLoadGame()` | `:322-359`：保存走「选文件名 → 文件已存在则问覆盖 → 存 → 报结果」的循环 |
+| `EventPuzzleMaps()` / `EventScenarioInformation()` | `:361-396` |
+| `EventSwitchHeroSleeping()` | `:398-408` |
+| `EventDigArtifact()` | `:410-479`：船上/宝物袋满/移动力不足三种拒绝，`isSuitableForUltimateArtifact` 或「神器正踩在脚下且未挖出」才挖，`MusicRestorer` 包住 MIDI/非 MIDI 两种凯歌，成功后 `PickupArtifact` 并报名字，最后 `checkGameOver()` |
+| `EventDefaultAction()` | `:481-506`：可重访对象就跑 `Heroes::Action`，动作留下 `HeroModes.Action` 时清掉并 `checkGameOver()`；无英雄时打开焦点城堡 |
+| `EventOpenFocus()` | `:508-516` |
+| `EventSwitchShowRadar/Buttons/Status/Icons/ControlPanel()` | `:518-590`：五个都只在 `IsHideInterface` 下起作用 |
+| `EventKeyArrowPress()` | `:592-641`：有焦点英雄就交给方向键行进，否则八个方向的滚动组合（拖动滚动中或 `ScrollSpeed == None` 时不滚） |
+
+新增契约（`UI/Interface/AdventureMapHost.cs`）：
+
+* `AdventureEventResult`：事件会产出的结局（`Cancel`/`EndTurn`/`NewGame`/`LoadGame`/`QuitGame`/`Win`/`Lose`/`HighScore`），对应 `fheroes2::GameMode`（`game_mode.h:32-53`）。端口不引入全局 `GameMode` 枚举——`FileOptionsDialog` 早就用「每个对话框自己的结果枚举」表达过这个决定（ADR-163），这里沿用。
+* `AdventureOption`：`Dialog::AdventureOptions()` 的返回值（CANCEL/WORLD/PUZZLE/INFO/DIG）。
+* `IAdventureHost`：参考从事件里直接调的全局函数（`Dialog::AdventureOptions`、`Dialog::FileOptions`、`Dialog::GameInfo`、`Dialog::SelectFileSave`、`Game::OpenHeroesDialog`、`Game::OpenCastleDialog`、`Game::Save`、`Game::SelectCampaignScenario`、`Kingdom::openOverviewDialog`、`PuzzleMaps::ShowMapsDialog`、`ViewWorld::ViewWorldWindow`、`fheroes2::showSystemOptionsDialog`、`fheroes2::showStandardTextMessage`、`Heroes::OpenSpellBook`、`GameOver::Result::checkGameOver`）在这里是宿主方法。端口没有阻塞式消息框（消息框是调用方建好再喂事件的 `Dialogs.MessageBox`），所以 `ShowMessage` / `ShowYesNoMessage` 也在契约里。
+
+偏差（已写进代码注释）：
+
+* 事件把 `redraw(force)` 换成 `SetRedraw(mask)` 累积请求，绘制交给场景；`AdventureMap.RedrawInterface` 仍是 G5 的桩，事件里不能调它。
+* `_buttonsPanel.setRedraw()` / `_radar.SetRedraw(REDRAW_RADAR)` 换成接口层的 `SetRedraw(Redraw.Buttons)` / `SetRedraw(Redraw.Radar)`——这两个面板还没注入到 `AdventureMap`（按钮条随 G5 的输入处理一起进来）。
+* `hero->Action(idx)` 在端口没有英雄级入口，写成 `new HeroActions(hero, world.Kingdoms).Action(idx, world)`，并注明 `HeroActions` 目前还没有别的调用方。
+* `isAction()`/`ResetAction()` 用端口已有的 `HeroModes.Action` 判定与清除。
+* `GetMaxMovePoints()` 用端口同名的无参重载（陆地分支），`M82::DIGSOUND` → `M82Sound.Digsound`，`MUS::ULTIMATE_ARTIFACT` → `MusicTrack.UltimateArtifact`，`System::IsFile()` → `File.Exists()`。
+* 战役分支（`Game::SelectCampaignScenario()`）未移植，`EventScenarioInformation()` 只做非战役部分并返回 `Cancel`，注释里写明这条分支暂时无法请求别的模式。
+* 消息文本沿用参考英文原文（端口还没有翻译层）。
+
+顺带补上的英雄层缺口：`Hero.CalculatePath(int destinationIndex, WorldMap world)`（`calculatePath(dst)` 重载；端口原先只有无参版，且 `HeroPath` 不存目的地，靠最后一步推导）与 `Hero.ResetMovePoints()`。
+
+**仍然抛 `NotImplementedException`**：`AdventureMap.RedrawInterface` / `Reset` 与四个鼠标/光标处理（G5）；
+`IAdventureHost` 尚无实现方——它是契约，场景在 G5 实现。
+
+构建 0 错误 0 警告，全量 **4 945 绿**。
+
+## 2026-11-22 G5 前半：`game_interface.cpp` 的 `reset()`/`redraw()` 与光标
+
+`game/game_interface.cpp` 的三个函数 + `game/game_startgame.cpp` 的光标选择落地。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `AdventureMap.RedrawInterface( Redraw )` | `game_interface.cpp:130-173`：锁定时只 `SetRedraw(force)`；否则 `combined = GetRedrawMask() \| force`，按 GAMEAREA → RADAR → ICONS → BUTTONS → STATUS → BORDER 顺序绘制，末尾 `ClearRedraw()`。`REDRAW_GAMEAREA` 走 `GameArea.Redraw( All )` 加控制面板重绘，`REDRAW_RADAR` 走 `Radar.RedrawRadar( isRedrawCursor, humanColors )` |
+| `AdventureMap.Reset()` | `game_interface.cpp:63-128`：先按 `Settings.IsHideInterface` 把四个面板的 `HideInterfaceEnabled` 对齐；隐藏模式用 `PosRadar/PosButtons/PosIcons/PosStatus`，四个都有效才照搬（`isPosValid()` → 坐标非负），否则从左上角起依次堆叠；普通模式按 `GameBorder.BorderWidth/RadarWidth` 排右边栏。最后 `GameArea.Generate()` 并把视野中心按新旧 ROI 差值平移 |
+| `AdventureMap.RedrawLocker` | `game_interface.h:64-88`：RAII 锁，锁内只收集请求 |
+| `GetCursorFocusCastle` / `GetCursorFocusShipmaster` / `GetCursorFocusHeroes` / `GetCursorNoFocus` / `GetCursorTileIndex` / `UpdateCursor` | `game_startgame.cpp:477-730`：城堡（自城/友城/敌城/带城门的空地）、船坞（有船/无船）与英雄（可走到/可攻击/可登船/下船登岸/港湾/中立或敌对的己方可交互对象）四类分派，最后 `CursorState.Current?.SetThemes(...)` |
+| `World.IsCaptureObjectProtected( int )` | `maps_tiles_helper.cpp:1836-1856`：可占领对象且自带守卫才算受保护；城堡走 `GetCastleEntrance(tile.GetCenter())` 再问守军 |
+| `IconsPanel.RedrawIcons( HeroesCastlesIcons )` | `interface_icons.cpp:422-447`：只重绘英雄/城堡图标行，边框另画 |
+| `ButtonsPanel.SavePosition()` | `interface_buttons.cpp` 的位置存档，改为写 `Settings.SetPosButtons` |
+| `Settings.PosRadar/PosButtons/PosIcons/PosStatus` | `settings.h` 的 `pos_*` 与 `settings.cpp` 里 `Config::PointParams( …, -1, -1 )` 的默认值；四个都初始化为 `(-1, -1)`，`reset()` 据此判断「从没挪过」 |
+
+偏差（已写进代码注释）：
+
+* 参考的 `updateCursor( tileIndex, isKeyboardCursor )` 与 `GetCursorFocusHeroes( hero, tile, isQuickSelectHeld )` 都会自己读热键；端口把「是否按住快速选择键」作为参数传进来（本文件 `UpdateCursor(int, bool)`），`BaseInterface.UpdateCursor(int)` 是不带该参数的老接口，`AdventureMap` 用 `UpdateCursor(tileIndex, false)` 转接。
+* 端口把光标结果做成返回值（`GetCursorTileIndex` 返回 `CursorTheme`），`UpdateCursor` 只负责写 `CursorState`——这样光标选择逻辑不必依赖渲染就能测。
+* `tile.getPassable()` 的 `== 0` 判断写成 `PassableDirections == Direction.Unknown`（端口的「无方向」值）。
+* 参考 `MP2::OBJ_CASTLE` 带动作位（端口叫 `ActionCastle`），而端口的加载器把城门存成 `Mp2ObjectType.Castle`；`IsCaptureObjectProtected` 两种拼写都接受，注释里写明。
+* `_buttonsPanel` / `_controlPanel` / 边框贴图在端口都是可空注入（无游戏数据时场景可以先不建），`Reset()` / `RedrawInterface()` 全程判空。
+* `Settings` 只保内存：`SavePosition()` 写进 `Settings`，不落 `.fh2config`（配置写入器还没移植）。
+
+测试：`AdventureMapTests`（6 个：两种布局下的面板排列、浮动位置取用、`RedrawLocker` 只收集不绘制、空光标状态不炸、地图外索引给指针）与 `WorldMapScanTests` 新增的 5 个 `IsCaptureObjectProtected` 用例（可占领但有/无守卫、守卫在别的格子、城堡地块无城）。
+
+构建 0 错误 0 警告，全量 **4 956 绿**。
+
+## 2026-11-22 G5 中段：`game_startgame.cpp` 的三个鼠标处理
+
+落在 `UI/Interface/AdventureMap.Mouse.cs`（`game_startgame.cpp:1615-1736`）。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `AdventureMap.MouseCursorAreaClickLeft( int )` | `game_startgame.cpp:1615-1682`：按 `Cursor::WithoutDistanceThemes( Cursor::Get().Themes() )` 分派——`HEROES` 换焦点/开英雄对话框、`CASTLE` 换焦点/开城堡对话框、七种 `CURSOR_HERO_*` 走 `ShowPathOrStartMoveHero()` |
+| `AdventureMap.MouseCursorAreaPressRight( int )` | `game_startgame.cpp:1684-1730`：雾格直接 `Dialog::QuickInfo( tile )`，否则按 `getMainObjectType()` 给城堡 / 英雄 / 地块三选一 |
+| `AdventureMap.MouseCursorAreaLongPressLeft( int )` | `game_startgame.cpp:1732-1736`：转 `EventSwitchFocusedHero()`（G4 已落） |
+| `IAdventureHost.ShowQuickInfo( Tile / Castle / Hero )` | `Dialog::QuickInfo()` 的三个重载；参考里是阻塞窗口，端口交给场景 |
+
+偏差（已写进代码注释）：
+
+* 三个处理都先判 `GetGeometry().IsValidAbsIndex(tileIndex)`：参考由事件循环保证索引有效，端口由场景给索引，越界指直接返回（否则 `world.getTile()` 会读到别的格子或抛异常）。
+* `!IS_DEVEL() && tile.isFog(...)` 的右键盘条件只留雾判：端口没有开发版开关。
+* `assert( focusedHero == nullptr || !focusedHero->Modes( ENABLEMOVE ) )` 是调试断言，端口不抄。
+* `Dialog::QuickInfo()` 三个重载在端口是同一名字的三份签名（`ShowQuickInfo(Tile)` / `(Castle)` / `(Hero)`），与参考一一对应。
+
+测试：`AdventureMapTests` 增至 10 个（新增：无光标主题时左键不动作、越界右键不弹速览、空地右键弹地块速览且拿到的是同一 `Tile` 实例、长按无英雄时焦点不变）。
+
+**仍然抛 `NotImplementedException`**：无——`AdventureMap` 的 `BaseInterface` 抽象成员已全部有实体实现。
+`IAdventureHost` 仍无实现方：它是场景契约，`AdventureMapScene` 收口时实现。
+
+构建 0 错误 0 警告，全量 **4 960 绿**。
+
+## 2026-11-22 G5 收口第一步：界面自建面板（`game_interface.cpp:38-61`）
+
+`AdventureMap` 不再由外部塞入预建面板，改成参考的「界面自己造面板」：`public AdventureMap(...)` 收成私有构造，
+新增 `public static AdventureMap? TryCreate( PixelBuffer, AssetBundle?, AudioManager, IAdventureHost )`。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `AdventureMap.TryCreate( ... )` | `game_interface.cpp:38-61` 的构造函数：读 `isEvilInterfaceEnabled()` 选 `ADVBTNS`/`ADVEBTNS`，造 `IconsPanel` / `StatusPanel` / `ButtonsPanel` / `ControlPanel`，`MapFrame.Load()` 取 `ADVBORD.ICN` 边框贴图 |
+| `AdventureMap.CreateButtonsPanel( ... )` | `gui/interface_buttons.cpp:40-56`：`ADVBTNS` 前 16 帧按 8 个按钮的「释放/按下」成对切开，任一帧缺失就整条不建（返回 `null`） |
+| `AdventureMap.CreateControlPanel( ... )` | `gui/interface_cpanel.cpp:38-58` 的 `ResetTheme()`：帧 4/0/12/10/8 拼成隐藏界面模式的五格横条 |
+| `AdventureMap.ControlPanelAreaForInput` | `BaseInterface` 的钩子，返回 `_controlPanel.Area`，供 `GameArea` 吞掉落在横条上的点击 |
+
+要点：
+
+* 面板必须在 `this` 之后才能造（它们的重绘请求与焦点都走这个界面对象），C# 无法把 `this` 传进自己的构造参数，
+  所以由静态工厂在 `new` 之后填字段；字段因此不再是 `readonly`，注释里写明了原因。
+* 工厂在 `assets == null` 或缺 `MONS32.ICN` 的怪物头像时返回 `null`：状态栏没法画军队，整屏不建。参考在这种情况下会
+  直接崩，端口把「没有游戏数据」当成正常情况。
+* 边框贴图只加载一次：`GameBorder` 与 `ControlPanel` 用的是同一张 `ADVBORD.ICN` 帧（参考每次重绘都 `AGG::GetICN()`）。
+* `IcnSpriteCache` 在端口是 `Game` 的内部类型，`UI` 侧取图统一走 `IcnViewWorldSpriteSource.GetSprite( IcnType, int )`，
+  顺带把字符串文件名换成了枚举。
+
+测试：`AdventureMapTests` 增至 13 个（新增：工厂把五个面板都造出来、无游戏数据时返回 `null`、
+`ControlPanelAreaForInput` 就是隐藏界面横条的 `Area` 本身）；测试里原来的 `StubInterface` / 桩精灵 / 桩怪物集随预建面板一起删掉。
+
+**G5 收口剩余**（`AdventureMapScene` 接管）：
+
+1. `MapSprites.Initialize( assets, KB.PAL )` 在打开冒险地图时调用——端口的地图区渲染目前完全没跑起来过；
+2. App 侧 `IAdventureHost` 实现：消息框、英雄/城堡对话框、存档/读档、世界地图可接现有 overlay，但英雄对话框
+   （`Game::OpenHeroesDialog`）、法术书、王国总览、拼图都还没移植，是接管的前置；
+3. 接管后删自建 `AdventureMapView` / `IconBar` / `Minimap` / `MapFrame` / `StatusPanelPainter` 与 140 处测试引用。
+
+构建 0 错误 0 警告，全量 **4 963 绿**。
+
+## 2026-11-22 G5 收口第二步：`MapSprites` 接线 + 整屏绘制跑通
+
+**接线**（`src/FHeroes2.App/GameHost.cs` 的 `LoadGameData()`）：在 `GameAssets.Current` 与 `KB.PAL` 就位之后调
+`MapSprites.Initialize( _assets, _palette )`——这就是 `MapSprites` 文档里说的「组合根装一次」。`KB.PAL` 缺失时仍然装
+`MapSprites.Initialize( _assets, null )`：地形精灵是不透明贴图，没有调色板也能画，只有 alpha 混合的对象会显式抛
+（`GameArea.BlitOnTile`）。
+
+**验证**（`tests/FHeroes2.UI.Tests/AdventureMapTests.cs`，新增 2 个用例，共 15 个）：
+
+* `RedrawInterface_WithTheGameData_PaintsTheWholeScreen`：经典布局下按 `StartGame()` 的前置
+  （`game_startgame.cpp:740-750`：`Radar.Build()` / `SetHide(true)` / `HideIcons(Any)` / `StatusPanel.Reset()`）准备好，
+  一次 `RedrawInterface( Redraw.All )` 画出边框、雷达、地图区、图标条、按钮条、状态栏，断言不是空白帧。
+* `RedrawInterface_WithTheHideInterfaceMode_PaintsTheFloatingPanelsOverTheMap`：隐藏界面模式，雷达不折叠（覆盖生成地图
+  图像的分支）、四个浮动面板常驻绘制、`ControlPanel` 走 `GetGamePalette()` 的 alpha 混合。
+
+这两个用例第一次证明「移植版冒险地图整屏能画出来」，也钉住了两条此前没人走过的依赖：`MapSprites` 必须先装
+（否则 `GameArea` 取不到地形图），`Radar.Build()` 必须先跑（否则 `Radar.RedrawRadar` 抛）。
+
+**G5 收口剩余**：只剩场景接管（见上一节的三步，第 1 步已完成）。
+
+构建 0 错误 0 警告，全量 **4 965 绿**。

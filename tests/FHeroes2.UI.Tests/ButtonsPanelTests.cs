@@ -2,6 +2,7 @@ using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
 
@@ -272,11 +273,14 @@ public sealed class ButtonsPanelTests
     }
 
     [Fact]
-    public void SavePosition_IsNotPortedYet()
+    public void SavePosition_StoresTheFloatingOffset()
     {
         ButtonsPanel panel = CreatePanel();
 
-        Assert.Throws<NotImplementedException>(panel.SavePosition);
+        panel.SetPos(40, 60);
+        panel.SavePosition();
+
+        Assert.Equal(panel.GetRect.Position, Settings.Get().PosButtons);
     }
 
     [Fact]
