@@ -28,6 +28,7 @@ internal sealed class SdlPresenter : IScreenPresenter
     private readonly WindowIcon? _windowIcon;
 
     private uint[] _lookup;
+    private Palette? _paletteInUse;
     private PresentationViewport _viewport;
     private bool _disposed;
 
@@ -82,7 +83,8 @@ internal sealed class SdlPresenter : IScreenPresenter
         SDL.SetTextureBlendMode(_logicalTarget, SDL.BlendMode.None);
 
         _conversionBuffer = new uint[logicalSize.Area];
-        _lookup = IndexedFrameConverter.BuildLookup(new Palette());
+        _paletteInUse = new Palette();
+        _lookup = IndexedFrameConverter.BuildLookup(_paletteInUse);
 
         // The window is still hidden here, so the icon is already in place when it appears.
         _windowIcon = WindowIcon.TryLoad();
@@ -122,14 +124,6 @@ internal sealed class SdlPresenter : IScreenPresenter
 
     public bool IsFullscreen => (SDL.GetWindowFlags(_window) & SDL.WindowFlags.Fullscreen) != 0;
 
-    /// <summary>Precomputes the packed pixel lookup table used when uploading indexed pixels.</summary>
-    public void SetPalette(Palette palette)
-    {
-        ArgumentNullException.ThrowIfNull(palette);
-
-        _lookup = IndexedFrameConverter.BuildLookup(palette);
-    }
-
     /// <summary>Uploads the dirty region of the frame into the streaming texture.</summary>
     public void Upload(ScreenBuffer frame)
     {
@@ -139,6 +133,8 @@ internal sealed class SdlPresenter : IScreenPresenter
         {
             throw new ArgumentException($"The frame is {frame.Size} but the presenter expects {LogicalSize}.", nameof(frame));
         }
+
+        EnsureLookup(frame);
 
         Rect dirty = frame.TakeDirtyRegion();
         if (dirty.IsEmpty)
@@ -159,6 +155,26 @@ internal sealed class SdlPresenter : IScreenPresenter
         {
             throw new InvalidOperationException($"SDL_UpdateTexture failed: {SDL.GetError()}");
         }
+    }
+
+    /// <summary>
+    /// Keeps the index to RGBA lookup in sync with the palette the frame is drawn with, the port of the
+    /// palette refresh inside <c>Display::changePalette()</c> (<c>src/engine/screen.cpp:1622-1630</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考换调色板就让引擎刷 GPU 的调色板表；端口在上传时把索引落成 RGBA，所以这里记住查找表是用哪份
+    /// 调色板算出来的，画面换了调色板就重算。<see cref="ScreenBuffer.ChangePalette"/> 已经把整屏标脏，
+    /// 于是换完调色板的那一帧会把全部像素重新上传。
+    /// </remarks>
+    private void EnsureLookup(ScreenBuffer frame)
+    {
+        if (ReferenceEquals(frame.Palette, _paletteInUse))
+        {
+            return;
+        }
+
+        _paletteInUse = frame.Palette;
+        _lookup = IndexedFrameConverter.BuildLookup(_paletteInUse);
     }
 
     /// <summary>Binds the 640x480 logical render target and clears it.</summary>

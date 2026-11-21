@@ -1,6 +1,8 @@
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
+using FHeroes2.UI.Input;
+using FHeroes2.UI.Widgets;
 
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
@@ -276,53 +278,32 @@ public sealed class RecruitDialog
     }
 
     /// <summary>
-    /// Feeds one typed digit, <c>processIntegerValueTyping( 0, max, typedValueBuf )</c> of the reference.
+    /// Feeds one keystroke to the typed digits, <c>processIntegerValueTyping( 0, max, typedValueBuf )</c>
+    /// (<c>dialog_recruit.cpp:571-577</c>).
     /// </summary>
     /// <remarks>
     /// The digits accumulate: typing <c>1</c> then <c>2</c> asks for twelve. A digit that would push the number above
-    /// <see cref="Maximum"/> is dropped and the buffer is left as it was, which is what keeps <c>12</c> from turning into
-    /// <c>1</c> when the maximum is <c>1</c>. Backspace is a separate call, <see cref="ClearTyped"/>.
+    /// <see cref="Maximum"/> is taken back off the buffer, which is what keeps <c>12</c> from turning into <c>1</c>
+    /// when the maximum is <c>1</c>. Backspace and Delete empty the buffer and the count, and the keypad digits count
+    /// as digits too; every other key is ignored. The rule itself is
+    /// <see cref="IntegerValueTyping.Process"/>, the reference's function.
     /// </remarks>
-    /// <param name="digit">A character from <c>'0'</c> to <c>'9'</c>.</param>
+    /// <param name="key">The key that went down this frame.</param>
     /// <returns>Whether a number was accepted and <see cref="Count"/> changed.</returns>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="digit"/> is not a decimal digit.</exception>
-    public bool TypeDigit(char digit)
+    public bool TypeKey(Key key)
     {
-        if (digit is < '0' or > '9')
-        {
-            throw new ArgumentOutOfRangeException(nameof(digit), digit, "Not a decimal digit.");
-        }
+        // The reference casts max to int32 for the call, so a maximum that does not fit is capped rather than wrapped.
+        int maximum = (int)Math.Min(Maximum, int.MaxValue);
 
-        string candidate = _typedValue + digit;
-
-        // An overflowing number is as impossible as a too large one.
-        if (!uint.TryParse(candidate, System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out uint value) || value > Maximum)
+        if (IntegerValueTyping.Process(0, maximum, ref _typedValue, key) is not { } value)
         {
             return false;
         }
 
-        _typedValue = candidate;
-        Count = value;
+        Count = (uint)value;
         UpdateMaxMinButtons();
 
         return true;
-    }
-
-    /// <summary>
-    /// Forgets the typed digits and sets the count to zero, the <c>KEY_BACKSPACE</c> branch of
-    /// <c>processIntegerValueTyping</c>.
-    /// </summary>
-    /// <remarks>
-    /// The reference returns <c>clamp( 0, min, max )</c> for this branch, which is zero for the recruit window's
-    /// <c>min = 0</c>: pressing backspace empties the count instead of deleting one digit.
-    /// </remarks>
-    public void ClearTyped()
-    {
-        _typedValue = string.Empty;
-        Count = 0;
-
-        UpdateMaxMinButtons();
     }
 
     /// <summary>

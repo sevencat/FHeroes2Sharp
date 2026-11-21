@@ -286,6 +286,128 @@ public static partial class ImageOps
     public static void ApplyPalette(PixelBuffer target, PaletteId id) => ApplyPalette(target, PaletteTable.Get(id));
 
     /// <summary>
+    /// Recolours the pixels of <paramref name="area"/> through <paramref name="palette"/>, the region
+    /// form of <c>fheroes2::ApplyPalette( const Image &amp; in, ... Image &amp; out, ... )</c>
+    /// (<c>engine/image_tool.cpp</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考有六个指针参数（输入/输出各一套坐标与尺寸），在端口里输入就是输出、坐标就是区域，
+    /// 只剩「按表换色」这一件事。区域先按目标裁一遍，区域之外不动。
+    /// 调色板淡化（<c>gui/ui_tool.cpp:395</c> 的 <c>colorFade()</c>）用它把灰阶画面落回游戏调色板的索引。
+    /// </remarks>
+    /// <exception cref="ArgumentException">The table is not <see cref="PaletteTable.Size"/> bytes long.</exception>
+    public static void ApplyPalette(PixelBuffer target, in Rect area, ReadOnlySpan<byte> palette)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (palette.Length != PaletteTable.Size)
+        {
+            throw new ArgumentException(
+                $"A palette table must hold {PaletteTable.Size} entries.", nameof(palette));
+        }
+
+        Rect roi = area.Intersect(target.Bounds);
+        if (roi.IsEmpty)
+        {
+            return;
+        }
+
+        for (int y = roi.Y; y < roi.Bottom; ++y)
+        {
+            Span<byte> row = target.Row(y);
+
+            for (int x = roi.X; x < roi.Right; ++x)
+            {
+                row[x] = palette[row[x]];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Blends <paramref name="source"/> into <paramref name="target"/> after darkening every palette
+    /// entry by <paramref name="alpha"/>, a port of <c>fheroes2::ApplyAlpha()</c>
+    /// (<c>engine/image.cpp:1153-1168</c>).
+    /// </summary>
+    /// <param name="source">Pixels that get recoloured.</param>
+    /// <param name="sourceArea">Region of <paramref name="source"/> to take.</param>
+    /// <param name="target">Destination buffer.</param>
+    /// <param name="targetPosition">Top left corner of the region in <paramref name="target"/>.</param>
+    /// <param name="alpha">Brightness factor, <c>255</c> keeps the colours, <c>0</c> makes them black.</param>
+    /// <param name="gamePalette">The game palette in video values, <c>getRGBGamePalette()</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// 参考不是「按 alpha 混合两层」，而是先把调色板每一项的六个颜色通道乘以 <c>alpha / 255</c>，
+    /// 再用 <see cref="PALColorId"/> 找回最近的颜色，得到一张「压暗后的调色板」，最后按这张表给源像素换色
+    /// 写进目标。所以 <paramref name="alpha"/> 越小，画面越暗。索引 <c>0..9</c> 与 <c>254..255</c>
+    /// 在游戏调色板里未定义，参考把它们留在表里的 <c>0</c>（黑色），端口一样处理。
+    /// </para>
+    /// <para>
+    /// 参考用六个坐标参数（输入与输出各一套），端口换成区域加左上角；两边都先裁剪再逐像素换色。
+    /// </para>
+    /// </remarks>
+    public static void ApplyAlpha(
+        PixelBuffer source,
+        in Rect sourceArea,
+        PixelBuffer target,
+        in Point targetPosition,
+        byte alpha,
+        Palette gamePalette)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(gamePalette);
+
+        Rect sourceRoi = sourceArea.Intersect(source.Bounds);
+        if (sourceRoi.IsEmpty)
+        {
+            return;
+        }
+
+        Rect requestedTarget = new(
+            targetPosition.X + (sourceRoi.X - sourceArea.X),
+            targetPosition.Y + (sourceRoi.Y - sourceArea.Y),
+            sourceRoi.Width,
+            sourceRoi.Height);
+
+        Rect targetRoi = requestedTarget.Intersect(target.Bounds);
+
+        if (targetRoi.IsEmpty)
+        {
+            return;
+        }
+
+        int width = targetRoi.Width;
+        int height = targetRoi.Height;
+        int sourceX = sourceRoi.X + (targetRoi.X - targetPosition.X - (sourceRoi.X - sourceArea.X));
+
+        // A palette entry above 253 is undefined in the game palette, just like the first ten:
+        // the reference leaves them pointing at index 0, which is black in every game palette.
+        Span<byte> conversion = stackalloc byte[PaletteTable.Size];
+
+        ReadOnlySpan<byte> palette = gamePalette.ToRaw();
+        for (int id = 10; id < 254; ++id)
+        {
+            byte red = (byte)((palette[id * 3] >> 2) * alpha / 255);
+            byte green = (byte)((palette[(id * 3) + 1] >> 2) * alpha / 255);
+            byte blue = (byte)((palette[(id * 3) + 2] >> 2) * alpha / 255);
+
+            conversion[id] = PALColorId.Get(red, green, blue, palette);
+        }
+
+        int sourceY = sourceRoi.Y + (targetRoi.Y - targetPosition.Y - (sourceRoi.Y - sourceArea.Y));
+        for (int y = 0; y < height; ++y)
+        {
+            ReadOnlySpan<byte> sourceRow = source.Row(sourceY + y);
+            Span<byte> targetRow = target.Row(targetRoi.Y + y);
+
+            for (int x = 0; x < width; ++x)
+            {
+                targetRow[targetRoi.X + x] = conversion[sourceRow[sourceX + x]];
+            }
+        }
+    }
+
+    /// <summary>
     /// Nearest neighbour resampling of <paramref name="source"/> onto <paramref name="target"/>,
     /// the single layer case of <c>fheroes2::Resize( const Image &amp;, Image &amp; )</c>
     /// (<c>engine/image.cpp:3087</c>).

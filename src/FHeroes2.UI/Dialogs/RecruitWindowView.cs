@@ -566,33 +566,14 @@ public sealed class RecruitWindowView
     }
 
     /// <summary>
-    /// Feeds this frame's keystroke to <see cref="RecruitDialog.TypeDigit"/>, <c>processIntegerValueTyping()</c>
-    /// (<c>ui_tool.cpp:806-856</c>).
+    /// Feeds this frame's keystroke to <see cref="RecruitDialog.TypeKey"/>, <c>processIntegerValueTyping()</c>
+    /// (<c>dialog_recruit.cpp:571-577</c>, <c>ui_tool.cpp:766-839</c>).
     /// </summary>
     /// <param name="events">The events of this frame.</param>
-    /// <returns>Whether a digit or a backspace was handled.</returns>
+    /// <returns>Whether a number was accepted, in which case the mouse branches of the frame are skipped.</returns>
     private bool TryTypeDigit(LocalEvent events)
     {
-        if (!events.IsAnyKeyPressed)
-        {
-            return false;
-        }
-
-        Key key = events.PressedKeyValue;
-
-        if (key is >= Key.Digit0 and <= Key.Digit9)
-        {
-            return _dialog.TypeDigit((char)('0' + (key - Key.Digit0)));
-        }
-
-        if (key is Key.Backspace or Key.Delete)
-        {
-            _dialog.ClearTyped();
-
-            return true;
-        }
-
-        return false;
+        return events.IsAnyKeyPressed && _dialog.TypeKey(events.PressedKeyValue);
     }
 
     private static void Toggle(ButtonSprite button, bool show)

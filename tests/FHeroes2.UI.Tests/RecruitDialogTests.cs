@@ -1,6 +1,7 @@
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Monsters;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
@@ -141,14 +142,14 @@ public sealed class RecruitDialogTests
 
         Assert.Equal(20u, dialog.Maximum);
 
-        Assert.True(dialog.TypeDigit('1'));
+        Assert.True(dialog.TypeKey(Key.Digit1));
         Assert.Equal(1u, dialog.Count);
 
-        Assert.True(dialog.TypeDigit('2'));
+        Assert.True(dialog.TypeKey(Key.Digit2));
         Assert.Equal(12u, dialog.Count);
 
         // "123" is above the maximum, so the third digit is dropped and the count stays twelve.
-        Assert.False(dialog.TypeDigit('3'));
+        Assert.False(dialog.TypeKey(Key.Digit3));
         Assert.Equal(12u, dialog.Count);
     }
 
@@ -157,19 +158,22 @@ public sealed class RecruitDialogTests
     {
         RecruitDialog dialog = CreateDialog(gold: 100, available: 5);
 
-        Assert.True(dialog.TypeDigit('5'));
-        Assert.False(dialog.TypeDigit('0'));
+        Assert.True(dialog.TypeKey(Key.Digit5));
+        Assert.False(dialog.TypeKey(Key.Digit0));
 
         // Typing "5" then "0" must not read as "0".
         Assert.Equal(5u, dialog.Count);
     }
 
     [Fact]
-    public void ClearTypedEmptiesTheCount()
+    public void BackspaceEmptiesTheCount()
     {
         RecruitDialog dialog = CreateDialog(gold: 100, available: 10);
 
-        dialog.ClearTyped();
+        Assert.True(dialog.TypeKey(Key.Digit4));
+        Assert.Equal(4u, dialog.Count);
+
+        Assert.True(dialog.TypeKey(Key.Backspace));
 
         // clamp( 0, 0, max ) of the reference.
         Assert.Equal(0u, dialog.Count);
@@ -177,12 +181,16 @@ public sealed class RecruitDialogTests
     }
 
     [Fact]
-    public void TypeDigitRejectsAnythingButADecimalDigit()
+    public void KeysThatAreNotDigitsAreIgnored()
     {
         RecruitDialog dialog = CreateDialog(gold: 100, available: 10);
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => dialog.TypeDigit('a'));
-        Assert.Throws<ArgumentOutOfRangeException>(() => dialog.TypeDigit('-'));
+        Assert.True(dialog.TypeKey(Key.Digit3));
+
+        // The recruit window asks for 0..max, so the minus key has nothing to do either.
+        Assert.False(dialog.TypeKey(Key.A));
+        Assert.False(dialog.TypeKey(Key.Minus));
+        Assert.Equal(3u, dialog.Count);
     }
 
     [Fact]

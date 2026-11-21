@@ -221,7 +221,7 @@ public sealed class RecruitWindowTests
     public void OkayDoesNothingWhileNothingIsChosen()
     {
         RecruitWindowView view = CreateView(CreateDialog(gold: 100, available: 10));
-        view.Dialog.ClearTyped();
+        view.Dialog.SetCount(0);
 
         LocalEvent events = CreateEvents();
         Click(events, MouseButtonType.Left, Center(view.OkayButton.Area));

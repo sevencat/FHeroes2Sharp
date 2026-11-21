@@ -231,7 +231,105 @@
 * **「有落点」不等于「已实装」**：第一遍验收看的是「参考的每个非内联函数在端口有一个公开或内部的对应成员」，
   而不是每个分支都写完。实装缺口的清单由「身体是 `NotImplementedException`」这一事实自动表达，不需要另立
   台账。
-* **既有代码不回炉**：端口已有的、比参考更细的拆分（如 `Hero.*.cs`、`World.*.cs`）保持不动，只补缺失成员。
+* **既有代码不回炉**（**已被第 5 节改写**）：端口已有的、比参考更细的拆分（如 `Hero.*.cs`、`World.*.cs`）保持不动，
+  只补缺失成员。但凡是「端口另写一套顶替参考」的界面代码，一律按第 5 节换成 1:1 移植并删掉自建件。
 * **不被「已完成」误导**：`docs/PROGRESS.md` 的覆盖率快照止于 2026-11-15 且按 v3 批次口径统计，本计划以
   `progressv4.md` 的目录状态表为准。
+
+## 5. 第二阶段：1:1 还原缺口与执行顺序（从 `gui/` 开始）
+
+### 5.1 口径
+
+* **1:1 的判据**：参考的每个非内联函数在端口都有同名或同义的成员，且函数体逐段对应——循环边界、魔数、
+  绘制顺序、早退条件一致；文档注释里写清参考文件与行号。
+* **三类差距**：①**部分**（有对应文件，缺函数或分支）②**未移植**（端口用自建件顶替）③**纯缺失**（端口没有）。
+* **删除顺序**：写参考移植 → 调用方切换 → 测试迁移 → 删自建文件。任何一步没做完就不删，避免出现「两边都不完整」。
+* **不做的事**：不为了对齐而重命名端口里已经 1:1 的文件；`interface_*` 的拆分方式（一个类拆多文件）可以保留，
+  但类与函数必须与参考对得上。
+
+### 5.2 `gui/` 现状判定（33 个 cpp）
+
+| 参考文件 | 行数 | 端口对应 | 判定 |
+| --- | --- | --- | --- |
+| `ui_tool.cpp` | 861 | `Widgets/ColorFade.cs`、`DisplayFade*.cs`、`*Restorer.cs`、`HeroRacePortrait.cs`、`IntegerValueTyping.cs`、`Game/Gui/LocalizedText.cs`、`MovableText.cs`、`SystemInfoRenderer.cs`、`TimedEventValidator.cs` | ①部分：剩 `getLocalizedStrings`（翻译层，不搬）、`UIScrollInertia`（G3 随 `interface_gamearea` 搬） |
+| `cursor.cpp` | 225 | `AdventureMapScene` 内部自选光标 | ②未移植 |
+| `ui_base.cpp` | 27 | 无 | ③纯缺失（`setIMEText` 一类平台钩子） |
+| `ui_button.cpp` | 813 | `Widgets/ButtonFactory.cs`、`ButtonBase.cs`、`ButtonSprite.cs`、`ButtonGroup.cs` | ①部分：缺透明背景按钮、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` |
+| `ui_window.cpp` | 541 | `Dialogs/StandardWindow.cs`、`FrameBox.cs`、`Widgets/WindowPadding.cs` | ①部分：`FrameBox` 取的是 `dialog/dialog_box.cpp`，与 `ui_window.cpp` 的 `FrameBox` 不是同一件东西 |
+| `ui_dialog.cpp` | 849 | `Dialogs/DialogElement.cs` | ①部分：缺 `MonsterDialogElement`、`CustomAnimationDialogElement`、`drawMonsterLine` |
+| `ui_text.cpp` | 1132 | `Game/Gui/Text.cs`、`TextBase.cs` | ①部分：缺 `TextInputField`、`getCursorSprite`、字符校验工具 |
+| `ui_font.cpp` | 6317 | `Assets/Fonts`（自建字形渲染） | ②未移植：整块待对拍 |
+| `ui_keyboard.cpp` | 1146 | 无 | ③纯缺失 |
+| `ui_language.cpp` | 327 | `Localization` + `LanguageSelectionDialog` 部分 | ①部分 |
+| `ui_scrollbar.cpp` / `ui_slider.cpp` / `ui_option_item.cpp` | 213/129/144 | `Widgets/ScrollBar.cs`、`ScrollSlider.cs`、`Slider.cs`、`OptionItem.cs` | 已 1:1（保留） |
+| `ui_castle.cpp` | 271 | `Widgets/ResourcePanel.cs` | ①部分 |
+| `ui_kingdom.cpp` | 78 | 无 | ③纯缺失 |
+| `ui_campaign.cpp` | 190 | 无 | ③纯缺失 |
+| `ui_mage_guild.cpp` | 192 | `Scenes/MageGuildWindow.cs`（自建） | ②未移植 |
+| `ui_monster.cpp` | 56 | 无 | ③纯缺失 |
+| `ui_map_interface.cpp` | 67 | `Widgets/StandardPopupWindow.cs` 部分 | ①部分 |
+| `ui_map_object.cpp` + `ui_object_rendering.h` | 316+52 | 无 | ③纯缺失 |
+| `interface_base.cpp` | 45 | `Widgets/InterfaceRedraw.cs` | ①部分 |
+| `interface_border.cpp` | 428 | 无（`FrameBox`/`StandardWindow` 只覆盖一部分） | ②未移植 |
+| `interface_buttons.cpp` | 249 | 无（`AdventureMapScene` 自绘） | ②未移植 |
+| `interface_cpanel.cpp` | 100 | 无 | ②未移植 |
+| `interface_events.cpp` | 535 | `AdventureMapScene`/`AdventureMapView` 自建事件 | ②未移植 |
+| `interface_focus.cpp` | 237 | 无 | ②未移植 |
+| `interface_gamearea.cpp` | 1053 | `AdventureMapScene` 自建滚动与绘制 | ②未移植 |
+| `interface_icons.cpp` | 433 | 无 | ②未移植 |
+| `interface_itemsbar.h` | 460 | `Widgets/ItemsBarLayout.cs`（自建） | ②未移植 |
+| `interface_list.h` | 540 | `Widgets/ListBox.cs`、`ListBoxBase.cs` | 已 1:1（保留） |
+| `interface_radar.cpp` | 459 | `AdventureMapScene` 自绘雷达 | ②未移植 |
+| `interface_status.cpp` | 440 | `Widgets/StatusPanel.cs` | ①部分 |
+| `player_info.cpp` | 380 | 无 | ③纯缺失 |
+| `skill_bar.cpp` | 394 | 无（`SpellScrollRow` 不是它） | ③纯缺失 |
+| `statusbar.cpp` | 62 | 无 | ③纯缺失 |
+| `ui_constants.h` | 33 | 散落在各处的常量 | ①部分 |
+
+### 5.3 执行顺序（一步一收口）
+
+| 步 | 内容 | 参考行号 | 收口标志 |
+| --- | --- | --- | --- |
+| A1 | `colorFade`（按秒数逐帧压暗到目标调色板） | `ui_tool.cpp:395-484` | 纯函数 + 单测 |
+| A2 | `fadeOutDisplay` / `fadeInDisplay` / `FadeDisplayWithPalette` / `InvertedFadeWithPalette` / `InvertedShadow` | `ui_tool.cpp:653-760` | 宿主淡入淡出改调参考实现 |
+| A3 | `ScreenPaletteRestorer` / `ApplicationClosureRestorer` / `GameInterfaceTypeRestorer` | `ui_tool.cpp:349-393` | 三件 RAII 换成移植 |
+| A4 | `CreateDeathWaveEffect` / `CreateHolyShoutEffect` / `createRippleEffect` | `ui_tool.cpp:485-652` | 战斗特效接入 |
+| A5 | `renderHeroRacePortrait` | `ui_tool.cpp:841-912` | 英雄对话框改用 |
+| A6 | `getLocalizedText` 两个重载；`getLocalizedStrings` 登记不搬（翻译层）；`UIScrollInertia` 推迟到 G3 | `ui_tool.cpp:890-1077` | 偏差入档 |
+| A7 | `processIntegerValueTyping`（A 系列漏项）；`RecruitDialog` 换成 `TypeKey` 并由 `RecruitWindowView` 调用。`SelectCountView` 没有键盘入口，留到该窗口补输入时接 | `ui_tool.cpp:766-839` | 招募输入走参考实现 |
+| B | `cursor.cpp` 全量（`Cursor` 类、动画帧表），删 `AdventureMapScene` 里的光标选择 | `cursor.cpp:1-225` | 地图上光标由 `Cursor` 决定 |
+| C | `ui_text.cpp` 收尾：`TextInputField`、`getCursorSprite`、字符校验与换行工具 | `ui_text.cpp:600-1132` | 存档命名、战役名可用 |
+| D | `ui_keyboard.cpp`（屏幕键盘）+ `ui_language.cpp` | `ui_keyboard.cpp:1-1146` | 名称输入全走参考键盘 |
+| E | `ui_window.cpp` + `ui_dialog.cpp`：`FrameBox`/`WindowPadding` 对拍，删 `FrameBoxChrome`/`StandardWindowChrome`；补 `MonsterDialogElement`/`CustomAnimationDialogElement` | `ui_window.cpp:1-541`、`ui_dialog.cpp:1-849` | 对话框骨架只剩参考一套 |
+| F | `ui_button.cpp` 剩余：透明背景按钮、`makeButtonWithBackground/Shadow`、`EMPTY_VERTICAL_GOOD_BUTTON`/`EMPTY_MAP_SELECT_BUTTON`、`getSupportedText` | `ui_button.cpp:1-813` | 删 `DialogButtonArtwork`、`ButtonArtwork` 自算段 |
+| G1 | `interface_base.cpp` / `interface_cpanel.cpp` / `interface_buttons.cpp` / `interface_border.cpp` | 共 822 行 | 冒险地图面板由参考类绘制 |
+| G2 | `interface_radar.cpp` / `interface_status.cpp` / `interface_icons.cpp` | 共 1 332 行 | 雷达、状态栏、图标条 |
+| G3 | `interface_gamearea.cpp`（滚动、绘制、tooltip 命中） | 1 053 行 | 删 `AdventureMapScene` 自建视口 |
+| G4 | `interface_events.cpp` / `interface_focus.cpp` | 共 772 行 | 删 `AdventureMapView` 自建事件 |
+| G5 | 收口：`AdventureMapScene` 只留场景装配 | — | 自建面板代码全部删除 |
+| H | `player_info.cpp`、`skill_bar.cpp`、`statusbar.cpp`、`ui_kingdom.cpp`、`ui_campaign.cpp`、`ui_monster.cpp`、`ui_mage_guild.cpp`、`ui_map_object.cpp`(+`ui_object_rendering.h`)、`ui_map_interface.cpp`、`ui_base.cpp`、`ui_constants.h` | 共 2 300 行 | 各自有 1:1 文件 |
+| I | `ui_font.cpp` 对拍（字形、断词、语言字符表） | 6 317 行 | 所有绘制经由参考 `Font` |
+| J | 清理与回归：删自建文件、迁测试、全量 `dotnet test` | — | 0 自建替代 |
+
+进度：A1（`colorFade`）、A2（淡出/淡入、调色板淡入淡出、反色阴影）、A3（三件作用域守卫 +
+`ScreenBuffer.ChangePalette`）、A4（死亡波浪 / 圣言 / 涟漪）、A5（`SubpixelResize` + 种族立绘）、
+A6（`getLocalizedText` + `ui_tool` 剩余件盘点）、A7（`processIntegerValueTyping` + 招募窗口接线）
+已完成，2026-11-21；下一步 B（`cursor.cpp` 全量）。
+
+### 5.4 自建删除台账（`gui/` 范围）
+
+| 端口文件 | 现在的样子 | 由谁接管 | 步骤 |
+| --- | --- | --- | --- |
+| `Dialogs/FrameBoxChrome.cs` | 自己拼的窗框边框 | `ui_window.cpp` 的 `FrameBox` | E |
+| `Dialogs/StandardWindowChrome.cs` | 同上，另一套 | 同上 | E |
+| `Widgets/DialogButtonArtwork.cs` | 自己算的对话框按钮立体感 | `ui_button.cpp` 的 `makeButtonSprites` 等 | F |
+| `Widgets/ButtonArtwork.cs` | 残留的文字定位与描边自算 | 同上 | F |
+| `Widgets/ItemsBarLayout.cs` | 自算格子 | `interface_itemsbar.h` 的 `ItemsBar` | G2 |
+| `Widgets/StatusPanel.cs` | 自算状态栏 | `interface_status.cpp` | G2 |
+| `Scenes/AdventureMapScene.cs` 的面板/雷达/视口段 | 自绘 | `interface_*.cpp` | G1~G5 |
+| `AdventureMapView` 的事件段 | 自建事件循环 | `interface_events.cpp` | G4 |
+| `Scenes/MageGuildWindow.cs` | 自建窗口 | `ui_mage_guild.cpp` | H |
+
+注：`Dialogs/` 下还有一批「未指名参考」的对话框（`ArenaDialog`、`TavernDialog`、`WellDialog` 等），它们对应的是
+`dialog/` 目录，等 `gui/` 收口后按同一套流程处理，不在本节台账内。
 

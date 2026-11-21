@@ -58,6 +58,9 @@ public static class Assets
                 BaseFiles.Clear();
                 BaseImages.Clear();
                 SyntheticFiles.Clear();
+
+                // The monochrome cursor frames are decoded here rather than by the archive reader, see CursorImages.
+                CursorImages.ClearCache();
             }
         }
     }

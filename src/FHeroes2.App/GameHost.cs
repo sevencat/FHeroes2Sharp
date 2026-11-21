@@ -116,7 +116,6 @@ public sealed class GameHost : IDisposable
         try
         {
             _presenter = new SdlPresenter(ScreenBuffer.DefaultSize, _options.WindowScale, _options.Fullscreen);
-            _presenter.SetPalette(_palette);
 
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
 

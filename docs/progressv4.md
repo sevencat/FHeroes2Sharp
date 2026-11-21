@@ -675,3 +675,179 @@ S12 那轮把 `gui/` 归成「端口自建界面架构」，其中按钮美术�
 
 冒烟：`--scene menu --cursor 565,380 --left-click` 截图里编辑器主菜单的三个按钮（`NEW MAP`/`LOAD MAP`/`MAIN MENU`）
 是参考的浅棕底图，`MAIN MENU` 那块就是现场合成的 `EMPTY_GOOD_BUTTON.ICN`，文字位置与参考一致。
+
+## 2026-11-21 第二阶段开工：`gui/` 的 1:1 缺口清单 + `ui_tool.cpp` 前三件
+
+按新口径（见 `docs/planv4.md` 第 5 节）把「端口自建界面」全部换成 1:1 移植。本轮先做三件事：
+
+* `FHeroes2.UI/Widgets/MovableText.cs`：`ui_tool.cpp:186` 的 `MovableText`。参考用 `ImageRestorer` 把背景贴回去，
+  端口每帧重画，所以 `Hide()` 只清标志位；`extraShiftY` 与 `textArea ^ roi` 的裁剪照抄，`DrawnArea` 给宿主标脏。
+* `FHeroes2.UI/Widgets/SystemInfoRenderer.cs`：`ui_tool.cpp:283`。位置 `(26, height - 30)`，FPS 取「最近一秒内的样本数 / 累计时间 + 0.05」，
+  一秒窗口、以及低于 10 帧时输出十分位的规则一致；时钟与墙上时间做成可注入委托，宿主用 `--system-info` 打开（参考是设置里的开关）。
+* `FHeroes2.UI/Widgets/ColorFade.cs` + `ImageOps.ApplyPalette( target, area, table )`：`ui_tool.cpp:395` 的 `colorFade()`。
+  灰阶搜索范围 `10..36`、`(start*(steps-id) + end*id)/steps` 的整数插值、最后一步不渲染、结束后的 `assignedValue` 重映射都照抄。
+
+偏差：`colorFade` 参考在函数内自跑事件循环，端口把循环交给宿主（每帧 `TryAdvance` + 结束 `Complete`）；
+`delay = round(1000/fps)` 为 0 时参考整除零，端口夹到 1 毫秒并让 `StepCount` 退化为 0。
+
+测试：`MovableTextTests` 6 例、`SystemInfoRendererTests` 5 例、`ColorFadeTests` 6 例；构建 0 错误 0 警告。
+冒烟：`--scene menu --system-info --screenshot` 左下角出现白字 `HH:MM:SS, FPS: nn`，与参考位置一致。
+
+## 2026-11-21 第二阶段 A2：淡出/淡入与调色板淡入淡出
+
+`ui_tool.cpp` 里和「变暗/变亮」有关的一整块，连它依赖的引擎函数一起搬：
+
+* `FHeroes2.Core/Imaging/PALColorId.cs`：`GetPALColorId()`（`engine/image.cpp:419`，表生成在 `:355`）。
+  候选是 No cycle 调色板的 227 个不重复色，距离用 Redmean，最后过 `PaletteId.NoCycle`。
+  偏差：参考把 64×64×64 的表在编译期嵌进可执行文件，端口每次现算（227 次比较），结果逐位相同。
+* `ImageOps.ApplyAlpha()`（`engine/image.cpp:1153`）：把调色板每项按 `alpha/255` 压暗后找回最近色，
+  再按这张表给源像素换色；索引 0..9 与 254..255 留在 0（黑色）。
+* `Widgets/DisplayFade.cs`：`fadeDisplay()` + `fadeOutDisplay()` + `fadeInDisplay()`（`ui_tool.cpp:62-118`、`:653-696`）。
+  `screenFadeTimeMs = 100`、`screenFadeFrameCount = 6`、`screenFadeStep = 42`、
+  `round` 取整、alpha 255 直接拷回、alpha 0 直接填黑、半程淡出的帧数与时长都对上。
+* `Widgets/DisplayFadeWithPalette.cs`：`FadeDisplayWithPalette()`（`:698-724`），每帧对留底重复换色再贴回。
+* `Widgets/InvertedShadow.cs`：`InvertedShadow()` 与 `InvertedFadeWithPalette()`（`:726-764`），
+  四个环绕区域分别换色、挖掉的窗口不动、零尺寸的块跳过。
+
+偏差：参考都在函数内部跑事件循环并自己渲染，端口改成 `TryAdvance()` 逐帧、由宿主呈现（与 ColorFade 同一套约定）；
+`fadeDisplay()` 里的 `Cursor::Get().SetThemes( Cursor::POINTER )` 等光标移植（B 步）后再接；负的 alpha 在参考里
+会先命中 `assert` 再因 `static_cast<uint8_t>` 回绕，端口改为按 `Math.Round` 后的值走同一分支。
+
+本步没有可删的自建件：端口此前根本没有屏幕淡入淡出，参考的调用点（开局、战斗、城堡）接线时随各自场景一起做。
+
+测试：`PALColorIdTests` 6 例、`ApplyAlphaTests` 5 例、`DisplayFadeTests` 6 例、`PaletteFadeTests` 5 例。
+全量 4 652 绿（Core 247 + Assets 416 + UI 911 + Game 3 078），构建 0 错误 0 警告。
+
+## 2026-11-21 A3：三件作用域守卫（屏幕调色板 / 退出请求 / 界面类型）
+
+`ui_tool.cpp:349-393` 的三件 RAII 全部落成:
+
+* `Widgets/ScreenPaletteRestorer.cs`:`ScreenPaletteRestorer`。`ChangePalette` 每帧换视频自带调色板，
+  `Dispose` 时换回游戏调色板（未换过就不动，对应 `_paletteChanged`）。
+* `Widgets/ApplicationClosureRestorer.cs`:`ApplicationClosureRestorer`。作用域内 `QuitEventHook` 恒 `false`，
+  结束后还回标准钩子。偏差：参考写死 `Game::processExitEvent() == QUIT_GAME`，端口把标准钩子作为构造参数传入。
+* `Widgets/GameInterfaceTypeRestorer.cs`:`GameInterfaceTypeRestorer`。构造记下原类型、不同才切，`Dispose` 切回；
+  `InterfaceType` / `OriginalInterfaceType` 两个只读成员与参考同名。偏差：注入 `Settings` 而非取全局单例。
+
+依赖补齐（`Display::changePalette`，`engine/screen.cpp:1622`）：
+
+* `ScreenBuffer.ChangePalette( palette )` + `Palette` 改为可换：同一实例直接返回（对应参考的指针比较），
+  换掉后 `InvalidateAll()`——端口在上传时把索引落成 RGBA，换调色板必须整屏重传。
+* `SdlPresenter` 去掉 `SetPalette`，新增 `EnsureLookup`：上传时按 `frame.Palette` 的实例重建查找表，
+  于是「换调色板」在端口只有一条路径（改画面调色板），`GameHost` 里的 `SetPalette` 调用随之删除。
+
+偏差：参考构造/析构里的 `RenderProcessor::stopColorCycling()/startColorCycling()` 没有对应物——端口还没有色彩循环
+（`engine/render_processor.cpp` 未移植，所有画面按固定调色板出图），此处恒等于空操作，已在 XML 注释里写明等
+色彩循环移植时接上。
+
+测试：`ScreenBufferTests` 2 例、`RestorerTests` 5 例。全量 4 659 绿（Core 249 + Assets 416 + UI 916 + Game 3 078），
+构建 0 错误 0 警告。冒烟：`--scene menu --screenshot` 出图正常（菜单画面 1280x960，240 KB）。
+
+## 2026-11-21 A4：死亡波浪 / 圣言 / 涟漪三个法术特效
+
+`ui_tool.cpp` 里三个只吃索引像素的特效，落在 `Core/Imaging/SpellEffects.cs`:
+
+* `SpellEffects.CreateDeathWaveEffect()`（`:485-543`）：按死亡波浪曲线把每一列整体下移、曲线以下按相反顺序
+  翻回去；曲线越界时参考 `assert(0) + continue`，端口同样跳过该列。参考原地扩容并复用调用方的 `Image & out`，
+  端口每次返回新图（`PixelBuffer` 尺寸固定），尺寸取 `outWaveWidth x inHeight`——与调用点只拷左上
+  `waveWidth x height` 的那一块完全对齐，写到的列都是从头覆盖，结果逐像素相同。
+* `SpellEffects.CreateHolyShoutEffect()`（`:545-619`）：十字均值模糊 + 暗红系数
+  （红 `4 - s/280`、绿蓝 `4 - s/80`），再走 `GetColorId`（先除 4 再查 64³ 表）。
+  偏差：参考 `getRGBGamePalette()` 是 6 位色，端口 `Palette` 是左移两位后的 0..255，因此先 `>> 2` 还原；
+  参考 `return in;` 返回写时复制的同一张图，端口给 `Clone()`。
+* `SpellEffects.CreateRippleEffect()`（`:621-651`）：逐行按 `sin( 2π·y/period + phase )` 横向平移，
+  新图宽出两倍幅度、锚点左移一个幅度，图片与变换层一起搬，空出来的像素保持 `reset()` 的「变换 1」。
+  偏差：`std::round`（四舍五入远离零）用 `MidpointRounding.AwayFromZero`；负幅度与 `period == 0` 直接抛异常。
+
+放 Core 而不放 UI 的原因写在类的注释里：调用方是战斗界面（Game 层）与 `game_assets.cpp` 的 ICN 生成（Assets 层），
+Assets 只引用 Core，放 UI 会被上层反向依赖。
+
+本步没有可删的自建件：端口此前没有任何战斗法术特效，战斗界面整体还没移植。
+
+测试：`SpellEffectsTests` 12 例（死亡波浪 4、圣言 4、涟漪 4）。全量 4 671 绿
+（Core 261 + Assets 416 + UI 916 + Game 3 078），构建 0 错误 0 警告。
+
+## 2026-11-21 A5：`renderHeroRacePortrait`（英雄种族立绘）
+
+两处新件：
+
+* `Core/Imaging/ImageOps.SubpixelResize.cs`（`image.cpp:2986-3236`）：角对齐双线性重采样，
+  `Sprite → Sprite`、`Sprite → PixelBuffer`、`PixelBuffer → PixelBuffer` 以及带源 / 目标区域的四个重载。
+  插值出的 RGB 经 `PALColorId.Get()` 落回调色板；源图带变换层时只累计变换值 0 的像素，
+  权重和不足 0.5 的落点写黑并标变换 1；源图无变换层则纯算术加权，目标变换层清零。
+  放 Core 是因为 `ui_tool` 的调用点在 UI 层，而 `game_assets` 的 ICN 生成在 Assets 层。
+* `UI/Widgets/HeroRacePortrait.cs`：`TryGetArtwork` 是 `:860-886` 的 `switch`（六族 + `RAND` 用
+  `CMBTHROW` + 紫调色板），`Compose` 是 `:845-858` 的 lambda 加 `:887` 的 `Copy`，`TryRender` 负责读两张 ICN。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| `Assets::getImage()` 的全局图片缓存 | 没有对应物，`TryRender` 每调一次读一遍 ICN；类注释写明按帧重画的调用点要自己缓存 |
+| `default:` 分支 `assert( 0 )` | `TryGetArtwork` 返回 `false`，`TryRender` 返回 `null`，调用点跳过绘制 |
+| 目标区域只有 1 像素时步长 `NaN` 转 `int`（未定义行为） | `SubpixelResize` 里非有限采样位置按 0 处理，1 像素维退化为「全取第一条」 |
+| `Copy` 进调用方的 `output` | `Compose` 直接把整张图作为新 `Sprite` 返回 |
+
+落地时纠正了自己两处误读：立绘比肖像矮时目标 Y 是 `portPos.height - height`（贴底，不是贴顶）；
+返回图是单层 `Image`（没有变换层），背景的透明像素在重采样阶段就被压成不透明像素。
+
+A5 的收口标志写的是「英雄对话框改用」，但端口没有 `heroes_dialog`（S5-8 那条已记：界面与翻译层归 S13，
+端口不做翻译，`UI/Dialogs/HeroQuickInfo*` 只覆盖 `getHeroQuickInfo` 那一半），目前没有可接的调用点。
+`HeroRacePortrait` 与 `SubpixelResize` 先备好，等 `heroes_dialog.cpp` 真正移植（或编辑器地图规格窗口，`editor_map_specs_window.cpp:272` 也要它）时直接用。
+
+测试：`SubpixelResizeTests` 6 例、`HeroRacePortraitTests` 13 例（7 族取材 + 2 拒收 + 居中 + 透明 + 紫调色板 + 真实资源端到端）。
+全量 4 690 绿（Core 267 + Assets 416 + UI 929 + Game 3 078），构建 0 错误 0 警告。
+
+## 2026-11-21 A6：`getLocalizedText`（+ `ui_tool.cpp` 剩余件盘点）
+
+新增 `Game/Gui/LocalizedText.cs`：`ui_tool.cpp:913-948` 的两个重载
+（`Create(IReadOnlyList<LocalizedString>, FontType)` 与 `Create(IReadOnlyList<LocalizedTextRun>)`，后者带
+`LocalizedTextRun` 记录）。语义照抄：空表返回 `null`，一段返回 `Text`，多段返回 `MultiFontText`——
+返回类型是参考的约定，调用点据此决定排版。空串段由 `MultiFontText.Add` 丢掉，与参考一致。
+
+偏差：参考的 `Text( text, font, language )` 把语言标签交给字体层挑字形，端口没有字体回退（本地化未移植，
+ADR-172），`LocalizedString.Language` 在这里被忽略，每段都用调用方给的字体。
+放 `Game/Gui` 而不是 `UI/Widgets`：只依赖 `Text`/`MultiFontText`/`LocalizedString`，全在 Game 层，
+Game 层将来的存档与事件文案也要用。
+
+盘点本步顺带核出的三处缺口（原计划 A 系列没列全）：
+
+| 参考 | 现状 | 处理 |
+| --- | --- | --- |
+| `UIScrollInertia`（`ui_tool.cpp:950-1076`，`ui_tool.h:351-407`） | 计划原写「参考无调用点、不搬」，**这条是错的**：`interface_gamearea.h:306` 持有 `_inertiaHandler`，`interface_gamearea.cpp:970/1080/1090/1106/1166` 调 `isActive`/`commitRelease`/`reset`/`addMovementStep`/`update` | 推迟到 G3（端口先有 `interface_gamearea` 才有调用点，也才定得下时间源）；已写进新加的 A7 行 |
+| `getLocalizedStrings`（`ui_tool.cpp:890-911`） | 未移植。它按「当前语言 / 替换值语言」把模板切成三段，靠的正是端口没有的字形回退 | 登记不搬（ADR-172），与 `replace` 占位符文案一起留在翻译层 |
+| `processIntegerValueTyping`（`ui_tool.cpp:766-839`） | A1–A6 都没覆盖。端口只在 `RecruitDialog.TypeDigit`/`ClearTyped` 里自建了一份（缺小键盘数字与负号规则），`dialog_selectcount` 的输入整个没做 | 新增 A7，移植后 `RecruitWindowView`/`SelectCountView` 改用 |
+
+测试：`LocalizedTextTests` 6 例（空表 ×2、单段类型、单段自定义字体、多段拼接、逐段字体不同、空串段）。
+全量 4 696 绿（Core 267 + Assets 416 + UI 929 + Game 3 084），构建 0 错误 0 警告。
+
+## 2026-11-21 A7：`processIntegerValueTyping`（数字键入）
+
+新增 `UI/Widgets/IntegerValueTyping.cs`（`ui_tool.cpp:766-839`）：`Process( min, max, ref valueBuf, key )`。
+四条分支逐条照抄——退格 / 删除清空缓冲区并答 `clamp( 0, min, max )`；减号只在 `min < 0` 且缓冲区全为零时
+把内容换成 `"-"`；主键盘与小键盘的数字追加后解析，超出范围或溢出就把这一位退回去；其余键原样返回空。
+末尾那条「解析成功但不在范围内」的怪分支也保留了：数字留在缓冲区里但不报告（`min = 1` 时键入 `0` 之后再键
+`5` 得到 `05` → 5）。
+
+接线：`RecruitDialog.TypeDigit(char)`/`ClearTyped()` 删掉，换成 `TypeKey( Key )`——只留下「把参考算出来的
+`result = *value` 落进 `Count`」这一句，缓冲仍然是模型里的 `_typedValue`（参考的 `typedValueBuf` 是
+`Dialog::RecruitMonster()` 的局部变量，同一层）。`RecruitWindowView.TryTypeDigit` 从「自己判数字/退格」缩成
+「有按键就交给 `TypeKey`」，行为与参考的 else-if 链一致：键入被接受时跳过本帧的鼠标分支，字母键之类仍落到鼠标。
+
+偏差：
+
+| 参考 | 端口做法 |
+| --- | --- |
+| 从 `LocalEvent::Get()` 读全局事件 | 接收一个 `Key`，对话框模型不依赖输入状态，测试也不用造一帧事件 |
+| `assert( min <= max )` | `ArgumentOutOfRangeException` |
+| `std::stoi` 对只有减号的缓冲区抛未捕获的 `invalid_argument` | 解析失败一律当作「这一位没接受」，缓冲回退一位 |
+
+`SelectCountView` 没有改用：它的键盘输入整个不存在（只有 `SetLeftButton( down, point )`，没有 `LocalEvent`
+入口），`dialog_selectcount.cpp:168`（单值）与 `:569`（重新分配）的键入要等该窗口补输入时才接得上；届时直接调
+`IntegerValueTyping.Process` 即可。计划 A7 行已按此改写。
+
+测试：`IntegerValueTypingTests` 10 例（累加与回退、int32 溢出回退、退格 / 删除、减号三条、小键盘数字、
+无关键、越界数字留在缓冲区、反向区间）；`RecruitDialogTests` 的四个键入用例改成 `TypeKey`，
+`RecruitWindowTests` 里用 `ClearTyped` 的那处改成 `SetCount( 0 )`。
+全量 4 706 绿（Core 267 + Assets 416 + UI 939 + Game 3 084），构建 0 错误 0 警告。
+
