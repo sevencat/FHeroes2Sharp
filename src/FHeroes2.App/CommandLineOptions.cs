@@ -14,7 +14,8 @@ namespace FHeroes2.App;
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--view-world]
+///                 [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
 ///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
@@ -52,8 +53,9 @@ public sealed class CommandLineOptions
 
     /// <summary>
     /// Pretends the right mouse button is held down at the position of <c>--cursor</c>. The
-    /// tooltips of the main menu only exist while the button is pressed, so this is what makes a
-    /// screenshot of one possible; it has no effect without <c>--cursor</c>.
+    /// tooltips of the main menu and the marketplace's kingdom income popup only exist while the
+    /// button is pressed, so this is what makes a screenshot of one possible; it has no effect
+    /// without <c>--cursor</c>.
     /// </summary>
     public bool RightButton { get; private set; }
 
@@ -135,6 +137,47 @@ public sealed class CommandLineOptions
     /// screenshotted and how the tile to text path is smoke tested without a mouse.
     /// </summary>
     public bool QuickInfo { get; private set; }
+
+    /// <summary>
+    /// Opens the town screen of the first town of the acting kingdom as soon as the adventure map is up
+    /// (<c>--enter-town</c>). The screen normally opens by clicking one of the player's towns on the map,
+    /// so this is how its frame is screenshotted and smoke tested without a mouse.
+    /// </summary>
+    public bool EnterTown { get; private set; }
+
+    /// <summary>
+    /// Opens one of the town screen's windows right after <c>--enter-town</c> (<c>--town-window
+    /// mageguild</c>, <c>well</c>, <c>market</c>). The windows normally open by clicking a building, so
+    /// this is how their frames are screenshotted and smoke tested without a mouse.
+    /// </summary>
+    public string? TownWindow { get; private set; }
+
+    /// <summary>
+    /// Which town of the acting kingdom <c>--enter-town</c> opens (<c>--town-select</c>), zero based in the
+    /// order of <c>Kingdom.Castles</c>. Towns of a fresh map have random buildings, so picking the town is
+    /// how a smoke run reaches one that has the building under test.
+    /// </summary>
+    public int TownIndex { get; private set; }
+
+    /// <summary>
+    /// The name of one <c>BuildingType</c> to add to the entered town (<c>--town-build</c>). A fresh map
+    /// starts every town with nothing but its fort, so windows of built buildings need this to be reached.
+    /// </summary>
+    public string? TownBuild { get; private set; }
+
+    /// <summary>
+    /// The name of one <c>BuildingType</c> whose window is opened right after the town screen appears
+    /// (<c>--town-building DwellingMonster1</c>). It goes through the same <c>OpenBuilding</c> a click uses,
+    /// which is how the dwelling recruitment is reached without a mouse.
+    /// </summary>
+    public string? TownBuilding { get; private set; }
+
+    /// <summary>
+    /// Which of the two heroes on offer the recruit hero dialog shows (<c>--town-hero 0</c> or <c>1</c>).
+    /// The dialog normally needs two clicks — the slot of the building list, then OKAY — so this is how a
+    /// script reaches it in one run, and how a second run with <c>--left-click</c> hires the hero.
+    /// </summary>
+    public int? TownHero { get; private set; }
 
     /// <summary>
     /// Paints a rectangle of ground as soon as the editor opens (<c>--editor-paint
@@ -362,6 +405,43 @@ public sealed class CommandLineOptions
                     options.QuickInfo = true;
                     break;
 
+                case "--enter-town":
+                    options.EnterTown = true;
+                    break;
+
+                case "--town-window":
+                    options.TownWindow = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--town-build":
+                    options.TownBuild = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--town-building":
+                    options.TownBuilding = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--town-hero":
+                    string rawHero = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawHero, out int heroIndex) || heroIndex is < 0 or > 1)
+                    {
+                        throw new ArgumentException($"'{argument}' expects 0 or 1, got '{rawHero}'.");
+                    }
+
+                    options.TownHero = heroIndex;
+                    break;
+
+                case "--town-select":
+                    string rawTown = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawTown, out int townIndex) || townIndex < 0)
+                    {
+                        throw new ArgumentException(
+                            $"'{argument}' expects a zero based town index, got '{rawTown}'.");
+                    }
+
+                    options.TownIndex = townIndex;
+                    break;
+
                 case "--editor-paint":
                     options.EditorPaint = ParseEditorPaint(RequireValue(arguments, ref i, argument), argument);
                     break;
@@ -451,6 +531,12 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
         Console.WriteLine("  --view-world        Opens the View World window as soon as the map is up.");
+        Console.WriteLine("  --enter-town        Opens the town screen of the first town as soon as the map is up.");
+        Console.WriteLine("  --town-window <name>  Opens one of its windows, e.g. 'mageguild' or 'market', after --enter-town.");
+        Console.WriteLine("  --town-select <n>   Opens the n-th town of the kingdom (0 based) instead of the first.");
+        Console.WriteLine("  --town-build <name>  Adds one BuildingType to the entered town, e.g. 'MageGuild1'.");
+        Console.WriteLine("  --town-building <name>  Opens that building's window, e.g. 'Well' or 'DwellingMonster1'.");
+        Console.WriteLine("  --town-hero <0|1>   Opens the recruit hero dialog of one of the two heroes on offer.");
         Console.WriteLine("  --editor-paint <x,y,w,h,ground>  Paints that rectangle of tiles when the editor");
         Console.WriteLine("                      opens, e.g. '50,50,6,4,Snow' (ground name or 1..9).");
         Console.WriteLine("  --editor-save <file>  Saves the map to that file when the editor opens; combine with");

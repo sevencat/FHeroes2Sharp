@@ -71,6 +71,64 @@ public sealed class SpriteTests
     }
 
     [Fact]
+    public void Transpose_SwapsRowsAndColumns()
+    {
+        Sprite sprite = new(3, 2, 5, -6);
+        for (int y = 0; y < 2; ++y)
+        {
+            for (int x = 0; x < 3; ++x)
+            {
+                sprite.Image[x, y] = (byte)(1 + (y * 3) + x);
+            }
+        }
+
+        Sprite transposed = sprite.Transpose();
+
+        Assert.Equal(2, transposed.Width);
+        Assert.Equal(3, transposed.Height);
+        Assert.Equal(5, transposed.OffsetX);
+        Assert.Equal(-6, transposed.OffsetY);
+
+        // out(x, y) = in(y, x): the first source row becomes the first result column.
+        Assert.Equal(1, transposed.Image[0, 0]);
+        Assert.Equal(4, transposed.Image[1, 0]);
+        Assert.Equal(2, transposed.Image[0, 1]);
+        Assert.Equal(5, transposed.Image[1, 1]);
+        Assert.Equal(3, transposed.Image[0, 2]);
+        Assert.Equal(6, transposed.Image[1, 2]);
+    }
+
+    [Fact]
+    public void Transpose_CarriesTheTransformLayerAlong()
+    {
+        Sprite sprite = new(2, 3);
+        sprite.Image[1, 2] = 17;
+        sprite.Transform![(2 * 2) + 1] = 1;
+
+        Sprite transposed = sprite.Transpose();
+
+        Assert.Equal(17, transposed.Image[2, 1]);
+        Assert.Equal(1, transposed.Transform![(1 * 3) + 2]);
+    }
+
+    [Fact]
+    public void TransposeOfTheUpArrowPointsLeft()
+    {
+        // Pin the geometry, not just the loop: transposing an up arrow (wide at the bottom, tip at
+        // the top) has to yield a left arrow (wide at the right, tip at the left).
+        Sprite arrow = new(3, 3);
+        arrow.Image[1, 0] = 9; // tip
+        arrow.Image[0, 2] = 7; // bottom left
+        arrow.Image[2, 2] = 8; // bottom right
+
+        Sprite left = arrow.Transpose();
+
+        Assert.Equal(9, left.Image[0, 1]);
+        Assert.Equal(7, left.Image[2, 0]);
+        Assert.Equal(8, left.Image[2, 2]);
+    }
+
+    [Fact]
     public void BlitSprite_CopiesOpaquePixelsAndSkipsTransparentOnes()
     {
         PixelBuffer destination = new(2, 1);

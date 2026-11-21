@@ -68,15 +68,17 @@ public sealed class Kingdoms
     /// </summary>
     /// <remarks>
     /// 参考：<c>world.cpp:426</c>（<c>kingdoms.NewWeek()</c>）→<c>kingdom.cpp:778</c>。周数在参考里由
-    /// <c>world.CountWeek()</c> 提供，端口提到参数上。
+    /// <c>world.CountWeek()</c> 提供，端口提到参数上；<paramref name="world"/> 只为了让每个王国补位酒馆的那两位
+    /// 英雄（<c>kingdom.cpp:268</c>），七个王国本身仍然不持有世界（ADR-111）。
     /// </remarks>
+    /// <param name="world">The map and its hero pool.</param>
     /// <param name="weekCount">Weeks since the start of the game.</param>
     /// <param name="isDebugMode">Whether the reference's <c>IS_DEVEL()</c> build is in effect.</param>
-    public void NewWeek(uint weekCount, bool isDebugMode = false)
+    public void NewWeek(World world, uint weekCount, bool isDebugMode = false)
     {
         foreach (Kingdom kingdom in _kingdoms)
         {
-            kingdom.ActionNewWeek(weekCount, isDebugMode);
+            kingdom.ActionNewWeek(world, weekCount, isDebugMode);
         }
     }
 

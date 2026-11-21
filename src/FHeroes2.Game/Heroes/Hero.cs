@@ -103,6 +103,9 @@ public sealed partial class Hero
     private Mp2ObjectType _objectTypeUnderHero = Mp2ObjectType.None;
     private HeroModes _modes = HeroModes.None;
 
+    /// <summary>The name the map gave the hero, <c>_name</c>; empty means "use the default one".</summary>
+    private string _customName = string.Empty;
+
     /// <summary>
     /// Creates a hero with the given id and race.
     /// </summary>
@@ -283,20 +286,34 @@ public sealed partial class Hero
     public int MapIndex { get; private set; } = NoPosition;
 
     /// <summary>
-    /// The name the map gave the hero, <c>GetName()</c>, empty when the map did not name him.
+    /// The name of the hero, <c>Heroes::GetName()</c> (<c>heroes.cpp:2100-2116</c>): the name the map gave him,
+    /// or the race's default name when the map did not name him.
     /// </summary>
     /// <remarks>
-    /// The 73 default names are a table with translated strings (<c>heroes.cpp</c>, <c>_name</c>
-    /// initialised per race), which the port has no text layer for yet; only custom names reach this
-    /// property so far.
+    /// 参考的 <c>_name</c> 只在读地图时由文字层写入，空着就回落到 <c>defaultHeroNames[id]</c>；端口照抄这个回落，
+    /// 于是没有自定义名字的英雄也有名字（<see cref="HeroNames"/>）。
     /// </remarks>
-    public string Name { get; private set; } = string.Empty;
+    public string Name
+    {
+        get => _customName.Length > 0 ? _customName : HeroNames.Get(Id);
+        private set => _customName = value;
+    }
 
     /// <summary>
     /// Restores the stolen French characters of the name, <c>Heroes::fixFrenchCharactersInName()</c>
     /// (called from <c>world.cpp:1281-1283</c>).
     /// </summary>
-    internal void FixFrenchCharactersInName() => Name = MapTextCodec.FixFrenchCharacters(Name);
+    /// <remarks>
+    /// 参考只处理 <c>_name</c>——默认名字是 ASCII，不需要修；端口同样只动自定义名字，否则会把默认名字写进
+    /// <c>_customName</c>，之后再也回不到这张表。
+    /// </remarks>
+    internal void FixFrenchCharactersInName()
+    {
+        if (_customName.Length > 0)
+        {
+            _customName = MapTextCodec.FixFrenchCharacters(_customName);
+        }
+    }
 
     /// <summary>
     /// The tile a patrolling hero guards, <c>_patrolCenter</c>; the tile he stands on when the map placed

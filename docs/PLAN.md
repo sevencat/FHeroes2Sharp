@@ -749,7 +749,7 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 | 设置窗口 | 7 个 1 907：`dialog_hotkeys` 384、`dialog_system_options` 379、`dialog_resolution` 274、`dialog_graphics_settings` 252、`dialog_interface_settings` 221、`dialog_audio` 212、`dialog_random_map_generator` 205 | 1 907 | **不卡 `OptionButtonGroup`**：当前参考改用 `drawOption` 网格（`ui_option_item.cpp`），端口的 `OptionItem` 已在；每个窗口是一次网格绘制 + 点击映射 |
 | `dialog_selectitems` | 1 777 | 1 777 | 卡 `TextBox` 与滚动列表 |
 | `maps` 剩余 | `maps_tiles_render` 1 118、随机地图三件 2 121 | 3 239 | 地形绘制端口还没有等价物；随机地图是旁支 |
-| 城堡屏 | `castle_dialog` 859（其中布局与资源面板已落，剩 ≈600）、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel` 已落；缺建筑 blit 与事件循环，**六个已落窗口仍没有入口** |
+| 城堡屏 | `castle_dialog` 859（布局、资源面板、建筑绘制、整屏合成、点击分派、场景循环与魔法塔/水井入口已落，剩 ≈90）、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | ≈1 500 | 规则层已全，`CastleDialogLayout`/`ResourcePanel`/`CastleScene`/`MageGuildWindow`/`WellWindow` 已落；**其余四个已落窗口仍没有入口**，缺玩家配色与淡入 |
 | `heroes` 剩余 | `heroes_meeting` 695、`heroes_spell` 333、`heroes_indicator` 269、`direction` 186 | 1 483 | 会面窗口依赖已落的 `ArmyInfo` |
 | `campaign` | 3 个 1 874 | 1 874 | 旁支，等 P6 |
 | `engine` 剩余 | `image_color_conversion` 1 362、`audio` 867（播放层）、`audio_xmi2mid` 579、`system` 495、`smk_decoder` 264 … | ≈3 700 | 除 `smk`/`xmi2mid` 外多为平台层 |
@@ -831,7 +831,9 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   视图那一半：`MarketplaceLayout` 摆位、`MarketplaceArtwork`（`TRADPOST` 十九帧 + `MARKETPLACE_ICON` +
   `RESOURCE` 七帧 + 三个按钮）、`MarketplaceView.Draw`/`ProcessEvents`（两组 34×34 格子、交易条、
   `Scrollbar` 拖拽与滚轮、左右箭头与 Max/Min、税率图标、成交），`ResourceIconIndex` 给
-  `RESOURCE.ICN` 的序号表。弹出来的两个子窗口见下两行
+  `RESOURCE.ICN` 的序号表。场景侧的 `MarketplaceWindow` 已把它接进城堡屏（第十批，`--town-window market`）；
+  `MARKETPLACE_ICON` 在原版 AGG 里不存在，所以 `MarketplaceArtwork` 收它时允许缺省，税率那行只画 `x N`。
+  弹出来的两个子窗口见下两行
 * ✅ `ui_dialog.cpp` 的元素行 + `showKingdomIncome()`→`MessageBox` 扩展 + `KingdomIncome`：
   `MessageBox.Create` 收一个 `DialogElement` 列表，按 `( max(行宽, 元素宽) + 10 ) × (个数 + 1) ≤ 244`
   打包成行、行间 10 px、元素在行内底对齐居中、行高计入框高，`ProcessEvents` 把元素的
@@ -1071,8 +1073,10 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
   剩余缺口写明白：塔的守城强度（`Battle::Tower`）、`ActionNewMonth` 的维护费与税收、`DrawImageCastle`
   （城堡屏）、`ActionPreBattle` 的 AI 分支（`AI::Planner::CastlePreBattle`）；
   ◐ `buildinginfo.cpp` 的**数据层**已转：`BuildingInfo`（四个改写、状态、成本/名字/描述/矩形、
-  `getBuildingDescription` 的住所分支）、`DwellingsBar`（六项、布局、命中、周产、左右键意图），红黑绘制与
-  招募/购买弹窗未转（ADR-165）；◐ `castle_building.cpp` 的**非绘制部分**已转：`FadeBuilding` 的 9 步淡入
+  `getBuildingDescription` 的住所分支）、`DwellingsBar`（六项、布局、命中、周产、左右键意图）；**建造说明框**
+  （`Dialog::BuyBuilding()`）在第十二批补齐：`BuildDialogLayout`/`BuildDialogArtwork`/`BuildDialogView`/
+  `ResourceCostBox` 加场景外壳 `BuildWindow`，含右键帮助；只剩城镇屏建筑格子的红黑角标（`BuildingInfo::Redraw`）
+  与进入说明框的 `BUILD_STRUCTURE` 列表（ADR-165）；◐ `castle_building.cpp` 的**非绘制部分**已转：`FadeBuilding` 的 9 步淡入
   （帧钟当参数）、`BuildingsRenderQueue`（绘制优先级 + 屏幕偏移）、`CastleBuildingRender` 的三个判定
   （连接件、是否建完、这栋画不画，含升级替代基础建筑的淡入例外），blit 未转（ADR-166）；
   ◐ `castle_mageguild.cpp`/`castle_well.cpp` 的**规则部分**已转：`Castle.GetMageGuildSpellRows` 的五层行
@@ -1260,7 +1264,7 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 
 | 序 | 工作包 | 参考文件（行数） | 批数 | 前置 | 退出条件 |
 | --- | --- | --- | --- | --- | --- |
-| **P0** | 城堡屏入口（进行中：布局与资源面板已落） | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | 2–3 | 无：`Castle`/`Kingdom`/`BuildingInfo`/`FadeBuilding` 与六个子窗口（招募、水井、魔法塔、军队信息、市场、城建）都已落，只缺入口 | 冒险屏点城堡 → 城镇屏 → 六个窗口能开、能回、能改数据 → 出城；`castle-dialog.png` 基线；M6 验收 |
+| **P0** | 城堡屏入口（进行中：布局、绘制、合成、点击、进退游戏、魔法塔/水井/市场/盗贼公会/建造确认/建造列表/招募英雄窗口、水井里的招募窗口与城镇屏点住宅的招募、英雄速览框都已落，缺玩家配色与淡入） | `castle_dialog` 859、`castle_town` 772、`castle_building`/`buildinginfo` 的 blit | 2–3 | 无：`Castle`/`Kingdom`/`BuildingInfo`/`FadeBuilding` 与六个子窗口（招募、水井、魔法塔、军队信息、市场、城建）都已落，招募窗口的外壳（`RecruitWindow` + `RecruitWindowView`）在水井与城镇屏两条路径上都能开能回，市场的两个说明框（兑换率、每日收入）与盗贼公会的十行排行（含神谕全解锁、右键 `"Exit this menu."`）也接上了，建造列表的 19 格、船长面板与阵型图标、两个英雄位在第十三批落齐、点开它们的招募确认框在第十四批落齐（`Hero.Name` 的 73 个默认名与换周补位一并补上），英雄速览框（`HeroQuickInfoView`）在第十五批落齐（招募框相框、建造列表英雄位、城镇屏英雄像三处右键），城镇屏左侧的船长像与它的速览在第十六批落齐（`CaptainPortrait` + `HeroQuickInfoSubject`），缺的是玩家配色与淡入 | 冒险屏点城堡 → 城镇屏 → 六个窗口能开、能回、能改数据 → 出城；`castle-dialog.png` 基线；M6 验收 |
 | **P1** | 设置窗口网格 | 7 个 1 907 | 1–2 | 无：`OptionItem` 已在（`drawOption` 网格） | 每个窗口一组网格 + 点击映射，改动落到 `Settings`；`SettingsDialog` 的 chevron 替身换成同一套网格 |
 | **P2** | `TextBox` + `dialog_selectitems` | 1 777 | 1–2 | P1 | 选件窗口能滚动、能过滤、能返回选择；`InputString` 的文本框一并落 |
 | **P3** | 冒险界面外壳补全 | `interface_events` 535、`interface_icons` 433、`skill_bar` 394、`ui_map_object` 316、`ui_castle` 271、`interface_buttons` 249、`interface_focus` 237 | 2–3 | P0（`ui_castle` 与城镇屏共用命中表） | 焦点/悬停/按钮面板/英雄栏与参考一致；`adventure-map.png` 重拍 |
@@ -1272,7 +1276,7 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
 **不排进任何包**：`map_format_helper.cpp`/`map_format_info.cpp`（本项目走 MP2）、`dir.cpp`、`tinyconfig.cpp`、
 翻译层（ADR-139）、`tools` 8 个（有 `AssetProbe` 对拍）。
 
-排序只看一条：**哪个动作能最先接出让玩家跑起来的闭环**。城堡屏排最前，因为六个窗口都已落却都没有入口，
+排序只看一条：**哪个动作能最先接出让玩家跑起来的闭环**。城堡屏排最前，因为六个窗口都已落却（魔法塔与水井之外）都没有入口，
 它一到位，「进城镇 → 招募/水井/魔法塔 → 出城」就是完整可玩的一段；设置窗口与 `selectitems` 次之，它们是把
 对话框这一层真正收尾；冒险外壳补全排在其后，因为它不再挡任何东西。战斗与 AI 仍留最后，但进包前先清掉
 `monster_anim` 与 `battle_action` 的五个分支，否则那个批次会一拖再拖。
@@ -1319,10 +1323,37 @@ Game 2636 → **2643**，UI 187 → **193**，全解决方案 3 439 → **3 452*
    这一步的招募子项只欠热键（`DEFAULT_UP/DOWN/LEFT/RIGHT/OKAY/CANCEL`）与 `ArmyInfo()` 的窗口内容。剩下的
    `Dialog::InputString` 的文本框（`TextInput`）还没有动。
 4. **城堡屏入口**（P0，进行中）：`castle_dialog`、`castle_town`、`castle_building`、`ui_castle`、`ui_mage_guild`。
-   分两批：先 `CastleDialogLayout` + 静态绘制（`TOWNBKG` 背景、日期行、状态行、左右切城箭头、EXIT、建筑区命中表），
-   再把六个已落窗口接进事件循环并补 `castle-dialog.png` 基线。**第一批已全部落**（`CastleDialogLayout`、
-   `ResourcePanel`、`CastleScreenPainter`，39 条测试）；第二步只剩事件循环（切城、EXIT、点建筑、点资源面板）、
-   城名与状态栏文字、玩家配色与淡入混合。
+   分三批：先 `CastleDialogLayout` + 静态绘制（`TOWNBKG` 背景、日期行、状态行、左右切城箭头、EXIT），
+   再 `CastleScreenPainter` 的建筑与淡入，最后把六个已落窗口接进事件循环并补 `castle-dialog.png` 基线。
+   **前两批已全部落**（`CastleDialogLayout`、`ResourcePanel`、`CastleScreenPainter`，39 条测试）；
+   **第三批的合成与命中已落**（`CastleScreenArtwork`/`CastleScreenFrame`/`CastleScreenView`、
+   `CastleBuildingHitTest`、`ArmyBarArtwork`，另 19 条测试：城名牌、状态行文字与优先级、军队条、EXIT 按下帧）；
+   **第四批的点击分派已落**（`CastleScreenInput`，10 条测试：按下/松手同一目标、按下帧、箭头启用、收入面板、
+   英雄像、建筑）；**第五批的场景接线已落**（`CastleScene` + `AdventureMapScene` 的城请求 + `GameHost` 路由 +
+   `--enter-town`，`dotnet run` 截图为证：进屏、悬停状态行、点 EXIT 回地图）；**第六批接了第一个子窗口**
+   （`MageGuildWindow` + `--town-window`/`--town-select`/`--town-build`，模态覆盖、换城、EXIT 与状态行都有截图）；
+   **第七批接了水井**（`WellWindow`，含现场合成的 `MAX` 按钮与关窗后整屏还原，`--town-window well`）；
+   **第八批接了水井里的招募窗口**（`RecruitWindow`，四颗小按钮全是现场合成，`MAX` 一键买满走
+   `CastleMaxRecruitment`，`--town-window well` + 点住宅）；**第九批接了城镇屏点住宅的招募**（`OpenBuilding` 的住宅分支
+   + `Sprite.Transpose()` 现拼的换降级兵箭头 + `--town-building`，顺手修了兵栏立绘取错档案与城镇屏兵栏缺 `STRIP` 底板）；
+   **第十批接了市场**（`MarketplaceWindow`：`TRADPOST` 的 15~18 帧当 TRADE/EXIT、GIFT 现拼、`MARKETPLACE_ICON` 允许缺、
+   右键按住弹每日收入、`--town-window market` 与城镇屏右键转交）；**第十一批接了盗贼公会**（`ThievesGuildWindow`
+   + 拆成五块的 `ThievesGuildView`/`Layout`/`Report`/`Ranking`/`Row`/`Artwork`：十行按公会数逐级解锁、等值合并成一组旗、
+   `MINIPORT`/`MONS32`/`SMALLBAR` 全用上、`--town-window guild|oracle`）；
+   **第十二批补齐建造确认框**（`BuildWindow` + `BuildDialogView`/`Layout`/`Artwork`/`ResourceCostBox`：
+   状态说明、需求行、价格框 3+3+1、OKAY/CANCEL 与右键帮助，`--town-building`）；
+   **第十三批补上 `BUILD_STRUCTURE` 建造列表**（`ConstructionWindow` + `ConstructionView`/`Input`/`Layout`/`Artwork`/`Cell`
+   + `CastleImagePainter`：19 格相框/图标/状态标记、顶部小城堡图、船长四维与阵型图标、两个英雄位、状态条与右键说明、
+   点格子接价格框、左右键换城）；**第十四批补上英雄位的招募确认框**（`RecruitHeroWindow` + `RecruitHeroView`/`Layout`/
+  `Artwork`：标题、`SURRENDR` 相框、大肖像、说明、2500 金币价格框、OKAY/CANCEL 与右键说明，招人后关列表回城镇），
+  顺带让 `Hero.Name` 回落到 73 个默认名字、酒馆名单在换周时真的补位；**第十五批补上英雄速览框**
+  （`HeroQuickInfoView`/`Layout`/`Artwork`：`QWIKHERO` 底板、`LOCATORS` 相框、`MINIPORT` 小肖像、士气/幸运两列、
+  `FLAG32` 双旗、六行四维与一行军队，招募框相框/建造列表英雄位/城镇屏英雄像三处右键都接上，按住右键才显示）；
+  **第十六批补上城镇屏船长像与船长速览**（`CaptainPortrait` + `HeroQuickInfoSubject`：`PORT0090`~`PORT0095` 贴
+  `HEROFL` 旗、`MINICAPT` 小肖像、Captain 没有等级也没有移动力行、右键徽记弹框）；
+  **第十七批补上酒馆闲话框**（`TavernView` + `TavernDialog`：`TAVWIN` 吧台手 20 帧 75ms、引子与本周传闻两段
+  `MultiFontText`、单个 OK，模态框压过城镇屏、右键不关，`--town-window tavern` 与城镇屏酒馆建筑两处入口），
+  城堡屏至此只剩玩家配色与淡入混合。
    `StatusPanel` 的 ARMY/RESOURCE 两种状态也在这一步补上（需要 `ArmyTroop` 与 `RESOURCE.ICN` 索引表）。
 5. **战斗界面与结算**（P4）：`battle_interface` 与其配套五个文件。
 6. **AI 与会话层**（P5/P6）：两者一起排，因为 AI 回合必须有 `Game::NewDay`/存读档这一层才能跑通。

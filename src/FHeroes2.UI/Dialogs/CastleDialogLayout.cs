@@ -51,21 +51,23 @@ public sealed class CastleDialogLayout
     private const int TownNameOffsetY = 248;
     private const int ResourceHitInset = 3;
 
-    private CastleDialogLayout(Point offset, Size statusBar, Size crest)
+    private CastleDialogLayout(Point offset, Size statusBar, Size castleButton, Size crest)
     {
         Offset = offset;
         CrestSize = crest;
 
         int barTop = offset.Y + ScreenSize.Height - StatusBarHeight;
 
-        PreviousCastleButton = new Rect(offset.X, barTop, statusBar.Width, StatusBarHeight);
-        StatusBarArea = new Rect(offset.X + statusBar.Width, barTop, statusBar.Width, StatusBarHeight);
-        NextCastleButton = new Rect(StatusBarArea.Right, barTop, statusBar.Width, StatusBarHeight);
+        // 参考 :330-345：两个箭头各占自己那一帧的宽，状态条从箭头右侧开始画，下一个箭头接在状态条右端。
+        // 三段的宽度不同（状态条比箭头宽得多），所以这里不能拿状态条的宽度去当箭头的宽度。
+        PreviousCastleButton = new Rect(offset.X, barTop, castleButton.Width, castleButton.Height);
+        StatusBarArea = new Rect(PreviousCastleButton.Right, barTop, statusBar.Width, statusBar.Height);
+        NextCastleButton = new Rect(StatusBarArea.Right, barTop, castleButton.Width, castleButton.Height);
         StatusTextArea = new Rect(
             StatusBarArea.X + StatusTextInset,
             barTop,
             statusBar.Width - (StatusTextInset * 2),
-            StatusBarHeight);
+            statusBar.Height);
 
         CrestArea = new Rect(
             offset.X + CrestOffsetX,
@@ -140,11 +142,15 @@ public sealed class CastleDialogLayout
     /// Builds the layout of one castle screen.
     /// </summary>
     /// <param name="offset">Origin of the screen; the reference passes the display's area.</param>
-    /// <param name="statusBar">Size of a <c>SMALLBAR</c> frame; it is both the bar and both side buttons.</param>
+    /// <param name="statusBar">Size of <c>SMALLBAR</c> frame 0, the bar between the two arrows.</param>
     /// <param name="crest">Size of a <c>ICN::CREST</c> frame.</param>
+    /// <param name="castleButton">
+    /// Size of <c>SMALLBAR</c> frames 1/3, the two arrows. Defaults to <paramref name="statusBar"/>, which is
+    /// only right for square stand-ins; with the original frames the arrows are much narrower than the bar.
+    /// </param>
     /// <returns>The layout.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">The bar is too narrow for the inset, or the crest is empty.</exception>
-    public static CastleDialogLayout Create(Point offset, Size statusBar, Size crest)
+    /// <exception cref="ArgumentOutOfRangeException">The bar is too narrow for the inset, or a size is empty.</exception>
+    public static CastleDialogLayout Create(Point offset, Size statusBar, Size crest, Size? castleButton = null)
     {
         if (statusBar.Width <= StatusTextInset * 2)
         {
@@ -159,7 +165,13 @@ public sealed class CastleDialogLayout
             throw new ArgumentOutOfRangeException(nameof(crest), crest, "The crest must have a positive size.");
         }
 
-        return new CastleDialogLayout(offset, statusBar, crest);
+        Size button = castleButton ?? statusBar;
+        if (button.Width <= 0 || button.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(castleButton), button, "The arrow must have a positive size.");
+        }
+
+        return new CastleDialogLayout(offset, statusBar, button, crest);
     }
 
     /// <summary>
@@ -177,7 +189,10 @@ public sealed class CastleDialogLayout
     /// <summary>
     /// Where the EXIT button goes, once its frame is known, <c>castle_dialog.cpp:379</c>.
     /// </summary>
-    /// <param name="exitFrame">The <c>ICN::BUTTON_EXIT_TOWN</c> frame; its size is the button's size.</param>
+    /// <param name="exitFrame">
+    /// The released EXIT button frame; its size is the button's size. With the original resources this is
+    /// <c>TREASURY</c> frame 1, which is 80×25 (<c>game_assets.cpp:918-926</c>).
+    /// </param>
     /// <returns>The button's rectangle.</returns>
     public Rect GetExitButtonArea(Sprite exitFrame)
     {

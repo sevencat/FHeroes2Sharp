@@ -99,7 +99,18 @@ public sealed class MageGuildArtwork
     public DialogButtonArtwork NextTown { get; }
 
     /// <summary>The exit button, <c>BUTTON_GUILDWELL_EXIT</c>.</summary>
+    /// <remarks>帧来自 <see cref="GetExitButtonIcn"/>，不是与 id 同名的那份档案。</remarks>
     public DialogButtonArtwork Exit { get; }
+
+    /// <summary>
+    /// The archive the EXIT button is read from, <c>game_assets.cpp:904-911</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>ICN::BUTTON_GUILDWELL_EXIT</c> 本身没有档案：用原始资源时它的两帧就是 <c>WELLXTRA</c> 的 0 和 1
+    /// （fheroes2 只在「不用原始资源」时才现画这个按钮）。
+    /// </remarks>
+    /// <returns>The archive to read the released and pressed frames from.</returns>
+    public static IcnType GetExitButtonIcn() => IcnType.Wellxtra;
 
     /// <summary>Every frame of <c>ICN::SPELLS</c>, which the rows index by <c>Spell::IndexSprite()</c>.</summary>
     public IReadOnlyList<Sprite> SpellIcons { get; }

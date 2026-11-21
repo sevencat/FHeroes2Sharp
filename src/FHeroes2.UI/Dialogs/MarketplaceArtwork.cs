@@ -64,7 +64,7 @@ public sealed class MarketplaceArtwork
 
     private MarketplaceArtwork(
         IReadOnlyList<Sprite> tradpost,
-        IReadOnlyList<Sprite> marketplaceIcon,
+        IReadOnlyList<Sprite>? marketplaceIcon,
         IReadOnlyList<Sprite> resourceIcons,
         DialogButtonArtwork tradeButton,
         DialogButtonArtwork giftButton,
@@ -83,8 +83,16 @@ public sealed class MarketplaceArtwork
     /// <summary>Every frame of <c>TRADPOST.ICN</c> the window reads.</summary>
     public IReadOnlyList<Sprite> Tradpost { get; }
 
-    /// <summary>Frame 0 (good) or 1 (evil) of <c>MARKETPLACE_ICON.ICN</c>.</summary>
-    public IReadOnlyList<Sprite> MarketplaceIcon { get; }
+    /// <summary>
+    /// Frame 0 (good) or 1 (evil) of <c>MARKETPLACE_ICON.ICN</c>, or <see langword="null"/> when the archive is
+    /// not there.
+    /// </summary>
+    /// <remarks>
+    /// 这颗图标不在原版 AGG 里：参考从 h2d 资源 <c>market_icon_good.image</c> 读（<c>game_assets.cpp:104</c>），
+    /// 端口没有这一套数据，于是允许缺——<c>"x N"</c> 那一行照旧画，只是少了左边的摊子图标
+    /// （<c>dialog_marketplace.cpp:102-116</c> 里图标与文字是两个独立的精灵）。
+    /// </remarks>
+    public IReadOnlyList<Sprite>? MarketplaceIcon { get; }
 
     /// <summary>Frames of <c>RESOURCE.ICN</c>, indexed by <see cref="ResourceIconIndex.Of"/>.</summary>
     public IReadOnlyList<Sprite> ResourceIcons { get; }
@@ -129,7 +137,16 @@ public sealed class MarketplaceArtwork
     }
 
     /// <summary>The exchange rate icon, frame 0 or 1 of <c>MARKETPLACE_ICON.ICN</c>.</summary>
-    public Sprite ExchangeRateIcon => MarketplaceIcon[EvilInterface ? 1 : 0];
+    /// <returns>The icon, or <see langword="null"/> when the archive is missing.</returns>
+    public Sprite? ExchangeRateIcon
+    {
+        get
+        {
+            int frame = EvilInterface ? 1 : 0;
+
+            return MarketplaceIcon is { } icons && frame < icons.Count ? icons[frame] : null;
+        }
+    }
 
     /// <summary>Size of a resource cell, which is also the size of the cursor over it.</summary>
     public Size CellSize => new(Cell(0).Width, Cell(0).Height);
@@ -138,7 +155,10 @@ public sealed class MarketplaceArtwork
     /// Collects the window's sprites, in the spirit of <c>MageGuildArtwork.TryCreate</c>.
     /// </summary>
     /// <param name="tradpost">Frames of <c>TRADPOST.ICN</c> or <c>TRADPOSE.ICN</c>; fifteen of them.</param>
-    /// <param name="marketplaceIcon">Frames of <c>MARKETPLACE_ICON.ICN</c>; two of them.</param>
+    /// <param name="marketplaceIcon">
+    /// Frames of <c>MARKETPLACE_ICON.ICN</c>; two of them. May be <see langword="null"/>: the icon lives in the
+    /// h2d resources, which the port does not ship.
+    /// </param>
     /// <param name="resourceIcons">Frames of <c>RESOURCE.ICN</c>; seven of them.</param>
     /// <param name="tradeButton">Frames of <c>BUTTON_SMALL_TRADE_GOOD</c>/<c>_EVIL</c>.</param>
     /// <param name="giftButton">Frames of <c>BUTTON_GIFT_GOOD</c>/<c>_EVIL</c>.</param>
@@ -157,8 +177,12 @@ public sealed class MarketplaceArtwork
         IReadOnlyList<Sprite>? exitButton,
         bool evilInterface = false)
     {
+        if (marketplaceIcon is { Count: < RequiredMarketplaceIconFrames })
+        {
+            marketplaceIcon = null;
+        }
+
         if (tradpost is null || tradpost.Count < RequiredTradpostFrames
-            || marketplaceIcon is null || marketplaceIcon.Count < RequiredMarketplaceIconFrames
             || resourceIcons is null || resourceIcons.Count < RequiredResourceFrames
             || tradeButton is null || tradeButton.Count < 2
             || giftButton is null || giftButton.Count < 2

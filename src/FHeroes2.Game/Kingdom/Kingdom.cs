@@ -968,8 +968,9 @@ public sealed partial class Kingdom
     /// 这段代码根本不存在，所以它不该是「运行时开关」，而是「调用方是否在调一个调试入口」。
     /// </para>
     /// <para>
-    /// 重排那一对（<c>GetRecruits()</c>）目前只返回已结算的槽位，补位规则还没有（ADR-118）；调用它不会错，
-    /// 只是暂时没有效果。
+    /// 结尾那句重排酒馆的 <c>GetRecruits()</c>（<c>kingdom.cpp:268</c>）要 <c>World</c> 才能补位，所以不带
+    /// <see cref="World"/> 的这个重载只做「清访问记录 + 调试礼物」，补位交给
+    /// <see cref="ActionNewWeek(World, uint, bool)"/>。
     /// </para>
     /// </remarks>
     /// <param name="weekCount">Weeks since the start of the game, <c>world.CountWeek()</c>.</param>
@@ -994,8 +995,29 @@ public sealed partial class Kingdom
             AddFundsResource(new Funds(20, 20, 10, 10, 10, 10, 5000));
             GameLog.Info($"debug gift granted to {_color}: 5000 gold, 20 wood, 20 mercury, 10 of each other resource.");
         }
+    }
 
-        // kingdom.cpp:285：重排酒馆的那一对（补位规则未搬，ADR-118）。
-        GetRecruits();
+    /// <summary>
+    /// The kingdom's part of a new week, including the tavern's new roster,
+    /// <c>Kingdom::ActionNewWeek()</c> (<c>kingdom.cpp:248-269</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在最后一句 <c>GetRecruits()</c>（<c>:268</c>）里顺手补位：酒馆的两位英雄被雇走、关进监狱或者上周逃跑过，
+    /// 这一周就要换人。补位要查英雄池，所以只有带 <see cref="World"/> 的这条重载才算真的「重排」。
+    /// </remarks>
+    /// <param name="world">The map and its hero pool.</param>
+    /// <param name="weekCount">Weeks since the start of the game, <c>world.CountWeek()</c>.</param>
+    /// <param name="isDebugMode">Whether the reference's <c>IS_DEVEL()</c> build is in effect.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    public void ActionNewWeek(World world, uint weekCount, bool isDebugMode = false)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        ActionNewWeek(weekCount, isDebugMode);
+
+        if (IsPlay)
+        {
+            GetRecruits(world);
+        }
     }
 }

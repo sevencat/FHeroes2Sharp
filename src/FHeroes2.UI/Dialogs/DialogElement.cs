@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Fonts;
+using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Gui;
@@ -44,11 +45,20 @@ public abstract class DialogElement
     /// <returns>What the owner has to do, empty when the element does not react.</returns>
     public virtual DialogElementResult ProcessEvents(LocalEvent events, Point offset) => default;
 
-    /// <summary>Refreshes animated content, <c>update( output, offset )</c>; nothing by default.</summary>
+    /// <summary>
+    /// Refreshes animated content, <c>update( output, offset )</c>; nothing by default.
+    /// </summary>
+    /// <remarks>
+    /// The reference asks <c>Game::validateCustomAnimationDelay()</c>, a global clock that answers «a
+    /// delay has passed» once per frame; the port passes the elapsed time in, so that the owner of the
+    /// dialog - which already owns the frame clock - decides how fast time runs and a test can step
+    /// the animation frame by frame.
+    /// </remarks>
     /// <param name="output">Frame buffer of the message box.</param>
     /// <param name="offset">Position the layout gave the element.</param>
+    /// <param name="elapsed">Time since the previous call.</param>
     /// <returns><see langword="true"/> when something was painted.</returns>
-    public virtual bool Update(PixelBuffer output, Point offset) => false;
+    public virtual bool Update(PixelBuffer output, Point offset, TimeSpan elapsed) => false;
 }
 
 /// <summary>
@@ -108,6 +118,154 @@ public sealed class CustomImageDialogElement : DialogElement
         ArgumentNullException.ThrowIfNull(output);
 
         ImageOps.BlitSprite(output, offset, _image);
+    }
+}
+
+/// <summary>
+/// A looping animation drawn over one or more background frames, <c>AnimationDialogElement</c>
+/// (<c>ui_dialog.h:287-313</c>, <c>ui_dialog.cpp:798-856</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The reference takes the id of the ICN file and the indices of the background frames, and asks
+/// <c>ICN::getAnimatedIcnIndex()</c> which sprite a frame number stands for. The port does not port
+/// that table - see <see cref="IcnAnimation"/> - so the caller names the range of the animation and the
+/// element keeps the background frames.
+/// </para>
+/// <para>
+/// <b>The background is painted on every <see cref="Draw"/>, not only on the first one.</b> The
+/// reference paints it once, at <c>_currentIndex == 0</c>, and then only repaints the animated frame,
+/// because its dialog loop leaves the rest of the screen alone. A ported scene repaints the whole frame
+/// every time, so the background has to come back with it.
+/// </para>
+/// <para>
+/// The centring quirk of the reference is kept: every background frame is centred inside
+/// <see cref="DialogElement.Area"/> on its own, but the animated frame is placed by the centring of the
+/// <i>last</i> background frame, because the reference overwrites <c>_internalOffset</c> on every
+/// iteration of that loop (<c>ui_dialog.cpp:806-813</c>). <c>TAVWIN</c> depends on it: 188x100 and
+/// 182x94, so the hand of the barkeep sits at <c>(3, 3)</c> plus its own anchor.
+/// </para>
+/// <para>
+/// The element never handles input and has nothing to pop up, like the reference.
+/// </para>
+/// </remarks>
+public sealed class AnimationDialogElement : DialogElement
+{
+    private readonly IReadOnlyList<Sprite> _backgrounds;
+    private readonly IcnAnimation _animation;
+    private readonly Point _internalOffset;
+
+    /// <summary>
+    /// Creates the element and sizes it to the widest and tallest background frame,
+    /// <c>AnimationDialogElement( icnId, backgroundIndices, animationIndexOffset, delay )</c>.
+    /// </summary>
+    /// <param name="sprites">Sprites of the ICN file, in file order.</param>
+    /// <param name="backgroundIndices">
+    /// Frames drawn under the animation, in drawing order; the last one decides where the animation sits.
+    /// </param>
+    /// <param name="firstFrame">Index of the first animated sprite inside <paramref name="sprites"/>.</param>
+    /// <param name="frameCount">Number of sprites the animation cycles through.</param>
+    /// <param name="frameDuration">Time one frame stays on screen, <c>CASTLE_TAVERN_DELAY</c> is 75 ms.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="sprites"/> or <paramref name="backgroundIndices"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="backgroundIndices"/> is empty or names a frame outside <paramref name="sprites"/>,
+    /// or the animation range does not fit into <paramref name="sprites"/>.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="firstFrame"/> is negative, <paramref name="frameCount"/> is not positive or
+    /// <paramref name="frameDuration"/> is zero or negative.
+    /// </exception>
+    public AnimationDialogElement(
+        IReadOnlyList<Sprite> sprites, IReadOnlyList<int> backgroundIndices, int firstFrame, int frameCount,
+        TimeSpan frameDuration)
+    {
+        ArgumentNullException.ThrowIfNull(sprites);
+        ArgumentNullException.ThrowIfNull(backgroundIndices);
+
+        if (backgroundIndices.Count == 0)
+        {
+            throw new ArgumentException("An animation needs at least one background frame.",
+                nameof(backgroundIndices));
+        }
+
+        List<Sprite> backgrounds = new(backgroundIndices.Count);
+        Size area = default;
+
+        foreach (int index in backgroundIndices)
+        {
+            if (index < 0 || index >= sprites.Count)
+            {
+                throw new ArgumentException(
+                    $"Frame {index} is not one of the {sprites.Count} sprites of the ICN file.",
+                    nameof(backgroundIndices));
+            }
+
+            Sprite background = sprites[index];
+
+            backgrounds.Add(background);
+            area = new Size(Math.Max(area.Width, background.Width), Math.Max(area.Height, background.Height));
+        }
+
+        // 参考在循环里每次都覆盖 _internalOffset，所以留下的是最后一帧的居中量。
+        Sprite last = backgrounds[^1];
+
+        _backgrounds = backgrounds;
+        _internalOffset = new Point((area.Width - last.Width) / 2, (area.Height - last.Height) / 2);
+        _animation = new IcnAnimation(sprites, firstFrame, frameCount, frameDuration);
+        Area = area;
+    }
+
+    /// <summary>Current frame of the cycle, <c>_currentIndex % frame count</c> of the reference.</summary>
+    public int FrameNumber => _animation.FrameNumber;
+
+    /// <summary>Draws the background frames and the current frame of the animation on top of them.</summary>
+    /// <param name="output">Frame buffer of the message box.</param>
+    /// <param name="offset">Position of the element.</param>
+    public override void Draw(PixelBuffer output, Point offset)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+
+        foreach (Sprite background in _backgrounds)
+        {
+            ImageOps.BlitSprite(
+                output,
+                new Point(
+                    offset.X + ((Area.Width - background.Width) / 2),
+                    offset.Y + ((Area.Height - background.Height) / 2)),
+                background);
+        }
+
+        Sprite frame = _animation.Current;
+
+        ImageOps.BlitSprite(
+            output,
+            new Point(
+                offset.X + _internalOffset.X + frame.OffsetX,
+                offset.Y + _internalOffset.Y + frame.OffsetY),
+            frame);
+    }
+
+    /// <summary>Advances the clock and repaints when the frame of the animation changed.</summary>
+    /// <param name="output">Frame buffer of the message box.</param>
+    /// <param name="offset">Position of the element.</param>
+    /// <param name="elapsed">Time since the previous call.</param>
+    /// <returns><see langword="true"/> when the animation moved on and was painted.</returns>
+    public override bool Update(PixelBuffer output, Point offset, TimeSpan elapsed)
+    {
+        int before = _animation.FrameNumber;
+
+        _animation.Advance(elapsed);
+
+        if (_animation.FrameNumber == before)
+        {
+            return false;
+        }
+
+        Draw(output, offset);
+
+        return true;
     }
 }
 

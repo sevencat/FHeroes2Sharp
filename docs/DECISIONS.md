@@ -7157,3 +7157,162 @@ Game 2 930 → **2 938**，合计 3 983 → **3 991** 全绿，`-warnaserror` 0 
 **遗留**：淡入淡出没做；正式入口（冒险选项对话框）未转；档位没有落地到配置；`OBJ_RESOURCE` 的多格邻格在参考里也会
 各画一次图标（因为元数据被复制），端口现在只画带精灵的那一格——若要完全对齐，得在装图时把整组对象的元数据分发到
 全部格子，这需要先有「对象 → 格子」的映射，暂不做。
+
+## ADR-190：招募英雄确认框复用建造框的骨架；英雄默认名做成 `Hero.Name` 的回落；酒馆补位交给带 `World` 的重载 ◐
+
+**背景**：建造列表的两个英雄位在第十三批只上报「点了哪个位」。参考在那里的下一步是
+`Castle::DialogBuyHero( hero )`（`castle_town.cpp:66-160`）：标题、`SURRENDR.ICN` 帧 4 的 111×105 相框、大肖像、一句
+说明、`PaymentConditions::RecruitHero()` 的 2500 金币价格框、OKAY/CANCEL。模型 `RecruitHeroDialog` 早在 ADR-163 就有
+（`Title`/`Description`/`Cost`/`ConfirmText`/`CanRecruit`），缺的是视图、窗口与入口。
+
+冒烟时另外撞到两个洞：(1) 两个英雄位永远是空的——`Kingdom.GetRecruits( World, ... )` 的补位重载写好了却**没有人调**，
+`ActionNewWeek` 结尾叫的是不带世界的那个；(2) 对话框里写着「 is a level 1 Wizard without artifacts.」——`Hero.Name`
+只有地图的自定义名字，73 个默认名字那张表（`heroes.cpp:84-121`）没搬。
+
+**决定**：
+
+1. **视图照搬建造说明框的分工**：`RecruitHeroLayout`（几何）、`RecruitHeroArtwork`（`SURRENDR` 帧 4 + `RESOURCE` 0~6 +
+   `BUYBUILD` 六块边框）、`RecruitHeroView`（绘制与按钮）、`App/Scenes/RecruitHeroWindow`（窗口：光标、按键、说明框）。
+   大肖像不进素材类——它是每个英雄的 `PORT00xx` 帧 0，由窗口按英雄取，所以同一个对话框可以给任何英雄用。
+2. **高度不带领先的 10 像素**：`DialogBuyHero` 的标题写在 `dialogRoi.y + 2`，相框从标题高度之后才开始
+   （`castle_town.cpp:104-114`），与建造框「先让 10 像素再放标题」不同，`GetContentHeight` 照参考只加四段与三个间隔。
+3. **相框右键只上报**：英雄速览（`Dialog::QuickInfo`）没搬，窗口用 `IsPortraitUnder` 回答「是否点在相框上」，
+   由场景记一条日志；两个按钮的右键说明（`Recruit X the Y.` / `Exit this menu without doing anything.`）照参考写。
+4. **招人之后整屏回城镇**：参考在 `recruitHeroDialog()` 里 `castle->RecruitHero( hero )`，`_openConstructionDialog`
+   随即返回，建造列表关掉、城镇屏留着并重画英雄像（`castle_dialog.cpp` 的 `RecruitHero` 分支把 `alphaHero` 归零）。
+   端口因此是「关确认框 + 关列表 + `DrawTown()`」，不重开列表。
+5. **默认名字做成 `Hero.Name` 的回落**：新增 `HeroNames`（73 条英文原文，顺序即编号），`Name` 变成
+   `_customName` 为空时取表——这正是参考 `Heroes::GetName()` 的形状，改一处就修好所有要显示英雄名的地方。
+   `FixFrenchCharactersInName` 同时收窄成只改自定义名字，否则会把默认名字写进 `_customName`，之后再也回不到表。
+6. **补位放进带 `World` 的重载**：`Kingdom.ActionNewWeek( World, uint, bool )` 先跑原来的逻辑，再 `GetRecruits( World )`；
+   `Kingdoms.NewWeek( World, uint, bool )` 把世界透传下去（七个王国自己不持有世界，ADR-111 不变）；
+   `ConstructionWindow` 取英雄时改用带世界的重载——参考的 `castle_town.cpp:193` 叫的就是会补位的那个。
+7. **脚本入口加 `--town-hero <0|1>`**：对话框正常要两次点击（列表的英雄位、再 OKAY），`--left-click` 只有一个，
+   所以给一条命令行直接开框；同一次跑里再点 OKAY 就能验证整条「开框 → 扣 2500 → 回城镇」。
+
+**后果**：新增 `src/FHeroes2.UI/Dialogs/RecruitHeroLayout.cs`、`RecruitHeroArtwork.cs`、`RecruitHeroView.cs`，
+`src/FHeroes2.App/Scenes/RecruitHeroWindow.cs`，`src/FHeroes2.Game/Heroes/HeroNames.cs`；`CastleScene` 加
+`_recruitHero`/`OpenRecruitHero( Hero )`/`OpenRecruitHero( int )`/`FollowRecruitHero`/`HireRecruitedHero`/
+`ShowRecruitHeroHelp` 与四处分流；`ConstructionWindow` 加 `FirstHero`/`SecondHero`、取英雄改带世界；
+`Kingdom` 加带世界的 `ActionNewWeek`，`Kingdoms.NewWeek` 改签名（唯一调用点在 `World.NewWeek`）；
+`CommandLineOptions` 加 `--town-hero`。测试：`RecruitHeroViewTests` +6（布局算术、相框居中、按钮灰化、点击回答、
+绘制落在框内），`HeroNamesTests` +12（表长与编号对位、越界、默认名回落）；Game 2 938 → **2 950**，UI 818 → **824**，
+合计 4 408 → **4 426** 全绿，`-warnaserror` 0 警告。截图 `artifacts/recruit-hero.png`（对话框）与
+`artifacts/recruit-hero-hired.png`（招完回城镇，金币 4500 → 2000，卫戍栏换成新英雄的像）。
+
+**遗留**：相框右键的英雄速览（`Dialog::QuickInfo`）未搬；酒馆（`TavernWindow`）还没接这份名单；`AllHeroes` 的
+`RECRUIT` 模式位与投降英雄的处理仍是 ADR-118 的状态；英雄名只有英文原文，没有翻译层。
+
+## ADR-191：英雄速览框照参考的「固定内容框」排布；右键的「按住才显示」用松开清空实现；亡灵士气图标先灰再暗 ◐
+
+**背景**：城堡屏三处右键都该弹英雄速览——招募确认框的相框（`castle_town.cpp:148`）、建造列表的两个英雄位、
+城镇屏卫戍栏的英雄像（`castle_dialog.cpp:551-553`），而船长那一处（`:549-550`）端口还没有船长像。参考的
+`Dialog::QuickInfo( const Hero & )` 是个**阻塞**模态框：`while ( le.HandleEvents() && le.isMouseRightButtonPressed() )`
+——按住右键期间一直显示、松开就退出（`dialog_quickinfo.cpp:886-911`）。框里的东西全照 `showQuickInfo( HeroBase )`
+（`:693-911`）：`QWIKHERO` 帧 0 当底板、`MINIPORT` 小肖像配 `LOCATORS` 帧 22 的相框、`MINILKMR` 六帧士气/幸运、
+`FLAG32` 两面阵营旗、四维 + 魔法点 + 移动力六行、最后一行 `DrawSingleDetailedMonsterLine` 的军队。
+
+**决定**：
+
+1. **内容框是常数，底板尺寸只当输入**：参考把 `cur_rt` 重写成底板 `+28,+10` 起的 146x144，之后每个部件都是相对
+   这个矩形的固定偏移。端口因此不写死 236x160，`HeroQuickInfoLayout.Create( box, 相框尺寸, 旗子尺寸 )` 只吃位置与
+   两个会变化的尺寸，测试可以用任意合成底板验算术。
+2. **「按住才显示」放在右键的两个端点**：`SetRightButton( down )` 开头 `if (! down) _heroInfo = null;`，按下时按命中
+   建框。参考的模态循环换成了浮层，`DrawFrame` 拆成 `DrawWindows()` + 最后画速览框 + `InvalidateAll()`，
+   这样三处入口共用一条绘制路径，也不会被各个 `return` 分支挡住。
+3. **亡灵士气先灰再暗**：参考对 `MINILKMR` 的士气帧连续两次 `ApplyPalette`（GRAY、DARKENING）表示「亡灵没有士气」，
+   端口把图标复制进临时 `PixelBuffer` 再调两次 `ImageOps.ApplyPalette`，不动原件。
+4. **小肖像不进素材类**：`MINIPORT` 的「编号 - 1」帧属于每个英雄，跟招募框的大肖像一样由调用方给，缺了就不画。
+5. **凑不出颜色的英雄不画旗**：`getCastleLeftFlagIcnIndex()` 只认六色与中立（`:196-220`，其余 `assert`），端口遇到
+   组合色返回 `null`，宁可少画两面旗也不猜颜色。
+6. **位置照 `makeRectQuickInfo`**：`StandardPopupWindow.PositionOf( 光标, 界面矩形, 尺寸 )`，界面矩形给整屏 640x480
+   ——参考在城堡界面里也这么问（它拿的是冒险地图那块区域），端口不另造规则。
+
+**后果**：新增 `src/FHeroes2.UI/Dialogs/HeroQuickInfoLayout.cs`、`HeroQuickInfoArtwork.cs`、`HeroQuickInfoView.cs`；
+`CastleScene` 加 `_heroInfo`/`_heroInfoArtwork`/`_miniMonsters` 与 `ShowHeroQuickInfo( Hero )`，`DrawFrame` 拆成
+`DrawWindows` + 覆盖层，`SetRightButton` 三处接线（招募框相框、建造列表英雄位、城镇屏英雄像）。测试：`HeroQuickInfoTests`
++15（内容框算术、相框居中、图标列上下移、旗子锚点、六行四维、军队线、图标数量、旗号映射、界面太小时拒绝、真实素材下
+贴边与底板像素、名字落在内容框里）。UI 824 → **839**，合计 4 426 → **4 441** 全绿，`-warnaserror` 0 警告。
+截图 `artifacts/hero-quick-info.png`（招募框上右键相框）与 `artifacts/hero-quick-info-list.png`（建造列表右键英雄位）。
+
+**遗留**：城镇屏船长像的速览（参考 `:549-550`，端口还没画船长像）；英雄位的士气/幸运小图标；
+`isFullInfo == false` 的简化版只有一条代码路径、没有入口去触发（敌方英雄的速览要等冒险地图的英雄交互）；
+英雄速览里的阵营旗用的是 `FLAG32` 的左右两帧，与城堡图上的旗子同源，但玩家配色的淡入仍未搬。
+
+## ADR-192：速览框改吃「英雄/船长快照」；船长大头像在 UI 层合成、画的时候才建；右键先徽记后英雄像 ✅
+
+**背景**：参考的速览框一直吃 `const HeroBase &`（`dialog_quickinfo.cpp:693`），船长的入口是城镇屏左侧徽记上的右键
+（`castle_dialog.cpp:547-548` 的 `Dialog::QuickInfo( GetCaptain() )`）。船长是 `HeroBase` 而不是英雄：`isActiveHero`
+为假，所以名字后面没有 `" (Level N)"`、六行四维只画五行（没有 `Move Points:`），名字取城镇名、军队就是卫戍部队本身。
+它的头像是 `Captain::GetPortrait()`（`castle/captain.cpp:200-250`）：大头像是 `PORT0090`~`PORT0095` 再贴该色的 `HEROFL`
+帧 0（偏移见 `:64-84`），小头像是 `MINICAPT` 帧 0~5。城镇屏左侧立的那张也是大头像（`:138-145` 在船长住处建好后用船长像
+替换徽记），端口此前只有徽记。
+
+**决定**：
+
+1. **端口没有 `HeroBase`，改成一份快照**：新增 `UI.Dialogs.HeroQuickInfoSubject`，由 `FromHero( Hero, 小肖像 )` 与
+   `FromCaptain( Captain, 小肖像 )` 两个工厂取数，`HeroQuickInfoView.TryCreate` 只认它。判据是 `Level` 与 `MovePoints`
+   为 `null`——正好对应参考的 `isActiveHero`：为空就不加等级后缀、不画移动力那一行，其余（幸运、士气、双旗、四项基本
+   技能、魔法点、军队）一律照旧。用小肖像当参数外的第二份输入，是因为 `MINIPORT` 与 `MINICAPT` 是两套素材，素材读取留在
+   调用方。
+2. **肖像不进 `Game` 层**：`Captain.GetPortrait()` 拆成 `UI.Dialogs.CaptainPortrait`——它要读归档，而 `Captain` 只该
+   管数值。`TryCreateBig` 克隆 `PORT00xx` 帧 0 再把 `ICN::getFlagIcnId( 颜色 )` 帧 0 贴到种族偏移上（参考也是把旗子贴到
+   底图的拷贝上，原件不动），`TryCreateSmall` 取 `MINICAPT` 的种族帧。没有船长的种族（`MapRace.None`）一律返回 null。
+3. **大头像懒加载、按「城 + 颜色」缓存**：船长住处是城镇屏里建的，所以不能在切城时就读；`TownCaptainPortrait( castle )`
+   在画的时候才合成，同一座城、同一个颜色直接复用，城易主（颜色变了）才重贴旗子。
+4. **右键顺序照参考**：先 `rectSign1`（徽记 → 船长）后 `rectSign2`（英雄像 → 英雄），命中区就用 `CrestArea`——参考的
+   `rectSign1` 本来也是 `CREST` 的尺寸。船长没建出来时按键照旧落到英雄像上。
+5. **`CrestArea` 只当命中区**：大头像 101×93 比 `CREST` 的 100×92 各多一像素，参考也是从 `+5,+262` 原样贴、不裁，端口
+   照做；命中判定仍按 `CREST` 尺寸，与参考一致。
+
+**后果**：新增 `src/FHeroes2.UI/Dialogs/CaptainPortrait.cs`、`HeroQuickInfoSubject.cs`；`HeroQuickInfoView` 改吃快照并
+去掉 `portrait` 参数（`Hero` 属性换成 `Subject`）；`CastleScene` 加 `TownCaptainPortrait` 缓存与 `ShowCaptainQuickInfo`，
+`ShowHeroQuickInfo`/`ShowCaptainQuickInfo` 共用 `ShowQuickInfo( subject )`；`CastleScreenFrame.CaptainPortrait` 终于有值；
+`Captain` 的过时注释（「`MINICAPT` 没有枚举」）改掉。测试：新增 8 条（英雄快照与船长快照的差异、种族→头像/帧/旗偏移、
+无船长种族、真实素材下大头像尺寸与小头像、旗子确实贴上且原件不动、船长只画五行、英雄仍画六行）。UI 839 → **847**，
+合计 4 441 → **4 449** 全绿，`-warnaserror` 0 警告。截图 `artifacts/captain-portrait.png`（骑士船长与红旗）与
+`artifacts/captain-quick-info.png`（右键徽记弹出的船长速览：城名、小肖像、两面紫旗、五行、军队行）。
+
+**遗留**：船长像的淡入（参考 `RedrawIcons` 用 `AlphaBlit`，端口直接换）；`--town-build Captain` 之后 `Captain.LoadDefaults`
+是构造时做的，参考在住处建好时会再灌一次默认（当前数值相同，等有增益建筑再补）；船长的战斗界面（`battle_only` 模式）
+未接；酒馆名单、`RECRUIT` 模式位、敌方英雄的 `isFullInfo == false` 路径照旧。
+
+## ADR-193：酒馆窗口复用 MessageBox 的两段 `MultiFontText` + `TAVWIN` 动画；模态框压过城镇屏、右键不关 ✅
+
+**背景**：`castle_dialog.cpp:697-701` 的 `BUILD_TAVERN` 分支调 `Castle::_openTavern()`
+（`castle_tavern.cpp:39-54`）：本周传闻加一句固定引子，配 `TAVWIN.ICN` 的吧台手动画，再用
+`showStandardTextMessage( GetStringBuilding( BUILD_TAVERN ), {}, Dialog::OK, { &imageUI, &textBodyUI } )` 弹框。
+参考只组两个元素——`AnimationDialogElement( ICN::TAVWIN, { 0, 1 }, 0, 75ms )` 与一个装了两段 `MultiFontText` 的
+`TextDialogElement`——没有独立的窗口类。亡灵的酒馆位是 `BUILD_SHRINE`，走的是说明框，不是这个函数。
+
+**决定**：
+
+1. **模型与渲染分开，渲染复用 `MessageBox`**：`TavernDialog` 只给标题、引子、本周传闻与 `DialogButton.Ok`；
+   `TavernView.TryCreate` 把 `TAVWIN` 精灵与 `BUYBUILD` 框、两套字体、`SYSTEM` 按钮拼成 `MessageBox`。
+   `frameCount = min( 20, 精灵数 - 2 )`，连一帧吧台手都没有（少于 3 张）就返回 `null`，不画半截动画。
+2. **两段文字仍是两个 run**：引子与传闻各是一个 `Text`，中间 `"\n\n"`；因为没有移植本地化子系统（ADR-139），
+   两段都用 `FontType.NormalWhite`，传闻的语言标签只留在 `LocalizedString` 里。空传闻由 `TavernDialog.Create`
+   直接拒绝——地图 loader 从不存空传闻，空值只可能是 bug。
+3. **动画参数照参考当常数**：背景帧 `{ 0, 1 }`、首帧 2、20 帧、每帧 75ms（`DelayType::CASTLE_TAVERN_DELAY`）。
+   参考的 `ICN::getAnimatedIcnIndex()`（`2 + n % 20`）由 `AnimationDialogElement` 的「首帧 + 帧数」表达，
+   不回头看 ICN 文件；素材读取留给调用方，和其它窗口一致。
+4. **模态层级最高**：`CastleScene` 的 `_tavern` 在说明框、英雄速览和所有建筑窗口之前判；`SetCursor`、`SetLeftButton`、
+   键盘、`Update`、`DrawWindows` 五处都先看它。`Update` 只推吧台手的动画，城镇屏自己的帧不动；
+   `DrawWindows` 每帧先把城镇屏照常重画一遍再叠框，因为参考的 `showStandardTextMessage` 是「在当前画面上摆框」。
+5. **只有 OK 能关**：左键在按钮上完成按下/松开、ESC/Enter/小键盘 Enter 三键都当 OK；右键直接忽略（`Dialog::OK`
+   不认右键），不会像收入框那样按住右键显示。开框时顺手清掉 `_message`/`_messageHeldByRightButton`/`_heroInfo`。
+6. **入口走 `OpenBuilding` 的 `Tavern` 分支**：`OpenTavern()` 要求城镇已建酒馆、`BUYBUILD` 框、`TAVWIN` 精灵与
+   `SYSTEM` 按钮四样齐备，缺一样只记日志不开框。亡灵建的是 `Shrine`（`castle_dialog.cpp` 的说明框分支），
+   所以这个 `Tavern` 分支不会顶掉亡灵的神龛。
+7. **冒烟入口**：`--town-window tavern`、`--town-building Tavern`；未建酒馆时先加 `--town-build Tavern`。
+   城镇屏点击坐标依赖种族，而 Beltway 的玩家城是随机城、载入时重掷种族（`World.Castles.cs`），固定坐标只在
+   对应种族的那次启动命中——实测骑士酒馆区中心 `(386,145)` 开窗成功，其余几次启动是别的种族、点在同一处不会开。
+
+**后果**：新增 `src/FHeroes2.UI/Dialogs/TavernView.cs`；`CastleScene` 加 `_tavern`、`OpenTavern()`、`CloseTavern()`
+与五处优先级判断，`GameHost` 的 `--town-window` 加 `tavern`。测试：`TavernViewTests` +7（常数与参考一致、
+少于 3 帧拒绝、两个元素与吧台手尺寸、单个居中的 OK、按下松开返回 OK、75ms 后换帧、六个参数都不许空）。
+UI 847 → **854**，合计 4 449 → **4 456** 全绿，`-warnaserror` 0 警告。截图 `artifacts/tavern.png`（酒馆框）、
+`artifacts/tavern-from-click.png`（点城镇屏酒馆建筑开框）、`artifacts/tavern-closed.png`（点 OK 后回到城镇屏）。
+
+**遗留**：玩家配色与淡入（城堡屏主线只剩这一项）；船长战斗界面（`battle_only`）；随机城的固定坐标冒烟不可复现，
+要么等地图随机种子可设，要么给 CLI 加按建筑名取中心的点击入口；酒馆传闻的多语言字体仍随本地化一起缺。

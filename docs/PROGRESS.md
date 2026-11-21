@@ -7301,3 +7301,511 @@ kingdom, allowDowngraded )` 新重载 + 老重载保留），`DialogModelsTests`
 **遗留**：玩家配色（六张旗帜类 ICN 按玩家色换调色板，`getModifiedByColorImage`）与 `AlphaBlit` 的淡入混合；
 城名牌 `TOWNNAME` 与状态栏文字；事件循环与六个窗口的接线。
 
+### 城堡屏第三批：整屏合成与命中 ✅
+
+把 `CastleDialogLayout`、`CastleScreenPainter`、`ResourcePanel` 和六个已落窗口之间的那一层补上：一屏城堡由哪些帧
+组成、按什么顺序画、鼠标落点问谁。循环本身仍留给场景层。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/CastleScreenArtwork.cs` | `castle_dialog.cpp:325-398`、`game_assets.cpp:918-932` | 一次性取好整屏静态帧（`STRIP` 0/1/2/3/11、`CREST` 按玩家色、`TOWNNAME` 0、`SMALLBAR` 0…4、`RESOURCE` 0…6、EXIT 两帧），任一缺失整体返回 `null` |
+| `UI/Dialogs/CastleScreenView.cs`（+ `CastleScreenFrame`） | `castle_dialog.cpp:385-470` | `Show` 建两条 `ArmyBar`；`Draw` 按参考顺序合成；`FindBuildingAt`/`GetStatusMessage` 命中的两个入口 |
+| `UI/Dialogs/CastleBuildingHitTest.cs` | `castle_dialog.cpp:416-435` | 倒序查 `BuildingsRenderQueue`、跳过未建、任一 `areas` 命中即返回 |
+| `UI/Widgets/ArmyBarArtwork.cs` | `army_bar.cpp` 的 `ICN::STRIP` / `MONS32` | 军队条的帧集合，`ArmyBar.Redraw` 取用 |
+
+三处校正：
+
+* **EXIT 不是档案里的图**：参考的 `BUTTON_EXIT_TOWN` 排在 `LAST_VALID_FILE_ICN` 之后，属运行时生成
+  （`game_assets.cpp:918-932`）；原始资源分支就是 `TREASURY` 1/2 帧（80×25）。诊断测试一开始逐个问「这帧在不在」，
+  只报这两个缺失，才定位到 `IcnCatalog.GetFileName` 对它返回 `CUSTOM`。端口没有文字按钮生成，按原始资源取帧。
+* **命中必须倒序**：`BuildingsRenderQueue` 从最低 z 开始画，所以要 `crbegin()` 找最上层；顺序查会把被压住的建筑
+  报出来。状态行同理，先问建筑、再用 EXIT/面板/箭头/英雄覆盖。
+* **状态文字先截再居中**：参考的 `StatusBar::updateMessage` 内部先 `fitToOneRow`。端口按字体宽度逐字截到
+  `StatusTextArea` 宽度再居中，不做滚动。
+
+**修正**：布局那条测试原先写的是 `ResourceHitArea with { Height = exit.Height + 3 }`，与 `exit` 比较永远不可能成立
+（前几批 `TryCreate` 返回 `null`，这条断言从未真正跑过）。改成断言命中区与面板同宽、下沿停在 `exit.Y - 3`。
+
+**测试**：`CastleBuildingHitTestTests` 5 条（空点、未建、已建、偏移、最上层优先），`CastleScreenViewTests` 14 条
+（无档案返回 `null`、六色加载、布局、无英雄只有城内条、建筑命中、状态行优先级、村庄措辞、面板覆盖、EXIT 按下帧）。
+
+**指标**：UI 687 → **706**，合计 4 274 → **4 293** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：事件循环与六个已落窗口的接线（切城、EXIT、点建筑、点资源面板）、玩家配色旗帜、`AlphaBlit` 淡入。
+
+### 城堡屏第四批：点击分派 ✅
+
+循环里的 `MouseClickLeft` 分派单独成一层，仍然不碰 App：吃指针与左键状态，吐出一次「点了什么」。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/CastleScreenInput.cs` | `castle_dialog.cpp:493-776` | `CastleScreenTarget`（EXIT/两个箭头/收入面板/英雄像/建筑）、`CastleScreenAction`、按下松手判定、`TakeAction` 消费一次点击 |
+
+三处取舍：
+
+* **按下与松手要落在同一目标**：参考的 `MouseClickLeft(area)` 是「按下后在这一区域松开」，所以按下 EXIT 再拖到地图上松手什么都不会发生；目标与建筑 id 都要一致。
+* **按下帧只看当前位置**：`isMouseLeftButtonPressedAndHeldInArea` 是「按住且指针现在在区域内」，指针拖出去帧就恢复、拖回来又按下，和「按下时的记录」不同。
+* **箭头由王国城数开关**：`CanSwitchCastle` 对应 `buttonPrevCastle.isEnabled()`（`GetCountCastle() > 1`），单城时箭头既不亮也不响应；场景层按 `Kingdom` 的城数设置。
+
+窗口选择仍不在这一层：魔法塔、怪物住所与建造窗口的区分要用 `GetActualDwelling` 与 `BUILD_MAGEGUILD` 掩码，留给场景层。
+
+**测试**：`CastleScreenInputTests` 10 条（EXIT 关闭、一次点击只消费一次、拖出后松手无效、按下帧跟随指针、未按下松手无效、单城箭头不响应、收入面板、有/无英雄的肖像、建筑 id、空地）。
+
+**指标**：UI 706 → **716**，合计 4 293 → **4 303** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：App 场景层接线（`AdventureMapScene` 点城堡图标进入、`CastleScene`、`GameHost` 路由、`--enter-town` 截图开关）、六个子窗口的选择与返回值、玩家配色、`AlphaBlit` 淡入。
+
+### 城堡屏第五批：进退游戏 ✅
+
+把前四批的静态层接成玩家能走的一条路：地图上点自己的城进来、`<`/`>` 换城、EXIT（或 ESC/E）回地图。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/CastleScene.cs` | `castle_dialog.cpp:470-859` | 视图 + 输入 + 循环：EXIT 关闭、箭头在 `Kingdom.Castles` 里循环、状态行空时换成 `world.DateString()`、动画每 200 ms（`CASTLE_AROUND_DELAY`）一帧；建筑/面板/英雄像先记日志 |
+| `App/Scenes/AdventureMapScene.cs` | `interface_events.cpp:1652-1659` | `TakeCastleRequest`：视口内按下本王国（`Color == CurrentColor`）的城就交出一座城；`TryOpenCastle`/`TryEnterTown` 建城屏 |
+| `App/GameHost.cs` | — | 路由（鼠标移动/按下/滚轮/按键在城堡屏打开时交给它）、`--enter-town` 与 `--cursor`、`--left-click` 回放 |
+
+四个连带修正：
+
+* **`Assets.Current` 从来没赋过值**：UI 层（`CastleScreenArtwork` 等）通过 `FHeroes2.Game.Assets` 门面取图，而 App 一直没把 `AssetBundle` 发布给门面——地图能画是因为它走自己的包，城镇屏却是全 null，`TryCreate` 对每座城都返回 `null`。`LoadGameData` 里补上 `GameAssets.Current = _assets` 之后才第一次画出真图。
+* **状态条把两个箭头当成了状态条帧**：`CastleDialogLayout` 拿 `SMALLBAR` 帧 0 的宽度去摆帧 1/3 的箭头，三段一起被推到 544 像素之后，屏幕外看不见状态条，状态文字自然也没了。改成三段各取自己的帧尺寸（`Create` 加一个可选的箭头尺寸参数，默认仍等于状态条，老测试不受影响），并补一条宽度不同的测试。
+* **合成点击要有位置**：`--cursor` 是合成指针，主机不投递移动事件，所以城堡屏的指针只有点自身的 `x,y` 才能到位；`HandleMouseButton` 改成总是先把点击坐标喂给它，`--enter-town` 也把 `--cursor` 传给新屏。
+* **`--left-click` 原先只回放菜单**：城镇屏打开时改为回放给它（按、松同一帧），这是 EXIT 能被无鼠标验证的唯一办法。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --screenshot` → 整屏成图（背景、城名、两条军队条、资源面板、EXIT、底栏日期）；
+* `--enter-town --cursor 200,120` → 悬停城堡，底栏由日期换成 `Castle`；
+* `--enter-town --cursor 593,440 --left-click` → 日志出现 `Closing the town screen of '<城名>'.`，截图回到冒险地图。
+
+**测试**：`CastleDialogLayoutTests` 新增 1 条（三段宽度互不相同），UI 716 → **717**，合计 4 303 → **4 304** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：六个子窗口的选择与返回（招募、建造、魔法塔、市场、盗贼公会、水井，选中后要改 `Castle`/`Kingdom` 数据）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线。
+
+### 城堡屏第六批：魔法塔窗口 ✅
+
+六个子窗口里的第一个落地：点城里的魔法塔（或 `--town-window mageguild`）整屏换成公会窗口，EXIT 回来，箭头在城之间换。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/MageGuildWindow.cs`（新） | `castle_mageguild.cpp:56-212` | `MageGuildDialog` 的场景外壳：`TryCreate` 读 `STONEBAK(_EVIL)`、`SMALLBAR`、`TOWNWIND`、`SPELLS`、退出按钮与种族 `MAGEGLD*` 帧；`SetCursor`/`SetLeftButton` 灌 `LocalEvent`，`Update` 一帧交回 `MageGuildFrame`，`Draw` 画整屏含状态行 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:596-621` | `IsWindowOpen`，窗口打开时输入/绘制/按键都转交窗口；`OpenMageGuild()` 查 `GetLevelMageGuild()`，`OpenBuilding` 认五个 `MageGuild1..5`，`FollowMageGuild` 处理退出/换城/点法术；`HandleKey` 窗口内 ESC·Enter 关、←/→ 换城，窗口外 ESC·E 出城 |
+| `App/Scenes/AdventureMapScene.cs`（改） | — | 存住 `AssetBundle` 传给 `CastleScene.TryCreate`；`TryEnterTown(index)` 按 `Kingdom.Castles` 下标取城，四类失败各留一条日志 |
+| `App/CommandLineOptions.cs` + `App/GameHost.cs` | — | `--town-window <name>`、`--town-select <n>`、`--town-build <name>`（`Enum.TryParse<BuildingType>` + `AddBuildings`），把新屏的按键也路由进 `HandleKey` |
+| `UI/Dialogs/MageGuildArtwork.cs`（改） | `game_assets.cpp:904-911` | `GetExitButtonIcn()`：`ICN::BUTTON_GUILDWELL_EXIT` 没有独立档案，原始资源下取 `WELLXTRA` 帧 0/1 |
+
+三个坑：
+
+* **新地图的城建不出魔法塔**：`Beltway` 起始的城只有初始建筑，`GetLevelMageGuild()` 是 0，窗口直接被拒；`--town-build MageGuild3` 先把塔加上，才有画面可截。
+* **退出按钮取错档案**：先按 `BUTTON_GUILDWELL_EXIT` 找独立 ICN，帧数为 0，`TryCreate` 一路返回 null。参考的 `getImage( ICN::BUTTON_GUILDWELL_EXIT )` 在原始资源分支就是 `WELLXTRA`，改用后帧数对得上；失败日志现在会列出每份档案的帧数，下一次不用再猜。
+* **状态行一个字都不显示**：`MageGuildLayout.StatusBar` 的高度照参考是 0（`setRoi( ..., 0 )`，让状态条自己决定文字位置），而端口直接拿它当裁剪矩形——`GlyphText.DrawLine` 裁到高度 0 自然什么也画不出，纵坐标还成了负偏移。改成横向用 `StatusBar` 的 ROI、纵向居 `Bar` 底板并裁在底板内，与城镇屏的状态行一致。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --town-build MageGuild3 --town-window mageguild --screenshot` → `artifacts/mage-guild.png`（石面、种族公会建筑、五行卷轴与法术名、底栏、两个箭头、EXIT）；
+* 同上加 `--cursor 600,470` → `artifacts/mage-guild-hover.png`，底栏出现 `Exit Mage Guild`。
+
+**指标**：无新增单测（App 场景层按截图验证），合计 4 304 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**截图基线要留意**：无名城镇在载入时随机取名、空洞的公会随机出法术，所以同一张地图每次运行的城名与五行卷轴都不同（`Beltway` 的玩家王国只有一座城，`--town-select 1` 直接报 `owns 1 towns`）。回合内对比要靠同一次运行的截图，跨运行不能逐像素比。
+
+**遗留**：其余五个子窗口（招募、水井、市场、盗贼公会、城建）、魔法塔里的 `ShowSpell` 法术说明窗口（现在只记日志）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线。
+
+### 城堡屏第七批：水井窗口 ✅
+
+第二个子窗口，也是第一个带「原版资源里没有的按钮」的窗口：MAX 按钮得按参考现场合成。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/WellWindow.cs`（新） | `castle_well.cpp:203-306` | `WellDialog` 的场景外壳：`TryCreate` 读 `WELLBKG`、`SMALLBAR`、`WELLXTRA` 的 EXIT 帧与种族 `CSTL*` 的 19~30 号帧；`Update` 一帧交回 `WellDialogFrame`，`Draw` 画整屏；`PressClose`/`PressBuyAll`/`PressDwelling` 供按键与命令行 |
+| `App/Fonts/GameFonts.cs`（改） | `ui_button.cpp:229` | 新增 `White`（`FONT.ICN` 走 `PaletteId.WhiteFont`），原版所有文字按钮的标签色 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:596-621`、`145` | `_well` 与 `_mageGuild` 并列，输入/绘制/按键都先问窗口；`OpenBuilding` 认 `BuildingType.Well`；新增 `RememberTownFrame`/`RestoreTownFrame`，`DrawTown` 从 `DrawFrame` 里抽出来复用 |
+| `AdventureMapScene.cs` / `GameHost.cs` | — | `CastleScene.TryCreate` 改收 `GameFonts`（三个字面都要）；`--town-window well` 路由到 `OpenWell()` |
+
+两个坑：
+
+* **MAX 按钮没有档案**：`BUTTON_WELL_MAX.ICN` 在 AGG 里不存在，`TryCreate` 直接判缺素材。参考的做法是 `EMPTY_GUILDWELL_BUTTON` 现场生成，而那颗空按钮本身是 `WELLXTRA` 的 EXIT 帧擦掉文字得到的（`game_assets.cpp:4946-4976`）。端口照做：克隆 EXIT 帧、先丢掉共享的透明层（那颗按钮是整块矩形，没有要保留的镂空），把 `(3-i, 2+i, 55, 14)` 填成按钮底色，再按 `releasedOffset (4,2)` / `pressedOffset (3,3)` 居中写白色 `MAX`。参考的底色是固定 RGB（`GetColorId(216,184,152)`），端口没有 RGB→调色板索引的换算，改用「该区域出现最多的那个索引」，效果一致。
+* **关窗后城镇屏留着窗口的字**：底栏是 640×205 的 `STRIP,0`，几个兵栏的口子是透明像素；把底栏改成不带透明的一次性拷贝之后口子变成纯黑（那儿索引是 0），说明底色其实是「开窗之前帧缓冲里原有的东西」——参考的 `Blit` 同样跳过透明像素，吃的是同一口。于是改成开窗前把整屏留一份底（`RememberTownFrame`，换城时先按新城重画一遍再留底），关窗贴回去（`RestoreTownFrame`）。魔法塔窗口同样受益：之前 `mage-guild-closed.png` 的兵栏里也残留着法术名，只是没人细看。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --town-build Well --town-window well --screenshot` → `artifacts/well.png`（石面、六个住宅格（树屋/小屋/靶场/红塔/……）、产量与属性、底栏、左侧 `MAX`、右侧 `EXIT`）；
+* 同上加 `--cursor 610,462 --left-click` → 日志 `Closing the well window.`，`artifacts/well-closed.png` 回到完整的城镇屏（兵栏里没有残留）；
+* `--cursor 30,462 --left-click` → `Recruiting everything the town has is not wired up yet.`；`--cursor 200,80 --left-click` → `The recruit window of dwelling 1 is not wired up yet.`，说明命中测试接上了。
+
+**指标**：无新增单测（App 场景层按截图验证），合计 4 304 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：水井里的招募窗口与 MAX 一键买满（要接 `RecruitWindowView` + `CastleMaxRecruitment`，还得先有「文字按钮」的通用工厂给 OKAY/CANCEL 用）、右键的法术/住宅说明弹窗（`DwellingInfoDialog`/`MessageBox`）、其余四个子窗口（招募、市场、盗贼公会、城建）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线。
+
+### 城堡屏第八批：水井里的招募窗口 ✅
+
+第三个窗口，也是第一个「四颗按钮全得现拼」的窗口：`BUTTON_SMALL_OKAY_GOOD` / `_CANCEL_GOOD` / `_MAX_GOOD` / `_MIN_GOOD` 在 AGG 里一个都没有。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/RecruitWindow.cs`（新） | `castle_well.cpp:263-271` + `dialog_recruit.cpp:253-668` | `RecruitWindowView` 的场景外壳：`TryCreate` 读 `RECRBKG`、`BLDGXTRA`（帧 1）、`RECRUIT`、`RESOURCE`、怪物的静态帧与外框三件；`SetCursor`/`SetLeftButton` 灌 `LocalEvent`，`Update` 一帧交回 `RecruitWindowFrame`，OKAY 时留下 `Selected`、ESC/Return 当取消；`Draw` 只画窗口本身（水井屏由场景先画） |
+| `App/Scenes/WellWindow.cs`（改） | `castle_well.cpp:263-271` | `_model` 改成可重建：新增 `GetDwelling(level)` 供场景查住宅、`Refresh(castle)` 买完之后 `WellDialog.Create` 重算六行的库存与周产 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:596-621` | `_recruit` 与 `_well`/`_mageGuild` 并列，输入、按键与绘制都先问它；`OpenRecruit(level)` 查住宅后交给 `TryCreate`；`CloseRecruit` 按 `Selected` 走 `Castle.RecruitMonster` 并刷新水井；`RecruitEverything` 把 `CastleMaxRecruitment` 的计划逐条落地；`CopyArmy` 给计划层递一份草稿军队 |
+| `UI/Dialogs/RecruitWindowView.cs`（复用） | `dialog_recruit.cpp` | 排版、数字框、MAX/MIN 互斥显示、OKAY/CANCEL 命中，第七批之前已落并有单测，本批只接素材 |
+
+三个坑：
+
+* **四颗小按钮都没有档案**：参考在原始资源分支一律现拼（`game_assets.cpp:1020-1056`、`2214-2257`）。端口照做：OKAY 取 `SPANBTN` 0/1、CANCEL 取 `CPANEL` 8/9、MAX 取 `RECRUIT` 4/5 裁 `(5,0,60,25)` 去掉投影、MIN 是把 MAX 的标签区域整块填成按钮底色再写白色 `MIN`。`RECRUIT` 的 `MAX` 字约占满 6~55 列，参考那个 25 像素宽的擦除框只够盖住中间，端口把擦除框放大到 `(5,3,52,18)`。
+* **裁帧不能丢变换层**：第一版用 `WithoutTransformLayer()` 复制帧，按钮上的字、投影和四角镂空全变成调色板噪声（截图里是一团乱笔画）。参考的 `Crop` 连 `transform` 一起裁；端口改成分两层裁（`Blit` 拷图像、按行 `Array.Copy` 拷变换），四角透明和阴影自己就回来了。
+* **`WellWindow` 的数字是建窗时算的**：买完之后六格的 `Available` 还是旧的，重开窗口才更新。加 `Refresh(castle)` 在每次成功招募后重建 `_model`，截图里树屋从 `Available: 8` 变成 0。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --town-build Well --town-window well --cursor 200,80 --left-click --screenshot artifacts/recruit.png` → 日志 `Opened the recruit window of dwelling 1 in 'Meramec'.`，窗口盖在水井屏中央：怪物像、`Available: 8`、`Number to buy: 8`、`Max` 提示、四颗小按钮（左下 OKAY 双、右下 CANCEL 双、中下 `MIN`）；
+* 另一次运行里点 `30,462`（水井底栏的 MAX）→ 日志 `Recruited 2 stack(s) in 'Antioch': Boars : 6 / Halflings : 8`，`artifacts/well-max.png` 里两格的 `Available` 都归零。
+* 命令行一次只回放一个点击（`--cursor`/`--left-click` 各一份），所以「开窗之后再点 OKAY」这条路走不到；OKAY/MIN/MAX 的按钮语义由 `RecruitWindowTests` 覆盖，场景侧只剩 `Selected` → `Castle.RecruitMonster` 一行接线。
+
+**指标**：无新增单测（App 场景层按截图验证），合计 4 304 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：城镇屏自己的招募入口（同一个 `RecruitWindow` 外壳可复用，但怪物来自兵营而不是住宅，且要补 `MONSTER_SWITCH_*_ARROW` 的转置翻转合成）、窗口内的数字键与怪物说明窗口（`RecruitWindowAction.ChooseCount`/`MonsterInfo` 现在只记日志）、右键的住宅/法术说明弹窗（`DwellingInfoDialog`/`MessageBox`）、其余三个子窗口（市场、盗贼公会、城建）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线、命令行的多点击回放。
+
+### 城堡屏第九批：城镇屏点住宅开招募窗口 + 换降级兵箭头 ✅
+
+第八批留下的「城镇屏自己的招募入口」和它的前提 `MONSTER_SWITCH_*_ARROW` 一起做掉了。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Core/Imaging/Sprite.cs`（改） | `engine/image.cpp` 的 `Transpose` | 新增 `Transpose()`：结果宽高互换、`out(x, y) = in(y, x)`，变换层一起转置（`game_assets.cpp:3022-3042` 用它把 `RECRUIT` 的上下箭头转成左右箭头） |
+| `App/Scenes/RecruitWindow.cs`（改） | `game_assets.cpp:3005-3042` | `TryBuildSwitchArrows(arrows, firstFrame)` 现拼两帧箭头：转置、再上下翻转；缺料检查与它合到一处，一次把所有档案名打全；两个调用方都传 `allowDowngradedMonster = true`（水井那条其实也一直是 true，之前端口写死 false 是错的） |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:613-687` | `OpenBuilding` 变公开并返回 bool；住宅分支用 `Castle.GetActualDwelling` 认升级后的房子，再 `ShowRecruit(DwellingMonsters.FromDwelling(...), Castle.GetMonstersInDwelling(...), -65, ...)`；`ShowRecruit` 是两个入口（水井按层、城镇屏按建筑）共用的建窗段，开窗时如果底下不是水井就先 `RememberTownFrame`，关窗 `RestoreTownFrame` |
+| `App/CommandLineOptions.cs` + `GameHost.cs` | — | 新增 `--town-building <name>`：走的是点击用的同一个 `OpenBuilding`，脚本里不用鼠标也能开招募窗口 |
+| `UI/Widgets/ArmyBarArtwork.cs`（改） | `ui_monster.cpp:29` | 兵栏立绘改用 `MonsterIcnIds.GetDwellingIcn`（`MONH####`） |
+| `UI/Widgets/ArmyBar.cs` + `UI/Dialogs/CastleScreenView.cs`（改） | `army_bar.cpp:198-201`、`:300` | 城镇屏的兵栏补上 `SetStripBackground(STRIP 帧 2, 帧 1)` |
+
+四个坑：
+
+* **转置的索引方向**：`out(x, y) = in(y, x)`，第一版把 `image[row, column] = Image[column, row]` 的两个角标写反了；3×3 的箭头用例是方阵，碰巧两边一样，单元测试换成 3×2 才把它钉住（越界异常）。
+* **战斗动画档案的第 0 帧是 1×1 锚点**：`PEASANT.ICN` 第 0 帧只有 1 个像素、偏移 `(-106,-158)`；兵栏原来就用它当立绘，所以城镇屏里征到的兵只有数字没有图。参考的 `monster.ICNMonh()` 指的是 `MONH####` 那套住宅立绘，换过去才对。
+* **兵栏没设 `SetStripBackground` 就没有格子尺寸**：格子尺寸由 `STRIP` 帧 2 定，缺了它布局是默认尺寸，计数文本飘到兵栏上方、格子内部透明（看到的是城镇屏的雪山）。城镇屏那一批做兵栏时漏了这一句。
+* **从城镇屏开窗不能每帧重画城镇屏**：底栏的兵栏口子透明，重画会把上一帧窗口的 OKAY/CANCEL 留在口子里；正确做法是开窗前整屏留底、关窗贴回去，窗口打开期间只画窗口本身（参考也是在关窗那步才重画整个城镇屏）。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --town-build DwellingUpgrade2 --town-building DwellingMonster2 --screenshot artifacts/town-recruit.png` → 日志 `Opened the recruit window of DwellingMonster2 in 'Cathcart': Gargoyles x6.`，`Available: 6`、`1200 (800)`，左右换兵箭头都出现且方向正确（左指左、右指右；住宅没升级时 `CanSwitchMonster` 把它们藏起来）；
+* 同一靶子加 `--cursor 230,283 --left-click` → 日志 `Recruited 6 'Gargoyles' in 'Cathcart'`，`artifacts/town-recruited.png` 里兵栏第一格出现立绘与计数，窗口按钮没有残留；
+* `--town-build Well --town-building Well` → 日志 `Opened the well of 'Brownston'.`，`artifacts/well-via-building.png`；
+* 水井里的招募窗口回归：`--town-window well --cursor 200,80 --left-click` 仍能开窗。
+
+**指标**：新增 3 个 Core 单测（`Transpose_SwapsRowsAndColumns`/`Transpose_CarriesTheTransformLayerAlong`/`TransposeOfTheUpArrowPointsLeft`），合计 4 307 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：窗口内的数字键与怪物说明窗口（`RecruitWindowAction.ChooseCount`/`MonsterInfo` 现在只记日志）、右键的住宅/法术说明弹窗（`DwellingInfoDialog`/`MessageBox`）、其余三个子窗口（市场、盗贼公会、城建）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线、命令行的多点击回放。
+
+### 城堡屏第十批：市场窗口 ✅
+
+第四个窗口，也是第一个「只盖屏幕中间、四周还要看见城镇屏」的子窗口：点城里的市场（或 `--town-window market`）开窗，EXIT 回来，两个说明框也接上了。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Scenes/MarketplaceWindow.cs`（新） | `dialog_marketplace.cpp:380-685` | `MarketplaceView` 的场景外壳：`TryCreate` 取 `BUYBUILD` 外框、`TRADPOST`、`MARKETPLACE_ICON`（可缺）、`RESOURCE` 与三个字面；TRADE/EXIT 用 `TRADPOST` 的 15/16 与 17/18 帧，GIFT 从 EXIT 帧擦掉标签重写（原始资源分支，`game_assets.cpp:2196-2257`）；`SetCursor`/`SetLeftButton`/`SetRightButton` 灌 `LocalEvent`，`Update` 一帧交回 `MarketplaceAction`，`PressClose` 供 ESC/Enter，`Draw` 只画窗口本身 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:630-640`、`dialog_marketplace.cpp:596-666` | `_marketplace` 与其余窗口并列，光标/左键/右键/按键/绘制都先问它；`OpenMarketplace()` 查市场再 `RememberTownFrame`；`FollowMarketplace` 分派退出、成交、赠予、兑换率、收入；新增 `_message` + `_messageHeldByRightButton`——说明框是模态的（左键按下或 ESC/Enter 收起，右键按住的那一种松开就消失），`Update` 期间底下的窗口冻结 |
+| `App/GameHost.cs` + `App/CommandLineOptions.cs` | — | `--town-window market`；城镇屏分支补右键转交，`--right-button` 因此在城镇屏也能按住（原来只接主菜单提示框与地图的 `--quick-info`） |
+| `UI/Dialogs/MarketplaceArtwork.cs` + `UI/Dialogs/MarketplaceView.cs`（改） | `game_assets.cpp:104` | `MARKETPLACE_ICON` 变可选：原版 AGG 里没有这颗图标（参考从 h2d 的 `market_icon_good.image` 读），缺了时 `ExchangeRateArea`/`DrawExchangeRate` 退化成只剩一行 `x N`，可点区域跟着缩到文字宽度 |
+
+四个坑：
+
+* **兑换率图标在原版资源里不存在**：`MARKETPLACE_ICON.ICN` 一帧都读不到，`TryCreate` 一路返回 null，窗口起不来。改成允许缺省之后 `x N` 照旧画，只是少了左边的摊子图标；绘制与命中两块都要同时处理 null，否则画出来的是点不到的。
+* **TRADE/GIFT 按钮都没有档案**：`BUTTON_SMALL_TRADE_GOOD` / `BUTTON_GIFT_GOOD` 在原版 AGG 里都不存在。参考的 `useOriginalResources()` 分支直接借 `TRADPOST` 自己的按钮帧（15/16 是 TRADE，17/18 是 EXIT），GIFT 是把 EXIT 擦成空按钮再写白字；端口照做，底色照样取那块区域里出现最多的调色板索引（参考的 `getButtonFillingColor` 是固定 RGB，端口没有索引换算）。
+* **右键在城镇屏被整条丢弃**：`GameHost` 的城镇屏分支原来只转左键，市集要「按住右键弹每日收入」自然收不到。补上 `SetRightButton` 之后 `--right-button` 才在城镇屏有意义——它原来只接到主菜单的提示框与地图的 `--quick-info`。
+* **截图跨运行不能逐像素比**：同一条命令跑两次，纯城镇屏就差 160 832 / 307 200 个像素（无名城镇在载入时随机生成，城名、种族、建筑、背景一起变）。窗口内部本身是稳的，比较只能取同一次运行的两帧，或者只比窗口那一块。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+* `--enter-town --town-build Marketplace --town-window market --screenshot artifacts/marketplace.png` → 石面外框、`Marketplace` 标题、店铺那句提示语、两组资源格与 `x 1`、滑条与 `Qty to trade`、`GIFT`/`EXIT`（没有选择时 TRADE 是灰的，与参考一致）；
+* `--town-building Marketplace`（走点击那条路）→ `artifacts/marketplace-building.png`，日志 `Opened the marketplace of 'Meramec'.`；
+* `--cursor 321,310 --left-click` → `Showing the exchange rate of '…'`，`artifacts/marketplace-rate.png` 里的框写着 `You currently control 1 marketplace. …`；
+* `--cursor 295,310 --right-button` → `The right button is held at 295,310.` 与 `Showing the daily income of '…'`，`artifacts/marketplace-income.png` 是 `Kingdom Income` 加金币图标 `1000`；
+* `--cursor 388,396 --left-click` → `Closing the marketplace window.`，`artifacts/marketplace-closed.png` 回到完整的城镇屏（兵栏里没有残留）；
+* 回归：城镇屏自己的收入框 `--cursor 580,390 --left-click` 仍能弹。
+
+**指标**：无新增单测（App 场景层按截图验证），合计 4 307 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：赠予窗口（`GiftWindowView` 与 `MarketplaceDialog.IsGiftEnabled` 都在，`MarketplaceAction.Gift` 现在只记日志）、交易站变体（`isFromTradingPost: true` 要等地图上的交易站对象）、说明框的按钮层（`Dialog::OK` 现在用「按一下就收」代替，`MessageBox` 仍无按钮）、盗贼公会与城建两个子窗口、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线、命令行的多点击回放。
+
+### 城堡屏第十一批：盗贼公会窗口 ✅
+
+第五个子窗口，也是第一个「整屏铺满、底下什么都看不见」的子窗口：十行排行、按公会数量逐行解锁、神谕处全解锁。数据、排行、布局、绘制、场景外壳拆成五块，各自能单测。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ThievesGuildRow.cs`（新） | `dialog_thievesguild.cpp:279-403` | 十行的枚举、标签原文、解锁门槛：Towns/Castles/Heroes 无条件画，Gold/Wood&Ore 要 >1 座公会，稀有资源/方尖碑 >2，宝物/军队实力 >3，收入 >4；`0xFF` 是神谕哨兵 |
+| `UI/Dialogs/ThievesGuildRanking.cs`（新） | `dialog_thievesguild.cpp:63-136` 的 `getInfo` | 按颜色取值、**等值合并**（`PlayerColor` 位或进一个 `Colors`）、按值降序；`Count(PlayerColor)` 与 `Ordinal(int)` 的 "1st"…"6th" |
+| `UI/Dialogs/ThievesGuildReport.cs`（新） | 十个 lambda | `ThievesGuildPlayer` 一列十行 + 个性/最佳英雄/最强兵；`FromWorld(world, viewer, oracle)` 一次读满；`ThievesGuilds` 决定解锁、`Title` 换成 "Oracle: Player Rankings"；`ShowsBestHero(>0)`/`ShowsHeroStats(>1)`/`ShowsPersonality(>2)`/`ShowsBestMonster(>3)` |
+| `UI/Dialogs/ThievesGuildArtwork.cs`（新） | `game_assets.cpp` | `STONEBAK`/`STONEBAK_EVIL` 帧 0、`TOWNWIND` 帧 22…27、`LOCATORS`/`LOCATORE` 帧 22、`SMALLBAR` 帧 0、`MINIPORT`、`MONS32`、EXIT 两帧；缺帧返回 null |
+| `UI/Dialogs/ThievesGuildLayout.cs`（新） | 参考里的字面偏移 | `TextOffsetX = 207`、`StartOffsetX = 264`、`StepX = 68`、行距 24、状态栏 461、序数行 3、英雄/个性/最强兵那几段的 38/42/32/47 不等距；标题在 EXIT 让出的宽度里居中 |
+| `UI/Dialogs/ThievesGuildView.cs`（新） | `dialog_thievesguild.cpp:242-486` | `Draw` 按参考顺序铺底纹、序数、十行标签与旗帜、颜色名、英雄小窗 + `MINIPORT`、四维、个性、最强兵、`SMALLBAR` 左右两半、标题、EXIT；`ProcessEvents` 交回 `ThievesGuildAction` |
+| `App/Scenes/ThievesGuildWindow.cs`（新） | `Dialog::ThievesGuild()` | 场景外壳：`LocalEvent` 灌光标/左右键，`PressClose` 给 ESC/Enter，`Draw` 只画窗口本身 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:642-660` | `_thievesGuild` 与其余窗口并列，光标/左键/右键/按键/绘制/`Update` 都先问它；`OpenThievesGuild(oracle)` 走 `BuildingType.ThievesGuild` 分支；`FollowThievesGuild` 分派退出与说明框；右键 EXIT 弹 `"Exit this menu."`（复用市场那套模态 `_message`，按住右键才留） |
+| `App/GameHost.cs` | — | `--town-window guild` 与 `--town-window oracle` |
+| `tests/…/ThievesGuildReportTests.cs` + `ThievesGuildViewTests.cs`（新） | — | 排行分组/降序/等值、门槛、`Ordinal`、`Create` 映射、布局锚点、按帧绘制（旗帜颜色、肖像、四维、个性、最强兵、状态栏） |
+
+五个坑：
+
+* **原版 AGG 里没有 `BUTTON_GUILDWELL_EXIT`**：这个档案是 h2d 才有的，原版走的是 `useOriginalResources()` 里的 `WELLXTRA`。直接借 `MageGuildArtwork.GetExitButtonIcn()`（魔法塔/水井同一个 EXIT），`ThievesGuildArtwork` 只取两帧（常态、按下）。
+* **`Settings.GetPlayers()` 在端口里还没被开局流程填满**：参考用剧本的玩家槽算「第 1…6 名」，端口改成问 `Kingdoms.GetColors()` 再滤 `IsPlay`（与 ADR-111 一致）；出局但颜色还在的王国不该占一列。
+* **旗帜是「一组多面」，不是「一人一面」**：等值的玩家合并成一组，画在该组的列里、互相挨着，整组居中于列心（`x = 列心 + i*68 - 面数*旗宽/2 + 3`）。第一版看截图时把三面相邻的旗误当成三列各一面，放大 8 倍才看清间距只有 18 像素——验证这类密集精灵时别靠肉眼估位置。
+* **旧的 `ThievesGuildDialog.cs` 是前批留下的空壳**：只包了几个字段，与新 `ThievesGuildReport` 职责重叠，删掉，免得两套「排行」以后各改一半。
+* **神谕不是「多开一座公会」**：参考传 `0xFF` 当公会数，门槛全部被越过；端口用 `OracleGuilds = 0xFF` 同一个哨兵，标题也跟着换，`--town-window oracle` 就是为了截这一屏。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build ThievesGuild --town-window guild --screenshot artifacts/thieves-guild.png` → 日志 `Opened the thieves' guild of 'Xabran'.`，石面底纹 + `STONEBAK` 海报式版面，序数 `1st/2nd/3rd`、十行标签、三面小旗、三个英雄小肖像（`MINIPORT`）、`Best Hero Stats:` 四维、`Personality:` 的 Warrior/Explorer、底栏 `Thieves' Guild: Player Rankings` 与 `EXIT`；
+* `--town-window oracle --screenshot artifacts/thieves-guild-oracle.png` → 标题变 `Oracle: Player Rankings`，十行全部显示旗帜，`Best Monster:` 一行为空（三名玩家此时都没有军队，参考也跳过 `Unknown`）；
+* `--cursor 610,472 --right-button --screenshot artifacts/thieves-guild-help.png` → 257×112 的 `BUYBUILD` 框写着 `Exit` + `Exit this menu.`，按住右键时报表被它盖住；
+* `--cursor 610,472 --left-click --screenshot artifacts/thieves-guild-closed.png` → 日志 `Closing the thieves' guild window.`，截图回到完整的城镇屏（兵栏与城名都在，没有残留）。
+
+**指标**：新增 56 个 UI 单测（`ThievesGuildReportTests` 的排行/门槛/映射、`ThievesGuildViewTests` 的布局与按帧绘制），合计 4 307 → **4 363** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：`BUILD_STRUCTURE`（城镇屏点空地/城门进入建筑列表）、盗贼公会行的「最佳英雄」点击（参考没有）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线、命令行的多点击回放。
+
+### 城堡屏第十二批：城建/建造确认框 ✅
+
+第六个子窗口（`Dialog::BuyBuilding()`），城堡屏的六个子窗口到此齐备。说明框本身拆成布局、资产、视图、价格框四块，场景外壳 `BuildWindow` 只做输入分派。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ResourceCostBox.cs`（新） | `resource.cpp:603-664`（`Resource::BoxSprite`） | 价格框：按 `Funds` 取非零项（ore→wood→mercury→sulfur→crystal→gems→gold），图标底对齐、数字在小字下方 1 像素处居中；一行 45 像素、三列（`width/3`），最后 1~2 项落到窄行居中（三列里占中格 / 两列里各占一格）；`GetHeight` 45/90/135 |
+| `UI/Dialogs/BuildDialogArtwork.cs`（新） | `buildinginfo.cpp:435-537` 的取图 | `BLDGXTRA` 相框帧、种族建筑 ICN 的 `CastleBuildingInfo.GetSpriteIndex` 帧、`RESOURCE.ICN`、`FrameBoxChrome`；任一缺失返回 null |
+| `UI/Dialogs/BuildDialogLayout.cs`（新） | `buildinginfo.cpp:467-518` | 相框 `+10`、建筑图 `+11`、名字在相框下 2 像素、说明 `+2`、需求标题居中、需求正文左对齐、价格框在最后；`GetContentHeight` 把各段高度加起来 |
+| `UI/Dialogs/BuildDialogView.cs`（新） | `buildinginfo.cpp:435-537` | 状态非 `AllowBuild` 时把 `GetConditionDescription()` 追加到说明后（相同则不重复）并禁用 OKAY；`BuildDisabled` 不显示需求行；名字/说明按 `WrapLines` 折行、超高 `TryCreate` 返回 null；`Draw` 依次画框、建筑图、名字、说明、需求、价格、按钮；`FitToOneRow` 给名字留省略号 |
+| `Game/Castle/BuildingInfo.cs`（改） | `buildinginfo.h` | `GetConditionDescription()` 由 `private` 改 `public`（说明框与右键帮助都要） |
+| `App/Scenes/SystemButtonArtwork.cs`（新） | `game_assets.cpp` 的 OKAY/CANCEL | 原始资源分支：`SYSTEM.ICN` 1/2 是 OKAY、3/4 是 CANCEL |
+| `App/Scenes/BuildWindow.cs`（新） | `Dialog::BuyBuilding()` 的循环 | 场景外壳：`LocalEvent` 灌光标/左键，`Update` 交回 `BuildAction`（`Exit`/`Build`），ESC/Enter 对应 CANCEL/OKAY；`SetRightButton` 回答右键落在哪个按钮上 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp` 的建筑分支 | `OpenBuilding` 对未建的建筑改走 `OpenBuild`；`FollowBuild` 分派退出与建造；`BuyBuilding` 成功后清掉 `_townSnapshot` 并 `DrawTown()`；右键 OKAY/CANCEL 弹「条件」/「Exit this menu without doing anything.」（`_message` + `heldByRightButton`） |
+| `tests/…/BuildDialogTests.cs`（新） | — | 内容高度、布局锚点、价格框行数与落点、`FitToOneRow`、状态映射（AllowBuild/LackResources/RequiresBuild/BuildDisabled）、OKAY 置灰、绘制落在框内 |
+
+五个坑：
+
+* **价格框的整行数少算了一行**：第一版写 `(count - 3) / 3`，7 种资源只算出一整行，后 4 项全挤进「剩余项」分支、互相重叠。参考 `resource.cpp` 的循环是 `while ( size - id > 2 )` 每次吃掉三项，等价于 `count / 3`。`build-dialog-7cost.png`（法师塔 2 级：金 + 木 + 矿 + 四稀有）现在是 3+3+1。
+* **建造后城镇屏贴着旧底图**：开窗时留过 `_townSnapshot`，建完必须清掉再 `DrawTown()`，否则新建筑不出现。
+* **右键帮助是「按住才有」的模态**：复用市场/盗贼公会那套 `_message` + `heldByRightButton`；`CastleScene` 的 `_build` 绘制分支要先画窗口再叠 `_message`，右键松开时收框。
+* **说明框高度必须先量后建框**：先按 `WrapLines` 数说明与需求的行数，再把总高交给 `FrameBox.Create`；`BuildDialogView` 用 `layout.Cost.Y + 价格高 > 框底` 判定内容溢出。
+* **`--town-building` 仍是临时入口**：参考要先点城镇屏的空地/城门进入建筑列表（`BUILD_STRUCTURE` 分支），端口这一轮只把确认框做完，列表与建造图标留到下一批。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-building Well --cursor 250,344 --left-click --screenshot artifacts/build-dialog-well.png` → 日志 `Built 'Well' in 'Chandler'.`，对话框关闭、城镇屏重绘；
+* `--town-building Statue --screenshot artifacts/build-dialog-built.png` → 状态 `LackResources`，说明后追加 `Cannot afford the Statue.`，OKAY 置灰，点它不建造；
+* `--town-building Statue --cursor 250,344 --right-button --screenshot artifacts/build-help-okay.png` → `BUYBUILD` 框写 `Okay` + `Build Statue.`；`--cursor 370,344 --right-button` → `Cancel` + `Exit this menu without doing anything.`；
+* `--town-building MageGuild2 --screenshot artifacts/build-dialog-7cost.png` → 七项价格 3+3+1 行，最后一项居中。
+
+**指标**：新增 18 个 UI 单测（`BuildDialogTests`），合计 4 363 → **4 381** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：`BUILD_STRUCTURE`（城镇屏点空地/城门进入建筑列表与建造图标）、说明框的按钮层（`MessageBox` 仍无按钮）、英雄与船长肖像帧、玩家配色、`AlphaBlit` 淡入、`castle-dialog.png` 基线、命令行的多点击回放。
+
+
+---
+
+## 城堡屏第十三批：建造列表 `BUILD_STRUCTURE` ✅
+
+城镇屏点城门（`BUILD_CASTLE`）不再是死路：`Castle::_openConstructionDialog()`（`castle_town.cpp:171-800`）整屏 19 格的
+建造列表接上了，点格子进第十二批的价格框，左右键换城、右键出说明、船长建好后还能改阵型。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/ConstructionLayout.cs`（新） | `castle_town.cpp:220-337`、`:336-347`、`:400-444` | 19 格的坐标（住宅两列三排、法师塔/酒馆/盗贼公会、最后一排含左右塔与护城河、船长 `444,165`），两个英雄位 `(443,260,102,93)`/`(443,363,102,94)`，阵型图标 `(550,220)`/`(585,220)`，EXIT `(553,428)`，状态条 `(236,461,180,16)`，小城堡图 `(459,6)`，船长格石板 `(530,163,110,84)`；`GetMageGuildSlot` 夹到 1…5，`GetCaptainFlagOffset` 按种族给旗帜锚点 |
+| `UI/Dialogs/ConstructionArtwork.cs`（新） | `buildinginfo.cpp:318-412`、`game_assets.cpp` | `CASLWIND` 0 铺底、`STONEBAK`（整屏 640×480）、`BLDGXTRA` 0 相框、`CASLXTRA` 0/1/2（空槽 / 可建底 / 不可建底）、`HSICONS` 9/10 阵型图标与 11 光标、`STRIP` 3 空英雄像、`SMALLBAR`、`TREASURY` 1…4 箭头与 EXIT、`RESOURCE` 0…6；状态标记用 `BLDGXTRA` 的勾/金币/叉三帧 |
+| `UI/Dialogs/ConstructionCell.cs`（新） | `BuildingInfo::Redraw`/`RedrawCaptain` | 相框 → 图标 → 名字底 → 名字（`FitToOneRow` 截到 125 像素）→ 右下角标记；已建只画勾，缺钱画金币 + 灰名字，条件不足画叉 + 灰名字；船长格标记锚点 `(83,79)` 且按种族叠旗 |
+| `UI/Dialogs/CastleImagePainter.cs`（新） | `Castle::DrawImageCastle`（`castle.cpp:1326-1426`） | 5×5 瓦片：下两行 `OBJNTWBA` 地面（地面 ×10）、上四行 `OBJNTOWN`（种族 ×32，未建城堡 +16 用栅栏）；按 `sprite.OffsetX/OffsetY` 手动叠加，裁到背景矩形 |
+| `UI/Dialogs/ConstructionView.cs`（新） | `castle_town.cpp:186-480` + `:489-604` | `Create` 造 19 个 `BuildingInfo`（含 `SetPosition`）；`Draw` 顺序：底 → 船长石板 → 城堡图 → 城名（小号白字居中 `x=538`）→ 19 格 → 船长四维与阵型图标 → 两个英雄位 → 状态条与两个箭头 → 资源面板与 EXIT；`HitTest` 顺序照参考（EXIT → 箭头 → 资源 → 格子 → 英雄 → 阵型），`forClick` 只认能开的格子；`GetStatusMessage` 复刻参考的状态栏文案（`Exit Castle Options`、`Set garrison combat formation to 'Spread'`、`Recruit …`） |
+| `UI/Dialogs/ConstructionInput.cs`（新） | `castle_town.cpp:600-768` | 按下与松开要落在同一目标上才算点击；箭头在只有一座城时不响应（`CanSwitchCastle`）、已建/不可建的格子不响应、当前阵型那一侧也不响应 |
+| `Game/Heroes/PrimarySkillNames.cs`（新） | `skill.cpp:262-276` | `Attack Skill`/`Defense Skill`/`Spell Power`/`Knowledge` |
+| `Game/RaceNames.cs`（新） | `race.cpp:30-53` | 状态栏的 `the Knight/Barbarian/…`，`Multiple` 写作 `Multi` |
+| `App/Scenes/ConstructionWindow.cs`（新） | `castle_town.cpp` 的循环 | 场景外壳：光标/左键/右键灌进去，`Update` 交回 `ConstructionAction`（`Exit`/`Build`/`PreviousTown`/`NextTown`/`Income`/`FirstHero`/`SecondHero`），阵型图标就地翻 `Army.IsSpreadFormation`，右键返回 `ConstructionHelp`（建筑名 + 说明、阵型说明、`Exit this menu.`）；英雄位取 `Kingdom.GetRecruits()` 与 `PORT00xx` 帧 0 |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:761-764` | 点城门（`BUILD_CASTLE`）→ `OpenConstruction()`；`FollowConstruction` 分派换城（`SwitchTo` 后重开）、收入框、价格框（`Build` 交给 `OpenBuild`，真正扣钱仍在确认框里）；整屏窗口每帧先贴回开窗前的城镇屏再画，免得状态条透明口子漏字；`IsWindowOpen`/`SetCursor`/`SetLeftButton`/`SetRightButton`/`HandleKey` 都转交给它 |
+| `tests/…/ConstructionTests.cs`（新） | — | 19 格坐标、法师塔等级夹取、船长旗偏移、缺失资源返回 null、命中顺序、格子的状态说明、名字截断、`forClick` 穿越船长格、按下/松开配对、单城禁用箭头、缺船长时贴石板 |
+
+四个坑：
+
+* **「散开」图标压在船长格上**：船长格 `(444,165,135,70)` 覆盖了 `(550,220)` 的散开图标。参考里状态栏先问格子
+  （`castle_town.cpp:558`）再问图标（`:583`），所以那一小块显示的是船长格的状态；但点击必须落到图标上——那是因为
+  `BuildingInfo::QueueEventProcessing()` 对已建格子什么都不做（`buildinginfo.cpp:419-437`）。端口给 `HitTest` 加了
+  `forClick`：点的时候跳过开不了的格子，状态栏仍按原顺序问。
+* **空槽位看着像「没画」**：亡灵族在旧地图上的酒馆是 `BUILD_NOTHING`，参考先贴相框再拿整帧 `CASLXTRA` 0 盖住，
+  而这一帧是 137×72 的整格底板，于是结果就是一块没有边框的平底。`buildinginfo.cpp:355-360` 正是这个行为。
+* **没有英雄时也画叉**：参考 `castle_town.cpp:420-427` 的叉只看 `!allow_buy_hero1`，英雄为空时它同样是真。
+* **点格子只弹价格框**：`Dialog::BuyBuilding( true )` 返回真时列表直接关掉，扣钱与重绘都在确认框里，所以
+  `FollowConstruction` 的 `Build` 分支是「关掉自己 + `OpenBuild`」，不能直接 `BuyBuilding`。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build Castle --town-building Castle --cursor 72,37 --screenshot artifacts/construction-window.png`
+  → 整屏列表：19 格相框与名字底、勾/金币/叉三种标记、顶部小城堡图与城名、两个英雄位（空像 + 叉）、状态条写
+  `The Excavation is already built.`；
+* `--cursor 570,433` → 状态条 `Exit Castle Options`，EXIT 与资源面板位置正确（`artifacts/crop-bar.png`）；
+* `--cursor 72,192 --left-click` → 日志 `Built 'MageGuild1' in 'Whittingham'`：点法师塔格弹出价格框、买完回城镇屏；
+* `--cursor 72,37 --left-click` → 已建的格子不响应，仍是列表。
+
+**指标**：新增 27 个 UI 单测（`ConstructionTests`），合计 4 381 → **4 408** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：点英雄位的招募窗口（`recruitHeroDialog()`）、英雄位上的士气/幸运小图标、右键英雄位的英雄信息框、
+`AlphaBlit` 淡入与玩家配色、`castle-dialog.png` 基线。
+
+---
+
+## 城堡屏第十四批：招募英雄确认框 ✅
+
+建造列表的两个英雄位终于能点开了：`Castle::DialogBuyHero( hero )`（`castle_town.cpp:66-160`）接上，点 OKAY 真的把人招进
+王国；顺带补了两处让这条路走不通的洞——酒馆名单从来不补位、英雄没有默认名字。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/RecruitHeroLayout.cs`（新） | `castle_town.cpp:104-114` | 四段几何：标题（`+2`）、111×105 相框（横居中）、大肖像（框内 `+5,+6`）、说明（框下 10 像素再 `+2`）、价格框（说明下 10 像素）；`GetContentHeight` 只加四段与三个 10 像素间隔，**不**带领先的那 10 像素 |
+| `UI/Dialogs/RecruitHeroArtwork.cs`（新） | `castle_town.cpp:117-119` | `SURRENDR` 帧 4 当相框、`RESOURCE` 0~6 画价格、`BUYBUILD` 六块边框当底板；大肖像不在这里（属于英雄） |
+| `UI/Dialogs/RecruitHeroView.cs`（新） | `castle_town.cpp:88-160` | 黄色标题 `Recruit Hero` → 相框 → 大肖像 → 白字说明（244 像素换行）→ 价格框 → OKAY/CANCEL；`AllowBuyHero()` 为假时 OKAY 灰化；说明过长放不进框时不建 |
+| `App/Scenes/RecruitHeroWindow.cs`（新） | `castle_town.cpp:66-160` | 窗口：光标、左键、右键说明（`Okay`/`Recruit X the Y.`、`Cancel`/`Exit this menu without doing anything.`）、`IsPortraitUnder` 回答相框右键、ESC/回车；`Update` 交回 `RecruitHeroAction`（`Exit`/`Hire`） |
+| `Game/Heroes/HeroNames.cs`（新） | `heroes.cpp:84-121` | 73 个默认名字，顺序即编号（0 未知、1~9 骑士…55~60 战役、61~71 PoL、72 开发） |
+| `Game/Heroes/Hero.cs`（改） | `heroes.cpp:2100-2116` | `Name` 变成「自定义名字为空则取默认表」，`FixFrenchCharactersInName` 只改自定义名字 |
+| `Game/Kingdom/Kingdom.cs`（改） | `kingdom.cpp:248-269` | 新增 `ActionNewWeek( World, uint, bool )`：跑完原逻辑再 `GetRecruits( World )` 补位 |
+| `Game/Kingdom/Kingdoms.cs`（改） | `world.cpp:426` → `kingdom.cpp:778` | `NewWeek` 收一个 `World` 并透传（七个王国仍不持有世界） |
+| `App/Scenes/ConstructionWindow.cs`（改） | `castle_town.cpp:193` | 取英雄改用带世界的 `GetRecruits( World )`（参考那行本来就会补位）；公开 `FirstHero`/`SecondHero` |
+| `App/Scenes/CastleScene.cs`（改） | `castle_town.cpp:691-694`、`castle_dialog.cpp` | `_recruitHero` 叠在列表之上：分流顺序、绘制顺序、`FollowRecruitHero`（取消只收确认框，招人则关列表回城镇重画） |
+| `App/CommandLineOptions.cs`、`App/GameHost.cs`（改） | — | `--town-hero <0|1>` 直接开框，配合 `--left-click` 点 OKAY |
+| `tests/…/RecruitHeroViewTests.cs`、`…/HeroNamesTests.cs`（新） | — | 6 + 12 条 |
+
+四个坑：
+
+* **标题不占领先的 10 像素**：建造框的标题先让 `elementOffset` 再从标题之后放内容（`buildinginfo.cpp:454`），招募框的
+  标题直接写在 `dialogRoi.y + 2`（`castle_town.cpp:104`），所以 `GetContentHeight` 少一段。照抄建造框会让框子高 10 像素。
+* **英雄位一直是空的**：`Kingdom.GetRecruits( World, ... )` 的补位重载早就写好了，但 `ActionNewWeek` 结尾叫的是不带世界的
+  那个，于是补位从来没跑过。修法不是让它自己找世界（七个王国不持有世界，ADR-111），而是给 `ActionNewWeek`/`NewWeek`
+  一条带 `World` 的重载，并在 `ConstructionWindow` 里改用带世界的那条——参考 `castle_town.cpp:193` 叫的正是会补位的版本。
+* **默认名字是 `_customName` 的回落，不是初值**：把 73 个名字写进 `_customName` 会让「地图没给名字」和「地图给了名字」
+  再也分不开，`FixFrenchCharactersInName` 还会把默认名字固化下来；改成 `Name => _customName.Length > 0 ? ... : HeroNames.Get(Id)`
+  之后，两处都自然对了。
+* **招人之后不要重开列表**：参考里 `recruitHeroDialog()` 招到人就让 `_openConstructionDialog` 返回，建造列表跟着退出，
+  城镇屏留下并重画英雄像。端口照做（关确认框 + 关列表 + `DrawTown()`），否则会退回一个「英雄位已经换了人」的列表。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build Castle --town-building Castle --cursor 494,306 --left-click` → 日志
+  `Opened the recruit hero dialog of 'Ranloo'`，截图 `artifacts/recruit-hero.png`：标题、相框、亡灵巫师肖像、
+  `Ranloo is a level 1 Necromancer without artifacts.`、2500 金币、OKAY/CANCEL，底栏写 `Recruit Ranloo the Necromancer`；
+* 同一次跑加 `--town-hero 0 --cursor 263,371 --left-click` → 日志 `Recruited 'Carlawn' in 'Dragadune'`，截图
+  `artifacts/recruit-hero-hired.png`：回到城镇屏，金币 4500 → 2000，卫戍栏换成新英雄的像；
+* 悬停英雄位 → 状态栏 `Recruit <名字> the <种族>`（名字修好后不再是空的）。
+
+**指标**：新增 18 条单测（`RecruitHeroViewTests` 6、`HeroNamesTests` 12），Game 2 938 → **2 950**，UI 818 → **824**，
+合计 4 408 → **4 426** 全绿；`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：相框右键的英雄速览（`Dialog::QuickInfo`）未搬；酒馆窗口还没接这份名单；`RECRUIT` 模式位与投降英雄仍是
+ADR-118 的状态；英雄名只有英文原文；玩家配色与 `AlphaBlit` 淡入、`castle-dialog.png` 基线。
+
+---
+
+## 城堡屏第十五批：英雄速览框 ✅
+
+三处右键终于有东西了：招募框的相框、建造列表的两个英雄位、城镇屏卫戍栏的英雄像都能弹出
+`Dialog::QuickInfo( hero )`（`dialog_quickinfo.cpp:693-911`），按住右键期间一直显示、松开就收。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/HeroQuickInfoLayout.cs`（新） | `dialog_quickinfo.cpp:693-911` | 内容框是常数（底板 `+28,+10` 起 146x144）：名字 `+2`、相框 `+12`、肖像 `+16`、士气列 `+10` 与幸运列 `+120`（数量为 1 时下移到 `+20`）、旗子 `+13`（左旗从 `(146-40)/2` 往左伸、右旗从 `(146+40)/2` 往右伸）、六行四维从 `相框下沿` 起每行 11 像素、数值列右移 89、军队线 `-7,+118` 宽 160 |
+| `UI/Dialogs/HeroQuickInfoArtwork.cs`（新） | `ui_castle.cpp:196-220`、`heroes.cpp` 的 `GetPortrait( PORT_SMALL )` | `QWIKHERO` 帧 0 底板、`LOCATORS`/`LOCATORE` 帧 22 相框、`MINILKMR` 0~5（0~2 幸运、3~5 士气，各是差/平/好）、`FLAG32` 0~13（偶数左旗、奇数右旗，中立 12/13）；`GetLeftFlagIndex` 照参考只认六色与中立，组合色返回 `null` |
+| `UI/Dialogs/HeroQuickInfoView.cs`（新） | `dialog_quickinfo.cpp:693-911` | 名字（完整信息加 `" (Level N)"`，名字先截到 `236-39-等级宽度`）、相框与小肖像、两列图标、两面旗、`Attack:`/`Defense:`/`Spell Power:`/`Knowledge:`/`Spell Points:`/`Move Points:` 六行、`DrawSingleDetailedMonsterLine` 一行军队；亡灵军团的士气图标先 `Gray` 再 `Darkening`；不全信息只画名字、相框与 `DrawMultipleMonsterLines` 版军队；位置走 `StandardPopupWindow.PositionOf` |
+| `App/Scenes/CastleScene.cs`（改） | `castle_town.cpp:148`、`castle_dialog.cpp:551-553` | `_heroInfo`/`_heroInfoArtwork`/`_miniMonsters` 与 `ShowHeroQuickInfo( Hero )`；`DrawFrame` 拆成 `DrawWindows()` + 最后画速览框 + `InvalidateAll()`；`SetRightButton` 开头 `if (!down) _heroInfo = null`，按下时按命中建框：招募框相框 → 被招募的英雄、建造列表英雄位 → `FirstHero`/`SecondHero`、城镇屏英雄像 → `_view.Hero` |
+| `tests/…/HeroQuickInfoTests.cs`（新） | — | 15 条 |
+
+四个坑：
+
+* **内容框是常数、底板尺寸不是**：参考把 `cur_rt` 重写成底板 `+28,+10` 起的 146x144 之后，每个部件都是相对它的固定
+  偏移；照「按比例缩放」写会全错位。端口只把底板位置与两个会变的尺寸（相框、旗子）当输入。
+* **「按住右键才显示」不等同于「点一下显示」**：参考的 `while ( ... isMouseRightButtonPressed() )` 是模态循环，松开
+  才退出。端口在 `SetRightButton` 的两个端点实现——按下建、松开清空，而且清空必须写在方法**开头**，否则三处
+  `return` 会漏掉。
+* **亡灵士气要先灰再暗**：只 `Gray` 一次会留下亮色像素，参考连续两次 `ApplyPalette`（GRAY、DARKENING），而且要作用在
+  副本上，否则第二次右键就没颜色了。
+* **速览框必须最后画**：它会盖住招募确认框、建造列表与城镇屏，`DrawFrame` 里那些 `return` 分支让「最后画」无处可放，
+  所以拆成 `DrawWindows()` + 覆盖层 + 一次 `InvalidateAll()`。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build Castle --town-building Castle --town-hero 0 --cursor 300,180 --right-button`
+  → 日志无警告，截图 `artifacts/hero-quick-info.png`：`QWIKHERO` 底板、`LOCATORS` 相框套着 30x30 小肖像、
+  左右两面黄旗、左士气右幸运各一枚、`Sir Gallant (Level 1)`、`Attack: 0 / Defense: 0 / Spell Power: 1 / Knowledge: 1`
+  与魔法点、移动力，军队行空着（招募的是空英雄）；放大件 `artifacts/crop-quick.png`；
+* `--enter-town --town-building Castle --cursor 494,306 --right-button` → `artifacts/hero-quick-info-list.png`：
+  速览框贴在光标旁边浮在建造列表上，底栏仍是 `Recruit Natasha the Sorceress`；
+* 城镇屏右键英雄像（`--cursor 55,405 --right-button`，城里没有驻留英雄）→ 什么都不弹、无异常。
+
+**指标**：新增 15 条单测（`HeroQuickInfoTests`），UI 824 → **839**，合计 4 426 → **4 441** 全绿；
+`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：城镇屏船长像的速览（参考 `castle_dialog.cpp:549-550`，端口还没画船长像）；英雄位上的士气/幸运小图标；
+`isFullInfo == false` 这条简化路径还没有入口（敌方英雄速览要等冒险地图的英雄交互）；玩家配色的淡入。
+---
+
+## 城堡屏第十六批：城镇屏船长像与船长速览 ✅
+
+城镇屏左侧徽记终于会换成船长了：建好船长住处之后画 `PORT0090`~`PORT0095` 的船长大头像并把该色的 `HEROFL` 旗子
+贴在种族偏移上（`castle_dialog.cpp:138-145`），右键那块也能弹出 `Dialog::QuickInfo( GetCaptain() )`
+（`:547-548`）——速览框与英雄共用，但没有等级后缀、没有移动力那一行（`dialog_quickinfo.cpp:756`、`:760-780`）。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/CaptainPortrait.cs`（新） | `castle/captain.cpp:44-84`、`:200-250` | `GetBigIcn`（骑士 `PORT0090`、野蛮人 `0091`、女巫 `0092`、术士 `0093`、巫师 `0094`、亡灵 `0095`）、`GetSmallFrameIndex`（`MINICAPT` 0~5，同序）、`GetFlagOffset`（骑士/女巫 `(43,9)`、野蛮人 `(42,8)`、术士 `(41,9)`、巫师 `(42,10)`、亡灵 `(42,9)`，其余 `(0,0)`）；`TryCreateBig` 克隆帧 0 再贴 `ICN::getFlagIcnId` 帧 0，`TryCreateSmall` 取种族帧 |
+| `UI/Dialogs/HeroQuickInfoSubject.cs`（新） | `dialog_quickinfo.cpp:693-911` 的 `HeroBase` | 英雄/船长共用的快照：`FromHero` / `FromCaptain`；`Level`、`MovePoints`、`MaxMovePoints` 为 `null` 就表示船长（参考的 `isActiveHero` 为假），名字、颜色、幸运、士气、四维、魔法点与军队两边同形 |
+| `UI/Dialogs/HeroQuickInfoView.cs`（改） | 同上 | `TryCreate` 改吃快照（`portrait` 参数并入快照），`Hero` 属性换成 `Subject`；等级后缀与移动力行都看快照是否为 `null` |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:138-145`、`:547-551` | `TownCaptainPortrait( castle )` 懒加载并按「城 + 颜色」缓存，`DrawTown` 填进 `CastleScreenFrame.CaptainPortrait`；右键先判 `CrestArea`（船长住处已建 → 船长速览）再判英雄像；`ShowCaptainQuickInfo` 与小头像取自 `CaptainPortrait.TryCreateSmall`，建框逻辑抽成 `ShowQuickInfo( subject )` |
+| `tests/…/HeroQuickInfoTests.cs`（改） | — | 新增 8 条：英雄/船长快照差异、种族映射、无船长种族、真实素材大头像尺寸与小头像、旗子贴上且原件不动、船长五行与英雄六行 |
+| `Game/Castle/Captain.cs`（改） | — | 注释里「`MINICAPT` 没有枚举」的过时说法改成指向 `CaptainPortrait` |
+
+四个坑：
+
+* **船长不是英雄**：参考的 `isActiveHero` 决定两处——名字后缀与 `Move Points:` 那一行。把船长硬塞进 `Hero` 会让名字变成
+  空、等级变成 0；端口用小肖像之外的两个可空字段表达差异，视图不认识 `Captain` 也不认识 `Hero`。
+* **大头像比徽记大一像素**：`PORT0090` 帧 0 是 101×93，`CREST` 是 100×92。参考从 `+5,+262` 原样贴、不裁，端口照做；
+  命中区继续用 `CREST` 尺寸，与 `rectSign1` 一致。写测试时别把尺寸写死成 100×92。
+* **画的时候才建**：船长住处是城镇屏里建的（建造列表），切城时读会把「刚建好」的那一帧漏掉；缓存键必须是「城对象 +
+  颜色」，城易主时旗子要重贴。
+* **旗子要贴拷贝**：`GetPortrait` 返回的是带旗的副本，直接改归档里的帧会让别的城镇、别的界面一起变色。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build Captain --screenshot artifacts/captain-portrait.png` → 左侧徽记位置换成骑士船长，旗杆顶上是
+  红方的红旗（贴在图内 `(43,9)`），底栏日期、卫戍栏与资源面板都不变；放大件 `artifacts/crop-captain.png`；
+* 同一次加 `--cursor 55,310 --right-button --screenshot artifacts/captain-quick-info.png` → 速览框贴着光标浮在城镇屏上：
+  城名 `Avone`、`MINICAPT` 小肖像与相框、两面紫旗（术士城）、`Attack: 1 / Defense: 1 / Spell Power: 1 / Knowledge: 1 /
+  Spell Points: 10/10`，**没有** `Move Points:` 那一行，军队行空着（城镇还没招兵）。
+
+**指标**：新增 8 条单测（`HeroQuickInfoTests`），UI 839 → **847**，合计 4 441 → **4 449** 全绿；
+`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：船长像的 `AlphaBlit` 淡入；住处建好时参考会再 `Captain.LoadDefaults` 一次（当前数值相同）；船长的战斗界面；
+酒馆接英雄名单、`RECRUIT` 模式位、敌方英雄的 `isFullInfo == false` 路径、英雄名中文。
+
+## 城堡屏第十七批：酒馆闲话框 ✅
+
+点城镇屏的酒馆，吧台手会端着本周传闻出来（`castle_dialog.cpp:697-701` → `Castle::_openTavern()`，
+`castle_tavern.cpp:39-54`）：`TAVWIN.ICN` 的动画、引子与传闻两段文字、一个 OK 按钮，没有别的出口。
+亡灵的酒馆位是神龛，走的是说明框，不受这个窗口影响。
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `UI/Dialogs/TavernView.cs`（新） | `castle_tavern.cpp:39-54` | 把 `TAVWIN` 精灵（背景 `{0,1}`、首帧 2、20 帧、75ms）、`BUYBUILD` 框、两套字体与 `SYSTEM` 的 OK 按钮拼成 `MessageBox`；`frameCount = min(20, 精灵数 - 2)`，少于 3 张返回 `null`；两段文字是两个 run，都用 `NormalWhite` |
+| `UI/Dialogs/TavernDialog.cs`（已有） | 同上 | 标题 `Tavern`、引子 `A generous tip for the barkeep yields the following rumor:`、`Create( World )` 取本周传闻、单个 `DialogButton.Ok` |
+| `App/Scenes/CastleScene.cs`（改） | `castle_dialog.cpp:697-701` | `_tavern` 在说明框、速览与所有建筑窗口之前；`SetCursor`/`SetLeftButton`/键盘/`Update`/`DrawWindows` 五处先判；`Update` 只推吧台手；`DrawWindows` 先重画城镇屏再叠框；`SetRightButton` 直接忽略；`OpenBuilding` 的 `Tavern` 分支接 `OpenTavern()`，入口要求酒馆已建 + `BUYBUILD` 框 + `TAVWIN` + `SYSTEM` 按钮 |
+| `App/GameHost.cs`（改） | — | `--town-window tavern` 分发到 `townScene.OpenTavern()` |
+| `tests/…/TavernViewTests.cs`（新） | — | 7 条：四个常数、少于 3 帧拒绝、两个元素与吧台手 188×100、单个居中的 OK、按下松开返回 `Ok`、75ms 后换到第 1 帧、六个参数都不许空 |
+
+三个坑：
+
+* **这是模态框，不是浮层**：参考的 `showStandardTextMessage` 会阻塞在 `Dialog::OK` 的循环里，只有 OK、ESC、Enter 能走。
+  端口把 `_tavern` 放在输入分发的最前面，右键不关、点空处不关；开框时还要清掉按住右键才显示的收入框和英雄速览。
+* **城镇屏每帧照常重画**：框只盖住中间一块，不能像别的窗口那样 `return` 掉 `DrawTown()`——先把城镇画完，再
+  `tavern.Draw( pixels )` 并 `InvalidateAll()`。
+* **随机城的种族每次启动都可能不同**：Beltway 的玩家城是随机城，载入时重掷种族（`World.Castles.cs`），所以拿固定
+  坐标点城镇屏只在对应种族那次命中。实测骑士酒馆区中心 `(386,145)` 开窗成功；确定性的入口是 `--town-building Tavern`。
+
+**验证**（`dotnet run --map F:\game\fh2\maps\Beltway.mp2`）：
+
+* `--enter-town --town-build Tavern --town-window tavern --screenshot artifacts/tavern.png` → 框里是骑士吧台手
+  （第 0 帧背景 + 动画）、标题 `Tavern`、引子与一周传闻、底部居中的 OK；
+* 同一次换成 `--town-building Tavern --cursor 326,359 --left-click --smoke-frames 20 --screenshot artifacts/tavern-closed.png`
+  → 点 OK 后回到城镇屏，日志 `Closed the tavern of '…'`；
+* `--enter-town --town-build Tavern --cursor 386,145 --left-click --smoke-frames 20 --screenshot artifacts/tavern-from-click.png`
+  → 该次启动的玩家城是骑士，点酒馆建筑直接开框（日志 `Opened the tavern of '…'`）；同一坐标在别的种族那几次启动不开。
+
+**指标**：新增 7 条单测（`TavernViewTests`），UI 847 → **854**，合计 4 449 → **4 456** 全绿；
+`dotnet build -warnaserror` 0 警告 0 错误。
+
+**遗留**：玩家配色与淡入（城堡屏主线只剩这一项）；船长战斗界面（`battle_only`）；随机城的固定坐标冒烟不可复现；
+酒馆传闻的多语言字体随本地化一起缺；`RECRUIT` 模式位与敌方英雄的 `isFullInfo == false` 路径照旧。

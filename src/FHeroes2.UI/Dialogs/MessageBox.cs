@@ -2,13 +2,14 @@ using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Input;
+using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Dialogs;
 
 /// <summary>
-/// A message box with a frame and no buttons, the <c>fheroes2::showMessage( header, body,
-/// Dialog::ZERO )</c> of the reference: a yellow title and a white body, both centered in the text
-/// area of a <see cref="FrameBox"/>, optionally followed by <see cref="DialogElement"/>s.
+/// A message box with a frame and, optionally, a row of buttons, the <c>fheroes2::showMessage(
+/// header, body, button )</c> of the reference: a yellow title and a white body, both centered in the
+/// text area of a <see cref="FrameBox"/>, optionally followed by <see cref="DialogElement"/>s.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -32,8 +33,16 @@ namespace FHeroes2.UI.Dialogs;
 /// <para>
 /// <see cref="ProcessEvents"/> forwards to the elements and hands their answers back; popping the description
 /// window stays with the owner, exactly like the reference splits <c>processEvents</c> from
-/// <c>showStandardTextMessage</c>. Buttons are still out of scope: <c>Dialog::OK</c>/<c>YES_NO</c> need a
-/// <c>ButtonGroup</c> inside the bottom area of the frame, which no ported caller asks for yet (ADR-024).
+/// <c>showStandardTextMessage</c>.
+/// </para>
+/// <para>
+/// <b>Buttons.</b> The reference's <c>getDialogHeight()</c> adds <see cref="FrameBox.ButtonAreaHeight"/>
+/// when the caller asks for buttons and the row is built by <c>ButtonGroup( area, buttonTypes )</c> on
+/// the bottom edge of that area. The port does the same: <c>buttons</c> reserves the row and
+/// <see cref="ButtonGroup.CreateStandard"/> places the OK/CANCEL/YES/NO sprites there, while
+/// <see cref="SetCursor"/>/<see cref="SetLeftButton"/>/<see cref="ProcessHotKey"/> answer the clicks
+/// and the two closing keys. The tavern is the first caller (<c>castle_tavern.cpp:39-53</c>), so the
+/// boxes of the main menu keep passing no buttons and do not grow (ADR-192).
 /// </para>
 /// </remarks>
 public sealed class MessageBox
@@ -52,9 +61,11 @@ public sealed class MessageBox
     private readonly int _headerHeight;
     private readonly IReadOnlyList<DialogElement> _elements;
     private readonly IReadOnlyList<Rect> _elementAreas;
+    private readonly ButtonGroup? _buttons;
 
     private MessageBox(FrameBox frame, IGlyphSource headerFont, IGlyphSource bodyFont, string header, string body,
-        int headerHeight, IReadOnlyList<DialogElement> elements, IReadOnlyList<Rect> elementAreas)
+        int headerHeight, IReadOnlyList<DialogElement> elements, IReadOnlyList<Rect> elementAreas,
+        ButtonGroup? buttons)
     {
         _frame = frame;
         _headerFont = headerFont;
@@ -64,6 +75,7 @@ public sealed class MessageBox
         _headerHeight = headerHeight;
         _elements = elements;
         _elementAreas = elementAreas;
+        _buttons = buttons;
     }
 
     /// <summary>Text area of the frame, the <c>GetArea()</c> of the reference.</summary>
@@ -84,6 +96,9 @@ public sealed class MessageBox
     /// <summary>Where the box put each element, in the order of <see cref="Elements"/>.</summary>
     public IReadOnlyList<Rect> ElementAreas => _elementAreas;
 
+    /// <summary>The row of buttons at the bottom of the frame, <see langword="null"/> when the box has none.</summary>
+    public ButtonGroup? Buttons => _buttons;
+
     /// <summary>
     /// Composes the box for <paramref name="header"/> and <paramref name="body"/>.
     /// </summary>
@@ -95,13 +110,20 @@ public sealed class MessageBox
     /// <param name="elements">Elements drawn under the text; empty or <see langword="null"/> for none.</param>
     /// <param name="startY">Top of the frame, or a negative value to center it.</param>
     /// <param name="screen">Screen the box is centered on; 640x480 when omitted.</param>
+    /// <param name="buttons">
+    /// Buttons to place on the bottom edge, e.g. <see cref="DialogButton.Ok"/>; <see cref="DialogButton.None"/>
+    /// leaves the row out and keeps the box as small as the text needs.
+    /// </param>
+    /// <param name="buttonArtwork">Source of the button sprites, required as soon as <paramref name="buttons"/> is set.</param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="header"/>, <paramref name="body"/>, <paramref name="chrome"/>,
-    /// <paramref name="headerFont"/> or <paramref name="bodyFont"/> is <see langword="null"/>.
+    /// <paramref name="headerFont"/>, <paramref name="bodyFont"/> or, when buttons are asked for,
+    /// <paramref name="buttonArtwork"/> is <see langword="null"/>.
     /// </exception>
     /// <exception cref="ArgumentException">An element of <paramref name="elements"/> is <see langword="null"/>.</exception>
     public static MessageBox Create(string header, string body, FrameBoxChrome chrome, IGlyphSource headerFont,
-        IGlyphSource bodyFont, IReadOnlyList<DialogElement>? elements = null, int startY = -1, Size? screen = null)
+        IGlyphSource bodyFont, IReadOnlyList<DialogElement>? elements = null, int startY = -1, Size? screen = null,
+        DialogButton buttons = DialogButton.None, IDialogButtonArtworkSource? buttonArtwork = null)
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(body);
@@ -136,11 +158,20 @@ public sealed class MessageBox
             elementBlockHeight += TextOffsetY;
         }
 
-        FrameBox frame = FrameBox.Create(chrome, contentHeight + elementBlockHeight, showButtons: false, startY, screen);
+        bool hasButtons = buttons != DialogButton.None;
+
+        if (hasButtons && buttonArtwork is null)
+        {
+            throw new ArgumentNullException(nameof(buttonArtwork), "A message box with buttons needs their artwork.");
+        }
+
+        FrameBox frame = FrameBox.Create(chrome, contentHeight + elementBlockHeight, hasButtons, startY, screen);
 
         List<Rect> areas = PlaceElements(rows, frame.Area, contentHeight, bodyHeight > 0);
 
-        return new MessageBox(frame, headerFont, bodyFont, header, body, headerHeight, elements, areas);
+        ButtonGroup? group = hasButtons ? ButtonGroup.CreateStandard(frame.Area, buttons, buttonArtwork!) : null;
+
+        return new MessageBox(frame, headerFont, bodyFont, header, body, headerHeight, elements, areas, group);
     }
 
     /// <summary>Draws the frame, the title, the body and the elements, like <c>showMessage()</c> does.</summary>
@@ -180,7 +211,56 @@ public sealed class MessageBox
 
             _elements[i].Draw(target, new Point(area.X, area.Y));
         }
+
+        _buttons?.Draw(target);
     }
+
+    /// <summary>
+    /// Repaints the animated elements, the <c>update( output, offset )</c> loop of the reference's
+    /// message loop.
+    /// </summary>
+    /// <param name="target">Indexed frame buffer of the scene.</param>
+    /// <param name="elapsed">Time since the previous call.</param>
+    /// <returns><see langword="true"/> when an element painted something.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public bool Update(PixelBuffer target, TimeSpan elapsed)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        bool painted = false;
+
+        for (int i = 0; i < _elements.Count; ++i)
+        {
+            Rect area = _elementAreas[i];
+
+            painted |= _elements[i].Update(target, new Point(area.X, area.Y), elapsed);
+        }
+
+        return painted;
+    }
+
+    /// <summary>
+    /// Records the cursor position for the button row, <see cref="ButtonGroup.SetCursor"/>; does
+    /// nothing for a box without buttons.
+    /// </summary>
+    /// <param name="cursor">Cursor position in logical pixels, or <see langword="null"/> when it left the window.</param>
+    public void SetCursor(Point? cursor) => _buttons?.SetCursor(cursor);
+
+    /// <summary>
+    /// Records the left mouse button and answers the button the press and the release both landed on,
+    /// <see cref="ButtonGroup.SetLeftButton"/>; <see cref="DialogButton.None"/> for a box without buttons.
+    /// </summary>
+    /// <param name="down">Whether the left mouse button is now held.</param>
+    /// <returns>Value of the clicked button, or <see cref="DialogButton.None"/>.</returns>
+    public DialogButton SetLeftButton(bool down) => _buttons?.SetLeftButton(down) ?? DialogButton.None;
+
+    /// <summary>
+    /// Answers the button a hot key stands for, <see cref="ButtonGroup.ProcessHotKey"/>: ESC and Enter
+    /// close an OK box (<c>Game::HotKeyCloseWindow()</c>).
+    /// </summary>
+    /// <param name="hotKey">Hot key that was pressed.</param>
+    /// <returns>Value of the button the key stands for, or <see cref="DialogButton.None"/>.</returns>
+    public DialogButton ProcessHotKey(ButtonHotKey hotKey) => _buttons?.ProcessHotKey(hotKey) ?? DialogButton.None;
 
     /// <summary>
     /// Offers one frame of input to the elements, the loop <c>showMessage()</c> runs inside its dialog.

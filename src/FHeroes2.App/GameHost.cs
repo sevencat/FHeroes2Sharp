@@ -11,10 +11,13 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
 using SDL3;
+
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.App;
 
@@ -50,6 +53,7 @@ public sealed class GameHost : IDisposable
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
+    private CastleScene? _castle;
     private EditorScene? _editor;
     private bool _supportsCjk;
     private bool _sdlInitialised;
@@ -184,7 +188,15 @@ public sealed class GameHost : IDisposable
             // --left-click replays one click from inside the loop, i.e. after the event batch and
             // before the scene update, which is the frame order a player produces. Doing it in
             // CreateScenes would skip the first frames of the new scene.
-            if (_options.LeftClick && _menu is not null && _timer.FrameCount == LeftClickFrame)
+            // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
+            // replaying there (the arrows need a second click in the same run to be visible).
+            if (_options.LeftClick && _castle is { } townScreen && _options.Cursor is { } townPoint && _timer.FrameCount == LeftClickFrame)
+            {
+                townScreen.SetCursor(townPoint);
+                townScreen.SetLeftButton(true);
+                townScreen.SetLeftButton(false);
+            }
+            else if (_options.LeftClick && _menu is not null && _timer.FrameCount == LeftClickFrame)
             {
                 _menu.SetCursor(_options.Cursor);
                 _menu.SetLeftButton(true);
@@ -198,6 +210,8 @@ public sealed class GameHost : IDisposable
             // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
             // input batch that confirmed it has been handled.
             TryEnterAdventureMap();
+            TryOpenCastleFromAdventure();
+            CloseCastleWhenDone();
 
             double now = clock.Elapsed.TotalSeconds;
 
@@ -230,7 +244,11 @@ public sealed class GameHost : IDisposable
                     // real one must not steal the hover state.
                     if (!_syntheticCursor)
                     {
-                        if (_editor is { } editing)
+                        if (_castle is { } townScreen)
+                        {
+                            townScreen.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
+                        else if (_editor is { } editing)
                         {
                             editing.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
                         }
@@ -260,6 +278,7 @@ public sealed class GameHost : IDisposable
                 case SDL.EventType.WindowMouseLeave:
                     if (!_syntheticCursor)
                     {
+                        _castle?.SetCursor(null);
                         _editor?.SetCursor(null);
                         _adventure?.SetCursor(null);
                         _adventure?.ViewWorld?.DragTo(null);
@@ -279,8 +298,9 @@ public sealed class GameHost : IDisposable
 
                 case SDL.EventType.MouseWheel:
                     // SDL reports a positive y when the wheel turns away from the user, which rolls
-                    // a list up and moves the view towards the top of the map.
-                    if (!_syntheticCursor)
+                    // a list up and moves the view towards the top of the map. The town screen has
+                    // nothing to scroll, so the wheel is dropped while it is open.
+                    if (!_syntheticCursor && _castle is null)
                     {
                         int notches = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
 
@@ -341,6 +361,15 @@ public sealed class GameHost : IDisposable
         if (_editor is { } editor)
         {
             return HandleEditorKey(key, editor);
+        }
+
+        if (_castle is { } townScreen)
+        {
+            // Escape and E leave the town screen or the window that is open above it, the arrows switch
+            // town; the keys are the screen's own business.
+            townScreen.HandleKey(key.Key, key.Repeat);
+
+            return false;
         }
 
         if (_adventure is { } adventure)
@@ -428,6 +457,26 @@ public sealed class GameHost : IDisposable
                 {
                     GameLog.Info($"Picked the '{editor.Edits.Brush}' brush from the map.");
                 }
+            }
+
+            return false;
+        }
+
+        if (_castle is { } townScreen)
+        {
+            // The town screen is modal: the left button clicks its areas, the right one is handed to the
+            // windows that use it (the marketplace shows the kingdom income while it is held), and
+            // everything else is dropped. The click carries its own position, so a synthetic click from
+            // the command line finds its area even though motion events are ignored while --cursor is in use.
+            townScreen.SetCursor(ToLogical(button.X, button.Y));
+
+            if (button.Button == LeftMouseButton)
+            {
+                townScreen.SetLeftButton(button.Down);
+            }
+            else if (button.Button == RightMouseButton)
+            {
+                townScreen.SetRightButton(button.Down);
             }
 
             return false;
@@ -1034,6 +1083,41 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
+    /// Opens the town screen a click on the map asked for, <c>Game::OpenCastleDialog</c>.
+    /// </summary>
+    private void TryOpenCastleFromAdventure()
+    {
+        if (_castle is not null || _adventure?.TakeCastleRequest() is not { } castle)
+        {
+            return;
+        }
+
+        if (_adventure.TryOpenCastle(castle) is not { } scene)
+        {
+            GameLog.Warn($"The town screen of '{castle.Name}' cannot be shown: its artwork is missing.");
+
+            return;
+        }
+
+        _castle = scene;
+        _scene = scene;
+
+        GameLog.Info($"Opened the town screen of '{castle.Name}'.");
+    }
+
+    /// <summary>Goes back to the map when the town screen was left with EXIT or a close hot key.</summary>
+    private void CloseCastleWhenDone()
+    {
+        if (_castle is not { IsClosed: true })
+        {
+            return;
+        }
+
+        _castle = null;
+        _scene = _adventure ?? (IScene?)_menu ?? _diagnostics;
+    }
+
+    /// <summary>
     /// Opens one map file on the adventure map, bypassing the menu and the scenario list
     /// (<c>--map</c>). A file that cannot be read leaves the client where it was, which is what makes
     /// the flag safe to use in scripts.
@@ -1071,6 +1155,7 @@ public sealed class GameHost : IDisposable
         }
 
         GameLog.Info($"Leaving the adventure map '{_adventure.MapName}'.");
+        _castle = null;
         _adventure = null;
         _scene = _menu is not null ? _menu : _diagnostics;
     }
@@ -1217,6 +1302,112 @@ public sealed class GameHost : IDisposable
             OpenMapFile(_options.MapFile);
         }
 
+        // The town screen normally opens by clicking one of the player's towns on the map; --enter-town
+        // opens it here so its frame can be captured and smoke tested without a mouse.
+        if (_options.EnterTown && _adventure is { } townMap)
+        {
+            if (townMap.TryEnterTown(_options.TownIndex) is { } townScene)
+            {
+                _castle = townScene;
+                _scene = townScene;
+
+                // --town-build adds a building a day-one town does not have yet, so the windows behind
+                // those buildings can be reached without playing to them.
+                if (_options.TownBuild is { } buildingName)
+                {
+                    if (Enum.TryParse(buildingName, ignoreCase: true, out BuildingType building))
+                    {
+                        townScene.Castle.AddBuildings(building);
+
+                        GameLog.Info($"--town-build: added '{building}' to '{townScene.Castle.Name}'.");
+                    }
+                    else
+                    {
+                        GameLog.Warn($"--town-build: '{buildingName}' is not a building name.");
+                    }
+                }
+
+                // --cursor also places the pointer on the town screen, so the status line of the hovered
+                // area can be screenshotted the same way the map's hover is.
+                if (_options.Cursor is { } start)
+                {
+                    townScene.SetCursor(start);
+                }
+
+                GameLog.Info($"Opened the town screen of '{townScene.Castle.Name}' from the command line.");
+
+                // --town-window opens one of the windows above it, so their frames can be captured the
+                // same way the screen's is.
+                if (_options.TownWindow is { } windowName)
+                {
+                    if (windowName is "mageguild" or "mage-guild")
+                    {
+                        townScene.OpenMageGuild();
+                    }
+                    else if (windowName is "well")
+                    {
+                        townScene.OpenWell();
+                    }
+                    else if (windowName is "market" or "marketplace")
+                    {
+                        townScene.OpenMarketplace();
+                    }
+                    else if (windowName is "guild" or "thievesguild" or "thieves-guild")
+                    {
+                        townScene.OpenThievesGuild();
+                    }
+                    else if (windowName is "oracle")
+                    {
+                        townScene.OpenThievesGuild(oracle: true);
+                    }
+                    else if (windowName is "tavern")
+                    {
+                        townScene.OpenTavern();
+                    }
+                    else
+                    {
+                        GameLog.Warn($"--town-window: '{windowName}' is not a window the town screen opens yet.");
+                    }
+                }
+
+                // --town-building goes through the click's own entry point, which is how the dwelling
+                // recruitment window (and the windows of buildings still to come) is reached from a script.
+                if (_options.TownBuilding is { } clickedName)
+                {
+                    if (Enum.TryParse(clickedName, ignoreCase: true, out BuildingType clicked))
+                    {
+                        townScene.OpenBuilding(clicked);
+                    }
+                    else
+                    {
+                        GameLog.Warn($"--town-building: '{clickedName}' is not a building name.");
+                    }
+                }
+
+                // --town-hero opens the recruit hero dialog of one of the two heroes on offer, which
+                // normally needs two clicks: the slot in the building list, then OKAY.
+                if (_options.TownHero is { } heroIndex)
+                {
+                    if (!townScene.OpenRecruitHero(heroIndex))
+                    {
+                        GameLog.Warn($"--town-hero: '{townScene.Castle.Name}' has no hero {heroIndex} on offer.");
+                    }
+                }
+
+                // The marketplace asks for the kingdom income only while the right button is held
+                // (Dialog::ZERO); --right-button holds it so the popup can be captured.
+                if (_options.RightButton && _options.Cursor is { } heldCursor)
+                {
+                    townScene.SetRightButton(true);
+                    GameLog.Info($"The right button is held at {heldCursor.X},{heldCursor.Y}.");
+                }
+            }
+            else
+            {
+                GameLog.Warn("--enter-town: the acting kingdom has no town whose screen can be shown.");
+            }
+        }
+
         // The window normally opens from the adventure options dialog; --view-world opens it here so its
         // frame can be captured and smoke tested.
         if (_options.ViewWorld && _adventure is { } viewWorld && viewWorld.OpenViewWorld(ViewWorldMode.ViewAll))
@@ -1306,6 +1497,11 @@ public sealed class GameHost : IDisposable
             ExitCode = 1;
             return;
         }
+
+        // The ported screens read their frames through the process wide Assets.Current cache
+        // (game_assets.cpp:65); the castle screen paints through it, so the host publishes the bundle
+        // here, once, and keeps it for the life of the process.
+        GameAssets.Current = _assets;
 
         byte[]? paletteData = _assets.TryRead("KB.PAL");
         if (paletteData is null || paletteData.Length < Palette.RawPaletteSize)

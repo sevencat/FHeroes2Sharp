@@ -89,6 +89,22 @@ public sealed class CastleDialogLayoutTests
     }
 
     [Fact]
+    public void TheBarStartsAfterTheArrowAndTheSecondArrowAfterTheBar()
+    {
+        // 原始资源里 SMALLBAR 帧 0 远宽于帧 1/3：拿状态条的宽度去摆箭头会把状态条与状态文字推出屏幕。
+        CastleDialogLayout layout = CastleDialogLayout.Create(
+            new Point(0, 0),
+            new Size(500, 19),
+            Crest,
+            new Size(70, 19));
+
+        Assert.Equal(new Rect(0, 461, 70, 19), layout.PreviousCastleButton);
+        Assert.Equal(new Rect(70, 461, 500, 19), layout.StatusBarArea);
+        Assert.Equal(new Rect(570, 461, 70, 19), layout.NextCastleButton);
+        Assert.Equal(new Rect(86, 461, 468, 19), layout.StatusTextArea);
+    }
+
+    [Fact]
     public void ABarTooNarrowForTheInsetIsRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(

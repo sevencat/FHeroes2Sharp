@@ -213,7 +213,7 @@ public sealed class BuildingInfo
     /// <c>GetBuildConditionDescription()</c>; the rest name the building so the player knows which one is meant.
     /// </remarks>
     /// <returns>The text, empty for a status with no answer.</returns>
-    private string GetConditionDescription() => _status switch
+    public string GetConditionDescription() => _status switch
     {
         BuildingStatus.NotToday => "Cannot build. You have already built here today.",
         BuildingStatus.NeedCastle => "For this action it is necessary to build a castle first.",

@@ -21,9 +21,8 @@ namespace FHeroes2.Game.Castle;
 /// is the castle's, the same object, not a copy.
 /// </para>
 /// <para>
-/// Two things are deliberately left for later: <c>GetPortrait()</c>, which needs the <c>MINICAPT</c> icon set the
-/// port has no enumeration for, and <c>GetControl()</c>, which needs <c>Players</c>. Neither is reached by
-/// anything that exists today — the captain is fought, not drawn.
+/// <c>GetPortrait()</c> lives in the UI, not here: the big portrait is <c>PORT0090</c>~<c>PORT0095</c> with the
+/// color flag glued on, the small one is a <c>MINICAPT</c> frame (<c>FHeroes2.UI.Dialogs.CaptainPortrait</c>).
 /// </para>
 /// <para>
 /// The captain is <b>not</b> a copy of the hero standing in the town: <c>Castle::GetActualArmy()</c> picks the hero

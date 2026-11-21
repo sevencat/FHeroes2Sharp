@@ -13,6 +13,8 @@ using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Interface;
 
+using CastleTown = FHeroes2.Game.Castle.Castle;
+
 namespace FHeroes2.App.Scenes;
 
 /// <summary>
@@ -50,6 +52,7 @@ public sealed class AdventureMapScene : IScene
     private const int StatusBarGap = 10;
 
     private readonly ScreenBuffer _frame;
+    private readonly AssetBundle? _assets;
     private readonly GameFonts? _fonts;
     private readonly World _world;
     private readonly AdventureSession? _session;
@@ -71,6 +74,7 @@ public sealed class AdventureMapScene : IScene
 
     private bool _leftHeld;
     private bool _radarGrabbed;
+    private CastleTown? _castleRequest;
 
     private StatusPanelState _statusState = StatusPanelState.Day;
 
@@ -88,6 +92,7 @@ public sealed class AdventureMapScene : IScene
 
     private AdventureMapScene(
         ScreenBuffer frame,
+        AssetBundle? assets,
         GameFonts? fonts,
         World world,
         AdventureSession? session,
@@ -103,6 +108,7 @@ public sealed class AdventureMapScene : IScene
         PlayerColor friends)
     {
         _frame = frame;
+        _assets = assets;
         _fonts = fonts;
         _world = world;
         _session = session;
@@ -256,6 +262,7 @@ public sealed class AdventureMapScene : IScene
 
             AdventureMapScene scene = new(
                 frame,
+                assets,
                 fonts,
                 world,
                 session,
@@ -591,6 +598,19 @@ public sealed class AdventureMapScene : IScene
                 return;
             }
 
+            // A press on one of the acting kingdom's towns asks for its screen, Game::OpenCastleDialog of the
+            // castle branch of the terrain click. The town answers for its whole footprint (gate, walls, roofs).
+            if (_session is { } acting
+                && _viewport.Contains(cursor)
+                && _view.TileAt(cursor) is { } tile
+                && _world.GetCastle(tile.X, tile.Y) is { } town
+                && town.Color == acting.CurrentColor)
+            {
+                _castleRequest = town;
+
+                return;
+            }
+
             // The reference's MouseLeftClick on the terrain: the focus hero gets the route of world.getPath()
             // and starts walking. Without a session (a map with no human player) the press stays a drag.
             if (_session?.FocusHero is { } hero
@@ -733,6 +753,80 @@ public sealed class AdventureMapScene : IScene
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Takes the town a click asked to open, if any; the request is consumed.
+    /// </summary>
+    /// <remarks>
+    /// 场景不自己开城：城堡屏是另一个场景，由宿主换过去再换回来，所以这里只交出一座城的引用。
+    /// </remarks>
+    /// <returns>The town to open, or <see langword="null"/> when nothing was clicked.</returns>
+    public CastleTown? TakeCastleRequest()
+    {
+        CastleTown? castle = _castleRequest;
+        _castleRequest = null;
+
+        return castle;
+    }
+
+    /// <summary>
+    /// Builds the town screen of a castle, <c>Castle::OpenDialog()</c>.
+    /// </summary>
+    /// <param name="castle">The town to show.</param>
+    /// <returns>The screen, or <see langword="null"/> when the fonts or a frame of the screen are missing.</returns>
+    public CastleScene? TryOpenCastle(CastleTown castle)
+    {
+        ArgumentNullException.ThrowIfNull(castle);
+
+        if (_fonts is null)
+        {
+            GameLog.Warn("The town screen needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        return CastleScene.TryCreate(_frame, _world, castle, _session?.Kingdom, _assets, _fonts);
+    }
+
+    /// <summary>
+    /// Builds the town screen of a town of the acting kingdom, the <c>--enter-town</c> of the command line.
+    /// </summary>
+    /// <param name="index">Which town of the kingdom to show, in the order of <c>Kingdom.Castles</c>.</param>
+    /// <returns>The screen, or <see langword="null"/> when it cannot be built.</returns>
+    public CastleScene? TryEnterTown(int index = 0)
+    {
+        if (_session is not { } session)
+        {
+            GameLog.Warn("--enter-town: the map has no acting kingdom (no human player).");
+
+            return null;
+        }
+
+        if (session.Kingdom.Castles.Count == 0)
+        {
+            GameLog.Warn($"--enter-town: the acting kingdom ({session.CurrentColor}) owns no town.");
+
+            return null;
+        }
+
+        if (index < 0 || index >= session.Kingdom.Castles.Count)
+        {
+            GameLog.Warn($"--enter-town: the acting kingdom owns {session.Kingdom.Castles.Count} towns, there is no #{index}.");
+
+            return null;
+        }
+
+        CastleTown castle = session.Kingdom.Castles[index];
+
+        if (TryOpenCastle(castle) is { } scene)
+        {
+            return scene;
+        }
+
+        GameLog.Warn($"--enter-town: the screen of '{castle.Name}' ({castle.Color}) cannot be built.");
+
+        return null;
     }
 
     /// <summary>

@@ -98,6 +98,46 @@ public sealed class Sprite
             Transform is null ? null : FlipLayer(Transform, Width, Height, horizontal, vertical));
     }
 
+    /// <summary>
+    /// Returns the sprite transposed into its own bounds, <c>fheroes2::Transpose</c> of the engine:
+    /// the result is as wide as this sprite is tall, and <c>out(x, y) = in(y, x)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference uses it only to grow the four monster switch arrows of a recruit dialog out of
+    /// the up and down arrows of <c>ICN::RECRUIT</c> (<c>game_assets.cpp:3022-3042</c>). The transform
+    /// layer is transposed with the image for the same reason as in <see cref="Flip"/>.
+    /// </remarks>
+    public Sprite Transpose()
+    {
+        PixelBuffer image = new(Height, Width);
+
+        // The result is as wide as this sprite is tall, so a source row becomes a result column.
+        for (int row = 0; row < Height; ++row)
+        {
+            for (int column = 0; column < Width; ++column)
+            {
+                image[row, column] = Image[column, row];
+            }
+        }
+
+        return new Sprite(image, OffsetX, OffsetY, Transform is null ? null : TransposeLayer(Transform, Width, Height));
+    }
+
+    private static byte[] TransposeLayer(byte[] source, int width, int height)
+    {
+        byte[] result = new byte[source.Length];
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                result[(x * height) + y] = source[(y * width) + x];
+            }
+        }
+
+        return result;
+    }
+
     private static byte[] FlipLayer(byte[] source, int width, int height, bool horizontal, bool vertical)
     {
         byte[] result = new byte[source.Length];

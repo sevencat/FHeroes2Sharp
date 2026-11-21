@@ -648,7 +648,7 @@ public sealed partial class World
 
             NewWeek();
 
-            _kingdoms.NewWeek(_week);
+            _kingdoms.NewWeek(this, _week);
             _castles.NewWeek(_week, WeekType, IsBeginMonth, _day);
         }
 

@@ -15,9 +15,9 @@ namespace FHeroes2.App.Fonts;
 /// <remarks>
 /// <para>
 /// Everything the game shows is drawn into the indexed frame buffer through these sources, so the
-/// palette - not a GPU shader - decides the final colour. <see cref="Yellow"/> is the
-/// <c>YELLOW_FONT</c> conversion of <c>FONT.ICN</c>; its CJK fallback inherits that colour through
-/// <see cref="CompositeGlyphSource.ForBitmapFont"/>.
+/// palette - not a GPU shader - decides the final colour. <see cref="Yellow"/> and
+/// <see cref="White"/> are the <c>YELLOW_FONT</c> and <c>WHITE_FONT</c> conversions of <c>FONT.ICN</c>;
+/// their CJK fallbacks inherit that colour through <see cref="CompositeGlyphSource.ForBitmapFont"/>.
 /// </para>
 /// <para>
 /// Loading is best effort: without game data (or with a truncated archive) <see cref="TryLoad"/>
@@ -29,11 +29,17 @@ public sealed class GameFonts
     /// <summary>Character used to find out whether the fallback face covers CJK at all.</summary>
     private const char ProbeCharacter = '中';
 
-    private GameFonts(IGlyphSource small, IGlyphSource normal, IGlyphSource yellow, string description)
+    private GameFonts(
+        IGlyphSource small,
+        IGlyphSource normal,
+        IGlyphSource yellow,
+        IGlyphSource white,
+        string description)
     {
         Small = small;
         Normal = normal;
         Yellow = yellow;
+        White = white;
         SupportsCjk = normal.IsAvailable(ProbeCharacter);
 
         // The overlay has one line for the fonts, so the CJK state belongs in the description.
@@ -51,6 +57,12 @@ public sealed class GameFonts
     /// menu text of the original game.
     /// </summary>
     public IGlyphSource Yellow { get; }
+
+    /// <summary>
+    /// <c>FONT.ICN</c> converted with <see cref="PaletteId.WhiteFont"/>, the label colour of the original
+    /// buttons: the reference draws every text button with <c>FontType::buttonReleasedWhite()</c>.
+    /// </summary>
+    public IGlyphSource White { get; }
 
     /// <summary>Whether the fallback can draw Chinese/Japanese/Korean characters.</summary>
     public bool SupportsCjk { get; }
@@ -75,8 +87,9 @@ public sealed class GameFonts
             BitmapFont normal = BitmapFont.Load(bundle, BitmapFontSize.Normal);
             BitmapFont small = BitmapFont.Load(bundle, BitmapFontSize.Small);
 
-            // One conversion of FONT.ICN serves every yellow line of the UI.
+            // One conversion of FONT.ICN serves every yellow line of the UI, and one more its white buttons.
             BitmapFont yellow = normal.WithPalette(PaletteId.YellowFont);
+            BitmapFont white = normal.WithPalette(PaletteId.WhiteFont);
 
             TextFont? cjkFace = face ?? TryGetBuiltInFace();
 
@@ -84,6 +97,7 @@ public sealed class GameFonts
                 Wrap(small, cjkFace),
                 Wrap(normal, cjkFace),
                 Wrap(yellow, cjkFace),
+                Wrap(white, cjkFace),
                 Describe(normal, small, cjkFace));
 
             GameLog.Info($"Game fonts ready: {fonts.Description}.");

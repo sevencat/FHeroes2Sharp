@@ -144,7 +144,10 @@ public static class ResourcePanel
     /// The seven icons in <c>ICN::RESOURCE</c> order: wood, mercury, ore, sulfur, crystal, gems, gold. Exactly
     /// <see cref="IconCount"/> of them are required.
     /// </param>
-    /// <param name="exitFrame">The first frame of <c>ICN::BUTTON_EXIT_TOWN</c>, drawn at the panel's bottom.</param>
+    /// <param name="exitFrame">
+    /// The released EXIT button, drawn at the panel's bottom: <c>ICN::BUTTON_EXIT_TOWN</c> frame 0, which is
+    /// <c>TREASURY</c> frame 1 when the original resources are used (<c>game_assets.cpp:918-926</c>).
+    /// </param>
     /// <returns>The panel's rectangle.</returns>
     /// <exception cref="ArgumentException"><paramref name="icons"/> does not hold seven icons.</exception>
     public static Rect Draw(

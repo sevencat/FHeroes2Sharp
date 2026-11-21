@@ -433,8 +433,19 @@ public sealed class MarketplaceView
     /// <summary>The exchange rate icon and its "x N" line, <c>renderExchangeRate()</c> (<c>dialog_marketplace.cpp:102-116</c>).</summary>
     public Rect ExchangeRateArea()
     {
-        Sprite icon = _artwork.ExchangeRateIcon;
         Point centre = _layout.ExchangeRateCentre;
+
+        // 没有图标（原版 AGG 里没有 MARKETPLACE_ICON，参考从 h2d 读）时就只剩 "x N" 这一行可点。
+        if (_artwork.ExchangeRateIcon is not { } icon)
+        {
+            int textWidth = GlyphText.Measure(_fonts.SmallWhite, ExchangeRateLine());
+
+            return new Rect(
+                centre.X - (textWidth / 2),
+                centre.Y + MarketplaceLayout.ExchangeRateSpacing,
+                textWidth,
+                _fonts.SmallWhite.LineHeight);
+        }
 
         int width = icon.Width;
         int height = icon.Height + MarketplaceLayout.ExchangeRateSpacing
@@ -473,19 +484,20 @@ public sealed class MarketplaceView
 
     private void DrawExchangeRate(PixelBuffer target)
     {
-        Sprite icon = _artwork.ExchangeRateIcon;
         Point centre = _layout.ExchangeRateCentre;
+        int lineY = centre.Y + MarketplaceLayout.ExchangeRateSpacing;
 
-        int iconX = centre.X - (icon.Width / 2);
-        int iconY = centre.Y + MarketplaceLayout.ExchangeRateSpacing;
+        if (_artwork.ExchangeRateIcon is { } icon)
+        {
+            ImageOps.BlitSprite(target, new Point(centre.X - (icon.Width / 2), lineY), icon);
 
-        ImageOps.BlitSprite(target, new Point(iconX, iconY), icon);
+            lineY += icon.Height + MarketplaceLayout.ExchangeRateSpacing;
+        }
 
         GlyphText.DrawLine(
             _fonts.SmallWhite,
             target,
-            new Point(centre.X - (GlyphText.Measure(_fonts.SmallWhite, ExchangeRateLine()) / 2),
-                iconY + icon.Height + MarketplaceLayout.ExchangeRateSpacing),
+            new Point(centre.X - (GlyphText.Measure(_fonts.SmallWhite, ExchangeRateLine()) / 2), lineY),
             ExchangeRateLine());
     }
 
