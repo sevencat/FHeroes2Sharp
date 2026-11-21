@@ -7938,3 +7938,53 @@ ADR-118 的状态；英雄名只有英文原文；玩家配色与 `AlphaBlit` �
 **验证**：`dotnet test tests/FHeroes2.Game.Tests` → **2983 通过 / 0 失败**；`-warnaserror` 重建
 `src/FHeroes2.Game` 0 警告；`ai` 行 2/0/7 → **3/0/6**（`ai_planner_castle.cpp` 全转），合计
 **67/83/99**，剩余 `NotImplementedException` 71 处（AI 目录 58 + `AIWorldPathfinder` 13）。
+
+## AI 实现批次 B4：`ai_planner_kingdom.cpp` 与 `revealFog` ⚠️ 10/11（2026-11-21）
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `src/FHeroes2.Game/Ai/AiPlanner.Kingdom.cs`（新） | `ai_planner_kingdom.cpp` | `RecruitHero`（酒馆空位 + 三名候选的平均/最弱兵价与推力）、`SetHeroRoles`（Easy 全 Hunter → 胜利英雄/最强技能为 Champion → 巡逻即 Fighter → 多于三人时最弱两位 Courier/Scout → 余下按三倍中位数分 Fighter/Hunter）、`GetEnemyArmyOnTile`、`CanBecomeCastle`、`EvaluateRegionSafety`（受威胁 -50、敌堡 -100、岛屿 ×1.5、两遍传播）、`GetSortedCastleList`（受威胁优先，其余按 `建筑价值 × 对方安全度`）、`FindCastlesInDanger`（`ArmyAdvantageSmall`/`Desperate` 两档、距离衰减与按天缩放、`Desperate` 时临时下调寻路器 `SetMinimalArmyStrengthAdvantage`）、四个优先级目标成员、`PurchaseNewHeroes`（`max(宽度/72+2, 城堡数)` 且夹在 2..8） |
+| 同上（`internal` 的扫描段） | `ai_planner_kingdom.cpp:681-788` | `ScanMap(kingdom)`：清缓存 → 按 `world.RegionCount` 建 `_regions` → 数非巡逻英雄 → 逐瓦片（跳过无区域/雾中/无价值）填 `_mapActionObjects`、友方英雄与智慧等级、友/敌城堡、敌方军队与最高威胁 → `EvaluateRegionSafety` + `UpdateKingdomBudget` |
+| `src/FHeroes2.Game/Ai/AiPlanner.cs`（改） | `ai_planner.cpp:47-72` | `RevealFog`：动作对象才更新缓存与优先目标，再把第一个在动的英雄的路径截到一步；十个占位删除，类改 `partial` |
+| `tests/FHeroes2.Game.Tests/AiKingdomPlannerTests.cs`（新） | — | 8 条：Easy 全 Hunter、两人按三倍兵力分 Fighter/Hunter、巡逻即 Fighter 且不做中位数、五人时最弱两位 Courier/Scout、扫描计数 + 敌方军队 -50 + 邻区取份额 + 撤走即清、受威胁城堡排前、英雄满编不招、`revealFog` 截路径且忽略非动作对象 |
+
+四个判断：
+
+* **`KingdomTurn` 整段留到 B5**：它的回合循环第一句就是 `HeroesActionComplete`（`ai_planner_hero.cpp`），
+  只能和 `HeroesTurn` 一起落地。本批把循环前面的整图扫描抽成 `ScanMap`（同时也让
+  `EvaluateRegionSafety` 有了唯一的调用点），其余十个成员全部落地，`ai_planner_kingdom.cpp` 记「部分」。
+* **扫描按 ADR-133 折叠对象类型**：瓦片存带动作位的值（英雄 `ActionHero`），`GetEnemyArmyOnTile`
+  原先直接比 `Mp2ObjectType.Hero` 永不成立，本批改为先 `Mp2ObjectTypes.NonActionType`；
+  `_mapActionObjects` 仍存瓦片原值，与 `UpdateMapActionObjectCache` 一致。
+* **`View All` / `SLEEPER` / 次元门未移植**：端口没有冒险地图施法，扫描只认「不在雾里」；
+  参考里 `bestHeroToViewAll` 与每英雄重置也不存在，注释写明（ADR-195）。
+* **测试窗口**：`_regions` 加只读属性 `Regions`，`SetHeroRoles`/`GetSortedCastleList`/
+  `PurchaseNewHeroes` 由 private 改 `internal`；生成的空地图没有城堡表（`GetCastleEntrance` 只在装图
+  时登记），所以「友方城堡 +100」这一支与传播的岛屿乘数只能在真图上跑到，测试覆盖敌人 -50 与邻区份额。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` → **2991 通过 / 0 失败**（Game 项目）；全量 `dotnet build`
+0 警告；`ai` 行 3/0/6 → **4/1/4**（`ai_planner.cpp` 转「已转」、`ai_planner_kingdom.cpp` 转「部分」），
+合计 **68/84/97**，剩余 `NotImplementedException` 60 处（AI 目录 47 + `AIWorldPathfinder` 13）。
+
+## AI 辅助批 X1：`AIWorldPathfinder` 六个英雄入口 ✅（2026-11-21）
+
+| 文件 | 参考 | 要点 |
+| --- | --- | --- |
+| `src/FHeroes2.Game/World/AIWorldPathfinder.cs`（改） | `world_pathfinding.cpp:566-1434` | `ReEvaluateIfNeeded`（单参原形取 `hero.Army.GetStrength()`，双参版留给已知军力的调用方；缓存比对召船/次元门/城门户）、`GetFogDiscoveryTile`（相邻雾瓦 → 相邻不可达瓦两遍扫描，候选须 `IsSafeForFogDiscoveryObject`）、`GetNearestTileToMove`（洗牌方向、跳过动作对象、`GetNodeFrom == start`）、`IsHeroPossiblyBlockingWay`（十一个几何模式 + 石碑出口/踩碑）、`BuildDimensionDoorPath`（储备 / 移动力 / `GetDimensionDoorLimitForAi` 三重限制，每跳半程）、`GetObjectsOnTheWay`（回溯到 `PathStart`，`IsValuableAdventureMapObject` 过滤去重） |
+| `src/FHeroes2.Game/Heroes/Hero.Spells.cs`（改） | `heroes_base.cpp:396-430` | `CanCastSpell`（无书 / 点数不足 / 未学会 / 冒险法术需有颜色；`SHIPMASTER` 两支未移植已注明）、`DimensionDoorUses`（`heroes.h:692`） |
+| `src/FHeroes2.Game/System/Difficulty.cs`（改） | `difficulty.cpp` | `GetDimensionDoorLimitForAi`：Easy 1 / Normal 2 / Hard 3 / 其余不限 |
+| `tests/FHeroes2.Game.Tests/AIWorldPathfinderTests.cs`（改） | — | 增补 12 条：单参军力来源、迷雾两遍扫描、最近瓦片两态、走廊/空地/石碑、次元门有/无、路上对象有/无，全文件 26 条 |
+
+四个判断：
+
+* **返回值改名**：`GetFogDiscoveryTile` 第二项原写 `IsBoat`，参考含义是「雾就在这个瓦片旁边」（territory
+  expansion），与坐船无关，本批改为 `IsTerritoryExpansion`，行为未动。
+* **两套迷雾状态**：`World.ClearFog` 只写 `MapFog`，寻路器只读 `Tile._fogColors`。本批不改生产代码，
+  `GetFogDiscoveryTile` 按参考「瓦片雾判相邻、`MapFog` 数可揭示格」，测试同时写两张表；合并留待后续 ADR。
+* **无军力上限**：单参 `ReEvaluateIfNeeded` 证明「同一英雄换一支部队就是另一次搜索」，测试用 1 条黑龙守
+  路口、再用 100 条黑龙给自己，`GetDistance(3)` 从 0 变 400（含离开守怪格的额外代价）。
+* **窄图限制**：`World.ComputeStaticAnalysis` 用列号乘宽当行首（参考同款转置），宽度大于高度的合成图会越界，
+  本批测试统一用竖长走廊，不修该遗留问题。
+
+**验证**：`dotnet test` → **3003 通过 / 0 失败**（Game 项目），全量 4 530 条全绿；全量 `dotnet build` 0 警告；
+`AIWorldPathfinder` 的 `NotImplementedException` 13 → **0**，剩 47 处（全在 AI 目录）。

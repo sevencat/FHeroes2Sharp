@@ -5,7 +5,7 @@
 >
 > 契约基线：ADR-161（签名）与 ADR-180（`BattlePlanner` 的私有半、`AIWorldPathfinderStateRestorer`）。
 > 契约在 `src/FHeroes2.Game/Ai/` 与 `src/FHeroes2.Game/World/AIWorldPathfinder.cs`，每批收尾记一条 ADR，
-> 编号从 195 起接续。
+> 编号从 195 起接续（B4 用 ADR-195，X1 用 ADR-196，B5 起 197）。
 
 ## 0. 基线（2026-11-21 实测）
 
@@ -13,17 +13,17 @@
 | --- | --- | --- | --- | --- |
 | `ai_personality.cpp` | 45 | `System/AiPersonality.cs` | 已整份 | 0 |
 | `ai_common.cpp` | 525 | `Ai/AiCommon.cs`（123） | 9 个自由函数 | 0（B1） |
-| `ai_planner.cpp` | 188 | `Ai/AiPlanner.cs` | 5 个短函数（`Get` 已实现） | 1（B2 做 4 个，`revealFog` 归 B4） |
+| `ai_planner.cpp` | 188 | `Ai/AiPlanner.cs` | 5 个短函数（`Get` 已实现） | 0（B2 做 4 个，B4 做 `revealFog`） |
 | `ai_planner_castle.cpp` | 536 | 同上 | 4 个成员 | 0（B3） |
-| `ai_planner_kingdom.cpp` | 987 | 同上 | 11 个成员 | 11 |
+| `ai_planner_kingdom.cpp` | 987 | 同上 | 11 个成员 | 1（B4 做 10 个与扫描段，`KingdomTurn` 的回合循环等 B5） |
 | `ai_planner_hero.cpp` | 3 309 | 同上 | 16 个成员 | 16 |
 | `ai_battle.cpp` | 2 152 | `Ai/AiBattlePlanner.cs`（418） | `BattlePlanner` 全类 + `GetBerserkerTarget` | 24 |
 | `ai_battle_spell.cpp` | 984 | 同上 | 15 个法术估值 | 15 |
 | `ai_hero_action.cpp` | 2 504 | `Ai/AiHeroAction.cs`（53） | 4 个入口 | 4 |
 
 九个文件 11 230 行（`ai_personality.cpp` 的 45 行算在内）。基线 88 处 `NotImplementedException`
-（AI 目录 75 处，`AIWorldPathfinder` 13 处），覆盖率口径 1/0/8。B1..B3 之后剩 71 处（AI 目录 58 +
-`AIWorldPathfinder` 13），覆盖率 3/0/6。
+（AI 目录 75 处，`AIWorldPathfinder` 13 处），覆盖率口径 1/0/8。B1..B4 与 X1 之后剩 47 处（全在 AI 目录，
+`AIWorldPathfinder` 0），覆盖率 4/1/4。
 
 **契约已经先行**，这一步不是待办：39 个 `Planner` 成员、24 个 `BattlePlanner` 成员、9 个自由函数、
 4 个入口、2 个结构族与 4 个阈值都在，`AiContractTests`（169 行）钉住数据结构默认值、单例、
@@ -43,16 +43,16 @@
 | B1 | `ai_common.cpp` 九个函数 | 9 | 无（`Maps.GetFogTileCountToBeRevealed` 随批补） | 2/0/7 |
 | B2 | `ai_planner.cpp` 五个短函数 | 5 | B1 | 2/1/6 |
 | B3 | `ai_planner_castle.cpp` 四个成员 | 4 | B2 | 3/1/5 |
-| B4 | `ai_planner_kingdom.cpp` 十一个成员 | 11 | B3 | 3/2/4 |
+| B4 | `ai_planner_kingdom.cpp` 十一个成员 + `revealFog` | 11 + 1 | B3 | 4/1/4 |
 | B5 | `ai_planner_hero.cpp` 十六个成员 | 16 | B4 + **X1 + X2** | 3/3/3 |
 | B6 | `ai_battle.cpp` + `ai_battle_spell.cpp` | 39 | **X3** | 3/5/1 |
 | B7 | `ai_hero_action.cpp` 四个入口 | 4 | **X4** | 3/6/0 |
-| X1 | `AIWorldPathfinder` 六个方法 | 6 | Hero 读宝物袋、瓦片对象扫描 | — |
+| X1 ✅ | `AIWorldPathfinder` 六个方法（ADR-196） | 6 | Hero 读宝物袋、瓦片对象扫描 | — |
 | X2 | `ObjectValueStorage` 与对象价值表 | — | `world_pathfinding` 遗留项 | — |
 | X3 | `battle_action` 的法术目标与生效 | 10 | `battle_arena`/`battle_action` 收尾 | — |
 | X4 | `heroes_action` 补全 + 对象交互 + Interface 解耦 | — | 冒险层 | — |
 
-B1→B2→B3→B4 串行；B5 等 X1/X2；B6、B7 与上面串行链无关，可并行，但各自等 X3/X4。
+B1→B2→B3→B4 串行，X1 已并入；B5 等 X2；B6、B7 与上面串行链无关，可并行，但各自等 X3/X4。
 
 ## 3. 批次细节
 
@@ -132,6 +132,21 @@ B1→B2→B3→B4 串行；B5 等 X1/X2；B6、B7 与上面串行链无关，可
   等 B5 一起收。
 * 测试 `AiKingdomPlannerTests`：城堡排序（受威胁优先）、危险判定（敌方兵力比阈值）、
   预算与招募的联动、优先级目标的增删。
+* **2026-11-21 完成 10/11 + `revealFog`**，`AiKingdomPlannerTests` 8 条。五处要注意：
+  * **`KingdomTurn` 整段留到 B5**：它的循环第一句就是 `HeroesActionComplete`（`ai_planner_hero.cpp`），
+    只有它和 `HeroesTurn` 都落地后这个循环才有意义，所以本批只把扫描段抽成 `ScanMap`（`internal`，
+    返回 `availableHeroCount`，顺带调 `EvaluateRegionSafety`/`UpdateKingdomBudget`），其余十个成员全部落地。
+  * **扫描按 ADR-133 折叠对象类型**：瓦片存的是带动作位的值（英雄是 `ActionHero`），
+    `GetEnemyArmyOnTile` 原来直接比 `Mp2ObjectType.Hero` 永远不成立，本批改成先过
+    `Mp2ObjectTypes.NonActionType`；`_mapActionObjects` 仍存瓦片的原值，与 `updateMapActionObjectCache` 一致。
+  * **看全图（`View All`）未移植**：端口还没有冒险地图施法，扫描只认「不在雾里」的瓦片，
+    参考里那个 `bestHeroToViewAll` 也不存在；`ResetModes(SLEEPER)` 与 `setDimensionDoorUsage(0)` 同理
+    （端口没有这两项状态），注释里写明。
+  * **`_regions` 加了只读窗口 `Regions`**：`evaluateRegionSafety` 的结果只能从 `CastleTurn`/`GetSortedCastleList`
+    间接观察，测试要断言它就需要直接读；`SetHeroRoles`/`GetSortedCastleList`/`PurchaseNewHeroes` 同样由
+    private 改 `internal`。
+  * **合成世界没有城堡表**：`world.GetCastleEntrance` 只在装图时登记，生成的空地图里填不出「友方城堡 = +100」
+    这一支，所以测试只覆盖「敌方英雄 → 区域 -50 → 邻区取份额」与岛屿 ×1.5（`ScanMap` 只数得到敌人）。
 
 ### B5 `ai_planner_hero.cpp`（16）
 
@@ -140,7 +155,7 @@ B1→B2→B3→B4 串行；B5 等 X1/X2；B6、B7 与上面串行链无关，可
 `getGeneralObjectValue` / `getFighterObjectValue` / `getCourierObjectValue` / `getScoutObjectValue` /
 `getCourierMainTarget` / `updatePriorityTargets` / `pickSecondarySkill` / `HeroesPreBattle`。
 
-* 全批都过 `AIWorldPathfinder` 的新六方法（X1）与对象价值（X2），**这是 AI 真正可用的门槛**。
+* 前置：`AIWorldPathfinder` 的六个英雄入口（X1，已完成）与对象价值（X2），**这是 AI 真正可用的门槛**。
 * `HeroesPreBattle` 要 `OptimizeTroopsOrder` + `BattlePlanner` 无关（只排兵），可直接落。
 * 测试 `AiHeroPlannerTests`：四种角色（战士/信使/侦察/通用）对同一张对象表的估值差异、
   距离惩罚、优先级目标的选择与失效。
@@ -168,14 +183,22 @@ B1→B2→B3→B4 串行；B5 等 X1/X2；B6、B7 与上面串行链无关，可
 
 ## 4. 外部前置批
 
-### X1 `AIWorldPathfinder` 的六方法
+### X1 `AIWorldPathfinder` 的六方法 ✅（ADR-196）
 
-`World/AIWorldPathfinder.cs` 里仍是 `NotImplementedException` 的六个：
-`ReEvaluateIfNeeded(Hero, strength)`(186)、`GetFogDiscoveryTile`(319)、`GetNearestTileToMove`(331)、
-`IsHeroPossiblyBlockingWay`(342)、`BuildDimensionDoorPath`(354)、`GetObjectsOnTheWay`(369)。
+`World/AIWorldPathfinder.cs` 里原本抛异常的六个：`ReEvaluateIfNeeded(Hero, strength)`、
+`GetFogDiscoveryTile`、`GetNearestTileToMove`、`IsHeroPossiblyBlockingWay`、`BuildDimensionDoorPath`、
+`GetObjectsOnTheWay`，**2026-11-21 全部落地**。
 
-卡点写在这份文件自己的注释里：英雄数据（宝物袋、技能）还没读，以及「路上的对象」扫描没转。
-解锁 B5。`ai_planner_hero.cpp` 用 `IsHeroPossiblyBlockingWay`（3 185）与 `GetObjectsOnTheWay`（369）。
+* 单参 `ReEvaluateIfNeeded(Hero)` 是参考的原形（军力由 `hero.Army.GetStrength()` 自己算），双参版留作测试与
+  已知军力的调用方；上下文比对含召船/次元门/城门户三项缓存字段。
+* 迷雾探索两遍扫描（相邻雾瓦 → 相邻不可达瓦），候选必须 `IsSafeForFogDiscoveryObject`；返回值第二项的含义
+  是「雾就在旁边」（参考的 territory expansion），端口之前误名 `IsBoat`，本批改正。
+* `IsHeroPossiblyBlockingWay` 十一个几何模式 + 石碑出口/踩碑两支（ADR-133 折叠后再比）。
+* `BuildDimensionDoorPath` 受法术点储备、移动力与 `Difficulty.GetDimensionDoorLimitForAi` 三重限制，
+  每次跳 `Spell.DimensionDoorDistance() / 2`；返回的是固定跳段，最后一小段由调用方用普通路径补齐。
+* 随批补：`Hero.CanCastSpell`、`Hero.DimensionDoorUses`（`heroes.h:692`）、`Difficulty.GetDimensionDoorLimitForAi`。
+* 遗留：`MapFog` 与 `Tile._fogColors` 仍是两套迷雾状态（`World.ClearFog` 只写前者，路径器只读后者），
+  本批按参考把 `GetFogDiscoveryTile` 写成「瓦片雾判相邻、`MapFog` 数可揭示格」，测试同时写两张表；合并留作后续 ADR。
 
 ### X2 `ObjectValueStorage`
 
@@ -210,8 +233,8 @@ AI 不碰 `battle_interface`（0 引用），只要求 `Arena` 的查询齐全�
 
 | # | 位置 | 偏差 | 处理 |
 | --- | --- | --- | --- |
-| 1 | `AiPlanner.cs` 的异常消息 | `RecruitHero` 写 castle，参考在 `ai_planner_kingdom.cpp:273` | B4 落地时改消息 |
-| 2 | 同上 | `PurchaseNewHeroes` 写 castle，参考在 `ai_planner_kingdom.cpp` | B4 落地时改消息 |
+| 1 | `AiPlanner.cs` 的异常消息 | `RecruitHero` 写 castle，参考在 `ai_planner_kingdom.cpp:273` | B4 已落地，占位与消息一并删除 |
+| 2 | 同上 | `PurchaseNewHeroes` 写 castle，参考在 `ai_planner_kingdom.cpp` | 同上 |
 | 3 | `BattlePlanner.BattleTurn` | `List<BattleCommand>` 代替 `Battle::Actions` | 已文档化（ADR-180），不动 |
 | 4 | `AiPlanner._pathfinder` | 可空 + `AttachPathfinder`，参考是值成员 | 已文档化（ADR-161），不动 |
 

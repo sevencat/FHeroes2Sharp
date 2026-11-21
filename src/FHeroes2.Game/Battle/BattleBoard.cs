@@ -388,6 +388,100 @@ public static class BattleBoard
     };
 
     /// <summary>
+    /// Whether a unit may strike from a given cell, <c>Board::CanAttackFromCell()</c>
+    /// (<c>battle_board.cpp:972-1007</c>).
+    /// </summary>
+    /// <remarks>
+    /// 唯一的拦路虎是护城河：站在河里的地面单位打不到对岸，除非它本来就贴着目标、或者它会飞。参考从全局
+    /// <c>Arena::GetCastle()</c> 取城堡，端口把竞技场显式传进来——城堡与桥都在它手上。
+    /// </remarks>
+    /// <param name="arena">The arena, for the castle and its drawbridge.</param>
+    /// <param name="unit">The unit that would strike.</param>
+    /// <param name="from">The cell it would strike from.</param>
+    /// <returns>Whether the strike is allowed from that cell.</returns>
+    public static bool CanAttackFromCell(BattleArena arena, BattleUnit unit, int from)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(unit);
+
+        BattlePosition position = BattlePosition.GetReachable(arena, unit, from);
+
+        if (position.Head == null)
+        {
+            return false;
+        }
+
+        if (arena.Castle is not { } castle || !castle.IsBuild(FHeroes2.Game.Castle.BuildingType.Moat))
+        {
+            return true;
+        }
+
+        bool bridgeIsPassable = arena.Bridge is { } bridge && bridge.IsPassable(unit);
+
+        if (!IsMoatIndex(from, unit.IsFlying, bridgeIsPassable))
+        {
+            return true;
+        }
+
+        if (unit.IsFlying)
+        {
+            return true;
+        }
+
+        return from == unit.HeadIndex || (unit.IsWide && from == unit.TailIndex);
+    }
+
+    /// <summary>
+    /// Whether a unit could actually reach its target from a given cell,
+    /// <c>Board::CanAttackTargetFromPosition()</c> (<c>battle_board.cpp:1009-1036</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考拿攻击者在这个格子上的真实站位去试：头尾任一格与目标相邻、并且那一格允许出手
+    /// （<see cref="CanAttackFromCell"/>），就算打得着。宽单位因此有两个候选格。
+    /// </remarks>
+    /// <param name="arena">The arena, for the moat rules.</param>
+    /// <param name="attacker">The unit that would strike.</param>
+    /// <param name="target">The unit it would hit.</param>
+    /// <param name="dst">The cell the attacker would move to first.</param>
+    /// <returns>Whether the target can be struck from that cell.</returns>
+    public static bool CanAttackTargetFromPosition(BattleArena arena, BattleUnit attacker, BattleUnit target, int dst)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(attacker);
+        ArgumentNullException.ThrowIfNull(target);
+
+        BattlePosition position = BattlePosition.GetReachable(arena, attacker, dst);
+
+        int[] cells = position.Tail == null
+            ? [position.HeadIndex]
+            : [position.HeadIndex, position.TailIndex];
+
+        foreach (int cell in cells)
+        {
+            uint distance = GetDistance(target.HeadIndex, cell);
+
+            if (target.Position.Tail != null)
+            {
+                distance = Math.Min(distance, GetDistance(target.TailIndex, cell));
+            }
+
+            if (distance > 1)
+            {
+                continue;
+            }
+
+            if (!CanAttackFromCell(arena, attacker, cell))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// <c>Board::GetMoveWideIndexes()</c>: the up to four cells a unit's tail may occupy next to its head.
     /// </summary>
     /// <remarks>
@@ -613,6 +707,151 @@ public static class BattleBoard
     /// through it rather than merely slowing it down, which is why it gets a paragraph of its own.
     /// </remarks>
     /// <returns>The sentence, with the defense reduction substituted.</returns>
+    /// <summary>
+    /// The cells around a whole position, <c>Board::GetAroundIndexes( const Position &amp; )</c>
+    /// (<c>battle_board.cpp:793-869</c>).
+    /// </summary>
+    /// <remarks>
+    /// 宽单位占两格，邻居是两格邻居的并集；顺序按顺时针走，参考里的顺序会影响 AI 选格的确定性，所以照抄。
+    /// </remarks>
+    /// <param name="position">The position to surround.</param>
+    /// <returns>The neighbouring cells, clockwise.</returns>
+    public static List<int> GetAroundIndexes(BattlePosition position)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+
+        if (position.Head == null)
+        {
+            return [];
+        }
+
+        if (position.Tail == null)
+        {
+            return [.. GetAroundIndexes(position.HeadIndex)];
+        }
+
+        int headIndex = position.HeadIndex;
+        int tailIndex = position.TailIndex;
+
+        if (!IsValidIndex(headIndex) || !IsValidIndex(tailIndex))
+        {
+            return [];
+        }
+
+        List<int> result = new(8);
+
+        if (headIndex > tailIndex)
+        {
+            AddAround(result, tailIndex, CellDirection.TopLeft);
+            AddAround(result, tailIndex, CellDirection.TopRight);
+            AddAround(result, headIndex, CellDirection.TopRight);
+            AddAround(result, headIndex, CellDirection.Right);
+            AddAround(result, headIndex, CellDirection.BottomRight);
+            AddAround(result, tailIndex, CellDirection.BottomRight);
+            AddAround(result, tailIndex, CellDirection.BottomLeft);
+            AddAround(result, tailIndex, CellDirection.Left);
+        }
+        else if (headIndex < tailIndex)
+        {
+            AddAround(result, headIndex, CellDirection.TopLeft);
+            AddAround(result, headIndex, CellDirection.TopRight);
+            AddAround(result, tailIndex, CellDirection.TopRight);
+            AddAround(result, tailIndex, CellDirection.Right);
+            AddAround(result, tailIndex, CellDirection.BottomRight);
+            AddAround(result, headIndex, CellDirection.BottomRight);
+            AddAround(result, headIndex, CellDirection.BottomLeft);
+            AddAround(result, headIndex, CellDirection.Left);
+        }
+
+        return result;
+
+        static void AddAround(List<int> cells, int center, CellDirection direction)
+        {
+            if (IsValidDirection(center, direction))
+            {
+                cells.Add(GetIndexDirection(center, direction));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every cell exactly <paramref name="radius"/> steps away from a position,
+    /// <c>Board::GetDistanceIndexes( const Position &amp;, uint32_t )</c> (<c>battle_board.cpp:916-935</c>).
+    /// </summary>
+    /// <remarks>两个格子的环带取并集，再去掉单位自己站的格子，顺序按索引升序。</remarks>
+    /// <param name="position">The center position.</param>
+    /// <param name="radius">How many steps away.</param>
+    /// <returns>The cells of that ring.</returns>
+    public static List<int> GetDistanceIndexes(BattlePosition position, uint radius)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+
+        int[] ownIndexes = position.Tail == null ? [position.HeadIndex] : [position.HeadIndex, position.TailIndex];
+        SortedSet<int> cells = [];
+
+        foreach (int own in ownIndexes)
+        {
+            if (!IsValidIndex(own))
+            {
+                continue;
+            }
+
+            foreach (int index in GetDistanceIndexes(own, radius))
+            {
+                if (Array.IndexOf(ownIndexes, index) >= 0)
+                {
+                    continue;
+                }
+
+                cells.Add(index);
+            }
+        }
+
+        return [.. cells];
+    }
+
+    /// <summary>
+    /// The units still on the field, nearest first, <c>Board::GetNearestTroops()</c>
+    /// (<c>battle_board.cpp:193-228</c>).
+    /// </summary>
+    /// <remarks>
+    /// 起点单位自己与黑名单里的单位都不算；每个单位只算一次（只看头格）。距离相同保持遍历顺序——
+    /// 参考用的就是 <c>std::sort</c> 的非稳定比较，这里用 <see cref="List{T}.Sort"/> 也一样。
+    /// </remarks>
+    /// <param name="arena">The arena, to walk its cells.</param>
+    /// <param name="startUnit">The unit to measure from.</param>
+    /// <param name="blackList">The units to skip.</param>
+    /// <returns>The units, nearest first.</returns>
+    public static List<BattleUnit> GetNearestTroops(BattleArena arena, BattleUnit startUnit, IReadOnlyList<BattleUnit> blackList)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(startUnit);
+        ArgumentNullException.ThrowIfNull(blackList);
+
+        List<(BattleUnit Unit, uint Distance)> foundUnits = [];
+
+        for (int index = 0; index < WidthInCells * HeightInCells; ++index)
+        {
+            BattleUnit? cellUnit = arena.GetTroopBoard(index);
+
+            if (cellUnit == null || ReferenceEquals(cellUnit, startUnit) || index != cellUnit.HeadIndex)
+            {
+                continue;
+            }
+
+            if (blackList.Contains(cellUnit))
+            {
+                continue;
+            }
+
+            foundUnits.Add((cellUnit, GetDistance(startUnit.Position, cellUnit.Position)));
+        }
+
+        foundUnits.Sort(static (first, second) => first.Distance.CompareTo(second.Distance));
+
+        return [.. foundUnits.Select(static found => found.Unit)];
+    }
+
     public static string GetMoatInfo() =>
         "The Moat interrupts any movement through it and reduces the defense skill of troops present in it by " +
         GameStatic.BattleMoatReduceDefense.ToString() + ".";

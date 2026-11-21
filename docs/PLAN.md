@@ -142,7 +142,15 @@ ADR-139、ADR-140、ADR-141、ADR-142、ADR-144）单独重算过；`army` 行�
   13 处 = 75 处）。同日 B3 落地 `ai_planner_castle.cpp` 全部四个成员（外加文件内的 `CastleDevelopment`、
   六张建造顺序表），该文件由「未转」转「已转」，本行 **2/0/7 → 3/0/6**，合计 **66/83/100 → 67/83/99**
   （测试 `AiCastlePlannerTests` 10 条；剩余 `NotImplementedException` 58 处 + `AIWorldPathfinder` 13 处 = 71 处）。
-  `ai_planner.cpp` 仍记「部分」：`KingTurn`/`HeroTurn` 等要等 B4、B5。
+  `ai_planner.cpp` 仍记「部分」：`KingTurn`/`HeroTurn` 等要等 B4、B5。同日 B4 落地
+  `ai_planner_kingdom.cpp` 的十个成员与扫描段 `ScanMap`，外加 `ai_planner.cpp` 的最后一件 `revealFog`：
+  `ai_planner.cpp` 由「部分」转「已转」，`ai_planner_kingdom.cpp` 由「未转」转「部分」（`KingdomTurn` 的回合
+  循环要等 B5 的 `HeroesActionComplete`），本行 **3/0/6 → 4/1/4**，合计 **67/83/99 → 68/84/97**（测试
+  `AiKingdomPlannerTests` 8 条；剩余 `NotImplementedException` 47 处 + `AIWorldPathfinder` 13 处 = 60 处）。
+  同日 X1 补完 `AIWorldPathfinder` 的六个英雄入口（`ReEvaluateIfNeeded`、`GetFogDiscoveryTile`、
+  `GetNearestTileToMove`、`IsHeroPossiblyBlockingWay`、`BuildDimensionDoorPath`、`GetObjectsOnTheWay`，
+  ADR-196），`world_pathfinding` 的 AI 侧不再有占位，剩余 `NotImplementedException` 47 处（全在 AI 目录）；
+  本行覆盖率不动（AIWorldPathfinder 不在这九个 `.cpp` 的行里），`AIWorldPathfinderTests` 13 → 26 条。
 
 另外旧表的「合计」行 `49/75/125` 与各列实际相加（`60/78/111`）对不上——它一直是手写的，没跟列和一起改。
 这次按列和填：**65/83/101**（合计仍是 249）。

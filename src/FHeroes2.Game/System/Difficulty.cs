@@ -72,4 +72,62 @@ public static class Difficulty
     public static bool AllowAiToBuildCastleBuilding(GameDifficulty difficulty, bool isCampaign, BuildingType building) =>
         difficulty != GameDifficulty.Easy || isCampaign
         || building is not (BuildingType.DwellingMonster6 or BuildingType.MageGuild5);
+
+    /// <summary>
+    /// Whether the AI may give its heroes different roles,
+    /// <c>Difficulty::areAIHeroRolesAllowed()</c> (<c>difficulty.cpp:220</c>).
+    /// </summary>
+    /// <remarks>
+    /// Easy only: every hero is a hunter, so the AI neither concentrates its army in a champion nor spreads it over
+    /// scouts and couriers. Every other difficulty lets the roles be handed out.
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>Whether the roles may differ from hunter.</returns>
+    public static bool AreAiHeroRolesAllowed(GameDifficulty difficulty) => difficulty != GameDifficulty.Easy;
+
+    /// <summary>
+    /// How far ahead in stats an AI hero must be before it bothers to meet a friendly hero of the same role,
+    /// <c>Difficulty::getMinStatDiffForAIHeroesMeeting()</c> (<c>difficulty.cpp:234-255</c>).
+    /// </summary>
+    /// <remarks>
+    /// Easy keeps armies merged only when the difference is huge; every other level merges two heroes whose stats are
+    /// almost equal.
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>The minimum difference in stats.</returns>
+    public static int GetMinStatDiffForAiHeroesMeeting(GameDifficulty difficulty) => difficulty switch
+    {
+        GameDifficulty.Easy => 10,
+        GameDifficulty.Normal or GameDifficulty.Hard or GameDifficulty.Expert or GameDifficulty.Impossible => 2,
+        _ => 2,
+    };
+
+    /// <summary>
+    /// How many dimension doors the AI may open per turn, <c>Difficulty::GetDimensionDoorLimitForAI()</c>
+    /// (<c>difficulty.cpp:204-218</c>).
+    /// </summary>
+    /// <remarks>
+    /// Easy, Normal and Hard are capped; Expert and Impossible are not, which is the same as saying the spell
+    /// points and the movement points are the only limits there.
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>The number of doors per turn.</returns>
+    public static uint GetDimensionDoorLimitForAi(GameDifficulty difficulty) => difficulty switch
+    {
+        GameDifficulty.Easy => 1,
+        GameDifficulty.Normal => 2,
+        GameDifficulty.Hard => 3,
+        _ => uint.MaxValue,
+    };
+
+    /// <summary>
+    /// Whether the AI may guess that an object which is useless now will refill later,
+    /// <c>Difficulty::isFutureObjectPredictionAllowedForAI()</c> (<c>difficulty.cpp:361-366</c>).
+    /// </summary>
+    /// <remarks>
+    /// Easy only: the AI looks at what is there and does not plan a trip around next week's refill.
+    /// </remarks>
+    /// <param name="difficulty">Difficulty of the game.</param>
+    /// <returns>Whether the future value of an object may be used.</returns>
+    public static bool IsFutureObjectPredictionAllowedForAi(GameDifficulty difficulty) => difficulty != GameDifficulty.Easy;
 }

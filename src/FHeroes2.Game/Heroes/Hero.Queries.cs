@@ -1,5 +1,7 @@
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Resources;
 
 namespace FHeroes2.Game.Heroes;
 
@@ -52,6 +54,98 @@ public sealed partial class Hero
     /// </remarks>
     /// <returns>The number of artifacts in the bag.</returns>
     public int GetCountArtifacts() => _bagArtifacts.CountArtifacts();
+
+    /// <summary>
+    /// One point of a skill is worth this much next to one point of army strength, <c>SKILL_VALUE</c>
+    /// (<c>heroes.h:725</c>).
+    /// </summary>
+    private const double SkillValue = 100;
+
+    /// <summary>
+    /// How much the hero is worth as a set of numbers, <c>Heroes::getStatsValue()</c> (<c>heroes.cpp:875</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>getTotalPrimarySkillLevel() + _secondarySkills.GetTotalLevel()</c>，也就是四维的<b>基础</b>值加上副技能
+    /// 等级之和——神器与经验都不算，所以它衡量的是这位英雄「天生的底子」。AI 用它挑出王国的冠军。
+    /// </remarks>
+    /// <returns>Sum of the primary skills and of the secondary skill levels.</returns>
+    public int GetStatsValue() => _attack + _defense + _power + _knowledge + _secondarySkills.TotalLevel;
+
+    /// <summary>
+    /// How much the hero is worth at the tavern, <c>Heroes::getRecruitValue()</c> (<c>heroes.cpp:881</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>_army.GetStrength() + (( _bagArtifacts.getArtifactValue() * 10.0 + getStatsValue() ) * SKILL_VALUE)</c>。
+    /// 宝物按十份、每份照基础属性一点的千分之一折算的同一把尺子，所以一位带着宝物的英雄比一位空手的同族更值得招募。
+    /// </remarks>
+    /// <returns>Army strength plus the hero's own worth.</returns>
+    public double GetRecruitValue() =>
+        Army.GetStrength() + ((_bagArtifacts.GetArtifactValue() * 10.0 + GetStatsValue()) * SkillValue);
+
+    /// <summary>
+    /// What meeting this hero is worth to another friendly hero, <c>Heroes::getMeetingValue()</c>
+    /// (<c>heroes.cpp:886-901</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两笔账：这一队兵并进去能涨多少战力，加上宝物——宝物按五份、再乘 <see cref="SkillValue"/> 折算。宝物只算装得下的：
+    /// 收礼的英雄背包满了，价值就按比例摊薄，魔法书不转移所以先扣掉。
+    /// </para>
+    /// <para>
+    /// 参考在这里留了 TODO：还没考虑诅咒宝物和「对某位英雄无价」的宝物。端口照旧。
+    /// </para>
+    /// </remarks>
+    /// <param name="receivingHero">The hero who would receive the army and the artifacts.</param>
+    /// <returns>The value of the meeting.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="receivingHero"/> is <see langword="null"/>.</exception>
+    public double GetMeetingValue(Hero receivingHero)
+    {
+        ArgumentNullException.ThrowIfNull(receivingHero);
+
+        // 魔法书不转移。
+        int artCount = _bagArtifacts.CountArtifacts() - _bagArtifacts.Count(ArtifactType.MagicBook);
+        int canFit = ArtifactBag.MaxCapacity - receivingHero._bagArtifacts.CountArtifacts();
+
+        double artifactValue = _bagArtifacts.GetArtifactValue() * 5.0;
+
+        if (artCount > canFit)
+        {
+            artifactValue = canFit * (artifactValue / artCount);
+        }
+
+        // 参考 TODO：只留一队兵风险很大，应该只搬有用的那部分。端口照旧。
+        return receivingHero._army.GetReinforcementValue(_army) + (artifactValue * SkillValue);
+    }
+
+    /// <summary>
+    /// The smallest army that is worth a detour for this hero,
+    /// <c>Heroes::getAIMinimumJoiningArmyStrength()</c> (<c>heroes.cpp:2228-2282</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 门槛是「英雄自己兵力的一个比例」：兵越多，越不值得为一小队兵绕路。系数按 AI 角色分档：猎人 0.15、
+    /// 信使 0.3、侦察兵 0.5、冠军 0.1、战士 0.3。
+    /// </para>
+    /// <para>
+    /// 参考取的是 <c>Troops::GetStrength()</c>（不含英雄攻防与士气幸运），所以这里用
+    /// <see cref="Army.Army.GetTroopsStrength"/> 而不是 <see cref="Army.Army.GetStrength"/>。
+    /// </para>
+    /// </remarks>
+    /// <returns>The strength threshold a stack must exceed to be worth visiting.</returns>
+    public double GetAiMinimumJoiningArmyStrength()
+    {
+        double strengthThreshold = AiRole switch
+        {
+            HeroRole.Hunter => 0.15,
+            HeroRole.Courier => 0.3,
+            HeroRole.Scout => 0.5,
+            HeroRole.Champion => 0.1,
+            HeroRole.Fighter => 0.3,
+            _ => 0.15,
+        };
+
+        return strengthThreshold * _army.GetTroopsStrength();
+    }
 
     /// <summary>
     /// How far a Crystal Ball lets a hero see monster stacks, <c>Heroes::GetVisionsDistance()</c>

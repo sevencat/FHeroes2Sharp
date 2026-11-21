@@ -306,6 +306,38 @@ public sealed class BattleUnit : BitModes
         !HasModes(BattleMonsterState.Retaliated);
 
     /// <summary>
+    /// Whether the unit hits both of the cells in front of it, <c>Monster::isDoubleCellAttack()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考：<c>monster.h:267-270</c>，能力位 <c>TWO_CELL_MELEE_ATTACK</c>。与 <see cref="IsDoubleAttack"/>
+    /// （打两次）不是一回事，AI 用它决定要不要为了「顺带打第二个」挑攻击方向。
+    /// </remarks>
+    public bool IsDoubleCellAttack => MonsterAbilities.IsPresent(Monster, MonsterAbility.TwoCellMeleeAttack);
+
+    /// <summary>
+    /// Whether the unit hits every cell around it, <c>Monster::isAllAdjacentCellsAttack()</c>.
+    /// </summary>
+    /// <remarks>参考：<c>monster.h:272-275</c>，能力位 <c>ALL_ADJACENT_CELL_MELEE_ATTACK</c>。</remarks>
+    public bool IsAllAdjacentCellsAttack => MonsterAbilities.IsPresent(Monster, MonsterAbility.AllAdjacentCellMeleeAttack);
+
+    /// <summary>
+    /// How many hit points the unit has lost against its full strength,
+    /// <c>Unit::GetMissingHitPoints()</c> (<c>battle_troop.cpp</c>).
+    /// </summary>
+    /// <remarks>满员血量按「满编人数 × 单个兵的血」算，与参考的 <c>_maxCount * Monster::GetHitPoints()</c> 一致。</remarks>
+    public uint MissingHitPoints
+    {
+        get
+        {
+            uint total = MaxCount * (uint)MonsterStatistics.GetBattleStats(Monster).HitPoints;
+
+            Debug.Assert(total >= _hitPoints, "The current hit points never exceed the full count's.");
+
+            return total - _hitPoints;
+        }
+    }
+
+    /// <summary>
     /// Whether the unit heals itself at the start of its turn, <c>Monster::isRegenerating()</c>.
     /// </summary>
     public bool IsRegenerating => MonsterAbilities.IsPresent(Monster, MonsterAbility.HpRegeneration);
@@ -716,6 +748,62 @@ public sealed class BattleUnit : BitModes
         set => _blindRetaliation = value;
     }
 
+    /// <summary>
+    /// How much this unit would hit back for after taking a blow,
+    /// <c>Unit::EstimateRetaliatoryDamage()</c> (<c>battle_troop.cpp:449-491</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 伤害是「剩几个兵 × 单个兵的伤害」，**不走** <see cref="CalculateDamageUnit"/>——参考只想估个毛伤害，
+    /// 攻防修正与各种加成留给调用方。
+    /// </para>
+    /// <para>
+    /// 五种情况不反击：整队被打光、已经反击过、是镜像、被催眠（镜像与催眠本来也不会还手）、被定住
+    /// （无限反击的兵种不看这一条）。被致盲的单位仍会反击，只是按致盲法术的减伤比例打折。
+    /// </para>
+    /// </remarks>
+    /// <param name="damageTaken">The damage the incoming blow would deal.</param>
+    /// <returns>The damage the retaliation would deal, 0 when there is no retaliation.</returns>
+    public uint EstimateRetaliatoryDamage(uint damageTaken)
+    {
+        if (damageTaken >= _hitPoints)
+        {
+            return 0;
+        }
+
+        if (HasModes(BattleMonsterState.Retaliated | BattleMonsterState.CapMirrorImage | BattleMonsterState.SpellHypnotize))
+        {
+            return 0;
+        }
+
+        if (HasModes(BattleMonsterState.ParalyzeMagic) && !MonsterAbilities.IsPresent(Monster, MonsterAbility.UnlimitedRetaliation))
+        {
+            return 0;
+        }
+
+        uint unitsLeft = Troop.GetCountFromHitPoints(Monster, _hitPoints - damageTaken);
+        Debug.Assert(unitsLeft > 0, "A stack that survives keeps at least one creature.");
+
+        // 单个兵的伤害：参考显式限定 Monster:: 就是为了绕开 Troop:: 里乘数量的版本。
+        uint damagePerCreature = HasModes(BattleMonsterState.SpellCurse)
+            ? (uint)MonsterStatistics.GetBattleStats(Monster).DamageMin
+            : HasModes(BattleMonsterState.SpellBless)
+                ? (uint)MonsterStatistics.GetBattleStats(Monster).DamageMax
+                : (uint)((MonsterStatistics.GetBattleStats(Monster).DamageMin + MonsterStatistics.GetBattleStats(Monster).DamageMax) / 2);
+
+        uint retaliatoryDamage = unitsLeft * damagePerCreature;
+
+        if (!HasModes(BattleMonsterState.SpellBlind))
+        {
+            return retaliatoryDamage;
+        }
+
+        uint reductionPercent = new Spell(SpellType.Blind).ExtraValue();
+        Debug.Assert(reductionPercent <= 100, "The blind penalty is a percentage.");
+
+        return retaliatoryDamage * (100 - reductionPercent) / 100;
+    }
+
     /// <summary>The smallest damage the unit would deal to the enemy, <c>Unit::CalculateMinDamage()</c>.</summary>
     /// <param name="enemy">The unit that would be struck.</param>
     public uint CalculateMinDamage(BattleUnit enemy) => CalculateDamageUnit(enemy, _troop.GetDamageMin());
@@ -723,6 +811,30 @@ public sealed class BattleUnit : BitModes
     /// <summary>The largest damage the unit would deal to the enemy, <c>Unit::CalculateMaxDamage()</c>.</summary>
     /// <param name="enemy">The unit that would be struck.</param>
     public uint CalculateMaxDamage(BattleUnit enemy) => CalculateDamageUnit(enemy, _troop.GetDamageMax());
+
+    /// <summary>
+    /// The damage an average blow of this unit would deal to the enemy,
+    /// <c>Unit::getPotentialDamage()</c> (<c>battle_troop.cpp:504-516</c>).
+    /// </summary>
+    /// <remarks>
+    /// 不掷骰：诅咒取下限、祝福取上限，其余取上下限的中点。AI 拿它当「这一击值多少」的估量。
+    /// </remarks>
+    /// <param name="enemy">The unit that would be struck.</param>
+    /// <returns>The damage of an average blow.</returns>
+    public uint GetPotentialDamage(BattleUnit enemy)
+    {
+        if (HasModes(BattleMonsterState.SpellCurse))
+        {
+            return CalculateMinDamage(enemy);
+        }
+
+        if (HasModes(BattleMonsterState.SpellBless))
+        {
+            return CalculateMaxDamage(enemy);
+        }
+
+        return (CalculateMinDamage(enemy) + CalculateMaxDamage(enemy)) / 2;
+    }
 
     /// <summary>
     /// The damage a given blow would be turned into, <c>Unit::CalculateDamageUnit()</c>.
@@ -839,6 +951,182 @@ public sealed class BattleUnit : BitModes
         }
 
         return Math.Max(damage, 1u);
+    }
+
+    /// <summary>
+    /// How dangerous this unit is in the eyes of its enemy, <c>Unit::evaluateThreatForUnit()</c>
+    /// (<c>battle_troop.cpp:1007-1165</c>).
+    /// </summary>
+    /// <param name="defender">The enemy that this unit would strike.</param>
+    /// <returns>
+    /// The threat this unit poses to <paramref name="defender"/>; negative when the defender should not hit it.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// 战斗 AI 的全部判断都架在这个数上：先打威胁最大的。基础值是一击的平均伤害，然后按参考的顺序逐条修正：
+    /// </para>
+    /// <list type="number">
+    /// <item>距离：走不到敌人的近战兵威胁按 `1.5 × 距离 ÷ 速度` 打折；塔里的单位、飞行兵与射手不打折。</item>
+    /// <item>双击：敌人能反击时，第二击按「反击伤害 ÷ 自身血量」打折；不能反击时按两击都打满算（×2）。</item>
+    /// <item>能力：半敌（ENEMY_HALVING）×2、噬魂（SOUL_EATER）×3、吸血（HP_DRAIN）×1.3。</item>
+    /// <item>自带施法：致盲/定身/石化按触发几率把「敌人一击的伤害」折进去，诅咒只值十分之一，驱散不加分。</item>
+    /// <item>镜像 ×10——一击就碎，优先清掉。</item>
+    /// <item>打自己人 ×−2、被催眠 ×−1、不能动归零、本回合已行动 ÷1.25。</item>
+    /// </list>
+    /// <para>
+    /// 参考里那几条 <c>assert</c>（双击单位不会双格近战/全相邻近战/范围射击）也照抄成断言：属性表一旦配错，
+    /// 这里的两倍估算就不再成立。
+    /// </para>
+    /// </remarks>
+    public double EvaluateThreatForUnit(BattleUnit defender)
+    {
+        ArgumentNullException.ThrowIfNull(defender);
+
+        uint damageToDefender = GetPotentialDamage(defender);
+        double threat = damageToDefender;
+
+        // ① 距离：近战单位要走过去，威胁随距离衰减。
+        {
+            double distanceModifier;
+
+            if (defender.HasModes(BattleMonsterState.CapTower) || IsFlying || IsArchers)
+            {
+                distanceModifier = 1.0;
+            }
+            else
+            {
+                uint speed = GetSpeed(true, false);
+                Debug.Assert(speed > 0, "A unit standing on the battlefield has a speed.");
+
+                uint attackRange = speed + 1;
+                uint distance = BattleBoard.GetDistance(Position, defender.Position);
+                Debug.Assert(distance > 0, "Two units never share a cell.");
+
+                distanceModifier = distance <= attackRange ? 1.0 : (1.5 * distance) / speed;
+            }
+
+            threat /= distanceModifier;
+        }
+
+        // ② 双击：第二击能不能打满，取决于敌人还手打掉多少。
+        if (IsDoubleAttack)
+        {
+            Debug.Assert(!MonsterAbilities.IsPresent(Monster, MonsterAbility.TwoCellMeleeAttack)
+                         && !MonsterAbilities.IsPresent(Monster, MonsterAbility.AllAdjacentCellMeleeAttack)
+                         && !MonsterAbilities.IsPresent(Monster, MonsterAbility.AreaShot),
+                "A unit that strikes twice never hits several cells at once.");
+
+            uint retaliatoryDamage;
+
+            if (defender.HasModes(BattleMonsterState.CapTower)
+                || MonsterAbilities.IsPresent(Monster, MonsterAbility.NoEnemyRetaliation)
+                || (IsArchers && !IsHandFighting()))
+            {
+                retaliatoryDamage = 0;
+            }
+            else
+            {
+                retaliatoryDamage = defender.EstimateRetaliatoryDamage(damageToDefender);
+            }
+
+            if (retaliatoryDamage > 0)
+            {
+                Debug.Assert(HitPoints > 0, "A unit that strikes is alive.");
+
+                threat += threat * (1.0 - Math.Min((double)retaliatoryDamage / HitPoints, 1.0));
+            }
+            else
+            {
+                threat *= 2;
+            }
+        }
+
+        // ③ 特殊能力。
+        if (MonsterAbilities.IsPresent(Monster, MonsterAbility.EnemyHalving))
+        {
+            threat *= 2;
+        }
+
+        if (MonsterAbilities.IsPresent(Monster, MonsterAbility.SoulEater))
+        {
+            threat *= 3;
+        }
+
+        if (MonsterAbilities.IsPresent(Monster, MonsterAbility.HpDrain))
+        {
+            threat *= 1.3;
+        }
+
+        // ④ 自带施法：把法术的触发几率折算成威胁。
+        if (MonsterAbilities.TryGetInstance(Monster, MonsterAbility.SpellCaster, out MonsterAbilityInstance spellCaster))
+        {
+            SpellType castSpell = spellCaster.Spell;
+
+            uint defenderDamage = defender.HasModes(BattleMonsterState.SpellCurse)
+                ? defender.CalculateMinDamage(this)
+                : defender.HasModes(BattleMonsterState.SpellBless)
+                    ? defender.CalculateMaxDamage(this)
+                    : (defender.CalculateMinDamage(this) + defender.CalculateMaxDamage(this)) / 2;
+
+            double chance = spellCaster.Percentage / 100.0;
+
+            switch (castSpell)
+            {
+            case SpellType.Blind:
+            case SpellType.Paralyze:
+            case SpellType.Petrify:
+            {
+                if (defender.AllowApplySpell(new Spell(castSpell), null))
+                {
+                    threat += defenderDamage * chance;
+                }
+
+                break;
+            }
+            case SpellType.Dispel:
+                // 参考也没算驱散的价值。
+                break;
+            case SpellType.Curse:
+            {
+                if (defender.AllowApplySpell(new Spell(castSpell), null))
+                {
+                    threat += defenderDamage * chance / 10.0;
+                }
+
+                break;
+            }
+            default:
+                Debug.Fail($"A creature casts {castSpell}, whose threat value has not been worked out yet.");
+
+                break;
+            }
+        }
+
+        // ⑤ 镜像：一击就碎，必须先清。
+        if (HasModes(BattleMonsterState.CapMirrorImage))
+        {
+            threat *= 10;
+        }
+
+        // ⑥ 该不该打：自己人、被催眠、动不了、本回合已经打过。
+        if (Color == defender.GetCurrentColor())
+        {
+            threat *= -2;
+        }
+        else if (Color != GetCurrentColor())
+        {
+            threat *= -1;
+        }
+        else if (IsImmovable)
+        {
+            threat = 0;
+        }
+        else if (HasModes(BattleMonsterState.Moved))
+        {
+            threat /= 1.25;
+        }
+
+        return threat;
     }
 
     /// <summary>

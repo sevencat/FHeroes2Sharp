@@ -2,6 +2,7 @@ using System.Diagnostics;
 
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Resources;
 
 namespace FHeroes2.Game.Heroes;
 
@@ -50,6 +51,54 @@ public sealed partial class Hero : IArmyCommander
 
     /// <summary>The base attack, before the artifacts, <c>attack</c> (<c>heroes_base.h:241</c>).</summary>
     public int BaseAttack => _attack;
+
+    /// <summary>
+    /// Puts an artifact into the bag, <c>Heroes::PickupArtifact()</c> (<c>heroes.cpp</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two things happen beyond the bag itself: the complete sets that the new artifact completes are assembled,
+    /// and an artifact that widens the scouting radius reveals the map around the hero at once — otherwise the new
+    /// radius would only show up on the hero's next step.
+    /// </para>
+    /// <para>
+    /// The reference's three failure dialogs («a full load», «multiple spell books») belong to the UI layer and are
+    /// not here: a full bag simply refuses the artifact.
+    /// </para>
+    /// </remarks>
+    /// <param name="artifact">The artifact to take.</param>
+    /// <param name="world">The world whose fog the artifact may uncover.</param>
+    /// <returns><see langword="true"/> when the artifact went into the bag.</returns>
+    public bool PickupArtifact(ArtifactType artifact, World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        if (artifact == ArtifactType.Unknown)
+        {
+            return false;
+        }
+
+        if (!_bagArtifacts.Push(artifact))
+        {
+            return false;
+        }
+
+        _bagArtifacts.AssembleArtifactSets();
+
+        // 狱中的英雄（地图编辑器直接塞进来的工件）不需要侦察。
+        if (Modes.HasFlag(HeroModes.Jail))
+        {
+            return true;
+        }
+
+        if (ArtifactTable.Get(artifact).TryGetBonus(ArtifactBonusType.AreaRevealDistance, out _))
+        {
+            Scout(world, MapIndex);
+        }
+
+        return true;
+    }
+
 
     /// <summary>The base defense, before the artifacts, <c>defense</c> (<c>heroes_base.h:242</c>).</summary>
     public int BaseDefense => _defense;

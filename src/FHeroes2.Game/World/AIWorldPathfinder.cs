@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Random;
+using FHeroes2.Game.Ai;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
@@ -8,6 +11,9 @@ using FHeroes2.Game.System;
 
 // "Army" is both a namespace (FHeroes2.Game.Army) and the type inside it, so the type needs an alias.
 using ArmyUnit = FHeroes2.Game.Army.Army;
+
+// Same for "Kingdom": the namespace and the type share the name.
+using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
 namespace FHeroes2.Game;
 
@@ -30,15 +36,15 @@ namespace FHeroes2.Game;
 /// boarding a boat or stepping ashore.
 /// </para>
 /// <para>
-/// <b>What is not here yet.</b> The members that take a <see cref="Hero"/> throw
-/// <see cref="NotImplementedException"/>: they need hero data the port does not read yet (the artifact bag,
-/// the patrol centre, the dimension door uses, spell points as a movement budget). The fields they would
-/// fill are already here and stay at their "no hero" values, so the non-hero search is complete.
+/// <b>Heroes.</b> The members that take a <see cref="Hero"/> — <see cref="ReEvaluateIfNeeded(Hero)"/>,
+/// <see cref="GetFogDiscoveryTile"/>, <see cref="GetNearestTileToMove"/>, <see cref="IsHeroPossiblyBlockingWay"/>,
+/// <see cref="BuildDimensionDoorPath"/> and <see cref="GetObjectsOnTheWay"/> — set the hero-side fields
+/// (patrol centre, dimension door uses, spell points as a movement budget, bag artifacts) before reading the
+/// cache. Their hero comes from the caller rather than from a cached <c>_pathStart</c>, unlike the reference.
 /// </para>
 /// <para>
 /// <b>Town Gate and Town Portal.</b> The reference seeds the walk with the castle entrances the hero could
-/// teleport to; they are seeded here too, but only the hero batch sets the two fields, so in practice the
-/// search starts from one tile.
+/// teleport to; they are seeded here too, from the castles the hero owns for that color.
 /// </para>
 /// </remarks>
 public sealed class AIWorldPathfinder : WorldPathfinder
@@ -179,17 +185,138 @@ public sealed class AIWorldPathfinder : WorldPathfinder
         ProcessWorldMap();
     }
 
-    /// <summary>Searches for a hero that is on the map, <c>reEvaluateIfNeeded( const Heroes &amp; )</c>.</summary>
+    /// <summary>
+    /// Searches for a hero that is on the map, <c>reEvaluateIfNeeded( const Heroes &amp; )</c>
+    /// (<c>world_pathfinding.cpp:566-646</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Everything the search needs is baked into the cache, so the whole search only runs when one of the
+    /// inputs changed. The spells are the interesting part: they are only worth planning with when the hero
+    /// can pay for them and still keep the reserve the planner budgets with.
+    /// </para>
+    /// <para>
+    /// <b>Dimension Door</b> is the exception — its reserve is not checked here, because a route that ends on
+    /// something that gives spell points back does not need one.
+    /// </para>
+    /// </remarks>
     /// <param name="hero">The hero to model.</param>
-    /// <param name="armyStrength">Strength of the army on the map.</param>
-    /// <exception cref="NotImplementedException">The hero data is not read yet.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
+    public void ReEvaluateIfNeeded(Hero hero)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+
+        ReEvaluateIfNeeded(hero, hero.Army.GetStrength());
+    }
+
+    /// <summary>
+    /// The same search with the army strength supplied by the caller, <c>reEvaluateIfNeeded( const Heroes &amp; )</c>
+    /// (<c>world_pathfinding.cpp:566-646</c>) split for tests and for callers that already know the strength.
+    /// </summary>
+    /// <param name="hero">The hero to model.</param>
+    /// <param name="armyStrength">Strength of the army the hero leads.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
     public void ReEvaluateIfNeeded(Hero hero, double armyStrength)
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        throw new NotImplementedException(
-            "reEvaluateIfNeeded(hero, armyStrength) needs the hero's artifact bag, patrol centre and spell"
-            + " points, none of which the port reads yet.");
+        Spell summonBoat = new(SpellType.SummonBoat);
+        Spell dimensionDoor = new(SpellType.DimensionDoor);
+
+        uint spellPoints = hero.SpellPoints;
+        uint maxSpellPoints = hero.GetMaxSpellPoints();
+        uint reserve = (uint)(maxSpellPoints * _spellPointsReserveRatio);
+
+        bool isOnPatrol = hero.Modes.HasFlag(HeroModes.Patrol);
+
+        // A boat is only worth planning with when the hero has the spell, can pay for it with the reserve kept
+        // and there is a boat he could summon.
+        bool isSummonBoatSpellAvailable = hero.HasSpell(summonBoat)
+                                          && spellPoints >= summonBoat.SpellPoints(hero.BagArtifacts) + reserve
+                                          && SpellInfo.GetSummonableBoat(Map, hero, GetMapVersion(), Players.Get(hero.Color)) != -1;
+
+        bool isDimensionDoorSpellAvailable = hero.HasSpell(dimensionDoor);
+
+        int townGateCastleIndex = -1;
+        Spell townGate = new(SpellType.TownGate);
+        Spell townPortal = new(SpellType.TownPortal);
+
+        if (hero.CanCastSpell(townGate) && spellPoints >= townGate.SpellPoints(hero.BagArtifacts) + reserve)
+        {
+            // The reference asserts the nearest castle is free. The port cannot hold a hero in a castle yet, so
+            // every castle is free and the nearest one is taken as is.
+            if (SpellInfo.GetNearestCastle(Geometry, Map.GetKingdom(hero.Color).Castles, Geometry.GetPoint(hero.MapIndex)) is { } castle)
+            {
+                townGateCastleIndex = castle.TileIndex;
+            }
+        }
+
+        List<int> townPortalCastleIndexes = [];
+
+        if (hero.CanCastSpell(townPortal) && spellPoints >= townPortal.SpellPoints(hero.BagArtifacts) + reserve)
+        {
+            foreach (var castle in Map.GetKingdom(hero.Color).Castles)
+            {
+                townPortalCastleIndexes.Add(castle.TileIndex);
+            }
+        }
+
+        uint movePoints = hero.MovePoints;
+        SkillLevel pathfindingSkill = hero.GetLevelSkill(SecondarySkill.Pathfinding);
+        int patrolCenter = isOnPatrol ? hero.PatrolCenterIndex : -1;
+        uint patrolDistance = isOnPatrol ? (uint)hero.PatrolDistance : 0u;
+        uint maxMovePointsOnLand = hero.GetMaxMovePoints(false, Map);
+        uint maxMovePointsOnWater = hero.GetMaxMovePoints(true, Map);
+        uint dimensionDoorSpCost = dimensionDoor.SpellPoints(hero.BagArtifacts);
+        uint dimensionDoorNumOfUses = hero.DimensionDoorUses;
+        bool isArtifactsBagFull = hero.BagArtifacts.IsFull;
+        bool isEquippedWithSpellBook = hero.HasSpellBook;
+
+        if (PathStart == hero.MapIndex
+            && PathColor == hero.Color
+            && PathRemainingMovePoints == movePoints
+            && PathfindingSkill == pathfindingSkill
+            && _patrolCenter == patrolCenter
+            && _patrolDistance == patrolDistance
+            && _maxMovePointsOnLand == maxMovePointsOnLand
+            && _maxMovePointsOnWater == maxMovePointsOnWater
+            && _remainingSpellPoints == spellPoints
+            && _maxSpellPoints == maxSpellPoints
+            && _dimensionDoorSpCost == dimensionDoorSpCost
+            && _dimensionDoorNumOfUses == dimensionDoorNumOfUses
+            && _armyStrength == armyStrength
+            && _isOnPatrol == isOnPatrol
+            && _isArtifactsBagFull == isArtifactsBagFull
+            && _isEquippedWithSpellBook == isEquippedWithSpellBook
+            && _isSummonBoatSpellAvailable == isSummonBoatSpellAvailable
+            && _isDimensionDoorSpellAvailable == isDimensionDoorSpellAvailable
+            && _townGateCastleIndex == townGateCastleIndex
+            && _townPortalCastleIndexes.SequenceEqual(townPortalCastleIndexes))
+        {
+            return;
+        }
+
+        SetSearchContext(hero.MapIndex, hero.Color, movePoints, pathfindingSkill);
+
+        _patrolCenter = patrolCenter;
+        _patrolDistance = patrolDistance;
+        _maxMovePointsOnLand = maxMovePointsOnLand;
+        _maxMovePointsOnWater = maxMovePointsOnWater;
+        _remainingSpellPoints = spellPoints;
+        _maxSpellPoints = maxSpellPoints;
+        _dimensionDoorSpCost = dimensionDoorSpCost;
+        _dimensionDoorNumOfUses = dimensionDoorNumOfUses;
+        _armyStrength = armyStrength;
+        _isOnPatrol = isOnPatrol;
+        _isArtifactsBagFull = isArtifactsBagFull;
+        _isEquippedWithSpellBook = isEquippedWithSpellBook;
+        _isSummonBoatSpellAvailable = isSummonBoatSpellAvailable;
+        _isDimensionDoorSpellAvailable = isDimensionDoorSpellAvailable;
+        _townGateCastleIndex = townGateCastleIndex;
+        _townPortalCastleIndexes.Clear();
+        _townPortalCastleIndexes.AddRange(townPortalCastleIndexes);
+
+        ProcessWorldMap();
     }
 
     /// <summary>Movement points to a tile, <c>getDistance()</c> (<c>world_pathfinding.cpp:1244</c>).</summary>
@@ -312,64 +439,471 @@ public sealed class AIWorldPathfinder : WorldPathfinder
         _spellPointsReserveRatio = ratio;
     }
 
-    /// <summary>Where to go to lift the fog, <c>getFogDiscoveryTile()</c> (<c>world_pathfinding.cpp:886</c>).</summary>
+    /// <summary>
+    /// The version of the map being played, <c>Settings::getCurrentMapInfo().version</c> at the one place that
+    /// asks for it (<c>reEvaluateIfNeeded( hero )</c>).
+    /// </summary>
+    /// <remarks>
+    /// The port has no settings object that travels with the world, so a world built before a map was chosen
+    /// answers with the Succession Wars rules — the strictest of the two for the summon boat spell.
+    /// </remarks>
+    /// <returns>The version of the current map, or <see cref="MapVersion.SuccessionWars"/> before one is chosen.</returns>
+    private static MapVersion GetMapVersion() =>
+        Settings.Get().CurrentMapFileInfo?.Version ?? MapVersion.SuccessionWars;
+
+    /// <summary>
+    /// Where to go to lift the fog, <c>getFogDiscoveryTile()</c> (<c>world_pathfinding.cpp:886-966</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The best tile is the cheapest one to reach that uncovers something, ties going to the tile that uncovers
+    /// the most. Two passes: first the tiles with a fogged neighbour — the common case, since whatever hides the
+    /// neighbour usually hides the rest of that pocket as well — and then, if that found nothing, the tiles with a
+    /// neighbour the hero cannot reach at all, because the fog behind an obstacle is exactly what the first pass
+    /// cannot see.
+    /// </para>
+    /// <para>
+    /// A tile is only a candidate when <see cref="Mp2ObjectTypes.IsSafeForFogDiscoveryObject"/> agrees: standing on
+    /// a guarded object to look around is not worth the fight.
+    /// </para>
+    /// </remarks>
     /// <param name="hero">The scouting hero.</param>
-    /// <returns>The tile to walk to, and whether it is a boat.</returns>
-    /// <exception cref="NotImplementedException">The hero search is not implemented.</exception>
-    public (int Index, bool IsBoat) GetFogDiscoveryTile(Hero hero)
+    /// <returns>
+    /// The tile to walk to, and whether the fog lies right next to it — i.e. whether walking there most likely
+    /// opens a new area; the index is -1 when nothing is left.
+    /// </returns>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
+    public (int Index, bool IsTerritoryExpansion) GetFogDiscoveryTile(Hero hero)
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        throw new NotImplementedException(
-            "getFogDiscoveryTile() needs the hero's scouting distance and the objects-on-the-way scan.");
+        ReEvaluateIfNeeded(hero);
+
+        int FindBestTile(Func<int, bool> nearbyTilePredicate)
+        {
+            int bestIndex = -1;
+            uint bestCost = uint.MaxValue;
+            int bestTilesToReveal = 0;
+
+            int scoutingDistance = hero.GetScoutingDistance();
+
+            for (int tileIndex = 0; tileIndex < Map.Size; ++tileIndex)
+            {
+                uint nodeCost = GetNodeCost(tileIndex);
+
+                if (nodeCost == 0 || !Mp2ObjectTypes.IsSafeForFogDiscoveryObject(Map.GetTile(tileIndex).MainObjectType))
+                {
+                    continue;
+                }
+
+                bool isTileSuitable = false;
+
+                foreach (Direction direction in Directions.AllNeighboringDirections)
+                {
+                    if (!Geometry.IsValidDirection(tileIndex, direction)
+                        || !nearbyTilePredicate(Geometry.GetDirectionIndex(tileIndex, direction)))
+                    {
+                        continue;
+                    }
+
+                    isTileSuitable = true;
+
+                    break;
+                }
+
+                if (!isTileSuitable)
+                {
+                    continue;
+                }
+
+                Point position = Geometry.GetPoint(tileIndex);
+                int tilesToReveal = Map.Fog?.CountFoggedAround(position.X, position.Y, scoutingDistance, PathColor) ?? 0;
+
+                if (tilesToReveal == 0)
+                {
+                    continue;
+                }
+
+                if (nodeCost < bestCost || (nodeCost == bestCost && tilesToReveal > bestTilesToReveal))
+                {
+                    bestIndex = tileIndex;
+                    bestCost = nodeCost;
+                    bestTilesToReveal = tilesToReveal;
+                }
+            }
+
+            return bestIndex;
+        }
+
+        int bestTileIndex = FindBestTile(tileIndex => Map.GetTile(tileIndex).IsFog(PathColor));
+
+        if (bestTileIndex != -1)
+        {
+            return (bestTileIndex, true);
+        }
+
+        bestTileIndex = FindBestTile(tileIndex => GetNodeCost(tileIndex) == 0);
+
+        return bestTileIndex != -1 ? (bestTileIndex, false) : (-1, false);
     }
 
-    /// <summary>The closest tile worth moving to, <c>getNearestTileToMove()</c> (<c>world_pathfinding.cpp:968</c>).</summary>
+    /// <summary>
+    /// The closest tile worth moving to, <c>getNearestTileToMove()</c> (<c>world_pathfinding.cpp:968-1003</c>).
+    /// </summary>
+    /// <remarks>
+    /// The direction order is shuffled on purpose: a hero that cannot reach anything worthwhile would otherwise
+    /// step the same way every turn. Action objects are skipped because they may be a guarded castle or dwelling.
+    /// </remarks>
     /// <param name="hero">The hero to move.</param>
-    /// <returns>The tile to move to.</returns>
-    /// <exception cref="NotImplementedException">The hero search is not implemented.</exception>
+    /// <returns>The tile to move to, or -1 when the hero has nowhere to go.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
     public int GetNearestTileToMove(Hero hero)
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        throw new NotImplementedException("getNearestTileToMove() needs the objects-on-the-way scan.");
+        ReEvaluateIfNeeded(hero);
+
+        int start = hero.MapIndex;
+        Direction[] directions = (Direction[])Directions.AllNeighboringDirections.Clone();
+        Rand.Shuffle(directions);
+
+        foreach (Direction direction in directions)
+        {
+            if (!Geometry.IsValidDirection(start, direction))
+            {
+                continue;
+            }
+
+            int newIndex = Geometry.GetDirectionIndex(start, direction);
+
+            if (newIndex == start || Mp2ObjectTypes.IsInGameActionObject(Map.GetTile(newIndex).MainObjectType))
+            {
+                continue;
+            }
+
+            // Reachable in one move, and the hero has enough army to beat whatever guards it.
+            if (GetNodeCost(newIndex) > 0 && GetNodeFrom(newIndex) == start)
+            {
+                return newIndex;
+            }
+        }
+
+        return -1;
     }
 
-    /// <summary>Whether a friendly hero is in the way, <c>isHeroPossiblyBlockingWay()</c>.</summary>
+    /// <summary>
+    /// Whether a friendly hero is in the way, <c>isHeroPossiblyBlockingWay()</c>
+    /// (<c>world_pathfinding.cpp:1005-1160</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference encodes a handful of patterns, each of them a case where the hero stands between two parts of
+    /// the map that would otherwise be connected: a corridor in either axis, the mouth of a corner, and the tiles
+    /// around stone liths and whirlpools. The eleven cases below are copied one to one.
+    /// </para>
+    /// <para>
+    /// The last two questions are about the stone liths themselves: a hero may block the exit another hero would
+    /// teleport to, and a hero standing on the liths can be teleported himself.
+    /// </para>
+    /// </remarks>
     /// <param name="hero">The hero that would walk.</param>
-    /// <returns><see langword="true"/> when a friendly hero blocks the way.</returns>
-    /// <exception cref="NotImplementedException">The hero search is not implemented.</exception>
+    /// <returns><see langword="true"/> when a friendly hero stands in the way.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
     public bool IsHeroPossiblyBlockingWay(Hero hero)
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        throw new NotImplementedException("isHeroPossiblyBlockingWay() needs the hero search.");
+        int heroIndex = hero.MapIndex;
+        PlayerColor heroColor = hero.Color;
+
+        bool IsReachableDirection(Direction direction) =>
+            Geometry.IsValidDirection(heroIndex, direction)
+            && IsMovementAllowedForColor(heroIndex, direction, heroColor, ignoreFog: false, isSummonBoatSpellAvailable: false);
+
+        bool left = IsReachableDirection(Direction.Left);
+        bool right = IsReachableDirection(Direction.Right);
+        bool top = IsReachableDirection(Direction.Top);
+        bool bottom = IsReachableDirection(Direction.Bottom);
+        bool topLeft = IsReachableDirection(Direction.TopLeft);
+        bool topRight = IsReachableDirection(Direction.TopRight);
+        bool bottomLeft = IsReachableDirection(Direction.BottomLeft);
+        bool bottomRight = IsReachableDirection(Direction.BottomRight);
+
+        // A dead straight corridor: reachable on two opposite sides, closed on the other two.
+        if ((top && bottom && !left && !right) || (left && right && !top && !bottom))
+        {
+            return true;
+        }
+
+        // The mouth of a corner: the closed diagonal is the obstacle, the closed straight side is the map edge.
+        if ((left && (top || right) && !topLeft && !bottom)
+            || (right && (top || left) && !topRight && !bottom)
+            || (left && (bottom || right) && !top && !bottomLeft)
+            || (right && (bottom || left) && !top && !bottomRight)
+            || (left && (top || bottom || right) && !topLeft && !bottomLeft)
+            || (top && (bottom || right || left) && !topLeft && !topRight)
+            || (right && (top || bottom || left) && !topRight && !bottomRight)
+            || (bottom && (top || left || right) && !bottomLeft && !bottomRight)
+            || (top && (right || bottom) && !topRight && !left)
+            || (bottom && (right || top) && !bottomRight && !left)
+            || (top && (left || bottom) && !topLeft && !right)
+            || (bottom && (left || top) && !bottomLeft && !right))
+        {
+            return true;
+        }
+
+        Tile heroTile = Map.GetTile(heroIndex);
+
+        // A hero in a boat can neither occupy nor block stone liths.
+        if (heroTile.IsWater)
+        {
+            return false;
+        }
+
+        // A hero may block the exit another hero would teleport to.
+        foreach (int lithsIndex in Map.ScanAroundObject(heroIndex, Mp2ObjectType.ActionStoneLiths))
+        {
+            Tile tile = Map.GetTile(lithsIndex);
+
+            if (tile.MainObjectType == Mp2ObjectType.ActionHero)
+            {
+                Direction direction = Geometry.GetDirection(lithsIndex, heroIndex);
+
+                if (tile.IsPassableTo(direction) && heroTile.IsPassableFrom(Directions.Reflect(direction)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // A hero standing on the stone liths can be teleported himself.
+        return heroTile.GetMainObjectType(Map, ignoreObjectUnderHero: false) == Mp2ObjectType.ActionStoneLiths;
     }
 
-    /// <summary>A route that uses Dimension Door, <c>buildDimensionDoorPath()</c>.</summary>
+    /// <summary>
+    /// A route that uses Dimension Door, <c>buildDimensionDoorPath()</c> (<c>world_pathfinding.cpp:1216-1343</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every cast jumps as far towards the target as the spell allows, at most <c>distance / 2</c> in either axis;
+    /// when that landing tile is not usable the best neighbouring tile is taken instead. The number of casts is
+    /// bounded by three things: the spell points left after the reserve, the movement points (each door costs the
+    /// same as walking), and the difficulty cap on doors per turn.
+    /// </para>
+    /// <para>
+    /// The reserve is not subtracted when the target itself gives spell points back ({magic well},
+    /// {artesian spring}), exactly as in the reference: arriving there pays for the trip.
+    /// </para>
+    /// <para>
+    /// Only the <i>fixed</i> part of the route is returned — the hops the search pre-planned. The last, short
+    /// stretch is the ordinary path, which the caller adds by finding the last node and asking for its route.
+    /// </para>
+    /// </remarks>
     /// <param name="hero">The hero that would cast it.</param>
     /// <param name="targetIndex">Index of the destination tile.</param>
-    /// <returns>The route, or an empty list.</returns>
-    /// <exception cref="NotImplementedException">The hero search is not implemented.</exception>
+    /// <returns>The route, or an empty list when the door cannot get there.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="hero"/> is <see langword="null"/>.</exception>
     public List<RouteStep> BuildDimensionDoorPath(Hero hero, int targetIndex)
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        throw new NotImplementedException(
-            "buildDimensionDoorPath() needs the hero's spell points and dimension door uses, neither of"
-            + " which the port reads yet.");
+        ReEvaluateIfNeeded(hero);
+
+        if (!_isDimensionDoorSpellAvailable || PathStart == targetIndex)
+        {
+            return [];
+        }
+
+        if (_isOnPatrol
+            && Geometry.GetApproximateDistance(targetIndex, _patrolCenter) > _patrolDistance)
+        {
+            return [];
+        }
+
+        uint difficultyLimit = Difficulty.GetDimensionDoorLimitForAi(Settings.Get().GameDifficulty);
+
+        if (_dimensionDoorNumOfUses >= difficultyLimit)
+        {
+            return [];
+        }
+
+        difficultyLimit -= _dimensionDoorNumOfUses;
+
+        uint remainingSpellPoints = _remainingSpellPoints;
+
+        // The reserve is only kept when the target does not give the spell points back.
+        if (Map.GetTile(targetIndex).MainObjectType is not (Mp2ObjectType.ActionMagicWell or Mp2ObjectType.ActionArtesianSpring))
+        {
+            if (remainingSpellPoints < _maxSpellPoints * _spellPointsReserveRatio)
+            {
+                return [];
+            }
+
+            remainingSpellPoints -= (uint)(_maxSpellPoints * _spellPointsReserveRatio);
+        }
+
+        if (!IsTileAccessibleForAI(targetIndex))
+        {
+            return [];
+        }
+
+        uint dimensionDoorMovementCost = new Spell(SpellType.DimensionDoor).MovePoints();
+
+        if (dimensionDoorMovementCost == 0 || _dimensionDoorSpCost == 0)
+        {
+            // A door that costs nothing would loop forever: the reference asserts both are not zero.
+            return [];
+        }
+
+        int distanceLimit = (int)(Spell.DimensionDoorDistance() / 2);
+        bool isHeroOnWater = Map.GetTile(PathStart).IsWater;
+        uint maxCasts = Math.Min(
+            Math.Min(remainingSpellPoints / _dimensionDoorSpCost, PathRemainingMovePoints / dimensionDoorMovementCost),
+            difficultyLimit);
+
+        Point targetPoint = Geometry.GetPoint(targetIndex);
+        Point current = Geometry.GetPoint(PathStart);
+
+        List<RouteStep> path = [];
+
+        for (uint spellsUsed = 0; spellsUsed < maxCasts; ++spellsUsed)
+        {
+            int currentNodeIndex = Geometry.GetIndexFromAbsPoint(current);
+            Point differencePoint = new(targetPoint.X - current.X, targetPoint.Y - current.Y);
+
+            Point next = new(
+                current.X + (differencePoint.X > 0 ? Math.Min(differencePoint.X, distanceLimit) : Math.Max(differencePoint.X, -distanceLimit)),
+                current.Y + (differencePoint.Y > 0 ? Math.Min(differencePoint.Y, distanceLimit) : Math.Max(differencePoint.Y, -distanceLimit)));
+
+            int nextNodeIndex = Geometry.GetIndexFromAbsPoint(next);
+
+            if (Map.IsValidForDimensionDoor(nextNodeIndex, isHeroOnWater))
+            {
+                path.Add(new RouteStep(nextNodeIndex, currentNodeIndex, Direction.Center, dimensionDoorMovementCost));
+
+                current = next;
+            }
+            else
+            {
+                int bestNextIndex = -1;
+                int bestDirectionDifference = int.MaxValue;
+
+                foreach (Direction direction in Directions.AllNeighboringDirections)
+                {
+                    if (!Geometry.IsValidDirection(nextNodeIndex, direction))
+                    {
+                        continue;
+                    }
+
+                    int newIndex = Geometry.GetDirectionIndex(nextNodeIndex, direction);
+
+                    if (!Map.IsValidForDimensionDoor(newIndex, isHeroOnWater))
+                    {
+                        continue;
+                    }
+
+                    // Near the destination but unable to step onto it: skip that direction.
+                    if (nextNodeIndex == targetIndex
+                        && !IsMovementAllowedForColor(newIndex, Directions.Reflect(direction), PathColor, ignoreFog: true, isSummonBoatSpellAvailable: _isSummonBoatSpellAvailable))
+                    {
+                        continue;
+                    }
+
+                    Point newPoint = Geometry.GetPoint(newIndex);
+                    int directionDifference = Math.Abs(current.X - newPoint.X) + Math.Abs(current.Y - newPoint.Y);
+
+                    if (Math.Abs(current.X - newPoint.X) > distanceLimit || Math.Abs(current.Y - newPoint.Y) > distanceLimit)
+                    {
+                        continue;
+                    }
+
+                    if (bestNextIndex < 0 || bestDirectionDifference > directionDifference)
+                    {
+                        bestNextIndex = newIndex;
+                        bestDirectionDifference = directionDifference;
+                    }
+                }
+
+                if (bestNextIndex == -1)
+                {
+                    return [];
+                }
+
+                path.Add(new RouteStep(bestNextIndex, currentNodeIndex, Direction.Center, dimensionDoorMovementCost));
+
+                current = Geometry.GetPoint(bestNextIndex);
+            }
+
+            differencePoint = new Point(targetPoint.X - current.X, targetPoint.Y - current.Y);
+
+            if (Math.Abs(differencePoint.X) <= 1 && Math.Abs(differencePoint.Y) <= 1)
+            {
+                return path;
+            }
+        }
+
+        return [];
     }
 
     /// <summary>
-    /// The tiles worth stopping at on the way, <c>getObjectsOnTheWay()</c> (<c>world_pathfinding.cpp:1162</c>).
+    /// The tiles worth stopping at on the way, <c>getObjectsOnTheWay()</c> (<c>world_pathfinding.cpp:1162-1214</c>).
     /// </summary>
+    /// <remarks>
+    /// The walk goes from the target back to the hero through the search cache, and every tile of it is asked
+    /// whether it holds something valuable for the kingdom. The target itself is skipped: it is what the route
+    /// was built for and is counted by the caller.
+    /// </remarks>
     /// <param name="targetIndex">Index of the destination tile.</param>
-    /// <returns>One entry per object worth a stop, nearest first.</returns>
-    /// <exception cref="NotImplementedException">The objects-on-the-way scan is not implemented.</exception>
-    public List<(int Index, int Priority)> GetObjectsOnTheWay(int targetIndex) =>
-        throw new NotImplementedException(
-            "getObjectsOnTheWay() needs object UIDs and AiCommon.IsValuableAdventureMapObject(), which is not"
-            + " implemented.");
+    /// <returns>One entry per object worth a stop, with the type the tile holds.</returns>
+    public List<(int Index, Mp2ObjectType ObjectType)> GetObjectsOnTheWay(int targetIndex)
+    {
+        var result = new List<(int Index, Mp2ObjectType ObjectType)>();
+
+        if (GetNodeCost(targetIndex) == 0)
+        {
+            return result;
+        }
+
+        GameKingdom kingdom = Map.GetKingdom(PathColor);
+        HashSet<int> uniqueIndices = [];
+
+        void ValidateAndAdd(int index)
+        {
+            if (!uniqueIndices.Add(index))
+            {
+                return;
+            }
+
+            Mp2ObjectType objectType = Map.GetTile(index).MainObjectType;
+
+            if (AiCommon.IsValuableAdventureMapObject(kingdom, objectType, index))
+            {
+                result.Add((index, objectType));
+            }
+        }
+
+        // The target itself is counted by the caller, so it is not added here.
+        uniqueIndices.Add(targetIndex);
+
+        int currentNode = targetIndex;
+
+        while (currentNode != PathStart)
+        {
+            int from = GetNodeFrom(currentNode);
+
+            if (from == -1)
+            {
+                // The cache was cleared from under us: the route is unusable.
+                return result;
+            }
+
+            ValidateAndAdd(currentNode);
+
+            currentNode = from;
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// Whether the AI may step from one tile in a direction, <c>isMovementAllowed()</c>

@@ -127,6 +127,39 @@ public sealed partial class Hero
     }
 
     /// <summary>
+    /// Whether this hero has already met the other hero, <c>Heroes::hasMetWithHero()</c> (<c>heroes.cpp:1395-1398</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把人名记在同一本拜访簿里：<see cref="IndexObject.Index"/> 那一格放的是英雄 id 而不是瓦片下标，
+    /// 对象类型是 <see cref="Mp2ObjectType.Hero"/>。端口照抄这一写法。
+    /// </para>
+    /// <para>
+    /// 于是也照抄了它的副作用——「英雄」属于每周寿命的对象，跨周之后两位英雄可以重新算作初次见面
+    /// （<c>heroes.cpp:1180</c>）。
+    /// </para>
+    /// </remarks>
+    /// <param name="heroId">The id of the other hero.</param>
+    /// <returns><see langword="true"/> when the meeting is in the hero's visit list.</returns>
+    public bool HasMetWithHero(int heroId) => IsValidId(heroId) && IsVisited(heroId, Mp2ObjectType.Hero);
+
+    /// <summary>
+    /// Remembers a meeting with another hero, <c>Heroes::markHeroMeeting()</c> (<c>heroes.cpp:1375-1380</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只在「还没记过」时插到表头；<see cref="SetVisited"/> 已经做了这个去重。
+    /// <c>unmarkHeroMeeting()</c>（两位英雄分开时清记录）属于 <c>AIHeroMeetingUpdater</c>，等那片落地时再加。
+    /// </remarks>
+    /// <param name="heroId">The id of the other hero.</param>
+    public void MarkHeroMeeting(int heroId)
+    {
+        if (IsValidId(heroId))
+        {
+            SetVisited(heroId, Mp2ObjectType.Hero);
+        }
+    }
+
+    /// <summary>
     /// Forgets every visit, <c>visit_object.clear()</c>.
     /// </summary>
     /// <remarks>

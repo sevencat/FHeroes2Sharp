@@ -1,9 +1,12 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
+using FHeroes2.Game.Spells;
 using Xunit;
 
 namespace FHeroes2.Game.Tests;
@@ -15,6 +18,180 @@ namespace FHeroes2.Game.Tests;
 /// </summary>
 public sealed class AIWorldPathfinderTests
 {
+    [Fact]
+    public void ReEvaluateIfNeededReadsTheArmyFromTheHero()
+    {
+        World world = LoadMap(1, 5);
+        PutMonster(world, 2, MonsterType.BlackDragon, 1);
+
+        AIWorldPathfinder pathfinder = new(world);
+        Hero hero = PutHero(world, 0);
+
+        // The hero's army is empty, so the dragon seals the tiles next to it and nothing beyond can be reached.
+        pathfinder.ReEvaluateIfNeeded(hero);
+
+        Assert.Equal(0u, pathfinder.GetDistance(3));
+
+        // The same hero with an army that wins is a different search, without the caller passing a strength.
+        hero.Army.JoinTroop(MonsterType.BlackDragon, 100);
+        pathfinder.ReEvaluateIfNeeded(hero);
+
+        // Three steps on the grass, plus the extra cost of walking away from the dragon's tile.
+        Assert.Equal(400u, pathfinder.GetDistance(3));
+    }
+
+    [Fact]
+    public void FogDiscoveryPicksTheCheapestTileThatTouchesFog()
+    {
+        var world = new World();
+        world.LoadMap(SyntheticMap.Create(1, 6, _ => Grass()));
+
+        // LoadMap() would clear the whole map, so the fog is lifted by hand: only tiles 0 to 2 stay open.
+        Reveal(world, 0, 2, PlayerColor.Blue);
+
+        AIWorldPathfinder pathfinder = new(world);
+
+        (int index, bool isTerritoryExpansion) = pathfinder.GetFogDiscoveryTile(PutHero(world, 0));
+
+        // Tile 2 is the cheapest one with a fogged neighbour: 3 is the first tile still under the fog.
+        Assert.Equal(2, index);
+        Assert.True(isTerritoryExpansion);
+    }
+
+    [Fact]
+    public void FogDiscoveryLooksPastAnImpassableTile()
+    {
+        var world = new World();
+        world.LoadMap(SyntheticMap.Create(1, 7, tileIndex => tileIndex == 5 ? Water() : Grass()));
+
+        // Tile 5 is water, so the first pass finds no tile with a fogged neighbour and the second pass asks
+        // about tiles next to something unreachable: tile 4, with the fog on 6 behind the water.
+        Reveal(world, 0, 5, PlayerColor.Blue);
+
+        AIWorldPathfinder pathfinder = new(world);
+
+        (int index, bool isTerritoryExpansion) = pathfinder.GetFogDiscoveryTile(PutHero(world, 0));
+
+        Assert.Equal(4, index);
+        Assert.False(isTerritoryExpansion);
+    }
+
+    [Fact]
+    public void TheNearestTileToMoveIsAReachableNeighbour()
+    {
+        World world = LoadMap(1, 3);
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.Equal(1, pathfinder.GetNearestTileToMove(PutHero(world, 0)));
+    }
+
+    [Fact]
+    public void TheNearestTileToMoveIsMinusOneWhenNothingIsReachable()
+    {
+        World world = LoadMap(1, 3, index => index == 1 ? Grass() : Water());
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.Equal(-1, pathfinder.GetNearestTileToMove(PutHero(world, 1)));
+    }
+
+    [Fact]
+    public void AHeroInACorridorBlocksTheWay()
+    {
+        World world = LoadMap(1, 3);
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.True(pathfinder.IsHeroPossiblyBlockingWay(PutHero(world, 1)));
+    }
+
+    [Fact]
+    public void AHeroInTheOpenDoesNotBlockTheWay()
+    {
+        World world = LoadMap(3, 3);
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.False(pathfinder.IsHeroPossiblyBlockingWay(PutHero(world, 4)));
+    }
+
+    [Fact]
+    public void AHeroStandingOnTheLithsBlocksTheWay()
+    {
+        World world = LoadMap(3, 3, index => index == 4 ? Liths(1) : Grass());
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.True(pathfinder.IsHeroPossiblyBlockingWay(PutHero(world, 4)));
+    }
+
+    [Fact]
+    public void ADimensionDoorRouteJumpsTowardsTheTarget()
+    {
+        World world = LoadMap(1, 10);
+        Hero hero = PutHero(world, 0);
+
+        hero.BagArtifacts.Push(ArtifactType.MagicBook);
+        hero.AppendSpellToBook(new Spell(SpellType.DimensionDoor), ignoreWisdom: true);
+        hero.SetSpellPoints(100);
+        hero.SetMovePoints(1000);
+
+        AIWorldPathfinder pathfinder = new(world);
+
+        // The door covers seven tiles (half of the spell's reach), which leaves one tile to the target.
+        List<RouteStep> path = pathfinder.BuildDimensionDoorPath(hero, 8);
+
+        RouteStep step = Assert.Single(path);
+        Assert.Equal(7, step.Index);
+        Assert.Equal(0, step.From);
+        Assert.Equal(Direction.Center, step.Direction);
+    }
+
+    [Fact]
+    public void ADimensionDoorRouteIsEmptyWithoutTheSpell()
+    {
+        World world = LoadMap(1, 10);
+        Hero hero = PutHero(world, 0);
+        hero.SetSpellPoints(100);
+        hero.SetMovePoints(1000);
+
+        AIWorldPathfinder pathfinder = new(world);
+
+        Assert.Empty(pathfinder.BuildDimensionDoorPath(hero, 8));
+    }
+
+    [Fact]
+    public void TheObjectsOnTheWayAreTheValuableOnesUnderTheRoute()
+    {
+        World world = LoadMap(1, 5);
+        world.GetTile(2).SetMainObjectType(Mp2ObjectType.ActionResource);
+
+        AIWorldPathfinder pathfinder = Search(world, 0, OverwhelmingArmy);
+
+        World? previous = World.Current;
+        World.Current = world;
+
+        try
+        {
+            List<(int Index, Mp2ObjectType ObjectType)> objects = pathfinder.GetObjectsOnTheWay(4);
+
+            (int index, Mp2ObjectType objectType) = Assert.Single(objects);
+            Assert.Equal(2, index);
+            Assert.Equal(Mp2ObjectType.ActionResource, objectType);
+        }
+        finally
+        {
+            World.Current = previous;
+        }
+    }
+
+    [Fact]
+    public void TheObjectsOnTheWayIsEmptyForAnUnreachableTarget()
+    {
+        // Water at 1 cuts the corridor, and the AI only searches land: tile 3 cannot be reached on foot.
+        World world = LoadMap(1, 4, index => index == 1 ? Water() : Grass());
+
+        AIWorldPathfinder pathfinder = Search(world, 0, OverwhelmingArmy);
+
+        Assert.Empty(pathfinder.GetObjectsOnTheWay(3));
+    }
+
     /// <summary>First plain grass image of the <c>GROUND32.TIL</c> block.</summary>
     private const int GrassImageIndex = 68;
 
@@ -340,6 +517,41 @@ public sealed class AIWorldPathfinderTests
         pathfinder.ReEvaluateIfNeeded(startIndex, PlayerColor.Blue, armyStrength, SkillLevel.None);
 
         return pathfinder;
+    }
+
+    /// <summary>
+    /// Lifts the fog from a run of tiles for one color.
+    /// </summary>
+    /// <remarks>
+    /// The fog lives in two places: the <see cref="MapFog"/> table the AI plans territory expansion with, and the
+    /// per-tile bits the pathfinder asks. <see cref="World.ClearFog(int, int, PlayerColor)"/> only writes the
+    /// first, so a test that wants both answers has to write both.
+    /// </remarks>
+    /// <param name="world">The world to change.</param>
+    /// <param name="firstIndex">First revealed tile.</param>
+    /// <param name="lastIndex">Last revealed tile.</param>
+    /// <param name="color">The color that loses the fog.</param>
+    private static void Reveal(World world, int firstIndex, int lastIndex, PlayerColor color)
+    {
+        for (int index = firstIndex; index <= lastIndex; ++index)
+        {
+            world.GetTile(index).ClearFog(color);
+            world.Fog!.Reveal(index % world.Width, index / world.Width, 0, color);
+        }
+    }
+
+    /// <summary>Puts a blue hero on a tile, the way the planner models a hero it owns.</summary>
+    /// <param name="world">The world the tile belongs to.</param>
+    /// <param name="index">Index of the tile.</param>
+    /// <returns>The hero.</returns>
+    private static Hero PutHero(World world, int index)
+    {
+        // The world is not asked for the hero: these tests only need the fields the pathfinder reads.
+        Hero hero = new(Hero.LordKilburn, MapRace.Knight);
+        hero.SetColor(PlayerColor.Blue);
+        hero.SetMapIndex(index);
+
+        return hero;
     }
 
     /// <summary>Puts a wandering stack of <paramref name="count"/> creatures on a tile.</summary>

@@ -478,4 +478,46 @@ public sealed partial class BattleArena : IBattleField
 
         return covrs.Length == 0 ? IcnType.Unknown : Rand.GetWithGen(covrs, generator);
     }
+
+    /// <summary>
+    /// Whether the side may run away, <c>Arena::CanRetreatOpponent()</c>.
+    /// </summary>
+    /// <remarks>只有被人类控制的一方才有「撤退」这个选项；AI 从不逃。</remarks>
+    /// <param name="color">The side to ask about.</param>
+    /// <returns>Whether that side can retreat.</returns>
+    public bool CanRetreatOpponent(PlayerColor color) =>
+        GetCommander(color) is { } commander && commander.GetControl() != System.PlayerControl.Ai;
+
+    /// <summary>
+    /// Whether the side may give up, <c>Arena::CanSurrenderOpponent()</c>.
+    /// </summary>
+    /// <remarks>与撤退同理，只有在场的人类指挥官才谈得上投降。</remarks>
+    /// <param name="color">The side to ask about.</param>
+    /// <returns>Whether that side can surrender.</returns>
+    public bool CanSurrenderOpponent(PlayerColor color) =>
+        GetCommander(color) is { } commander && commander.GetControl() != System.PlayerControl.Ai;
+
+    /// <summary>
+    /// Whether the fight is being played by the computer, <c>Arena::AutoCombatInProgress()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在这里读 <c>_autoBattle</c>；端口的自动战斗还没接进竞技场（<see cref="BattleLoader"/> 的缺口之一），
+    /// 所以恒为 <see langword="false"/>。等自动战斗落地，这里改成读开关即可。
+    /// </remarks>
+    public bool AutoCombatInProgress => false;
+
+    /// <summary>
+    /// Whether the player could hand the fight over to the computer, <c>Arena::CanToggleAutoCombat()</c>.
+    /// </summary>
+    /// <remarks>同理，自动战斗未接入，先恒为 <see langword="false"/>。</remarks>
+    public bool CanToggleAutoCombat => false;
+
+    /// <summary>
+    /// Whether spells are switched off for this fight, <c>Arena::IsSpellcastDisabled()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考把「剧本禁用魔法」与「自动战斗进行中」两件事合在这里；端口还没有前者（无设置入口），
+    /// 后者见 <see cref="AutoCombatInProgress"/>。
+    /// </remarks>
+    public bool IsSpellcastDisabled => AutoCombatInProgress;
 }

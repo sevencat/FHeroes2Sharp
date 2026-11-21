@@ -7352,3 +7352,62 @@ UI 847 → **854**，合计 4 449 → **4 456** 全绿，`-warnaserror` 0 警告
 
 **遗留**：`AlphaBlit` 的半透明混合（新建筑淡入仍是一步到位，城堡屏主线只剩这一项）；船长战斗界面
 （`battle_only`）；酒馆传闻的多语言字体随本地化一起缺。
+
+## ADR-195：王国侧 AI 按「扫描 → 评估 → 决策」三段落地，KingdomTurn 的回合循环等 B5 ✅
+
+
+**背景**：`ai_planner_kingdom.cpp` 的 `Planner::KingdomTurn()`（`:660-900`）是一整段：清缓存、数英雄、
+逐瓦片扫描、`evaluateRegionSafety`、`setHeroRoles`、优先级目标的重算、城堡循环、英雄循环。端口里英雄循环的
+第一个调用就是 `HeroesActionComplete`（`ai_planner_hero.cpp`，B5 范围），所以这段在 B4 无法整段落。
+
+**决定**：
+
+1. **扫描段抽成 `internal int ScanMap(GameKingdom)`**：清缓存 → 按 `world.RegionCount` 建 `_regions`（瓦片
+   的 `Region` 直接做下标）→ 数非巡逻英雄 → 逐瓦片填 `_mapActionObjects`/`_enemyArmies`/区域统计 →
+   收尾调 `EvaluateRegionSafety` 与 `UpdateKingdomBudget` → 返回 `availableHeroCount`。参考把这些写在循环里，
+   端口分开是因为「`evaluateRegionSafety` 的产物只被扫描产生」——写在两处容易漏；B5 的 `KingdomTurn` 只剩
+   「`ScanMap` → `SetHeroRoles` → 城堡循环 → 英雄循环」。
+2. **对象类型一律先折叠（ADR-133）**：瓦片缓存的是带动作位的值（英雄 `ActionHero` = 183），
+   `GetEnemyArmyOnTile` 原先拿它比 `Mp2ObjectType.Hero` 永不成立，本批改成 `Mp2ObjectTypes.NonActionType`；
+   `_mapActionObjects` 仍存瓦片原值，与 `UpdateMapActionObjectCache` 保持同一口径（两者在同一字典里混存会不自洽）。
+3. **`View All`、`SLEEPER`、次元门次数不移植**：端口没有冒险地图施法，扫描只认「不在雾里」的瓦片，
+   参考里的 `bestHeroToViewAll` 与每英雄的 `ResetModes(SLEEPER)`/`setDimensionDoorUsage(0)` 都没有对应状态，
+   注释里逐条写明（有状态时再补，不预留空方法）。
+4. **测试窗口只开必要的四个**：`Regions` 只读属性 + `SetHeroRoles`/`GetSortedCastleList`/
+   `PurchaseNewHeroes` 由 private 改 `internal`。生成的空地图没有城堡表（`GetCastleEntrance` 只在装图时
+   登记），所以「友方城堡 +100 / 敌堡 -100」两支在合成世界上跑不到，测试覆盖「敌方英雄 → -50 → 邻区取份额」、
+   撤走英雄后归零、受威胁城堡排前与招募上限。
+
+**后果**：新增 `src/FHeroes2.Game/Ai/AiPlanner.Kingdom.cs`（十个成员 + `ScanMap`）与
+`tests/FHeroes2.Game.Tests/AiKingdomPlannerTests.cs` 8 条；`AiPlanner` 改 `partial` 并删掉十个占位；
+`ai_planner.cpp` 的最后一件 `revealFog` 一并落地，该文件全转。`ai` 行 4/1/4，合计 68/84/97，
+剩余 `NotImplementedException` 60 处。`KingdomTurn` 的回合循环与 `HeroesActionComplete` 留待 B5。
+
+## ADR-196：`AIWorldPathfinder` 的六个英雄入口由调用方显式给英雄，迷雾有两张表 ✅
+
+
+**背景**：`world_pathfinding.cpp:566-1434` 的 AI 寻路器在端口里早已落地，只有六个英雄相关入口还抛异常：
+`ReEvaluateIfNeeded`、`getFogDiscoveryTile`、`getNearestTileToMove`、`isHeroPossiblyBlockingWay`、
+`buildDimensionDoorPath`、`getObjectsOnTheWay`（参考里这些方法大多直接读缓存的 `_pathStart`/`_pathColor`）。
+B5 的 `ai_planner_hero.cpp` 依赖其中五个，所以必须先收。
+
+**决定**：
+
+1. **六个入口都接收 `Hero` 参数**：参考在 `reEvaluateIfNeeded` 里把英雄写进搜索上下文，之后的方法只读缓存。
+   端口把英雄一路显式传下去，因为「缓存里哪一任英雄」在测试和未来的多英雄规划里都不可靠；单参
+   `ReEvaluateIfNeeded(Hero)` 保留参考语义（军力自家算），双参版留给已知军力的调用方。
+2. **`GetFogDiscoveryTile` 的 bool 改名为 `IsTerritoryExpansion`**：参考的注释写明第二项表示「雾就在这个瓦片
+   旁边」，用于决定扩张还是探路，与坐船无关；原命名 `IsBoat` 会误导 B5 的调用方，行为未改。
+3. **迷雾仍按两张表走**：`World.ClearFog` 只写 `MapFog`，寻路器只读 `Tile._fogColors`（ADR-061/ADR-079 的
+   历史结果）。本批不改这条接线：`GetFogDiscoveryTile` 照参考「瓦片雾判相邻、`MapFog.CountFoggedAround`
+   数可揭示格」，测试自己把两张表都写一遍，并在注释里说明原因。合并两张表要单独一条 ADR（会动 `World`、
+   渲染与存档），不混在本批。
+4. **次元门的空路由直接返回空表**：参考在 `_dimensionDoorMovementCost == 0 || _dimensionDoorSpCost == 0`
+   处是 `assert`；端口返回空列表，避免调用方（B7 的 `HeroesCastDimensionDoor`）拿到死循环的落点序列。
+5. **测试用竖长合成图**：`World.ComputeStaticAnalysis` 用列号乘宽当行首（与参考同款转置），宽度大于高度的
+   合成图会越界。本批测试统一用 1×N 走廊，不修这个遗留问题（与 X1 无关）。
+
+**后果**：`AIWorldPathfinder` 的 13 处 `NotImplementedException` 归零，`AIWorldPathfinderTests` 13 → 26 条；
+随批补 `Hero.CanCastSpell`、`Hero.DimensionDoorUses`、`Difficulty.GetDimensionDoorLimitForAi`。
+Game 测试 2991 → 3003，全量 4 530 条全绿；全解决方案 0 警告。`world_pathfinding` 的 AI 侧不再有占位，
+B5 只剩对象价值表（X2）。

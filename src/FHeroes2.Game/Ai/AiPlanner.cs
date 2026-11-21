@@ -2,6 +2,7 @@ using System.Diagnostics;
 
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Army;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
@@ -9,6 +10,7 @@ using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 using ArmyTroops = FHeroes2.Game.Army.Army;
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -58,7 +60,7 @@ public enum AiTurnOutcome
 /// still throw.
 /// </para>
 /// </remarks>
-public sealed class AiPlanner
+public sealed partial class AiPlanner
 {
     private AiPlanner()
     {
@@ -68,6 +70,16 @@ public sealed class AiPlanner
     public static AiPlanner Instance { get; } = new();
 
     private AIWorldPathfinder? _pathfinder;
+
+    /// <summary>
+    /// The pathfinder the AI asks for distances, refusing to guess when none was attached.
+    /// </summary>
+    /// <remarks>
+    /// 参考里路径寻路器是全局单例，随时可用；端口按世界构造，所以由 <see cref="AttachPathfinder"/> 交进来。没交就直接
+    /// 报错，而不是退回一个「大概安全」的判断——距离算错的 AI 会白白送掉英雄。
+    /// </remarks>
+    private AIWorldPathfinder Pathfinder =>
+        _pathfinder ?? throw new InvalidOperationException("AiPlanner.Pathfinder — 尚未 AttachPathfinder（ADR-180）");
 
     /// <summary>
     /// Objects on the map whose value was already worked out this turn, <c>_mapActionObjects</c>
@@ -123,39 +135,207 @@ public sealed class AiPlanner
     }
 
     /// <summary>
-    /// Plays one turn of one kingdom, <c>Planner::KingdomTurn()</c> (<c>ai_planner.h:166</c>).
+    /// Plays one turn of one kingdom, <c>Planner::KingdomTurn()</c> (<c>ai_planner_kingdom.cpp:623-927</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 一天的顺序：清掉昨天的计划 → 英雄醒来、放「全图视野」、扫描地图 → 挖宝 → 反复「给英雄派活 / 买新英雄 /
+    /// 最后一天召回」直到没人有事可做 → 按危险程度开发城堡 → 把城里英雄的慢兵交给守军。
+    /// </para>
+    /// <para>
+    /// <b>表现层的事不在这里</b>：参考会画状态栏进度、切电脑回合的背景音乐、以及在回合结束时释放 AI 自动控制的
+    /// 玩家（<c>AIAutoControlModeCommitter</c>），这些都是 UI 与 Players 层的事。
+    /// </para>
+    /// </remarks>
     /// <param name="kingdom">The kingdom whose turn it is.</param>
-    /// <returns><see cref="AiTurnOutcome.EndTurn"/> when the turn is over.</returns>
-    public AiTurnOutcome KingdomTurn(GameKingdom kingdom) =>
-        throw new NotImplementedException("AiPlanner.KingdomTurn — ai_planner.cpp 未移植（ADR-161）");
+    /// <returns><see cref="AiTurnOutcome.EndTurn"/> when the turn is over, or the outcome that ended it.</returns>
+    public AiTurnOutcome KingdomTurn(GameKingdom kingdom)
+    {
+        ArgumentNullException.ThrowIfNull(kingdom);
 
-    /// <summary>
-    /// What the AI does when a hero starts moving, <c>Planner::HeroesBeginMovement()</c>
-    /// (<c>ai_planner.h:169</c>): the transparent <c>SUMMON_BOAT</c> cast.
-    /// </summary>
-    /// <param name="hero">The hero that starts moving.</param>
-    public void HeroesBeginMovement(Hero hero) =>
-        throw new NotImplementedException("AiPlanner.HeroesBeginMovement — ai_planner_hero.cpp 未移植（ADR-161）");
+        World world = World.Current;
+        PlayerColor myColor = kingdom.Color;
 
-    /// <summary>
-    /// What the AI does every time its hero reaches a new tile, <c>Planner::HeroesActionNewPosition()</c>
-    /// (<c>ai_planner.h:172</c>): preparing the dig for the ultimate artifact and the transparent
-    /// <c>SUMMON_BOAT</c> cast.
-    /// </summary>
-    /// <param name="hero">The hero that moved.</param>
-    public void HeroesActionNewPosition(Hero hero) =>
-        throw new NotImplementedException("AiPlanner.HeroesActionNewPosition — ai_planner_hero.cpp 未移植（ADR-161）");
+        // 昨天的计划、敌人位置与区域安全度全部作废：一天里城堡与军队都可能变了。
+        ResetTurnCaches();
 
-    /// <summary>
-    /// What the AI does after its hero finished an action, <c>Planner::HeroesActionComplete()</c>
-    /// (<c>ai_planner.h:174</c>).
-    /// </summary>
-    /// <param name="hero">The hero that acted.</param>
-    /// <param name="tileIndex">Tile the action happened on.</param>
-    /// <param name="objectType">Object on that tile, <c>MP2::OBJ_NONE</c> when there is none.</param>
-    public void HeroesActionComplete(Hero hero, int tileIndex, Mp2ObjectType objectType) =>
-        throw new NotImplementedException("AiPlanner.HeroesActionComplete — ai_planner_hero.cpp 未移植（ADR-161）");
+        if (kingdom.IsLoss || myColor == PlayerColor.None)
+        {
+            // 参考在这里还会做 LossPostActions：那要 Players 层，端口还没有。
+            return AiTurnOutcome.EndTurn;
+        }
+
+        IReadOnlyList<Hero> heroes = kingdom.Heroes;
+        IReadOnlyList<CastleTown> castles = kingdom.Castles;
+
+        // 新的一天：英雄都醒过来，次元门次数重新算。
+        foreach (Hero hero in heroes)
+        {
+            hero.ResetModes(HeroModes.Sleeper);
+            hero.DimensionDoorUses = 0;
+        }
+
+        // 有英雄能放全图视野就先放一个：扫描地图时就能无视迷雾，看到整张图。
+        Hero? bestHeroToViewAll = null;
+
+        foreach (Hero hero in heroes)
+        {
+            if (!hero.CanCastSpell(new Spell(SpellType.ViewAll)))
+            {
+                continue;
+            }
+
+            // 有神秘术的英雄能把法术点省下来，优先让他放。
+            if (bestHeroToViewAll is null || hero.GetLevelSkill(SecondarySkill.Mysticism) > 0)
+            {
+                bestHeroToViewAll = hero;
+            }
+        }
+
+        bool isUnderViewSpell = false;
+
+        if (bestHeroToViewAll is not null)
+        {
+            bestHeroToViewAll.SpellCasted(new Spell(SpellType.ViewAll));
+            isUnderViewSpell = true;
+        }
+
+        int availableHeroCount = ScanMap(kingdom, isUnderViewSpell);
+
+        // 有英雄正站在终极宝物上，就得在这一天开始前把它挖出来。
+        foreach (Hero hero in heroes)
+        {
+            UltimateArtifact ultimateArtifact = world.UltimateArtifact;
+
+            if (!ultimateArtifact.IsAt(hero.MapIndex) || !AiCommon.IsUltimateArtifactAvailableToHero(ultimateArtifact, hero))
+            {
+                continue;
+            }
+
+            Debug.Assert(hero.MovePoints == hero.GetMaxMovePoints() && hero.Path.IsEmpty,
+                "A hero who can dig for the artifact has not moved yet.");
+
+            hero.SetMovePoints(0);
+
+            if (!world.DiggingForUltimateArtifact(world.Geometry!.Value.GetPoint(hero.MapIndex))
+                || !hero.PickupArtifact(ultimateArtifact.Artifact, world))
+            {
+                Debug.Fail("The ultimate artifact was available but could not be dug up.");
+            }
+
+            // 挖到终极宝物本身可能就是胜利条件：胜负判定在会话层，这里只管结束这一天。
+            break;
+        }
+
+        HashSet<int> castlesInDanger = [];
+        List<AiCastle> sortedCastleList = [];
+
+        // 进度条从 1 走到 9；端口没有状态栏，这个数字只是传给 HeroesTurn 的刻度。
+        uint currentProgressValue = 1;
+
+        while (true)
+        {
+            // 城里的英雄多半没事干，先让他把守军与背包整理好。
+            foreach (Hero hero in heroes)
+            {
+                HeroesActionComplete(hero, hero.MapIndex, Mp2ObjectType.None);
+            }
+
+            SetHeroRoles(heroes, Settings.Get().GameDifficulty);
+
+            castlesInDanger = FindCastlesInDanger(kingdom);
+
+            foreach (Hero hero in heroes)
+            {
+                if (!castlesInDanger.Contains(hero.MapIndex))
+                {
+                    continue;
+                }
+
+                // 危险城堡里的英雄多半打不过野外的敌人，让他守着城堡别出去。
+                HeroesActionComplete(hero, hero.MapIndex, hero.ObjectTypeUnderHero);
+            }
+
+            sortedCastleList = GetSortedCastleList(castles, castlesInDanger);
+
+            // 开局英雄少于一队时估计这一回合还会买一个，进度只涨两点。
+            uint endProgressValue = currentProgressValue == 1
+                ? Math.Min(((uint)heroes.Count * 2U) + 1U, 8U)
+                : Math.Min(currentProgressValue + 2U, 9U);
+
+            bool moreTasksForHeroes = false;
+
+            AiTurnOutcome gameState = HeroesTurn(heroes, ref currentProgressValue, endProgressValue, ref moreTasksForHeroes);
+
+            if (gameState != AiTurnOutcome.EndTurn)
+            {
+                return gameState;
+            }
+
+            if (PurchaseNewHeroes(sortedCastleList, castlesInDanger, availableHeroCount, moreTasksForHeroes))
+            {
+                ++availableHeroCount;
+
+                UpdateMapActionObjectCache(kingdom, heroes[^1].MapIndex);
+
+                // 新英雄还能做事，重新派一轮活。
+                continue;
+            }
+
+            if (!moreTasksForHeroes && world.IsLastDay)
+            {
+                // 英雄都没事可做，又是本周最后一天：把他们召回空城堡过夜，明天就能拿到全部法术点与新兵。
+                foreach (CastleTown castle in castles)
+                {
+                    if (world.GetTile(castle.TileIndex).GetHero(world) is not null)
+                    {
+                        continue;
+                    }
+
+                    if (_priorityTargets.TryAdd(castle.TileIndex, new PriorityTask(PriorityTaskType.Reinforce)))
+                    {
+                        moreTasksForHeroes = true;
+                    }
+                }
+
+                if (moreTasksForHeroes)
+                {
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        // 回合里新打下的城堡会让列表对不上，先重新排一次再开发。
+        if (castles.Count != sortedCastleList.Count)
+        {
+            EvaluateRegionSafety();
+
+            castlesInDanger = FindCastlesInDanger(kingdom);
+            sortedCastleList = GetSortedCastleList(castles, castlesInDanger);
+        }
+
+        foreach (AiCastle entry in sortedCastleList)
+        {
+            CastleTurn(entry.Castle, entry.UnderThreat);
+        }
+
+        // 城里的英雄把最慢的兵交给守军：明天的行动力就按队伍里最快的兵算。
+        foreach (Hero hero in heroes)
+        {
+            CastleTown? castle = world.GetCastleEntrance(hero.MapIndex);
+
+            if (castle is null)
+            {
+                continue;
+            }
+
+            AiCommon.TransferSlowestTroopsToGarrison(hero, castle);
+        }
+
+        return AiTurnOutcome.EndTurn;
+    }
 
     /// <summary>
     /// Drops whatever the AI pathfinder cached, <c>Planner::resetPathfinder()</c> (<c>ai_planner.h:176-179</c>).
@@ -168,48 +348,45 @@ public sealed class AiPlanner
     public void ResetPathfinder() => _pathfinder?.Reset();
 
     /// <summary>
-    /// Reveals the fog around a tile for a kingdom, <c>Planner::revealFog()</c> (<c>ai_planner.h:181</c>).
+    /// Reveals the fog around a tile for a kingdom, <c>Planner::revealFog()</c> (<c>ai_planner.h:181</c>,
+    /// <c>ai_planner.cpp:47-72</c>).
     /// </summary>
-    /// <param name="tile">The tile to reveal.</param>
+    /// <remarks>
+    /// <para>
+    /// The AI learns about the map as its heroes scout, so every tile that comes out of the fog is offered here before
+    /// the fog is cleared: only action objects are worth remembering, and only they can change the plans of the turn.
+    /// </para>
+    /// <para>
+    /// A new object may be more valuable than the one a hero is already walking to, so the first hero who is moving has
+    /// his route cut down to the step he is about to take — the same thing the mouse does when a route is dragged
+    /// around. The reference stops at that hero; the port does too.
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">The tile that leaves the fog.</param>
     /// <param name="kingdom">The kingdom that sees it.</param>
-    public void RevealFog(Tile tile, GameKingdom kingdom) =>
-        throw new NotImplementedException("AiPlanner.RevealFog — ai_planner_hero.cpp 未移植（ADR-161）");
+    public void RevealFog(Tile tile, GameKingdom kingdom)
+    {
+        ArgumentNullException.ThrowIfNull(tile);
+        ArgumentNullException.ThrowIfNull(kingdom);
 
-    /// <summary>
-    /// Whether an object is worth visiting for a hero, <c>Planner::isValidHeroObject()</c>
-    /// (<c>ai_planner.h:183</c>).
-    /// </summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="underHero">Whether the object is under the hero.</param>
-    /// <returns><see langword="true"/> when the object is a valid target.</returns>
-    public bool IsValidHeroObject(Hero hero, int index, bool underHero) =>
-        throw new NotImplementedException("AiPlanner.IsValidHeroObject — ai_planner_hero.cpp 未移植（ADR-161）");
+        if (!Mp2ObjectTypes.IsInGameActionObject(tile.MainObjectType))
+        {
+            return;
+        }
 
-    /// <summary>
-    /// The value of an object for a hero, <c>Planner::getObjectValue()</c> (<c>ai_planner.h:185-186</c>).
-    /// </summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="objectType">Type of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result, the <c>valueToIgnore</c> of the reference.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    public double GetObjectValue(Hero hero, int index, Mp2ObjectType objectType, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetObjectValue — ai_planner_hero.cpp 未移植（ADR-161）");
+        UpdateMapActionObjectCache(kingdom, tile.Index);
+        UpdatePriorityAttackTarget(kingdom, tile);
 
-    /// <summary>
-    /// The value of an object for a hero that will not visit it now, <c>Planner::getFutureObjectValue()</c>
-    /// (<c>ai_planner.h:188-189</c>).
-    /// </summary>
-    /// <param name="hero">The hero that would visit it later.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="objectType">Type of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    public double GetFutureObjectValue(Hero hero, int index, Mp2ObjectType objectType, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetFutureObjectValue — ai_planner_hero.cpp 未移植（ADR-161）");
+        foreach (Hero hero in kingdom.Heroes)
+        {
+            if (hero.IsMoveEnabled)
+            {
+                hero.Path.Truncate();
+
+                break;
+            }
+        }
+    }
 
     /// <summary>
     /// Strength of the army guarding a tile, <c>Planner::getTileArmyStrength()</c> (<c>ai_planner.h:191-193</c>).
@@ -247,18 +424,29 @@ public sealed class AiPlanner
     }
 
     /// <summary>
-    /// Prepares a hero or captain for a battle, <c>Planner::HeroesPreBattle()</c> (<c>ai_planner.h:195</c>).
+    /// Prepares a hero or captain for a battle, <c>Planner::HeroesPreBattle()</c>
+    /// (<c>ai_planner_hero.cpp:3087-3092</c>).
     /// </summary>
     /// <remarks>
-    /// The reference takes <c>HeroBase&amp;</c>, the common base of an adventure hero and a castle captain; the port
-    /// has no such base (a hero is <see cref="Hero"/>, a captain is <c>Captain</c>), so the parameter is the
-    /// <see cref="IArmyCommander"/> both of them implement. Narrow it to <see cref="Hero"/> if the implementation
-    /// needs hero-only members.
+    /// <para>
+    /// The reference takes <c>HeroBase&amp;</c> and only touches its army; the port has no such base, so the army
+    /// itself is the parameter — whoever starts the battle has the army at hand.
+    /// </para>
+    /// <para>
+    /// 只有主动进攻才重排兵种顺序：防守方的顺序是玩家／上一场战斗定下来的，不该被 AI 改动。
+    /// </para>
     /// </remarks>
-    /// <param name="commander">The hero or captain that is about to fight.</param>
+    /// <param name="army">The army of the hero or captain that is about to fight.</param>
     /// <param name="isAttacking">Whether it attacks.</param>
-    public static void HeroesPreBattle(IArmyCommander commander, bool isAttacking) =>
-        throw new NotImplementedException("AiPlanner.HeroesPreBattle — ai_planner.cpp 未移植（ADR-161）");
+    public static void HeroesPreBattle(ArmyTroops army, bool isAttacking)
+    {
+        ArgumentNullException.ThrowIfNull(army);
+
+        if (isAttacking)
+        {
+            AiCommon.OptimizeTroopsOrder(army);
+        }
+    }
 
     /// <summary>
     /// Prepares a castle for a battle, <c>Planner::CastlePreBattle()</c> (<c>ai_planner.h:196</c>,
@@ -288,16 +476,6 @@ public sealed class AiPlanner
 
         AiCommon.OptimizeTroopsOrder(guestHero.Army);
     }
-
-    /// <summary>
-    /// Picks one of two secondary skills, <c>Planner::pickSecondarySkill()</c> (<c>ai_planner.h:198</c>).
-    /// </summary>
-    /// <param name="hero">The hero that levels up.</param>
-    /// <param name="left">First offered skill.</param>
-    /// <param name="right">Second offered skill.</param>
-    /// <returns>The skill the AI takes.</returns>
-    public static SecondarySkill PickSecondarySkill(Hero hero, SecondarySkill left, SecondarySkill right) =>
-        throw new NotImplementedException("AiPlanner.PickSecondarySkill — ai_planner.cpp 未移植（ADR-161）");
 
     // -------------------------------------------------------------------------------------------------------------
     // 私有半边（ai_planner.h:200-281）：签名照抄参考，正文留到移植对应的 ai_planner_*.cpp 时再写（ADR-180）。
@@ -504,97 +682,6 @@ public sealed class AiPlanner
     }
 
     /// <summary>
-    /// Gives the kingdom's heroes their tasks one at a time, <c>Planner::HeroesTurn()</c> (<c>ai_planner.h:210</c>).
-    /// </summary>
-    /// <param name="heroes">The kingdom's heroes, the ones that can still act first.</param>
-    /// <param name="currentProgressValue">How far the turn has got, raised while the turn runs.</param>
-    /// <param name="endProgressValue">What <paramref name="currentProgressValue"/> reaches at the end of the turn.</param>
-    /// <param name="moreTasksAvailable">Set when a hero was given a task and other heroes may still have one.</param>
-    /// <returns><see cref="AiTurnOutcome.EndTurn"/> when no hero is left with something to do.</returns>
-    private AiTurnOutcome HeroesTurn(IReadOnlyList<Hero> heroes, ref uint currentProgressValue, uint endProgressValue, ref bool moreTasksAvailable) =>
-        throw new NotImplementedException("AiPlanner.HeroesTurn — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Hires a hero in a castle, <c>Planner::recruitHero()</c> (<c>ai_planner.h:212</c>).
-    /// </summary>
-    /// <param name="castle">The castle to hire in.</param>
-    /// <param name="buyArmy">Whether the new hero should get troops as well.</param>
-    /// <returns>Whether a hero was hired.</returns>
-    private bool RecruitHero(CastleTown castle, bool buyArmy) =>
-        throw new NotImplementedException("AiPlanner.RecruitHero — ai_planner_castle.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Works out how safe each region of the map is, <c>Planner::evaluateRegionSafety()</c>
-    /// (<c>ai_planner.h:214</c>).
-    /// </summary>
-    private void EvaluateRegionSafety() =>
-        throw new NotImplementedException("AiPlanner.EvaluateRegionSafety — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Ranks the castles by how much they need the heroes, <c>Planner::getSortedCastleList()</c>
-    /// (<c>ai_planner.h:216</c>).
-    /// </summary>
-    /// <param name="castles">The kingdom's castles.</param>
-    /// <param name="castlesInDanger">Tile indexes of the castles that an enemy can reach this turn.</param>
-    /// <returns>The castles, the ones that need help first.</returns>
-    private List<AiCastle> GetSortedCastleList(IReadOnlyList<CastleTown> castles, IReadOnlySet<int> castlesInDanger) =>
-        throw new NotImplementedException("AiPlanner.GetSortedCastleList — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Picks the most valuable task for a hero, <c>Planner::getPriorityTarget()</c> (<c>ai_planner.h:218</c>).
-    /// </summary>
-    /// <param name="hero">The hero to give a task to.</param>
-    /// <param name="maxPriority">Receives the priority of the task that was picked.</param>
-    /// <returns>Tile index of the target, <c>-1</c> when nothing is worth doing.</returns>
-    private int GetPriorityTarget(Hero hero, out double maxPriority) =>
-        throw new NotImplementedException("AiPlanner.GetPriorityTarget — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>The value of an object for any hero, <c>Planner::getGeneralObjectValue()</c> (<c>ai_planner.h:220</c>).</summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    private double GetGeneralObjectValue(Hero hero, int index, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetGeneralObjectValue — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>The value of an object for a fighting hero, <c>Planner::getFighterObjectValue()</c> (<c>ai_planner.h:221</c>).</summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    private double GetFighterObjectValue(Hero hero, int index, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetFighterObjectValue — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>The value of an object for a courier hero, <c>Planner::getCourierObjectValue()</c> (<c>ai_planner.h:222</c>).</summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    private double GetCourierObjectValue(Hero hero, int index, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetCourierObjectValue — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>The value of an object for a scouting hero, <c>Planner::getScoutObjectValue()</c> (<c>ai_planner.h:223</c>).</summary>
-    /// <param name="hero">The hero that would visit it.</param>
-    /// <param name="index">Tile index of the object.</param>
-    /// <param name="valueToIgnore">Value subtracted from the result.</param>
-    /// <param name="distanceToObject">Distance the hero has to travel.</param>
-    /// <returns>The value, already divided by the distance.</returns>
-    private double GetScoutObjectValue(Hero hero, int index, double valueToIgnore, uint distanceToObject) =>
-        throw new NotImplementedException("AiPlanner.GetScoutObjectValue — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// The task a courier hero should take, <c>Planner::getCourierMainTarget()</c> (<c>ai_planner.h:225</c>).
-    /// </summary>
-    /// <param name="hero">The courier hero.</param>
-    /// <param name="lowestPossibleValue">Below this value nothing is worth a trip.</param>
-    /// <returns>Tile index of the target, <c>-1</c> when there is none.</returns>
-    private int GetCourierMainTarget(Hero hero, double lowestPossibleValue) =>
-        throw new NotImplementedException("AiPlanner.GetCourierMainTarget — ai_planner_hero.cpp 未移植（ADR-180）");
-
-    /// <summary>
     /// How much the AI wants a resource, <c>Planner::getResourcePriorityModifier()</c> (<c>ai_planner.h:227</c>).
     /// </summary>
     /// <param name="resource">One of the <see cref="Resource"/> constants.</param>
@@ -729,16 +816,6 @@ public sealed class AiPlanner
     }
 
     /// <summary>
-    /// Turns an object a hero just visited into tasks, <c>Planner::updatePriorityTargets()</c>
-    /// (<c>ai_planner.h:230</c>).
-    /// </summary>
-    /// <param name="hero">The hero that acted.</param>
-    /// <param name="tileIndex">Tile the action happened on.</param>
-    /// <param name="objectType">Object on that tile.</param>
-    private void UpdatePriorityTargets(Hero hero, int tileIndex, Mp2ObjectType objectType) =>
-        throw new NotImplementedException("AiPlanner.UpdatePriorityTargets — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
     /// Works out what the kingdom is short of, <c>Planner::updateKingdomBudget()</c> (<c>ai_planner.h:231</c>).
     /// </summary>
     /// <remarks>
@@ -811,17 +888,6 @@ public sealed class AiPlanner
     }
 
     /// <summary>
-    /// Hires the heroes the kingdom can still afford, <c>Planner::purchaseNewHeroes()</c> (<c>ai_planner.h:233</c>).
-    /// </summary>
-    /// <param name="sortedCastleList">The castles, ranked by <see cref="GetSortedCastleList"/>.</param>
-    /// <param name="castlesInDanger">Tile indexes of the castles that an enemy can reach this turn.</param>
-    /// <param name="availableHeroCount">How many heroes the kingdom may still hire.</param>
-    /// <param name="moreTasksForHeroes">Whether the turn still has tasks for another hero.</param>
-    /// <returns>Whether a hero was hired.</returns>
-    private bool PurchaseNewHeroes(IReadOnlyList<AiCastle> sortedCastleList, IReadOnlySet<int> castlesInDanger, int availableHeroCount, bool moreTasksForHeroes) =>
-        throw new NotImplementedException("AiPlanner.PurchaseNewHeroes — ai_planner_castle.cpp 未移植（ADR-180）");
-
-    /// <summary>
     /// Remembers what stands on a tile, <c>Planner::updateMapActionObjectCache()</c> (<c>ai_planner.h:236</c>).
     /// </summary>
     /// <param name="kingdom">The kingdom whose turn it is.</param>
@@ -842,61 +908,6 @@ public sealed class AiPlanner
 
         _mapActionObjects[mapIndex] = objectType;
     }
-
-    /// <summary>
-    /// Finds the castles an enemy can reach this turn, <c>Planner::findCastlesInDanger()</c>
-    /// (<c>ai_planner.h:238</c>).
-    /// </summary>
-    /// <param name="kingdom">The kingdom to check.</param>
-    /// <returns>Tile indexes of the castles in danger.</returns>
-    private HashSet<int> FindCastlesInDanger(GameKingdom kingdom) =>
-        throw new NotImplementedException("AiPlanner.FindCastlesInDanger — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Re-raises the tasks that answer an enemy army, <c>Planner::updatePriorityForEnemyArmy()</c>
-    /// (<c>ai_planner.h:240</c>).
-    /// </summary>
-    /// <param name="kingdom">The kingdom whose turn it is.</param>
-    /// <param name="enemyArmy">The army that was found.</param>
-    private void UpdatePriorityForEnemyArmy(GameKingdom kingdom, EnemyArmy enemyArmy) =>
-        throw new NotImplementedException("AiPlanner.UpdatePriorityForEnemyArmy — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Re-raises the tasks that defend a castle, <c>Planner::updatePriorityForCastle()</c> (<c>ai_planner.h:241</c>).
-    /// </summary>
-    /// <param name="castle">The castle to defend.</param>
-    private void UpdatePriorityForCastle(CastleTown castle) =>
-        throw new NotImplementedException("AiPlanner.UpdatePriorityForCastle — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Whether one enemy army makes a castle worth defending, <c>Planner::updateIndividualPriorityForCastle()</c>
-    /// (<c>ai_planner.h:245</c>).
-    /// </summary>
-    /// <remarks>
-    /// The header warns not to call this directly: it only answers for one army at a time, and the callers that walk
-    /// through all of them are <see cref="UpdatePriorityForEnemyArmy"/> and <see cref="UpdatePriorityForCastle"/>.
-    /// </remarks>
-    /// <param name="castle">The castle to check.</param>
-    /// <param name="enemyArmy">The army that could attack it.</param>
-    /// <returns>Whether the castle is in danger from that army.</returns>
-    private bool UpdateIndividualPriorityForCastle(CastleTown castle, EnemyArmy enemyArmy) =>
-        throw new NotImplementedException("AiPlanner.UpdateIndividualPriorityForCastle — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Drops a task that is done, <c>Planner::removePriorityAttackTarget()</c> (<c>ai_planner.h:247</c>).
-    /// </summary>
-    /// <param name="tileIndex">Tile index of the target.</param>
-    private void RemovePriorityAttackTarget(int tileIndex) =>
-        throw new NotImplementedException("AiPlanner.RemovePriorityAttackTarget — ai_planner_kingdom.cpp 未移植（ADR-180）");
-
-    /// <summary>
-    /// Adds a task for an enemy hero or creature standing on a tile,
-    /// <c>Planner::updatePriorityAttackTarget()</c> (<c>ai_planner.h:248</c>).
-    /// </summary>
-    /// <param name="kingdom">The kingdom whose turn it is.</param>
-    /// <param name="tile">The tile to look at.</param>
-    private void UpdatePriorityAttackTarget(GameKingdom kingdom, Tile tile) =>
-        throw new NotImplementedException("AiPlanner.UpdatePriorityAttackTarget — ai_planner_kingdom.cpp 未移植（ADR-180）");
 
     /// <summary>
     /// Whether a tile is a task of any kind, <c>Planner::isPriorityTask()</c> (<c>ai_planner.h:250-253</c>).
