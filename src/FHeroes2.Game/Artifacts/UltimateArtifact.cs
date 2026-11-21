@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.Resources;
 
@@ -136,5 +137,25 @@ public sealed class UltimateArtifact
         Offset = default;
         Position = -1;
         IsFound = false;
+    }
+
+    /// <summary>
+    /// The patch of the puzzle map that shows where the artifact lies, <c>UltimateArtifact::GetPuzzleMapSurface()</c>
+    /// (<c>artifact_ultimate.cpp:44-47</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只转调 <c>Interface::GameArea::GenerateUltimateArtifactAreaSurface()</c>——那是把十二块拼图拼成
+    /// 一张小地图的绘制函数，隶属 <c>gui</c> 目录（planv4 的 S12）。端口按依赖先立接口的约定把方法留在原位。
+    /// </para>
+    /// <para>
+    /// <b>当前状态：抛 <see cref="NotImplementedException"/>。</b>
+    /// </para>
+    /// </remarks>
+    /// <returns>The picture of the area around the artifact.</returns>
+    /// <exception cref="NotImplementedException">The map-surface generator is not ported yet (S12).</exception>
+    public PixelBuffer GetPuzzleMapSurface()
+    {
+        throw new NotImplementedException("UltimateArtifact::GetPuzzleMapSurface() 依赖 gui 的 GameArea 生成器（planv4 S12）。");
     }
 }

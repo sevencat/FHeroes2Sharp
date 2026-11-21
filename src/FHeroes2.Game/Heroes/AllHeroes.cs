@@ -156,26 +156,26 @@ public sealed class AllHeroes : IReadOnlyCollection<Hero>
         }
 
         // The Succession Wars campaign.
-        Place(Hero.Roland, MapRace.Wizard);
-        Place(Hero.Corlagon, MapRace.Knight);
-        Place(Hero.Eliza, MapRace.Sorceress);
-        Place(Hero.Archibald, MapRace.Warlock);
-        Place(Hero.Halton, MapRace.Knight);
-        Place(Hero.Brax, MapRace.Necromancer);
+        Place(Hero.Roland, MapRace.Wizard, campaign: true);
+        Place(Hero.Corlagon, MapRace.Knight, campaign: true);
+        Place(Hero.Eliza, MapRace.Sorceress, campaign: true);
+        Place(Hero.Archibald, MapRace.Warlock, campaign: true);
+        Place(Hero.Halton, MapRace.Knight, campaign: true);
+        Place(Hero.Brax, MapRace.Necromancer, campaign: true);
 
         if (version is MapVersion.PriceOfLoyalty or MapVersion.Resurrection)
         {
-            Place(Hero.Solmyr, MapRace.Wizard);
-            Place(Hero.Dainwin, MapRace.Warlock);
-            Place(Hero.Mog, MapRace.Necromancer);
-            Place(Hero.UncleIvan, MapRace.Barbarian);
-            Place(Hero.Joseph, MapRace.Wizard);
-            Place(Hero.Gallavant, MapRace.Knight);
-            Place(Hero.Elderian, MapRace.Warlock);
-            Place(Hero.Ceallach, MapRace.Knight);
-            Place(Hero.Drakonia, MapRace.Wizard);
-            Place(Hero.Martine, MapRace.Sorceress);
-            Place(Hero.Jarkonas, MapRace.Barbarian);
+            Place(Hero.Solmyr, MapRace.Wizard, campaign: true);
+            Place(Hero.Dainwin, MapRace.Warlock, campaign: true);
+            Place(Hero.Mog, MapRace.Necromancer, campaign: true);
+            Place(Hero.UncleIvan, MapRace.Barbarian, campaign: true);
+            Place(Hero.Joseph, MapRace.Wizard, campaign: true);
+            Place(Hero.Gallavant, MapRace.Knight, campaign: true);
+            Place(Hero.Elderian, MapRace.Warlock, campaign: true);
+            Place(Hero.Ceallach, MapRace.Knight, campaign: true);
+            Place(Hero.Drakonia, MapRace.Wizard, campaign: true);
+            Place(Hero.Martine, MapRace.Sorceress, campaign: true);
+            Place(Hero.Jarkonas, MapRace.Barbarian, campaign: true);
         }
     }
 
@@ -353,9 +353,16 @@ public sealed class AllHeroes : IReadOnlyCollection<Hero>
     /// <summary>Creates a hero and puts it into its slot, the <c>emplace_back</c> of <c>Init()</c>.</summary>
     /// <param name="heroId">Hero id.</param>
     /// <param name="race">Race of the hero.</param>
-    private void Place(int heroId, MapRace race)
+    /// <param name="campaign">Whether this is a campaign or The Price of Loyalty hero.</param>
+    private void Place(int heroId, MapRace race, bool campaign = false)
     {
-        _slots[heroId] = new Hero(heroId, race);
+        Hero hero = new Hero(heroId, race);
+
+        // Campaign heroes start at 5000, everyone else at the reference's random 40..90
+        // (<c>heroes.cpp:2265-2320</c>).
+        hero.SetExperience(campaign ? 5000u : Hero.GetStartingExperience());
+
+        _slots[heroId] = hero;
         ++Count;
     }
 }

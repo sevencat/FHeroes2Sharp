@@ -118,3 +118,24 @@ public enum MonsterAnimationType
     /// <summary>The sentinel returned when a request produced no sequence.</summary>
     Invalid,
 }
+
+/// <summary>
+/// The fifteen-frame breathing cycle used where a creature must merely look alive,
+/// <c>getMonsterAnimationSequence()</c> (<c>monster_anim.cpp:31-39</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// 这串数字是<b>帧号</b>，不是动画类型：0 号静止图、1~3 号是「抬头/张嘴」的三小段，来回走一遍
+/// （<c>0 0 1 2 1 0 0 0 3 4 5 4 3 0 0</c>）就成了一次呼吸。
+/// </para>
+/// <para>
+/// 参考把它当全局只读数组，端口取只读视图；调用方只按下标读，不需要可变副本。
+/// </para>
+/// </remarks>
+public static class MonsterAnimationSequence
+{
+    private static readonly byte[] Sequence = [0, 0, 1, 2, 1, 0, 0, 0, 3, 4, 5, 4, 3, 0, 0];
+
+    /// <summary>The cycle, one entry per displayed frame.</summary>
+    public static ReadOnlySpan<byte> Frames => Sequence;
+}

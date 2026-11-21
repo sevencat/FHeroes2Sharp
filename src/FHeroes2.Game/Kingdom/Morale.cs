@@ -68,6 +68,17 @@ public static class Morale
     };
 
     /// <summary>
+    /// The value with its unit, <c>MoraleString()</c> (<c>heroes/heroes_indicator.cpp:47-58</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考是 <c>_("%{morale} Morale")</c>，但最高一档特判成 "Blood Morale"——因为 <see cref="GetName"/>
+    /// 给出的 "Blood!" 带感叹号，塞进这个短语里不合适。
+    /// </remarks>
+    /// <param name="morale">The morale value.</param>
+    /// <returns>For example <c>"Good Morale"</c>.</returns>
+    public static string GetLabel(int morale) => morale == Blood ? "Blood Morale" : GetName(morale) + " Morale";
+
+    /// <summary>
     /// The paragraph the info screen prints for a morale value, <c>Morale::Description()</c>
     /// (<c>morale.cpp:60-88</c>).
     /// </summary>

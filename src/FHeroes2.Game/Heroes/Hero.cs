@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Random;
 using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Heroes;
@@ -267,6 +268,66 @@ public sealed partial class Hero
 
     /// <summary>Clears every mode bit, the <c>modes = 0</c> at the start of <c>LoadFromMP2()</c>.</summary>
     public void ClearModes() => _modes = HeroModes.None;
+
+    /// <summary>
+    /// Whether the hero commands a boat, <c>Heroes::isShipMaster()</c> (<c>heroes.h:631-634</c>).
+    /// </summary>
+    public bool IsShipMaster => _modes.HasFlag(HeroModes.ShipMaster);
+
+    /// <summary>
+    /// Marks or clears the boat, <c>Heroes::SetShipMaster()</c> (<c>heroes.cpp:1717-1720</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只有这两种写法的三目，端口照抄：这个位一旦置上，海战士气/幸运才结算、<c>SUMMONBOAT</c> 之类才被拒、
+    /// <c>GetMaxMovePoints()</c> 才走水路。
+    /// </remarks>
+    /// <param name="isShipMaster">Whether the hero commands a boat.</param>
+    public void SetShipMaster(bool isShipMaster)
+    {
+        if (isShipMaster)
+        {
+            SetModes(HeroModes.ShipMaster);
+        }
+        else
+        {
+            ResetModes(HeroModes.ShipMaster);
+        }
+    }
+
+    /// <summary>
+    /// The castle whose gate the hero stands on, <c>Heroes::inCastle()</c>/<c>inCastleMutable()</c>
+    /// (<c>heroes.cpp:1245-1256</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考先从世界取出入口格上的城堡，再确认「那座城堡记的驻守英雄就是我」（访客与守将都站在门口，只有守将算）。
+    /// 端口的 <see cref="Castle.Castle"/> 没有驻守英雄成员：英雄在城堡里就是站在入口格上，AI 层也一直这么判，
+    /// 所以这里只比入口，注释说明这层差别。
+    /// </para>
+    /// <para>
+    /// 无主英雄（<see cref="PlayerColor.None"/>）参考直接返回空：他站哪儿都不算在谁的城堡里。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world holding the castle entrances.</param>
+    /// <returns>The castle, or <see langword="null"/> when the hero is not at one.</returns>
+    public Castle.Castle? InCastle(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        return Color == PlayerColor.None ? null : world.GetCastleEntrance(MapIndex);
+    }
+
+    /// <summary>
+    /// The experience a freshly created hero starts with, <c>Heroes::_getStartingXp()</c>
+    /// (<c>heroes.cpp:2009-2012</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在构造函数里写死 <c>_experience( _getStartingXp() )</c>，所以新英雄不是零经验而是 40~90 随机值；
+    /// 战役英雄另有 5000 的构造参数。端口把这一步交给创建方（<see cref="AllHeroes.Place"/>），构造函数保持
+    /// 零经验——地图读入时经验由存档/MP2 覆盖，构造函数再掷一次会白白消耗随机数。
+    /// </remarks>
+    /// <returns>The random starting experience, 40 to 90.</returns>
+    public static uint GetStartingExperience() => (uint)Rand.Get(40, 90);
 
     /// <summary>
     /// Gives the hero a custom portrait, <c>setPortraitId()</c>. The mode bit is not set here — the

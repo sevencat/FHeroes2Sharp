@@ -429,6 +429,12 @@ public sealed class Settings
     public bool Is3DAudioEnabled => gameOptions.HasModes((uint)GameOptions.Audio3D);
 
     /// <summary>
+    /// Whether text output replaces missing characters with readable names, <c>isTextSupportModeEnabled()</c>
+    /// (<c>settings.cpp:969-972</c>).
+    /// </summary>
+    public bool IsTextSupportMode => gameOptions.HasModes((uint)GameOptions.TextSupportMode);
+
+    /// <summary>
     /// Whether the music comes from the MIDI files of the archives rather than from the music folder,
     /// <c>isMusicTypeMidi()</c> (<c>settings.h:249</c>).
     /// </summary>
@@ -663,6 +669,15 @@ public sealed class Settings
     /// <summary>Switches the three dimensional sound effects, <c>set3DAudio()</c>.</summary>
     /// <param name="enable">True to position sound effects in the world.</param>
     public void Set3DAudio(bool enable) => SetGameOption(GameOptions.Audio3D, enable);
+
+    /// <summary>
+    /// Switches text support mode, <c>setTextSupportMode()</c> (<c>settings.cpp:824-836</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在同一处还会调 <c>Logging::setTextSupportMode()</c> 让日志转义字符；端口没有日志层，只留模式位。
+    /// </remarks>
+    /// <param name="enable">True to keep unprintable characters readable in text output.</param>
+    public void SetTextSupportMode(bool enable) => SetGameOption(GameOptions.TextSupportMode, enable);
 
     /// <summary>Switches auto resolved battles, <c>setBattleAutoResolve()</c>.</summary>
     /// <param name="enable">True to resolve battles automatically.</param>

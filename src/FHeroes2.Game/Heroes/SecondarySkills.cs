@@ -1,3 +1,8 @@
+using System.Diagnostics;
+using System.Text;
+
+using FHeroes2.Game.Artifacts;
+
 namespace FHeroes2.Game.Heroes;
 
 /// <summary>
@@ -201,6 +206,180 @@ public static class SecondarySkills
             SkillLevel.Expert => 20,
             _ => 0,
         };
+    }
+
+    /// <summary>
+    /// A skill with its level in front, <c>Skill::Secondary::GetName()</c> (<c>skill.cpp:457-471</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考用一张四十二格的扁平表，下标是 <c>(等级 - 1) + (技能 - 1) * 3</c>；端口用两个查表拼字符串，
+    /// 结果一致而不用维护那张表。等级或技能非法时参考返回 "unknown"，端口照抄小写。
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <param name="level">The hero's level in it.</param>
+    /// <returns>The name, e.g. <c>"Basic Luck"</c>.</returns>
+    public static string GetFullName(SecondarySkill skill, SkillLevel level)
+    {
+        if (skill <= SecondarySkill.Unknown || skill > SecondarySkill.Estates || level is < SkillLevel.Basic or > SkillLevel.Expert)
+        {
+            return "unknown";
+        }
+
+        string prefix = level switch
+        {
+            SkillLevel.Basic => "Basic ",
+            SkillLevel.Advanced => "Advanced ",
+            _ => "Expert ",
+        };
+
+        return prefix + GetName(skill);
+    }
+
+    /// <summary>
+    /// What a level of leadership adds to morale, and the line that explains it,
+    /// <c>Skill::getLeadershipModifiers()</c> (<c>skill.cpp:852-865</c>).
+    /// </summary>
+    /// <remarks>
+    /// 数值就是技能行里的值（1/2/3），所以这个函数的重点是那句 <c>"Leadership +1\n"</c>：界面把全部加成
+    /// 一条行拼起来给玩家看，拼接格式在参考里是硬编码的。
+    /// </remarks>
+    /// <param name="level">The hero's level in leadership.</param>
+    /// <param name="text">Where to append the line; <see langword="null"/> to only compute.</param>
+    /// <returns>The modifier, 0 without the skill.</returns>
+    public static int GetLeadershipModifiers(SkillLevel level, StringBuilder? text) =>
+        AppendModifierLine(SecondarySkill.Leadership, level, text);
+
+    /// <summary>
+    /// The same for luck, <c>Skill::getLuckModifiers()</c> (<c>skill.cpp:867-881</c>).
+    /// </summary>
+    /// <param name="level">The hero's level in luck.</param>
+    /// <param name="text">Where to append the line; <see langword="null"/> to only compute.</param>
+    /// <returns>The modifier, 0 without the skill.</returns>
+    public static int GetLuckModifiers(SkillLevel level, StringBuilder? text) =>
+        AppendModifierLine(SecondarySkill.Luck, level, text);
+
+    /// <summary>
+    /// The name of a level, <c>Skill::Level::String()</c> (<c>skill.cpp:325-341</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考对不在 <c>BASIC..EXPERT</c> 里的数 <c>assert( 0 )</c> 之后返回 "None"；端口照抄——等级只有四个值，
+    /// 越界说明调用方把技能编号当成了等级。
+    /// </remarks>
+    /// <param name="level">The level.</param>
+    /// <returns>"Basic", "Advanced", "Expert", or "None".</returns>
+    public static string GetLevelName(SkillLevel level) => level switch
+    {
+        SkillLevel.Basic => "Basic",
+        SkillLevel.Advanced => "Advanced",
+        SkillLevel.Expert => "Expert",
+        _ => UnsupportedLevel(level),
+    };
+
+    /// <summary>
+    /// The level name with the necromancy bonus appended, <c>Skill::Level::StringWithBonus()</c>
+    /// (<c>skill.cpp:343-350</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只有招魂、且神龛/宝物加成大于零时才补 <c>"+N"</c>：英雄信息页把「Expert+2」当作那一格的值，
+    /// 因为招魂的实际效果是技能行加上加成。
+    /// </remarks>
+    /// <param name="skill">The skill and the hero's level in it.</param>
+    /// <param name="necromancyBonus">The bonus from shrines and artifacts.</param>
+    /// <returns>The level name, possibly with a bonus.</returns>
+    public static string GetLevelNameWithBonus(SecondarySkillLevel skill, uint necromancyBonus) =>
+        skill.Skill == SecondarySkill.Necromancy && necromancyBonus > 0
+            ? GetLevelName(skill.Level) + "+" + necromancyBonus
+            : GetLevelName(skill.Level);
+
+    /// <summary>
+    /// A skill's name with the level in front and the necromancy bonus appended,
+    /// <c>Skill::Secondary::GetNameWithBonus()</c> (<c>skill.cpp:473-479</c>).
+    /// </summary>
+    /// <param name="skill">The skill and the hero's level in it.</param>
+    /// <param name="necromancyBonus">The bonus from shrines and artifacts.</param>
+    /// <returns>The name, possibly followed by <c>" (+2)"</c>.</returns>
+    public static string GetNameWithBonus(SecondarySkillLevel skill, uint necromancyBonus) =>
+        skill.Skill == SecondarySkill.Necromancy && necromancyBonus > 0
+            ? GetFullName(skill.Skill, skill.Level) + " (+" + necromancyBonus + ")"
+            : GetFullName(skill.Skill, skill.Level);
+
+    /// <summary>
+    /// How many extra necromancy points a hero's realm has, <c>Skill::GetNecromancyBonus()</c>
+    /// (<c>skill.cpp:882-888</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两点来源：每座招魂神龛一点，宝物栏里任意一件招魂系宝物一点，合计封顶七点。七点上限是参考写死的，
+    /// 对应「满编七座神龛」，再堆也不涨。
+    /// </para>
+    /// <para>
+    /// 参考读全局 <c>world</c> 取王国；端口把 <see cref="World"/> 传进来，<paramref name="hero"/> 的阵营决定看谁的
+    /// 王国——被击败的英雄没有王国时会拿到零座神龛，神龛数因此夹到非负。
+    /// </para>
+    /// </remarks>
+    /// <param name="hero">The hero whose realm and bag are counted.</param>
+    /// <param name="world">The world holding the kingdoms.</param>
+    /// <returns>The bonus, 0 to 7.</returns>
+    public static uint GetNecromancyBonus(Hero hero, World world)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+        ArgumentNullException.ThrowIfNull(world);
+
+        uint shrineCount = (uint)Math.Max(0, world.GetKingdom(hero.Color).CountNecromancyShrines());
+        uint artifactEffect = hero.BagArtifacts.IsBonusPresent(ArtifactBonusType.NecromancySkill) ? 1U : 0U;
+
+        return Math.Min(7U, shrineCount + artifactEffect);
+    }
+
+    /// <summary>
+    /// What share of the fallen a hero raises, <c>Skill::GetNecromancyPercent()</c> (<c>skill.cpp:890-896</c>).
+    /// </summary>
+    /// <remarks>
+    /// 技能本身给 10/20/30%，每点 <see cref="GetNecromancyBonus"/> 再加 10%，封顶 100%——满值就是「敌军全灭都
+    /// 变成骷髅」。
+    /// </remarks>
+    /// <param name="hero">The hero.</param>
+    /// <param name="world">The world holding the hero's realm.</param>
+    /// <returns>The percentage, 0 to 100.</returns>
+    public static uint GetNecromancyPercent(Hero hero, World world)
+    {
+        ArgumentNullException.ThrowIfNull(hero);
+        ArgumentNullException.ThrowIfNull(world);
+
+        uint percent = GetValue(SecondarySkill.Necromancy, hero.GetLevelSkill(SecondarySkill.Necromancy));
+
+        return Math.Min(percent + (10U * GetNecromancyBonus(hero, world)), 100U);
+    }
+
+    /// <summary>Logs the reference's <c>assert( 0 )</c> for a value that is not a level.</summary>
+    /// <param name="level">The offending value.</param>
+    /// <returns>The word the reference falls through to, <c>"None"</c>.</returns>
+    private static string UnsupportedLevel(SkillLevel level)
+    {
+        Debug.Assert(false, $"Not a skill level: {level}.");
+
+        return "None";
+    }
+
+    /// <summary>
+    /// Writes <c>"Leadership +1\n"</c> for one skill of the two that only shift a scale.
+    /// </summary>
+    /// <param name="skill">The skill.</param>
+    /// <param name="level">The hero's level in it.</param>
+    /// <param name="text">Where to write, possibly <see langword="null"/>.</param>
+    /// <returns>The value of that level.</returns>
+    private static int AppendModifierLine(SecondarySkill skill, SkillLevel level, StringBuilder? text)
+    {
+        int value = GetValue(skill, level);
+
+        if (value != 0 && text != null)
+        {
+            text.Append(GetName(skill));
+            text.Append(value < 0 ? " " : " +").Append(value);
+            text.Append('\n');
+        }
+
+        return value;
     }
 
     private static (ushort Basic, ushort Advanced, ushort Expert) GetRow(SecondarySkill skill)

@@ -10,14 +10,26 @@ namespace FHeroes2.Game.Resources;
 /// sentences name the resource given away and the one asked for.
 /// </para>
 /// <para>
-/// <b>Not ported</b>: <c>Resource::getDescription()</c> (<c>resource.cpp:359-364</c>), the paragraph the resource
-/// dialog shows when the icon itself is clicked; no caller in the port needs it yet.
+/// <see cref="Description"/> is the paragraph the resource dialog shows when the icon itself is clicked
+/// (<c>resource.cpp:359-364</c>); the reference has one constant for all seven resources.
 /// </para>
 /// </remarks>
 public static class ResourceText
 {
     /// <summary>What the reference answers for anything that is not one of the seven, <c>"Unknown"</c>.</summary>
     public const string Unknown = "Unknown";
+
+    /// <summary>
+    /// The paragraph of the resource window, <c>Resource::getDescription()</c> (<c>resource.cpp:359-364</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把整段话写成一个常量、对七种资源都返回同一句，端口照抄一句；拆成按资源分的七句没有意义，
+    /// 因为原文讲的就是「本作一共有七种资源」。
+    /// </remarks>
+    public const string Description =
+        "There are seven resources in Heroes 2, used to build and improves castles, purchase troops and recruit heroes. "
+        + "Gold is the most common, required for virtually everything. Wood and ore are used for most buildings. "
+        + "Gems, Mercury, Sulfur and Crystal are rare magical resources used for the most powerful creatures and buildings.";
 
     /// <summary>
     /// The name of a resource, <c>Resource::String()</c>.

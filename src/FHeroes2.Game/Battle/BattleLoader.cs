@@ -547,7 +547,7 @@ public static class BattleLoader
             return;
         }
 
-        uint raiseCount = Math.Max(enemyTroopsKilled * GetNecromancyPercent(hero, world) / 100, 1U);
+        uint raiseCount = Math.Max(enemyTroopsKilled * SecondarySkills.GetNecromancyPercent(hero, world) / 100, 1U);
 
         army.JoinTroop(MonsterType.Skeleton, raiseCount, false);
 
@@ -557,21 +557,4 @@ public static class BattleLoader
         }
     }
 
-    /// <summary>
-    /// How much of the fallen a necromancer raises, <c>GetNecromancyPercent()</c> (<c>heroes/skill.cpp:104-134</c>).
-    /// </summary>
-    /// <remarks>
-    /// 技能本身给一个百分比，再加上「招魂神龛」与宝物各 10%，封顶 100%。参考把神龛与宝物合起来算作
-    /// <c>GetNecromancyBonus</c>（最多 7 点），这里照抄它的上限。
-    /// </remarks>
-    private static uint GetNecromancyPercent(Hero hero, World world)
-    {
-        SkillLevel level = hero.GetLevelSkill(SecondarySkill.Necromancy);
-        uint percent = SecondarySkills.GetValue(SecondarySkill.Necromancy, level);
-
-        int shrineBonus = world.GetKingdom(hero.GetColor()).CountNecromancyShrines();
-        int artifactBonus = hero.BagArtifacts.IsBonusPresent(ArtifactBonusType.NecromancySkill) ? 1 : 0;
-
-        return Math.Min(percent + 10U * (uint)Math.Min(7, shrineBonus + artifactBonus), 100U);
-    }
 }

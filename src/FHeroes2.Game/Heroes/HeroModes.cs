@@ -7,9 +7,9 @@ namespace FHeroes2.Game.Heroes;
 /// <remarks>
 /// <para>
 /// The values are the reference's bit positions and must not be renumbered: they are also what a savegame
-/// stores. The remaining bits (<c>NOTDEFAULTS</c>, <c>HOURS</c>, <c>PATROL</c>, <c>UNKNOWN</c>,
-/// <c>SHIPMASTER</c>, <c>JAIL</c>-adjacent battle modes and the AI helper bits) arrive with the systems
-/// that set them; adding a bit ahead of its user would be dead weight.
+/// stores. The remaining bits (<c>NOTDEFAULTS</c>, <c>HOURS</c>, <c>UNKNOWN</c>, <c>JAIL</c>-adjacent battle
+/// modes and the AI helper bits) arrive with the systems that set them; adding a bit ahead of its user would
+/// be dead weight.
 /// </para>
 /// <para>
 /// <see cref="Recruit"/> does not mean "hired": it marks a hero that some kingdom already offers in its
@@ -23,6 +23,15 @@ public enum HeroModes : uint
 {
     /// <summary>No mode set.</summary>
     None = 0x0000_0000,
+
+    /// <summary>
+    /// The hero commands a boat, <c>Heroes::SHIPMASTER</c> (<c>heroes.h:190</c>).
+    /// </summary>
+    /// <remarks>
+    /// 这个位不只是「在船上」：海战士气/幸运宝物只在它打开时结算，<c>SUMMONBOAT</c>、<c>TOWNGATE</c> 与
+    /// <c>TOWNPORTAL</c> 在它打开时会被拒绝，<c>GetMaxMovePoints()</c> 也靠它走水路分支。
+    /// </remarks>
+    ShipMaster = 0x0000_0001,
 
     /// <summary>
     /// The hero has already cast a battle spell this round, <c>Heroes::SPELLCASTED</c>

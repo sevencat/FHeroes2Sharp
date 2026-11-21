@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Monsters;
 using ArmyStack = FHeroes2.Game.Army.Army;
@@ -183,5 +185,55 @@ public sealed partial class Hero
         }
 
         return movePoints + (skillValue * movePoints / 100);
+    }
+
+    /// <summary>
+    /// How many days it takes to walk the route to a tile, <c>Heroes::getNumOfTravelDays()</c>
+    /// (<c>heroes.cpp:1806-1840</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 一天一天地「刷卡」：当天剩下的移动力够走这一步就扣掉继续，不够就翻篇——新的一天从满值开始，前一天剩下的
+    /// 点数不带过去，所以这个数是整数天，不是「总消耗 / 每日」的向上取整。
+    /// </para>
+    /// <para>
+    /// 参考在这里 <c>assert( maxMovePoints >= stepPenalty )</c>：新的一天还走不动一步说明路线本身有问题（比如
+    /// 惩罚超过上限）。端口照抄这个断言，越界时调试版会停下来。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world holding the pathfinder.</param>
+    /// <param name="destinationIndex">The tile the route ends on.</param>
+    /// <returns>The number of days, 0 when there is no route.</returns>
+    public int GetNumOfTravelDays(World world, int destinationIndex)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        uint maxMovePoints = GetMaxMovePoints(IsShipMaster);
+        List<RouteStep> routePath = world.GetPath(this, destinationIndex);
+
+        if (routePath.Count == 0)
+        {
+            return 0;
+        }
+
+        uint movePoints = MovePoints;
+        int days = 1;
+
+        foreach (RouteStep step in routePath)
+        {
+            if (movePoints >= step.Penalty)
+            {
+                movePoints -= step.Penalty;
+            }
+            else
+            {
+                Debug.Assert(maxMovePoints >= step.Penalty, "A single step must fit into one day's movement points.");
+
+                movePoints = maxMovePoints - step.Penalty;
+                ++days;
+            }
+        }
+
+        return days;
     }
 }

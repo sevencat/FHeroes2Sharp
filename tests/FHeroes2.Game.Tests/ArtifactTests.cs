@@ -100,7 +100,13 @@ public class ArtifactTests
         Assert.Empty(ArtifactTable.Get(ArtifactType.MagicBook).Curses);
         Assert.True(ArtifactTable.Get(ArtifactType.Unused84).TryGetBonus(ArtifactBonusType.None, out _));
 
-        Assert.Same(ArtifactData.Empty, ArtifactTable.Get(ArtifactType.Unknown));
+        // Id 0 is a row of its own in the reference's table — the "Invalid Artifact" placeholder — so it keeps a
+        // name and still carries no numbers. Only the sentinel past the last row falls back to Empty.
+        ArtifactData unknown = ArtifactTable.Get(ArtifactType.Unknown);
+        Assert.Equal("Invalid Artifact", unknown.Name);
+        Assert.Empty(unknown.Bonuses);
+        Assert.Empty(unknown.Curses);
+
         Assert.Same(ArtifactData.Empty, ArtifactTable.Get(ArtifactType.ArtifactCount));
     }
 

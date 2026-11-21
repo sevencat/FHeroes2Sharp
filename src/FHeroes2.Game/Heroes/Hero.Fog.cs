@@ -1,6 +1,8 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Heroes;
 
@@ -77,5 +79,34 @@ public sealed partial class Hero
         ArgumentNullException.ThrowIfNull(world);
 
         return world.ClearFog(tileIndex, GetScoutingDistance(), Color);
+    }
+
+    /// <summary>
+    /// The square of the map the hero can see, <c>Heroes::GetScoutRoi()</c> (<c>heroes.cpp:1774-1780</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考拿英雄对象的中心点，向四周扩 <see cref="GetScoutingDistance"/> 格，边长是 <c>2 * 距离 + 1</c>——正方形
+    /// 而不是圆，因为它要的是一个「矩形区域」，用来判断某个对象在不在视野里。
+    /// </para>
+    /// <para>
+    /// 端口没有对象的像素中心（<c>Position::GetCenter()</c> 依赖对象贴图的锚点），取的是脚下瓦片的格点；
+    /// 视野半径是整数格，两者差最多半格，对「在不在这个矩形里」没有影响。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world whose geometry turns the tile index into a point.</param>
+    /// <returns>The visible rectangle, in map points.</returns>
+    /// <exception cref="InvalidOperationException">The world has no geometry yet.</exception>
+    public Rect GetScoutRoi(World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        MapGeometry geometry = world.Geometry
+                               ?? throw new InvalidOperationException("The scouting area needs a map of non-zero size.");
+
+        int range = GetScoutingDistance();
+        Point center = geometry.GetPoint(MapIndex);
+
+        return new Rect(new Point(center.X - range, center.Y - range), new Size(2 * range + 1, 2 * range + 1));
     }
 }

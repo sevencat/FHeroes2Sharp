@@ -71,6 +71,17 @@ public static class Luck
     };
 
     /// <summary>
+    /// The value with its unit, <c>LuckString()</c> (<c>heroes/heroes_indicator.cpp:59-75</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考是 <c>_("%{luck} Luck")</c> 一句话：幸运档位后跟单位词。幸运没有特例档（士气那边「血性」要单独写），
+    /// 所以这里只是拼接。
+    /// </remarks>
+    /// <param name="luck">The luck value.</param>
+    /// <returns>For example <c>"Good Luck"</c>.</returns>
+    public static string GetLabel(int luck) => GetName(luck) + " Luck";
+
+    /// <summary>
     /// The paragraph the info screen prints for a luck value, <c>Luck::Description()</c>
     /// (<c>luck.cpp:60-84</c>).
     /// </summary>

@@ -29,6 +29,25 @@ namespace FHeroes2.Game.Army;
 public sealed partial class Army
 {
     /// <summary>
+    /// Orders stacks by strength, strongest first, <c>Army::StrongestTroop</c> (<c>army.cpp:1738-1741</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的四个比较器（<c>WeakestTroop</c>、<c>StrongestTroop</c>、<c>SlowestTroop</c>、<c>FastestTroop</c>）
+    /// 都返回 <c>bool</c>，直接交给 <c>std::sort</c>。端口这里返回 <see cref="int"/>：<see cref="List{T}.Sort(Comparison{T})"/>
+    /// 要的是比较结果，写一个 <c>-1/0/1</c> 比在调用点把两个 bool 拼成符号干净。
+    /// </para>
+    /// <para>
+    /// 另外三个没有单独的方法：端口在 <see cref="GetSlowestTroop"/>、<see cref="GetFastestTroop"/> 里用
+    /// 同一个判断的 lambda 表达，语义一致，多一个公开方法只会多一个没人调的死角。
+    /// </para>
+    /// </remarks>
+    /// <param name="left">First stack.</param>
+    /// <param name="right">Second stack.</param>
+    /// <returns>Negative when <paramref name="left"/> is stronger, positive when weaker, 0 on a tie.</returns>
+    public static int StrongestTroop(Troop left, Troop right) => right.GetStrength().CompareTo(left.GetStrength());
+
+    /// <summary>
     /// Fills the army with the guardians of a map object, <c>Army::setFromTile()</c>
     /// (<c>army.cpp:1040-1192</c>).
     /// </summary>
@@ -253,7 +272,7 @@ public sealed partial class Army
             }
 
             // Sort the garrison troops by their strength (most powerful stacks first).
-            garrisonTroops.Sort(static (left, right) => right.GetStrength().CompareTo(left.GetStrength()));
+            garrisonTroops.Sort(StrongestTroop);
 
             // Try to reinforce the guest hero's army with garrison troops (most powerful stacks first).
             foreach (Troop troop in garrisonTroops)

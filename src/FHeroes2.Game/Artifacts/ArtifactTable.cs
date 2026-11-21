@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
 
@@ -25,25 +27,42 @@ public readonly record struct ArtifactBonus(ArtifactBonusType Type, int Value)
 public readonly record struct ArtifactCurse(ArtifactCurseType Type, int Value);
 
 /// <summary>
-/// The numbers of one artifact, the <c>bonuses</c>/<c>curses</c> halves of <c>fheroes2::ArtifactData</c>
+/// One artifact: its three text strings plus its bonuses and curses, <c>fheroes2::ArtifactData</c>
 /// (<c>artifact_info.h:182-195</c>).
 /// </summary>
 /// <remarks>
-/// The name and the descriptions are left out: they are gettext strings that belong to the translation layer,
-/// and nothing in the rules reads them. Artifacts without any number share <see cref="Empty"/>.
+/// <para>
+/// 参考的一张表两遍填：<c>artifact_info.cpp:43-582</c> 是名字与两段描述，<c>586-982</c> 是加成与诅咒。
+/// 端口把第二遍按 <see cref="ArtifactType"/> 可读地写在 <see cref="ArtifactTable"/> 里，第一遍整段搬到
+/// <see cref="ArtifactTexts"/>（一百多行长句子只有原样搬才不会抄错），构造时两遍按编号拼在一起。
+/// </para>
+/// <para>
+/// 数字为空但确实存在的编号（魔法书、编辑器专用项）文案照有；表外的编号共用 <see cref="Empty"/>。
+/// </para>
 /// </remarks>
 public sealed class ArtifactData
 {
-    /// <summary>Creates the data of one artifact.</summary>
-    /// <param name="bonuses">What it grants; empty is allowed.</param>
-    /// <param name="curses">What it takes away; empty is allowed.</param>
-    public ArtifactData(ArtifactBonus[] bonuses, ArtifactCurse[] curses)
+    private ArtifactData(ArtifactBonus[] bonuses, ArtifactCurse[] curses, string name, string description,
+        string? discoveryEventDescription)
     {
         Bonuses = bonuses;
         Curses = curses;
+        Name = name;
+        BaseDescription = description;
+        DiscoveryEventDescription = discoveryEventDescription;
     }
 
-    /// <summary>An artifact that does nothing by number, used for the artifacts without a row.</summary>
+    /// <summary>
+    /// Creates the data of one artifact with its numbers only, <c>ArtifactData{ "", "", nullptr, bonuses, curses }</c>.
+    /// </summary>
+    /// <param name="bonuses">What it grants; empty is allowed.</param>
+    /// <param name="curses">What it takes away; empty is allowed.</param>
+    public ArtifactData(ArtifactBonus[] bonuses, ArtifactCurse[] curses)
+        : this(bonuses, curses, string.Empty, string.Empty, null)
+    {
+    }
+
+    /// <summary>An artifact that does nothing and says nothing, used for the ids outside the table.</summary>
     public static ArtifactData Empty { get; } = new([], []);
 
     /// <summary>What the artifact grants, <c>ArtifactData::bonuses</c>.</summary>
@@ -51,6 +70,21 @@ public sealed class ArtifactData
 
     /// <summary>What the artifact takes away, <c>ArtifactData::curses</c>.</summary>
     public IReadOnlyList<ArtifactCurse> Curses { get; }
+
+    /// <summary>The name, <c>ArtifactData::untranslatedName</c>.</summary>
+    public string Name { get; }
+
+    /// <summary>
+    /// The description template, <c>ArtifactData::untranslatedBaseDescription</c>; read it through
+    /// <see cref="GetDescription"/> rather than directly.
+    /// </summary>
+    public string BaseDescription { get; }
+
+    /// <summary>
+    /// The paragraph shown when a hero picks the artifact up, <c>ArtifactData::untranslatedDiscoveryEventDescription</c>;
+    /// <see langword="null"/> for artifacts that never lie on a map.
+    /// </summary>
+    public string? DiscoveryEventDescription { get; }
 
     /// <summary>
     /// The bonus of the type, <c>std::find( bonuses.begin(), bonuses.end(), ArtifactBonus( type ) )</c>
@@ -96,6 +130,75 @@ public sealed class ArtifactData
         curse = default;
         return false;
     }
+
+    /// <summary>
+    /// The description a tooltip shows, <c>ArtifactData::getDescription()</c> (<c>artifact_info.cpp:949-982</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 先把 <c>%{name}</c> 换成名字，再按加成决定剩下一个占位符：法术卷轴的 <c>ADD_SPELL</c> 值为 <c>NONE</c> 时
+    /// 由 <paramref name="extraParameter"/> 指定法术（为 0 时说明调用方在看列表，写「由玩家选择」）；
+    /// 其余神器填第一条加成的数值，没有加成则填第一条诅咒的数值。
+    /// </para>
+    /// <para>
+    /// 参考在「既没有加成也没有诅咒」时 <c>assert( 0 )</c>：那种神器是不存在的。端口用
+    /// <see cref="Debug.Assert(bool)"/> 记一笔，然后原样返回只换过名字的模板——调试版会炸，发行版不会把
+    /// 界面卡死。
+    /// </para>
+    /// </remarks>
+    /// <param name="extraParameter">For a blank spell scroll, the spell it actually carries; 0 for a list view.</param>
+    /// <returns>The filled-in description.</returns>
+    public string GetDescription(int extraParameter = (int)SpellType.None)
+    {
+        string description = BaseDescription.Replace("%{name}", Name, StringComparison.Ordinal);
+
+        if (TryGetBonus(ArtifactBonusType.AddSpell, out ArtifactBonus addSpell))
+        {
+            if (addSpell.Value == (int)SpellType.None)
+            {
+                description = description.Replace("%{spell}",
+                    extraParameter == (int)SpellType.None
+                        ? "spellBonus|selected by user"
+                        : new Spell((SpellType)extraParameter).GetName(),
+                    StringComparison.Ordinal);
+            }
+            else
+            {
+                description = description.Replace("%{spell}", new Spell(addSpell.Spell).GetName(), StringComparison.Ordinal);
+            }
+        }
+        else if (Bonuses.Count > 0)
+        {
+            description = description.Replace("%{count}", Bonuses[0].Value.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal);
+        }
+        else if (Curses.Count > 0)
+        {
+            description = description.Replace("%{count}", Curses[0].Value.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal);
+        }
+        else
+        {
+            Debug.Assert(false, "An artifact with neither a bonus nor a curse has no description.");
+        }
+
+        return description;
+    }
+
+    /// <summary>
+    /// The paragraph shown on pickup, <c>Artifact::getDiscoveryDescription()</c> (<c>artifact.cpp:502-505</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考直接返回那个指针，调用方自己判空；端口把空翻成空串，调用方只需判 <see cref="string.IsNullOrEmpty"/>。
+    /// </remarks>
+    /// <returns>The paragraph, or an empty string when the artifact never lies on a map.</returns>
+    public string DiscoveryDescription => DiscoveryEventDescription ?? string.Empty;
+
+    /// <summary>Copies the numbers and attaches the texts of one row of <see cref="ArtifactTexts"/>.</summary>
+    /// <param name="row">The row of the same id.</param>
+    /// <returns>A new instance; <see cref="Empty"/>'s numbers are not touched.</returns>
+    internal ArtifactData WithText(in ArtifactTexts.Row row) =>
+        new([.. Bonuses], [.. Curses], row.Name, row.Description, row.Discovery);
 }
 
 /// <summary>
@@ -241,6 +344,12 @@ public static class ArtifactTable
         table[(int)ArtifactType.SwordBreaker] = new ArtifactData([new(ArtifactBonusType.DefenceSkill, 4), new(ArtifactBonusType.AttackSkill, 1)], []);
         table[(int)ArtifactType.SwordAnduran] = new ArtifactData([new(ArtifactBonusType.AttackSkill, 5)], []);
         table[(int)ArtifactType.SpadeNecromancy] = new ArtifactData([new(ArtifactBonusType.NecromancySkill, 10)], []);
+
+        // 参考是同一张表的两遍：数字填完，名字与两段描述按编号套上。
+        for (int i = 0; i < table.Length && i < ArtifactTexts.Rows.Length; ++i)
+        {
+            table[i] = table[i].WithText(ArtifactTexts.Rows[i]);
+        }
 
         return table;
     }

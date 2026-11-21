@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Kingdom;
@@ -117,6 +118,32 @@ public sealed partial class Hero : ISpellBookOwner
     }
 
     /// <summary>
+    /// Puts a spell book in the bag, <c>HeroBase::SpellBookActivate()</c> (<c>heroes_base.cpp:206-209</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考先判「本来就没有书」再塞，端口照抄：宝物栏满了也返回 false，但此时的后果与参考一样——书没进包，
+    /// 而英雄本来也没有书，状态没变。
+    /// </remarks>
+    /// <returns>Whether the book went into the bag.</returns>
+    public bool SpellBookActivate() => !HasSpellBook && _bagArtifacts.Push(ArtifactType.MagicBook);
+
+    /// <summary>
+    /// Takes the book out and forgets every spell, <c>HeroBase::SpellBookDeactivate()</c>
+    /// (<c>heroes_base.cpp:211-219</c>).
+    /// </summary>
+    /// <remarks>
+    /// 换英雄、投降后重新雇佣都会走这里：书被收走，已学的法术一并清空，所以再买一本不会白捡旧书的内容。
+    /// </remarks>
+    public void SpellBookDeactivate()
+    {
+        _bagArtifacts.Remove(ArtifactType.MagicBook);
+
+        Debug.Assert(!HasSpellBook, "A hero must not be left holding two spell books.");
+
+        _spellBook.Clear();
+    }
+
+    /// <summary>
     /// Sets the spell points, <c>SetSpellPoints()</c> (<c>heroes_base.h:131-134</c>).
     /// </summary>
     /// <remarks>
@@ -176,27 +203,81 @@ public sealed partial class Hero : ISpellBookOwner
         && (_spellBook.IsPresent(spell) || (!skipBag && _bagArtifacts.ContainSpell(spell.Type)));
 
     /// <summary>
-    /// Whether the hero can cast the spell right now, <c>HeroBase::CanCastSpell()</c>
-    /// (<c>heroes_base.cpp:396-430</c>).
+    /// Whether the mana pool covers the spell, <c>HeroBase::HaveSpellPoints()</c>
+    /// (<c>heroes_base.h</c>).
     /// </summary>
     /// <remarks>
-    /// Six refusals in the reference, in this order: no book, not enough spell points, the spell is not known,
-    /// adventure spells need a hero in somebody's service and are closed to a ship master, and a ship master
-    /// may not cast <see cref="SpellType.SummonBoat"/>. The port has no <c>SHIPMASTER</c> mode yet (see
-    /// <see cref="HeroModes"/>), so the last two refuse nothing — a hero on water is a hero the port cannot
-    /// build.
+    /// 参考把它写成头文件里的单行内联，端口落成方法：施法界面的「法力不足」提示与
+    /// <see cref="CanCastSpell"/> 都要问这一句，内联反而要抄两遍。
+    /// </remarks>
+    /// <param name="spell">The spell to pay for.</param>
+    /// <returns>Whether the hero has enough spell points.</returns>
+    public bool HaveSpellPoints(Spell spell) => _spellPoints >= spell.SpellPoints(_bagArtifacts);
+
+    /// <summary>
+    /// Whether the hero has the movement points an adventure spell costs, <c>HeroBase::haveMovePoints()</c>
+    /// (<c>heroes_base.h</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只对冒险法术有意义：战斗法术的 <c>minMovePoints</c> 是 0，所以这一句对它们永远成立，参考也没在战斗里调。
+    /// </remarks>
+    /// <param name="spell">The spell to pay for.</param>
+    /// <returns>Whether the hero has enough movement points left today.</returns>
+    public bool HaveMovePoints(Spell spell) => _movePoints >= spell.MinMovePoints();
+
+    /// <summary>
+    /// Whether the hero can cast the spell right now, <c>HeroBase::CanCastSpell()</c>
+    /// (<c>heroes_base.cpp:378-460</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考按顺序六道拒绝：没有魔法书、法力不够、没学会、冒险法术要求英雄在某人麾下、船长不能施冒险法术、
+    /// 船长不能再召一条船。后两条是 <c>SHIPMASTER</c> 位（<see cref="IsShipMaster"/>）的另外两个用处。
     /// </remarks>
     /// <param name="spell">The spell to cast.</param>
     /// <returns>Whether the spell would be cast.</returns>
     public bool CanCastSpell(Spell spell)
     {
-        if (!HasSpellBook || spell.SpellPoints(_bagArtifacts) > _spellPoints || !HasSpell(spell))
+        if (!HasSpellBook || !HaveSpellPoints(spell) || !HasSpell(spell))
         {
             return false;
         }
 
-        // Adventure spells are cast on the map, so they need a hero that is placed on it.
-        return !spell.IsAdventure() || Color != PlayerColor.None;
+        if (spell.IsAdventure())
+        {
+            // Adventure spells are cast on the map: they need a hero in somebody's service, and a ship master
+            // already stands on water, where the spell would have nothing to act on.
+            return Color != PlayerColor.None && !IsShipMaster;
+        }
+
+        // A ship master has a boat already.
+        return !IsShipMaster || spell.Type != SpellType.SummonBoat;
+    }
+
+    /// <summary>
+    /// Casts an adventure-map spell, <c>Heroes::ActionSpellCast()</c> (<c>heroes_spell.cpp:305-436</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考这个函数本身只是分派：先 <see cref="CanCastSpell"/>，再按法术类型转到 <c>ActionSpellViewMines</c>、
+    /// <c>ActionSpellSummonBoat</c>、<c>ActionSpellTownGate</c>、<c>ActionSpellDimensionDoor</c> 等 —— 每一个都要
+    /// 让玩家在地图上点目的地、再放动画与提示框，它们全在 <c>heroes_spell.cpp</c> 的界面段里。
+    /// </para>
+    /// <para>
+    /// 那些界面动作随冒险地图一起归 S12；端口在这里先立入口，好让地图层的调用点有一个固定的落点。
+    /// </para>
+    /// <para>
+    /// <b>当前状态：抛 <see cref="NotImplementedException"/>。</b>
+    /// </para>
+    /// </remarks>
+    /// <param name="spell">The spell to cast.</param>
+    /// <param name="world">The world the spell acts on.</param>
+    /// <returns>Whether the spell was cast.</returns>
+    /// <exception cref="NotImplementedException">The adventure-map casting dialogs are not ported yet (S12).</exception>
+    public bool ActionSpellCast(Spell spell, World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        throw new NotImplementedException("Heroes::ActionSpellCast() 依赖冒险地图的目的地选取与动画（planv4 S12）。");
     }
 
     /// <summary>

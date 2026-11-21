@@ -1,3 +1,5 @@
+using System.Text;
+
 using FHeroes2.Assets.Maps;
 
 namespace FHeroes2.Game.Heroes;
@@ -15,6 +17,45 @@ public readonly record struct SecondarySkillLevel(SecondarySkill Skill, SkillLev
     /// slot, not a bug: <see cref="SecSkills"/> keeps them so that the eight slots of a hero are positional.
     /// </summary>
     public bool IsValid => Skill != SecondarySkill.Unknown && Level != SkillLevel.None;
+
+    /// <summary>
+    /// The same skill at another level, <c>Skill::Secondary::SetLevel()</c> (<c>skill.cpp:380-383</c>).
+    /// </summary>
+    /// <remarks>
+    /// 记录结构不可变，参考的「就地改等级」在这里是「换一个值」。参考把越界等级压成 <c>NONE</c>，端口照抄：
+    /// 一个不在 0..3 里的数只可能来自坏数据。
+    /// </remarks>
+    /// <param name="level">The new level.</param>
+    /// <returns>The skill at that level.</returns>
+    public SecondarySkillLevel WithLevel(SkillLevel level) =>
+        this with { Level = level is >= SkillLevel.None and <= SkillLevel.Expert ? level : SkillLevel.None };
+
+    /// <summary>
+    /// The same level applied to another skill, <c>Skill::Secondary::SetSkill()</c> (<c>skill.cpp:375-378</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="WithLevel"/> 一样是「换一个值」，越界技能压成 <see cref="SecondarySkill.Unknown"/>——参考对
+    /// 不在 <c>UNKNOWN..ESTATES</c> 里的编号就是这么处理的，这种值只可能来自存档里的坏数据。
+    /// </remarks>
+    /// <param name="skill">The new skill.</param>
+    /// <returns>The skill at that level.</returns>
+    public SecondarySkillLevel WithSkill(SecondarySkill skill) =>
+        this with { Skill = skill > SecondarySkill.Unknown && skill <= SecondarySkill.Estates ? skill : SecondarySkill.Unknown };
+
+    /// <summary>
+    /// The next level up, <c>Skill::Secondary::NextLevel()</c> (<c>skill.cpp:385-400</c>).
+    /// </summary>
+    /// <remarks>
+    /// 已经到专家的技能原地不动——参考的 <c>default: break;</c> 就是「什么都不做」，不是回到初级。
+    /// </remarks>
+    /// <returns>The skill one level higher, or itself when it is already expert.</returns>
+    public SecondarySkillLevel NextLevel() => Level switch
+    {
+        SkillLevel.None => this with { Level = SkillLevel.Basic },
+        SkillLevel.Basic => this with { Level = SkillLevel.Advanced },
+        SkillLevel.Advanced => this with { Level = SkillLevel.Expert },
+        _ => this,
+    };
 }
 
 /// <summary>
@@ -172,5 +213,25 @@ public sealed class SecSkills
         {
             _skills.Add(filler);
         }
+    }
+
+    /// <summary>
+    /// The skills joined by <c>", "</c>, <c>Skill::SecSkills::String()</c> (<c>skill.cpp:763-773</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考每个技能后面都补一个 <c>", "</c>（含最后一个）且不裁剪末尾；端口照抄这个格式，它只用于日志与调试，
+    /// 改了会让人误以为行为变了。空槽也在遍历范围里——参考的 <c>GetName()</c> 对它们返回 "unknown"。
+    /// </remarks>
+    /// <returns>The comma-separated list with its trailing separator.</returns>
+    public override string ToString()
+    {
+        StringBuilder text = new();
+
+        foreach (SecondarySkillLevel skill in _skills)
+        {
+            text.Append(SecondarySkills.GetFullName(skill.Skill, skill.Level)).Append(", ");
+        }
+
+        return text.ToString();
     }
 }
