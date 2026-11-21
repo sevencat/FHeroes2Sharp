@@ -299,15 +299,11 @@ public sealed class MainMenuScene : IScene
                     signs.Sprites[released + 2]);
             }
 
-            // The editor button: frames 20..22 exist only in the Price of Loyalty artwork, and a
-            // plain Heroes II installation has no editor at all. Missing frames are not an error -
-            // the menu paints its own sign in the corner instead of dropping the entry.
-            Button? editorSign = signs.Count > EditorFrame + 2
-                ? new Button(
-                    signs.Sprites[EditorFrame],
-                    signs.Sprites[EditorFrame + 1],
-                    signs.Sprites[EditorFrame + 2])
-                : null;
+            // The editor button: frames 20..22 are not in the ICN file at all, game_assets.cpp adds
+            // them from resurrection.h2d. Missing artwork is not an error - the menu paints its own
+            // sign in the corner instead of dropping the entry.
+            Button? editorSign = CreateEditorButton(signs);
+            Sprite streetScene = CreateStreetScene(background.Sprites[0]);
 
             IcnSpriteFile? lanternFile = assets.TryReadIcn(AnimationAssetName);
             (Sprite? lanternBase, IcnAnimation? lantern) = CreateLantern(lanternFile);
@@ -319,7 +315,7 @@ public sealed class MainMenuScene : IScene
             ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
 
             MainMenuScene scene = new(
-                frame, background.Sprites[0], lanternBase, lantern, door, messageChrome, buttons, editorSign, fonts,
+                frame, streetScene, lanternBase, lantern, door, messageChrome, buttons, editorSign, fonts,
                 languages, culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
 
             GameLog.Info(
@@ -330,7 +326,7 @@ public sealed class MainMenuScene : IScene
                     : $"lantern glow {LanternFrameCount} frames every " +
                       $"{LanternFrameDuration.TotalMilliseconds:0} ms, ") +
                 (door is null ? "settings door stays dark, " : "settings door lights up on hover, ") +
-                (editorSign is null ? "editor sign drawn here, " : "editor sign from the artwork, ") +
+                (editorSign is null ? "editor sign drawn here, " : "editor sign from resurrection.h2d, ") +
                 (messageChrome is null ? "no tooltips, " : "right click tooltips, ") +
                 (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
@@ -342,6 +338,65 @@ public sealed class MainMenuScene : IScene
             GameLog.Warn($"The main menu could not be created: {exception.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Builds the editor button, the <c>EDITOR_DEFAULT</c> entry of <c>Game::MainMenu()</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>case ICN::BTNSHNGL</c> of <c>game_assets.cpp</c> appends three frames to the table it has just
+    /// read: the original <c>BTNSHNGL.ICN</c> stops at frame 19, so the editor look always comes from
+    /// <c>resurrection.h2d</c>. The anchors are stored in the archive, which is why the button lands on
+    /// the easel of the street scene without a single coordinate here. An asset pack that already
+    /// carries the frames (a table longer than 22 sprites) is used as it is.
+    /// </remarks>
+    /// <param name="signs">The loaded <c>BTNSHNGL.ICN</c>.</param>
+    /// <returns>The button, or <see langword="null"/> when neither the table nor the archive has it.</returns>
+    private static Button? CreateEditorButton(IcnSpriteFile signs)
+    {
+        if (signs.Count > EditorFrame + 2)
+        {
+            return new Button(
+                signs.Sprites[EditorFrame],
+                signs.Sprites[EditorFrame + 1],
+                signs.Sprites[EditorFrame + 2]);
+        }
+
+        // The reference appends the frames only to the twenty sprite table it knows; any other length
+        // is data the port does not understand, and guessing would put the button in the wrong place.
+        if (signs.Count != EditorFrame ||
+            !H2DResources.TryReadCurrentImage(EditorReleasedImageName, out Sprite? released) ||
+            !H2DResources.TryReadCurrentImage(EditorHighlightedImageName, out Sprite? highlighted) ||
+            !H2DResources.TryReadCurrentImage(EditorPressedImageName, out Sprite? pressed))
+        {
+            return null;
+        }
+
+        return new Button(released, highlighted, pressed);
+    }
+
+    /// <summary>
+    /// The street scene with the easel of the editor painted into it, <c>case ICN::HEROES</c> of
+    /// <c>game_assets.cpp</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference blits <c>main_menu_editor_icon.image</c> into its cached copy of the background,
+    /// at the anchor stored in the archive. Here the background sprite belongs to the ICN cache, so a
+    /// clone is painted instead of the cached sprite and the scene owns the result; leaving the cache
+    /// alone keeps a second menu creation from stacking the easel twice.
+    /// </remarks>
+    /// <param name="artwork">Sprite 0 of <c>HEROES.ICN</c>.</param>
+    /// <returns>The scene to draw, with the easel when the archive has it.</returns>
+    private static Sprite CreateStreetScene(Sprite artwork)
+    {
+        if (!H2DResources.TryReadCurrentImage(EditorIconImageName, out Sprite? icon))
+        {
+            return artwork;
+        }
+
+        Sprite scene = artwork.Clone();
+        ImageOps.BlitSprite(scene, new Point(icon.OffsetX, icon.OffsetY), icon);
+        return scene;
     }
 
     /// <summary>
