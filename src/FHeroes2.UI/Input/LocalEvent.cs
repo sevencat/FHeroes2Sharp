@@ -78,6 +78,7 @@ public sealed class LocalEvent
 
     private ActionStates _actionStates = ActionStates.None;
     private Key _currentKey = Key.None;
+    private KeyModifier _currentKeyModifiers = KeyModifier.None;
     private MouseButtonType _currentButton = MouseButtonType.Unknown;
 
     private Point _leftPressPosition;
@@ -361,6 +362,7 @@ public sealed class LocalEvent
         }
 
         _currentKey = key;
+        _currentKeyModifiers = modifier;
     }
 
     /// <summary>
@@ -468,6 +470,17 @@ public sealed class LocalEvent
 
     /// <summary>The last key that went down, <c>getPressedKeyValue()</c>.</summary>
     public Key PressedKeyValue => _currentKey;
+
+    /// <summary>
+    /// The modifier bits reported by the last keyboard event, <c>getCurrentKeyModifiers()</c>
+    /// (<c>localevent.h:347</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference asks SDL for the current modifier state; the port only sees the bits that come with
+    /// the key event, so an unchanged modifier combination stays at its last reported value until the next
+    /// key event, which is enough for text input.
+    /// </remarks>
+    public KeyModifier CurrentKeyModifiers => _currentKeyModifiers;
 
     /// <summary>Whether a drag started this gesture, <c>isDragInProgress()</c>.</summary>
     public bool IsDragInProgress => (_actionStates & ActionStates.DragOngoing) != 0;

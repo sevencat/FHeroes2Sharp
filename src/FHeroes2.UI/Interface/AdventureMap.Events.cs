@@ -425,7 +425,7 @@ public sealed partial class AdventureMap
     {
         while (true)
         {
-            string? fileName = _host.SelectSaveFile();
+            string? fileName = _dialogs.SelectSaveFile();
 
             if (string.IsNullOrEmpty(fileName))
             {
@@ -473,7 +473,8 @@ public sealed partial class AdventureMap
     /// </remarks>
     public AdventureEventResult EventScenarioInformation()
     {
-        _host.OpenScenarioInformation();
+        // 战役局在参考里走的是「淡出 → 选关 → 淡入」，选关界面还没搬，端口在战役局里也照样只开这一张信息表。
+        _dialogs.ShowGameInfo();
 
         return AdventureEventResult.Cancel;
     }

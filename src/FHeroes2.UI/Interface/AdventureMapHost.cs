@@ -129,19 +129,12 @@ public interface IAdventureHost
     /// <summary>Opens the world map, <c>ViewWorld::ViewWorldWindow( color, OnlyVisible, interface )</c>.</summary>
     void OpenViewWorld();
 
-    /// <summary>Opens the scenario information, <c>Dialog::GameInfo()</c>.</summary>
-    void OpenScenarioInformation();
-
     /// <summary>Opens the file options dialog, <c>Dialog::FileOptions()</c>.</summary>
     /// <returns>What the player asked for.</returns>
     AdventureEventResult ShowFileOptions();
 
     /// <summary>Opens the system options dialog, <c>fheroes2::showSystemOptionsDialog()</c>.</summary>
     void ShowSystemOptions();
-
-    /// <summary>Asks where to save, <c>Dialog::SelectFileSave()</c>.</summary>
-    /// <returns>The file name, or <see langword="null"/> when the player cancelled.</returns>
-    string? SelectSaveFile();
 
     /// <summary>Saves the game, <c>Game::Save( filename )</c>.</summary>
     /// <param name="fileName">Where to write the save.</param>

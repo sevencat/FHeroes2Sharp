@@ -59,4 +59,22 @@ public static class MapSizes
         size == MapSize.None
             ? string.Empty
             : $"{EdgeLength(size)} x {EdgeLength(size)}";
+
+    /// <summary>
+    /// Name of a map size class, <c>Maps::SizeString()</c> (<c>maps.cpp:208-224</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考传进来的是边长而不是枚举，任何不是 36/72/108/144 的边长都得到「自定义尺寸」——战役里那张
+    /// 地图编辑器做出来的地图就常常落在这一档。
+    /// </remarks>
+    /// <param name="width">The edge length in tiles.</param>
+    /// <returns>The name of the size class.</returns>
+    public static string GetName(int width) => FromWidth(width) switch
+    {
+        MapSize.Small => "Small",
+        MapSize.Medium => "Medium",
+        MapSize.Large => "Large",
+        MapSize.ExtraLarge => "Extra Large",
+        _ => "Custom Size",
+    };
 }

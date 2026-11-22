@@ -21,6 +21,25 @@ namespace FHeroes2.Game.System;
 public static class Difficulty
 {
     /// <summary>
+    /// The name of a difficulty level, <c>Difficulty::String()</c> (<c>difficulty.cpp:39-57</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考返回的是本地化字符串的 <c>const char *</c>，端口返回 <see cref="string"/>；未知值同样得到
+    /// <c>"Unknown"</c>（参考在那里没有断言，只是 break 出 switch）。
+    /// </remarks>
+    /// <param name="difficulty">The difficulty level.</param>
+    /// <returns>Its name.</returns>
+    public static string GetName(GameDifficulty difficulty) => difficulty switch
+    {
+        GameDifficulty.Easy => "Easy",
+        GameDifficulty.Normal => "Normal",
+        GameDifficulty.Hard => "Hard",
+        GameDifficulty.Expert => "Expert",
+        GameDifficulty.Impossible => "Impossible",
+        _ => "Unknown",
+    };
+
+    /// <summary>
     /// Whether the AI may split its weakest stacks to make an attack harder,
     /// <c>Difficulty::allowAIToSplitWeakStacks()</c> (<c>difficulty.cpp:259</c>).
     /// </summary>

@@ -2430,6 +2430,44 @@ UI 1 365）；冒烟 `--enter-map --smoke-frames 30 --no-audio` 30 帧 **59.8 FP
 所以要先有 `Tile`、`Hero`、`Castle`、`Kingdom`、`MapObjects`、`MapObjectInfo`、`UltimateArtifact`、`EventDate` 各自的算子，
 再写 `World.Persistence.cs`，最后才是 `GameSave.Save`/`Load` 本体与 zlib 包层。
 
+## 2026-11-22 G6.4（5/5）：场景信息窗口与存档选择窗口
+
+`Dialog::GameInfo()` 与 `Dialog::SelectFileSave()` / `SelectFileLoad()` 是 G6.4 最后两块。两者的共同点是**窗口里的
+美术全在 `AGG` 里、字体是全局表**，所以装配点统一放到 `AdventureMapDialogs`，事件层不再经过 `IAdventureHost`。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/GameInfoView.cs`、`GameInfoDialog.cs`（补） | `dialog_gameinfo.cpp` | 布局常量、12 行信息、评分行、About 让位、居中与影子 |
+| `UI/Dialogs/SelectFileView.cs`（新） | `dialog_selectfile.cpp:126-222`、`323-421` | `ListBox<SaveFileEntry>` 子类：窗口尺寸、列表/表头/输入框/日期区几何、行绘制、表头点击换排序、右键提示、`Delete` 请求、`SetFiles` / `SelectFile` / `SwitchSorting` / `RemoveSelectedFile` |
+| `UI/Dialogs/SelectFileDialog.cs`（新） | `dialog_selectfile.cpp:64-124`、`323-733` | `GetSaveFiles`（扫目录 + 逐个头解析，读不出头的跳过）、`SortSaveFiles`、`FindSaveFile`、`GetStem`、`DescribeDate`、`Show` 主循环 |
+| `UI/Interface/AdventureMapDialogs.cs`（补） | `dialog_selectfile.cpp:740-766` | `SelectSaveFile` / `SelectLoadFile` / `ShowSelectFile`：自取 `SCROLL`（或 `SCROLLE`）、`CELLWIN`、`ADVBORD`（或 `ADVBORDE`）、`SYSTEM.ICN` 按钮与全局字体 |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `SelectSaveFile`，接口 14 → 13 项 |
+| `tests/.../SelectFileViewTests.cs`、`SelectFileDialogTests.cs`（新） | 同上 | 30 条 |
+
+要点：
+
+* **窗口高度先于窗口存在**：参考先扫目录拿到行数再算 `dialogHeight`，端口也一样——`ShowSelectFile` 扫一次，
+  `TryCreate` 拿行数定高，同一份列表再交给 `Show`，避免把每个存档头解析两遍。
+* **行记录叫 `SaveFileEntry`**：`FHeroes2.Game.System` 里已有一个 `SaveFileInfo`（存档头的地图信息块），同名的 UI 行记录
+  会和它打架；改名后两边都不必写 `using` 别名。
+* **`SelectFile` 不改找不到时的选中行**：参考的 `findInMapInfos()` 找不到时什么也不做，`SetListContent()` 选中的第一行
+  留着，输入框由调用方填；端口一开始顺手 `Unselect()` 了，测试当场抓出来。
+* **`SetFiles` 不碰输入框**：参考里 `SetListContent()` 只选行，名字是 `selectFileListSimple()` 另外填的，端口照抄，
+  于是「保存」窗口的默认名走 `SelectSaveFile` 拼的 `GetSaveFileBaseName()_CountDay()`。
+* **排序标记没有 evil 版**：`ICN::CELLWIN_EVIL` 在参考里是 `CELLWIN.ICN` 前 19 帧套 `GOOD_TO_EVIL_INTERFACE` 现算的，
+  端口还没有调色板合成，两种界面都用 `CELLWIN.ICN`（勾选框是单色小图，只影响主题）。
+* **删除失败不留半截状态**：参考无论 `Unlink` 成不成都 `RemoveSelected()`，端口只在文件真删掉后才移行，并 `GameLog.Warn`
+  记下原因——这是有意的偏差。
+* **排序方式只写内存**：`Settings.SaveFileSortType` 已经有了，但设置落盘层还没移植，切换后不跨进程。
+* **提示框只弹一次**：`Popup` 一开始只是只读属性，右键提示会每帧重复弹；改成 `TakePopup()` 取走即清空，
+  和参考「弹一次就结束」对得上。
+
+构建 0 错误 0 警告；全量 **5 382 绿**（Core 284 + Assets 425 + Game 3 265 + UI 1 408）；冒烟 `--enter-map` 30 帧 59.1 FPS，
+退出 0。
+
+**下一段**：G6.8 剩下的 13 项 —— 英雄/城堡/王国总览/魔法书/谜题/世界地图/系统选项/文件选项这几个 `Event*()` 的装配器，
+以及 `CheckGameOver` 的兑现层。
+
 ## 2026-11-22 G6.6（1/3）：存档的明文段
 
 `GameSave` 的六个入口此前全是 `NotImplementedException`：缺 `World`/`Settings` 的序列化，也缺「用户数据目录」这个
