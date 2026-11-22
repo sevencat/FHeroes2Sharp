@@ -31,9 +31,9 @@ namespace FHeroes2.Game.Heroes;
 /// <see cref="HeroActionResult.TryGetPayload{T}"/> 取。等消息层落地，它就是这一格的消费者。
 /// </para>
 /// <para>
-/// <b>还没搬的对象</b>：怪物、城堡、另一个英雄、船、金字塔、沉船、龙穴、矿井、招募所、事件、神谕、狮身人面像
-/// ——参考在这半数 <c>case</c> 上都要战斗、要城堡界面或要文本系统，端口的落点还不存在。它们不会静默通过：
-/// <see cref="HeroActionKind.Unsupported"/> 明说「参考在这里会做事，端口还不会」，调用方可以据此提示玩家或者
+/// <b>还没搬的对象</b>：只剩漂流瓶（<c>OBJ_BOTTLE</c>，它不付钱、只弹瓦片上的留言），以及地形装饰那几类
+/// 编辑器硬塞动作位的瓦片。参考在这里要读瓦片的 <c>objectInfo</c> 留言，端口还没搬这块数据，于是它们落到
+/// <see cref="HeroActionKind.Unsupported"/>：明说「参考在这里会做事，端口还不会」，调用方可以据此提示玩家或者
 /// 干脆不放他走过去。踩在空地上、或者那一格根本没有对象时才是 <see cref="HeroActionKind.None"/>。
 /// </para>
 /// <para>
@@ -44,9 +44,12 @@ namespace FHeroes2.Game.Heroes;
 /// 所以照样分发，结果里自会说明。宝箱那条岔路（钱还是经验）用动作的默认值：拿钱。
 /// </para>
 /// <para>
-/// <b>两处缺口</b>：参考在船长的位置上还会判 <c>isSuitableForDisembarkation</c> 走 <c>ActionToCoast</c>，端口的
-/// <see cref="HeroModes"/> 里没有 SHIPMASTER、船也还没搬，故略过；参考对 AI 控制的王国直接转给
-/// <c>AI::HeroesAction</c>，端口没有 AI，一律走人这一支。
+/// <b>船长与岸</b>：进来的类型表要按身份挑——船长看的是水上的那张表，走路的英雄看陆上的
+/// （<see cref="Mp2ObjectTypes.IsInGameActionObject(Mp2ObjectType, bool)"/>）。另外船长靠岸时，<b>哪怕那一格空无一物</b>
+/// 也算一次动作（<c>heroes_action.cpp:787-791</c>），所以「有没有事可做」是两个条件相或，而不是一张表能说完的。
+/// </para>
+/// <para>
+/// <b>一处缺口</b>：参考对 AI 控制的王国直接转给 <c>AI::HeroesAction</c>，端口没有 AI，一律走人这一支。
 /// </para>
 /// </remarks>
 public sealed partial class HeroActions
@@ -79,7 +82,10 @@ public sealed partial class HeroActions
         Tile tile = world.GetTile(tileIndex);
         Mp2ObjectType tileObjectType = tile.GetMainObjectType(world, tileIndex != _hero.MapIndex);
 
-        if (!Mp2ObjectTypes.IsInGameActionObject(tileObjectType, false))
+        // 船长靠岸时，空无一物的沙滩也是一次动作（参考 heroes_action.cpp:787-791）。
+        bool isDisembarking = _hero.IsShipMaster && tile.IsSuitableForDisembarkation();
+
+        if (!isDisembarking && !Mp2ObjectTypes.IsInGameActionObject(tileObjectType, _hero.IsShipMaster))
         {
             return new HeroActionResult(Mp2ObjectTypes.NonActionType(tileObjectType), HeroActionKind.None, false, null);
         }
@@ -96,6 +102,27 @@ public sealed partial class HeroActions
 
         switch (objectType)
         {
+            case Mp2ObjectType.Monster:
+            {
+                MonsterEncounterOutcome outcome = ActionToMonster(tileIndex, world);
+
+                return Report(HeroActionKind.Monster, outcome != MonsterEncounterOutcome.NoMonsters, outcome);
+            }
+
+            case Mp2ObjectType.Castle:
+            {
+                CastleEncounterOutcome outcome = ActionToCastle(tileIndex, world);
+
+                return Report(HeroActionKind.Castle, outcome != CastleEncounterOutcome.Allied, outcome);
+            }
+
+            case Mp2ObjectType.Hero:
+            {
+                HeroMeetingOutcome outcome = ActionToHeroes(tileIndex, world);
+
+                return Report(HeroActionKind.HeroMeeting, outcome != HeroMeetingOutcome.Allied, outcome);
+            }
+
             case Mp2ObjectType.MagicWell:
                 return ReportFlag(HeroActionKind.MagicWell, ActionToMagicWell(tileIndex));
 
@@ -232,7 +259,26 @@ public sealed partial class HeroActions
                 return Report(HeroActionKind.TravellersTent, true, ActionToTravellersTent(tileIndex, world));
 
             case Mp2ObjectType.Stables:
-                return ReportFlag(HeroActionKind.Stables, ActionToStables(tileIndex));
+            {
+                StablesResult result = ActionToStables(tileIndex);
+
+                return Report(HeroActionKind.Stables, result.TookFreshHorse || result.Upgrade.Outcome == ArmyUpgradeOutcome.Upgraded, result);
+            }
+
+            case Mp2ObjectType.HillFort:
+            case Mp2ObjectType.FreemansFoundry:
+            {
+                ArmyUpgradeResult result = ActionToUpgradeArmyObject(objectType);
+
+                return Report(HeroActionKind.ArmyUpgrade, result.Outcome == ArmyUpgradeOutcome.Upgraded, result);
+            }
+
+            case Mp2ObjectType.Boat:
+            {
+                BoatResult result = ActionToBoat(tileIndex, world);
+
+                return Report(HeroActionKind.Boat, result.Outcome == BoatOutcome.Boarded, result);
+            }
 
             case Mp2ObjectType.Obelisk:
                 return ReportFlag(HeroActionKind.Obelisk, ActionToObelisk(tileIndex, world));
@@ -275,8 +321,183 @@ public sealed partial class HeroActions
                 return Report(HeroActionKind.Whirlpools, outcome == TeleportOutcome.Moved, outcome);
             }
 
+            case Mp2ObjectType.AlchemistLab:
+            case Mp2ObjectType.Mine:
+            case Mp2ObjectType.Sawmill:
+            case Mp2ObjectType.Lighthouse:
+            {
+                CaptureObjectOutcome outcome = ActionToCaptureObject(objectType, tileIndex, world);
+
+                return Report(
+                    HeroActionKind.CaptureObject,
+                    outcome is CaptureObjectOutcome.Captured or CaptureObjectOutcome.Won,
+                    outcome);
+            }
+
+            case Mp2ObjectType.AbandonedMine:
+            {
+                AbandonedMineOutcome outcome = ActionToAbandonedMine(tileIndex, world);
+
+                return Report(HeroActionKind.AbandonedMine, outcome == AbandonedMineOutcome.Restored, outcome);
+            }
+
+            case Mp2ObjectType.Shipwreck:
+            case Mp2ObjectType.Graveyard:
+            case Mp2ObjectType.DerelictShip:
+            {
+                PoorMoraleObjectOutcome outcome = ActionToPoorMoraleObject(objectType, tileIndex, world);
+
+                return Report(HeroActionKind.PoorMoraleObject, outcome == PoorMoraleObjectOutcome.Found, outcome);
+            }
+
+            case Mp2ObjectType.Pyramid:
+            {
+                PyramidResult result = ActionToPyramid(objectType, tileIndex, world);
+
+                return Report(HeroActionKind.Pyramid, result.Outcome == PyramidOutcome.Learned, result);
+            }
+
+            case Mp2ObjectType.DaemonCave:
+            {
+                DaemonCaveResult result = ActionToDaemonCave(objectType, tileIndex, world);
+
+                return Report(
+                    HeroActionKind.DaemonCave,
+                    result.Outcome is DaemonCaveOutcome.BattleWithServants
+                        or DaemonCaveOutcome.Experience
+                        or DaemonCaveOutcome.ExperienceAndGold
+                        or DaemonCaveOutcome.ExperienceAndArtifact
+                        or DaemonCaveOutcome.PaidOff
+                        or DaemonCaveOutcome.Death,
+                    result);
+            }
+
+            case Mp2ObjectType.WatchTower:
+            case Mp2ObjectType.Excavation:
+            case Mp2ObjectType.Cave:
+            case Mp2ObjectType.TreeHouse:
+            case Mp2ObjectType.ArcherHouse:
+            case Mp2ObjectType.GoblinHut:
+            case Mp2ObjectType.DwarfCottage:
+            case Mp2ObjectType.HalflingHole:
+            case Mp2ObjectType.PeasantHut:
+            {
+                DwellingJoinResult result = ActionToDwellingJoinMonster(objectType, tileIndex, world);
+
+                return Report(HeroActionKind.DwellingJoin, result.Outcome == DwellingJoinOutcome.Joined, result);
+            }
+
+            case Mp2ObjectType.Ruins:
+            case Mp2ObjectType.TreeCity:
+            case Mp2ObjectType.WagonCamp:
+            case Mp2ObjectType.DesertTent:
+            case Mp2ObjectType.EarthAltar:
+            case Mp2ObjectType.AirAltar:
+            case Mp2ObjectType.FireAltar:
+            case Mp2ObjectType.WaterAltar:
+            case Mp2ObjectType.BarrowMounds:
+            {
+                DwellingRecruitResult result = ActionToDwellingRecruitMonster(objectType, tileIndex, world);
+
+                // 参考在没成交时不改任何状态（连瓦片数量都不动），于是只有真的买到人才要重绘。
+                return Report(HeroActionKind.DwellingRecruit, result.Outcome == DwellingRecruitOutcome.Recruited, result);
+            }
+
+            case Mp2ObjectType.DragonCity:
+            case Mp2ObjectType.CityOfDead:
+            case Mp2ObjectType.TrollBridge:
+            {
+                DwellingBattleResult result = ActionToDwellingBattleMonster(objectType, tileIndex, world);
+
+                return Report(
+                    HeroActionKind.DwellingBattle,
+                    result.Outcome is DwellingBattleOutcome.Won
+                        or DwellingBattleOutcome.Recruited
+                        or DwellingBattleOutcome.RanksFull,
+                    result);
+            }
+
+            case Mp2ObjectType.GenieLamp:
+            {
+                DwellingRecruitResult result = ActionToGenieLamp(tileIndex, world);
+
+                return Report(HeroActionKind.GenieLamp, result.Outcome == DwellingRecruitOutcome.Recruited, result);
+            }
+
+            case Mp2ObjectType.TradingPost:
+            {
+                // 市场什么都不改，连重绘都不用。
+                ActionToTradingPost();
+
+                return ReportFlag(HeroActionKind.TradingPost, false);
+            }
+
+            case Mp2ObjectType.AlchemistTower:
+            {
+                AlchemistTowerResult result = ActionToAlchemistTower();
+
+                return Report(HeroActionKind.AlchemistTower, result.Outcome == AlchemistTowerOutcome.Purified, result);
+            }
+
+            case Mp2ObjectType.Fort:
+            case Mp2ObjectType.MercenaryCamp:
+            case Mp2ObjectType.WitchDoctorsHut:
+            case Mp2ObjectType.StandingStones:
+            {
+                PrimarySkillObjectResult result = ActionToPrimarySkillObject(objectType, tileIndex, world);
+
+                return Report(
+                    HeroActionKind.PrimarySkillObject,
+                    result.Outcome == PrimarySkillObjectOutcome.Learned,
+                    result);
+            }
+
+            case Mp2ObjectType.HutOfMagi:
+            {
+                HutOfMagiResult result = ActionToHutMagi(tileIndex, world);
+
+                return Report(HeroActionKind.HutOfMagi, result.Revealed > 0, result);
+            }
+
+            case Mp2ObjectType.EyeOfMagi:
+            {
+                // 参考只弹一句话，瓦片与世界都不动；文案归界面。
+                return ReportFlag(HeroActionKind.EyeOfMagi, false);
+            }
+
+            case Mp2ObjectType.Oracle:
+            {
+                ActionToOracle();
+
+                return ReportFlag(HeroActionKind.Oracle, false);
+            }
+
+            case Mp2ObjectType.Event:
+            {
+                EventTileResult result = ActionToEvent(tileIndex, world);
+
+                return Report(HeroActionKind.EventTile, result.Outcome == EventTileOutcome.Fired, result);
+            }
+
+            case Mp2ObjectType.Sphinx:
+            {
+                SphinxResult result = ActionToSphinx(objectType, tileIndex, world);
+
+                return Report(HeroActionKind.Sphinx, result.Outcome == SphinxOutcome.Answered, result);
+            }
+
             default:
+            {
+                // 参考在 default 之前先判「船长靠岸」：那一格不必有对象。
+                if (isDisembarking)
+                {
+                    CoastResult result = ActionToCoast(tileIndex, world);
+
+                    return Report(HeroActionKind.Coast, result.Outcome == CoastOutcome.Disembarked, result);
+                }
+
                 return Report(HeroActionKind.Unsupported, false);
+            }
         }
     }
 
@@ -297,6 +518,15 @@ public enum HeroActionKind
 
     /// <summary>The reference would act on this object; the port has no handler for it yet.</summary>
     Unsupported,
+
+    /// <summary><see cref="HeroActions.ActionToMonster"/> ran; the payload is a <see cref="MonsterEncounterOutcome"/>.</summary>
+    Monster,
+
+    /// <summary><see cref="HeroActions.ActionToCastle"/> ran; the payload is a <see cref="CastleEncounterOutcome"/>.</summary>
+    Castle,
+
+    /// <summary><see cref="HeroActions.ActionToHeroes"/> ran; the payload is a <see cref="HeroMeetingOutcome"/>.</summary>
+    HeroMeeting,
 
     /// <summary><see cref="HeroActions.ActionToMagicWell"/> ran.</summary>
     MagicWell,
@@ -364,7 +594,7 @@ public enum HeroActionKind
     /// <summary><see cref="HeroActions.ActionToTravellersTent"/> ran.</summary>
     TravellersTent,
 
-    /// <summary><see cref="HeroActions.ActionToStables"/> ran.</summary>
+    /// <summary><see cref="HeroActions.ActionToStables"/> ran; the payload is a <see cref="StablesResult"/>.</summary>
     Stables,
 
     /// <summary><see cref="HeroActions.ActionToObelisk"/> ran.</summary>
@@ -387,6 +617,107 @@ public enum HeroActionKind
 
     /// <summary><see cref="HeroActions.ActionToWhirlpools"/> ran.</summary>
     Whirlpools,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToCaptureObject"/> ran; the payload is a <see cref="CaptureObjectOutcome"/>.
+    /// </summary>
+    CaptureObject,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToAbandonedMine"/> ran; the payload is an <see cref="AbandonedMineOutcome"/>.
+    /// </summary>
+    AbandonedMine,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToPoorMoraleObject"/> ran; the payload is a <see cref="PoorMoraleObjectOutcome"/>.
+    /// </summary>
+    PoorMoraleObject,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToPyramid"/> ran; the payload is a <see cref="PyramidResult"/>.
+    /// </summary>
+    Pyramid,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToDaemonCave"/> ran; the payload is a <see cref="DaemonCaveResult"/>.
+    /// </summary>
+    DaemonCave,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToDwellingJoinMonster"/> ran; the payload is a <see cref="DwellingJoinResult"/>.
+    /// </summary>
+    DwellingJoin,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToDwellingRecruitMonster"/> ran; the payload is a
+    /// <see cref="DwellingRecruitResult"/>.
+    /// </summary>
+    DwellingRecruit,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToDwellingBattleMonster"/> ran; the payload is a <see cref="DwellingBattleResult"/>.
+    /// </summary>
+    DwellingBattle,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToGenieLamp"/> ran; the payload is a <see cref="DwellingRecruitResult"/>.
+    /// </summary>
+    GenieLamp,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToTradingPost"/> ran; the market window is the whole action.
+    /// </summary>
+    TradingPost,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToAlchemistTower"/> ran; the payload is an <see cref="AlchemistTowerResult"/>.
+    /// </summary>
+    AlchemistTower,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToPrimarySkillObject"/> ran; the payload is a <see cref="PrimarySkillObjectResult"/>.
+    /// </summary>
+    PrimarySkillObject,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToHutMagi"/> ran; the payload is a <see cref="HutOfMagiResult"/>.
+    /// </summary>
+    HutOfMagi,
+
+    /// <summary>
+    /// The Eye of the Magi was stepped on; there is nothing to do but say a line.
+    /// </summary>
+    EyeOfMagi,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToOracle"/> ran; the thieves' guild report is the whole action.
+    /// </summary>
+    Oracle,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToEvent"/> ran; the payload is an <see cref="EventTileResult"/>.
+    /// </summary>
+    EventTile,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToSphinx"/> ran; the payload is a <see cref="SphinxResult"/>.
+    /// </summary>
+    Sphinx,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToBoat"/> ran; the payload is a <see cref="BoatResult"/>.
+    /// </summary>
+    Boat,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToCoast"/> ran; the payload is a <see cref="CoastResult"/>.
+    /// </summary>
+    Coast,
+
+    /// <summary>
+    /// <see cref="HeroActions.ActionToUpgradeArmyObject"/> ran; the payload is an <see cref="ArmyUpgradeResult"/>.
+    /// </summary>
+    ArmyUpgrade,
 }
 
 /// <summary>

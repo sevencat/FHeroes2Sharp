@@ -121,7 +121,7 @@ public sealed class Radar : BorderWindow
     private World? _world;
     private Rect _roi;
     private double _zoom = 1.0;
-    private bool _hide = true;
+    private bool _hide;
 
     /// <summary>Builds the radar of an interface, <c>Radar( BaseInterface &amp; )</c>.</summary>
     /// <param name="interface">Owner of the radar, asked for the game area and for repaints.</param>

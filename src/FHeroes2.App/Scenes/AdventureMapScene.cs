@@ -46,35 +46,19 @@ namespace FHeroes2.App.Scenes;
 /// </summary>
 public sealed class AdventureMapScene : IScene
 {
-    /// <summary>Height of the status bar, one line of <c>SMALFONT.ICN</c>.</summary>
-    public const int StatusBarHeight = 11;
-
-    /// <summary>Distance between the minimap and the top right corner, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int RadarMargin = MapFrame.BorderWidth;
-
-    private const int StatusBarPadding = 8;
-
-    private const int StatusBarGap = 10;
-
     private readonly ScreenBuffer _frame;
     private readonly AssetBundle? _assets;
     private readonly GameFonts? _fonts;
     private readonly World _world;
     private readonly AdventureSession? _session;
     private readonly AdventureMapView _view;
-    private Point? _cursor;
 
     /// <summary>A panel drag the screen handed over, <see langword="null"/> while no panel is grabbed.</summary>
     private BorderDrag? _drag;
 
-    private readonly MapFrame _mapFrame;
-
     /// <summary>The ported screen itself, <c>Interface::AdventureMap</c>: it owns the panels and the frame.</summary>
     private readonly AdventureInterface _interface;
     private readonly Rect _viewport;
-    private readonly PixelBuffer _viewportPixels;
-    private readonly Rect _statusBar;
-    private readonly byte _dark;
 
     private CastleTown? _castleRequest;
 
@@ -87,8 +71,8 @@ public sealed class AdventureMapScene : IScene
     private readonly AdventureOptionsView? _optionsArtwork;
     private AdventureOptionsOverlay? _options;
 
-    private readonly Sprite? _quickInfoFrame;
-    private StandardPopupWindow? _quickInfo;
+    /// <summary>The quick info box while the right button is held, <c>Dialog::QuickInfo()</c>.</summary>
+    private IQuickInfoPanel? _quickInfo;
 
     private AdventureMapScene(
         ScreenBuffer frame,
@@ -101,7 +85,6 @@ public sealed class AdventureMapScene : IScene
         AdventureInterface screen,
         AdventureOptionsView? optionsArtwork,
         IViewWorldSpriteSource? viewWorldSprites,
-        Sprite? quickInfoFrame,
         PlayerColor friends)
     {
         _frame = frame;
@@ -111,23 +94,11 @@ public sealed class AdventureMapScene : IScene
         _session = session;
         _view = view;
 
-        _mapFrame = mapFrame;
         _interface = screen;
         _optionsArtwork = optionsArtwork;
         _viewWorldSprites = viewWorldSprites;
-        _quickInfoFrame = quickInfoFrame;
         _friends = friends;
         _viewport = mapFrame.Viewport;
-        _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
-
-        // The status line goes on the bottom border, where the frame art leaves the strip empty; the
-        // panel bay above it belongs to the interface buttons of later milestones.
-        _statusBar = new Rect(
-            mapFrame.BottomBorder.X,
-            mapFrame.BottomBorder.Y + 2,
-            mapFrame.BottomBorder.Width,
-            StatusBarHeight);
-        _dark = frame.Palette.FindDarkestIndex();
     }
 
     /// <summary>The map the scene draws.</summary>
@@ -150,12 +121,6 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => _view.Map.Info.Name;
-
-    /// <summary>
-    /// The status bar rectangle: a strip of the bottom border of the frame, which the artwork leaves
-    /// empty.
-    /// </summary>
-    public Rect StatusBarArea => _statusBar;
 
     /// <summary>
     /// Opens the adventure map of <paramref name="mapInfo"/>; <see langword="null"/> with an
@@ -284,8 +249,14 @@ public sealed class AdventureMapScene : IScene
                 screen,
                 AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
-                QuickInfoArtwork.TryCreate(assets),
                 observers);
+
+            // 城堡屏由宿主换场景（参考里是阻塞的 Game::OpenCastleDialog），屏幕点开城堡时先问场景。
+            screen.OpenCastleScreen = scene.RequestCastleScreen;
+
+            // 速览在参考里也是阻塞循环（按住右键），渲染循环自己管帧的场景不能被卡住：面板交回场景画，
+            // 松手时场景自己收掉（UpdateQuickInfo）。
+            screen.Dialogs.PresentQuickInfo = panel => scene._quickInfo = panel;
 
             // With a started game the map opens on the acting hero instead of the middle castle.
             scene.CentreOnFocusHero();
@@ -455,6 +426,7 @@ public sealed class AdventureMapScene : IScene
         AdventureEventResult result = _interface.FinishHumanTurn(panel.Mode, IsKingdomVanquished());
 
         FollowInterfaceFocus();
+        UpdateQuickInfo(events);
 
         if (result != AdventureEventResult.Cancel)
         {
@@ -484,6 +456,49 @@ public sealed class AdventureMapScene : IScene
     /// <summary>The acting kingdom has no hero and no town, the <c>!myKingdom.isPlay()</c> of the turn loop.</summary>
     /// <returns><see langword="true"/> when the current player cannot act any more.</returns>
     private bool IsKingdomVanquished() => _session is not null && _session.Kingdom.IsLoss;
+
+    /// <summary>
+    /// Drops the quick info box when the right button is no longer held, the release half of
+    /// <c>MouseRightClick</c> (<c>interface_events.cpp</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的速览在 <c>Dialog::QuickInfo()</c> 里阻塞到松手；端口的场景自己管帧，面板从
+    /// <see cref="AdventureMapDialogs.PresentQuickInfo"/> 交回来，所以松手这一帧由场景收掉。
+    /// </remarks>
+    /// <param name="events">Event state of this frame.</param>
+    private void UpdateQuickInfo(LocalEvent events)
+    {
+        if (_quickInfo is not null && !events.IsMouseRightButtonPressed)
+        {
+            _quickInfo = null;
+        }
+    }
+
+    /// <summary>
+    /// Shows the quick info of the tile under <paramref name="point"/>, the <c>--quick-info</c> of the command line.
+    /// </summary>
+    /// <param name="point">Pointer in logical pixels.</param>
+    /// <returns><see langword="false"/> when the pointer is not over the map or the box cannot be built.</returns>
+    public bool ShowQuickInfoAt(Point point)
+    {
+        GameArea gameArea = _interface.GetGameArea();
+
+        if (!gameArea.Roi.Contains(point))
+        {
+            return false;
+        }
+
+        int index = gameArea.GetValidTileIdFromPoint(point);
+
+        if (index < 0 || index >= _world.Size)
+        {
+            return false;
+        }
+
+        _interface.MouseCursorAreaPressRight(index);
+
+        return _quickInfo is not null;
+    }
 
     /// <summary>
     /// Carries the interface focus back into the session.
@@ -610,11 +625,13 @@ public sealed class AdventureMapScene : IScene
     /// </summary>
     /// <remarks>
     /// 整块屏幕现在由 <c>Interface::AdventureMap::redraw</c>（端口的 <see cref="AdventureInterface.RedrawInterface"/>）画：
-    /// 它按参考的次序铺边框、画地图区、雷达、图标条、按钮与石头状态面板。场景只做三件它不管的事——把索引缓冲标脏
-    /// （像素直写报告不了自己）、画自己的诊断状态行、再叠上两个浮层。
+    /// 它按参考的次序铺边框、画地图区、雷达、图标条、按钮与石头状态面板。场景只做两件它不管的事——把索引缓冲标脏
+    /// （像素直写报告不了自己）、再叠上两个浮层。
     /// </remarks>
     public void DrawFrame(in DiagnosticsState state)
     {
+        _ = state;
+
         // The View World window owns the whole display, the way the reference draws it straight into
         // the screen buffer and covers the adventure map with its side panel.
         if (_viewWorld is { } viewWorld)
@@ -629,8 +646,6 @@ public sealed class AdventureMapScene : IScene
         _frame.InvalidateAll();
         _interface.RedrawInterface(Redraw.All);
 
-        DrawStatusBar(state);
-
         // The outline of a grabbed panel goes over the map and under the dialogs, the order the reference
         // draws it in inside its drag loop.
         _drag?.Draw(_frame.Pixels);
@@ -642,8 +657,7 @@ public sealed class AdventureMapScene : IScene
             options.Draw();
         }
 
-        // The right button popup goes last: it is a tooltip over everything, including the terrain it
-        // names, Interface::displayStandardPopupWindow() drawing straight into the display.
+        // The quick info goes last: it is a tooltip over everything, including the terrain it names.
         _quickInfo?.Draw(_frame.Pixels);
     }
 
@@ -656,122 +670,21 @@ public sealed class AdventureMapScene : IScene
     public void ScrollBy(int dx, int dy) => _interface.GetGameArea().ShiftCenter(new Point(dx, dy));
 
     /// <summary>
-    /// Records the pointer. The radar, the panels and the terrain are no longer hit tested here: the ported
-    /// screen reads the pointer out of <see cref="LocalEvent"/> once a frame and dispatches the three cursor
-    /// handlers (<c>interface_events.cpp</c>). The scene keeps the point only for the click it still owns.
-    /// </summary>
-    /// <param name="cursor">Pointer in logical pixels, or <see langword="null"/> outside the window.</param>
-    public void SetCursor(Point? cursor) => _cursor = cursor;
-
-    /// <summary>
-    /// Records the left button and lays the route of the focus hero when the press lands on the terrain.
+    /// Asks the host for the town screen of <paramref name="castle"/>, the <c>Game::OpenCastleDialog()</c> the
+    /// reference opens when the left button lands on a town of the acting kingdom.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 面板、雷达与状态石的点击已经归屏幕（<c>ProcessPanels</c> 的叠放次序与三路光标处理），这里只剩地图区里的两件事：
-    /// 点自己的城要进城堡屏（<see cref="TakeCastleRequest"/>，参考的 <c>Game::OpenCastleDialog</c>），点地形给焦点
-    /// 英雄铺路。
-    /// </para>
-    /// <para>
-    /// 瓦片按 <c>GameArea::GetValidTileIdFromPoint()</c> 换算，不再自己减视口原点：卷屏已经归地图区，场景手里那份
-    /// 偏移是旧的，按它算会偏半格。
-    /// </para>
+    /// 参考里 <c>MouseCursorAreaClickLeft</c> 直接调阻塞的 <c>Game::OpenCastleDialog</c>；端口的城堡屏是宿主的场景，
+    /// 所以屏幕把这个调用转成一次请求（<see cref="AdventureInterface.OpenCastleScreen"/>），场景记下来交给宿主
+    /// （<see cref="TakeCastleRequest"/>）。点地形铺路、面板与雷达的点击都在屏幕里，不经过这里。
     /// </remarks>
-    /// <param name="down">Whether the left button is now held.</param>
-    public void SetLeftButton(bool down)
+    /// <param name="castle">The town to open.</param>
+    /// <returns>Always <see langword="true"/>: the request is queued for the host.</returns>
+    public bool RequestCastleScreen(CastleTown castle)
     {
-        GameArea gameArea = _interface.GetGameArea();
+        _castleRequest = castle;
 
-        if (!down || _cursor is not { } cursor || !gameArea.Roi.Contains(cursor))
-        {
-            return;
-        }
-
-        int index = gameArea.GetValidTileIdFromPoint(cursor);
-
-        if (index < 0 || index >= _world.Size)
-        {
-            return;
-        }
-
-        int tileX = index % _world.Width;
-        int tileY = index / _world.Width;
-
-        // A press on one of the acting kingdom's towns asks for its screen. The town answers for its whole
-        // footprint (gate, walls, roofs), which is the `world.getTile( index ).getObject() == MP2::OBJ_CASTLE`
-        // branch of MouseLeftClick.
-        if (_session is { } acting
-            && _world.GetCastle(tileX, tileY) is { } town
-            && town.Color == acting.CurrentColor)
-        {
-            _castleRequest = town;
-
-            return;
-        }
-
-        // The reference's MouseLeftClick on the terrain: the focus hero gets the route of world.getPath() and
-        // starts walking. Without a session (a map with no human player) the press stays a drag.
-        if (_session is { } session && session.FocusHero is { } hero)
-        {
-            session.SetPath(hero, index);
-        }
-    }
-
-    /// <summary>
-    /// The open right button popup, <see langword="null"/> while nothing is held, the
-    /// <c>displayStandardPopupWindow()</c> of <c>MouseRightClick</c>.
-    /// </summary>
-    public StandardPopupWindow? QuickInfo => _quickInfo;
-
-    /// <summary>
-    /// Records the right button: a press opens the quick info of the tile under the cursor, a release
-    /// closes it.
-    /// </summary>
-    /// <remarks>
-    /// The reference shows the popup while the button is held (<c>MouseRightClick</c> opens it,
-    /// <c>MouseRightButtonRelease</c> closes it), so the pane never blocks the map. A popup on the panel,
-    /// on the radar or outside the viewport is not shown: the reference only opens it over the terrain.
-    /// </remarks>
-    /// <param name="down">Whether the right button is now held.</param>
-    public void SetRightButton(bool down)
-    {
-        _quickInfo = null;
-
-        if (!down
-            || _quickInfoFrame is null
-            || _fonts is null
-            || _cursor is not { } cursor)
-        {
-            return;
-        }
-
-        GameArea gameArea = _interface.GetGameArea();
-
-        if (!gameArea.Roi.Contains(cursor))
-        {
-            return;
-        }
-
-        int index = gameArea.GetValidTileIdFromPoint(cursor);
-
-        if (index < 0 || index >= _world.Size)
-        {
-            return;
-        }
-
-        Tile mapTile = _world.GetTile(index);
-
-        // 没有会话就没有「轮到谁」，也就没有王国可问；此时只给不需要世界状态的那几支文字。
-        string text = _session is null
-            ? QuickInfoText.ForTile(mapTile)
-            : QuickInfoText.ForTile(mapTile, _world, _session.CurrentColor, FocusHero);
-
-        _quickInfo = StandardPopupWindow.TryCreate(
-            _quickInfoFrame,
-            _fonts.Small,
-            text,
-            cursor,
-            new Rect(new Point(0, 0), _frame.Size));
+        return true;
     }
 
     /// <summary>
@@ -911,42 +824,5 @@ public sealed class AdventureMapScene : IScene
 
         int width = _view.Map.Width;
         _interface.GetGameArea().SetCenter(new Point(hero.MapIndex % width, hero.MapIndex / width));
-    }
-
-    private void DrawStatusBar(in DiagnosticsState state)
-    {
-        // The line sits on the bottom border of the frame, over a dark strip of its own: the border art
-        // is too light for SMALFONT on its own, and this strip is the only row the frame leaves free.
-        ImageOps.FillRect(_frame.Pixels, _statusBar, _dark);
-
-        if (_fonts is null)
-        {
-            return;
-        }
-
-        IGlyphSource font = _fonts.Small;
-        int top = _statusBar.Y;
-        int leftEdge = _statusBar.X + StatusBarPadding;
-
-        Point centre = _interface.GetGameArea().CurrentCenterInPixels;
-        string right = FormattableString.Invariant($"center {centre.X},{centre.Y}  |  v{BuildInfo.Version}");
-        int rightX = Math.Max(
-            _statusBar.Right - StatusBarPadding - GlyphText.Measure(font, right), leftEdge);
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(rightX, top), right);
-
-        // With a started game the status line carries the two things the player needs at a glance in the
-        // reference: the day (StatusPanel's date) and whose turn it is (the flag next to it). A viewer map
-        // keeps the size instead, because it has neither.
-        string left = _session is { } session
-            ? $"{MapName}  day {session.DayCount}  {session.CurrentColor}"
-            : $"{MapName}  {_view.Map.Width}x{_view.Map.Height}";
-        int width = Math.Max(rightX - StatusBarGap - leftEdge, 0);
-        if (width <= 0)
-        {
-            return;
-        }
-
-        Rect line = new(leftEdge, top, width, _statusBar.Height);
-        GlyphText.DrawLine(font, _frame.Pixels, new Point(line.X, top), left, line);
     }
 }

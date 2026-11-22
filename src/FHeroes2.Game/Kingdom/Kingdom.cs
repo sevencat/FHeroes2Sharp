@@ -348,6 +348,16 @@ public sealed partial class Kingdom
     }
 
     /// <summary>
+    /// The treasury, <c>Kingdom::GetFunds()</c> (<c>kingdom.h:120</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考返回的是 <c>const Funds &amp;</c>，调用方拿它去算「这次进账还剩多少装得下」之类的差值；端口每次复制一份，
+    /// 于是调用方改不到账本本身——那正是 <see cref="AddFundsResource"/> 的活。
+    /// </remarks>
+    /// <returns>What the kingdom owns right now.</returns>
+    public Funds GetFunds() => _funds;
+
+    /// <summary>
     /// Whether the treasury holds everything <paramref name="funds"/> asks for, <c>AllowPayment()</c>.
     /// </summary>
     /// <remarks>

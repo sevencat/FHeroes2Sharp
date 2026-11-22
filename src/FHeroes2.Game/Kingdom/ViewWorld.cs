@@ -188,8 +188,7 @@ public static class ViewWorldZoomLevels
     /// <param name="color">The color to convert.</param>
     /// <returns>Zero to five for the six players, six for an unowned object, <see cref="UnknownIndex"/> otherwise.</returns>
     /// <remarks>
-    /// 中立（`NONE`）与参考里已废弃的 `UNUSED` 都落到第六格；端口没有 `Unused`，于是任何非六色的值
-    /// （包括 `Blue | Green` 这类组合）都走 `Unknown` 分支。
+    /// 中立（`NONE`）与 `UNUSED` 都落到第六格；其余非六色的值（包括 `Blue | Green` 这类组合）走 `Unknown` 分支。
     /// </remarks>
     public static uint ColorToOffsetIcn(PlayerColor color) => color switch
     {
@@ -200,6 +199,7 @@ public static class ViewWorldZoomLevels
         PlayerColor.Orange => 4,
         PlayerColor.Purple => 5,
         PlayerColor.None => 6,
+        PlayerColor.Unused => 6,
         _ => UnknownIndex,
     };
 

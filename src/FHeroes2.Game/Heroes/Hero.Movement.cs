@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Maps;
+using CastleTown = FHeroes2.Game.Castle.Castle;
 using WorldMap = FHeroes2.Game.World;
 
 namespace FHeroes2.Game.Heroes;
@@ -25,10 +26,8 @@ namespace FHeroes2.Game.Heroes;
 /// <para>
 /// <b>What is not here.</b> <c>playHeroWalkingSound()</c> (audio, and a table of <c>M82</c> ids),
 /// <c>FadeOut()</c>/<c>FadeIn()</c> (they loop on the display and the event queue),
-/// <c>_isInVisibleMapArea()</c> (it asks the game area for its visible tiles), and the castle and ship branches
-/// of <c>isNeedStayFrontObject()</c>: there is no castle to ask about and no ship to disembark from, so both
-/// fall through to the object table. The four calls that need a subsystem are routed to
-/// <see cref="MovementHandler"/>.
+/// <c>_isInVisibleMapArea()</c> (it asks the game area for its visible tiles). The four calls that need a
+/// subsystem are routed to <see cref="MovementHandler"/>.
 /// </para>
 /// <para>
 /// <b>Port substitutions.</b> The reference reads the story books <c>world</c>, <c>Settings</c> and the
@@ -818,10 +817,20 @@ public sealed partial class Hero
     /// <c>isNeedStayFrontObject()</c> (<c>heroes_move.cpp:162</c>).
     /// </summary>
     /// <remarks>
-    /// Three cases in the reference, two of them here: a castle that is not friendly and still garrisoned, and
-    /// a ship master stepping onto a tile where he would have to disembark. Neither castle nor ship exists in
-    /// the port, so both fall through to the object table, which is the third case and the common one: flags,
-    /// pickups and guarded stacks are walked up to but not onto.
+    /// <para>
+    /// 参考：<c>heroes_move.cpp:162-180</c>。三支，按参考的顺序判：
+    /// </para>
+    /// <list type="number">
+    /// <item>
+    /// 城：<b>不是友方的</b>、且城里有兵，就停在门口（友方的城直接走进去，空的城也直接走进去接管）。
+    /// </item>
+    /// <item>
+    /// 船长的下一步是能上岸的陆地：停在水上，让动作层去问「下不下船」。
+    /// </item>
+    /// <item>
+    /// 其余交给对象表：旗帜、宝物、守军都是走到跟前而不踩上去。
+    /// </item>
+    /// </list>
     /// </remarks>
     /// <param name="world">The world the hero walks on.</param>
     /// <param name="tileIndex">Tile the hero is about to enter.</param>
@@ -830,7 +839,26 @@ public sealed partial class Hero
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        return Mp2ObjectTypes.IsNeedStayFront(world.GetTile(tileIndex).MainObjectType);
+        Tile tile = world.GetTile(tileIndex);
+
+        if (tile.MainObjectType == Mp2ObjectType.Castle)
+        {
+            CastleTown? castle = world.GetCastleEntrance(tileIndex);
+
+            if (castle is null)
+            {
+                return false;
+            }
+
+            return !IsFriends(castle.Color) && castle.GetActualArmy(world.GetHero(castle)).IsValid;
+        }
+
+        if (IsShipMaster && tile.IsSuitableForDisembarkation())
+        {
+            return true;
+        }
+
+        return Mp2ObjectTypes.IsNeedStayFront(tile.MainObjectType);
     }
 
     /// <summary>

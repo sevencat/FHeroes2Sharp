@@ -295,6 +295,21 @@ public sealed partial class Hero
     }
 
     /// <summary>
+    /// The land region the hero left when he took a boat, <c>Heroes::_lastGroundRegion</c> (<c>heroes.h:801</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在 <c>ActionToBoat()</c> 里写下它，然后<b>没有任何读者</b>——AI 与存档各自存一份自己的解释。
+    /// 端口照抄，只为让「上船前在哪块陆地」这件事在状态里有据可查；默认 0 与参考一致。
+    /// </remarks>
+    public uint LastGroundRegion { get; private set; }
+
+    /// <summary>
+    /// Records the region a boat was pushed off from, <c>Heroes::setLastGroundRegion()</c> (<c>heroes.h:840</c>).
+    /// </summary>
+    /// <param name="region">Region of the tile the hero stood on before boarding.</param>
+    public void SetLastGroundRegion(uint region) => LastGroundRegion = region;
+
+    /// <summary>
     /// Opacity the hero is drawn with, <c>Heroes::getAlphaValue()</c> (<c>heroes.h:679-682</c>).
     /// </summary>
     /// <remarks>

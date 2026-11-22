@@ -7,6 +7,7 @@ using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
 using PlayerKingdom = FHeroes2.Game.Kingdom.Kingdom;
@@ -41,27 +42,40 @@ public sealed partial class HeroActions
 {
     private readonly Hero _hero;
     private readonly Kingdoms _kingdoms;
+    private readonly IHeroActionHost _host;
 
     /// <summary>
     /// Binds the actions to a hero and the container his kingdom lives in.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 收 <see cref="Kingdoms"/> 而不是 <see cref="Kingdom"/>：英雄的颜色是固定的，王国却是可查的
     /// （<see cref="Kingdoms.GetKingdom"/> 对非法颜色返回第七个槽），于是调用方不必先自己解析一遍。
+    /// </para>
+    /// <para>
+    /// <paramref name="host"/> 是参考里「停下来问玩家/开界面」的那些点，见 <see cref="IHeroActionHost"/>。
+    /// 缺省用 <see cref="NullHeroActionHost"/>：每一步都答「不」、不开战斗界面、不开城堡屏——AI 与测试要的
+    /// 正是这个，而人类那一支由界面层传自己的实现。
+    /// </para>
     /// </remarks>
     /// <param name="hero">The hero performing the action.</param>
     /// <param name="kingdoms">The kingdoms of the world.</param>
-    public HeroActions(Hero hero, Kingdoms kingdoms)
+    /// <param name="host">The layer above, or <see langword="null"/> for a host that is not there.</param>
+    public HeroActions(Hero hero, Kingdoms kingdoms, IHeroActionHost? host = null)
     {
         ArgumentNullException.ThrowIfNull(hero);
         ArgumentNullException.ThrowIfNull(kingdoms);
 
         _hero = hero;
         _kingdoms = kingdoms;
+        _host = host ?? NullHeroActionHost.Instance;
     }
 
     /// <summary>The hero acting, <c>*this</c> of the reference's free functions.</summary>
     public Hero Hero => _hero;
+
+    /// <summary>The layer above: the player's answers, the battle screen and the castle screen.</summary>
+    public IHeroActionHost Host => _host;
 
     /// <summary>The hero's kingdom, <c>hero.GetKingdom()</c>.</summary>
     private PlayerKingdom Kingdom => _kingdoms.GetKingdom(_hero.Color);
@@ -1110,26 +1124,32 @@ public sealed partial class HeroActions
     /// <para>
     /// 参考：<c>heroes_action.cpp:3313-3350</c>。两句独立：没来过就登记<b>本地</b>访问并加 400 移动点
     /// （<see cref="GameStatic.GetMovementPointBonus"/>，与「马厩给 500」的常见说法不同，参考里它和水坑共用
-    /// 一个 <c>case</c>）；若队伍里有骑兵，再走一遍「免费升级骑兵」的流程。
+    /// 一个 <c>case</c>）；若队伍里有骑兵，再走一遍「免费升级骑兵」的流程（<see cref="ActionToUpgradeArmyObject"/>）。
     /// </para>
     /// <para>
-    /// 升级那一半（<c>ActionToUpgradeArmyObject</c>）要军队升级的费用与确认框，还没搬——所以本方法只管马。
-    /// 马厩属于一周寿命的对象，英雄 <see cref="Hero.ActionNewWeek"/> 之后可以重来。
+    /// 两句的<b>记录</b>是分开的：访问记录只管加移动点，升级只看队伍里有没有骑兵——所以「来过一次、后来才招到
+    /// 骑兵」的人回来照样能升级，只是拿不到第二次移动点。马厩属于一周寿命的对象，英雄
+    /// <see cref="Hero.ActionNewWeek"/> 之后可以重来。
     /// </para>
     /// </remarks>
     /// <param name="tileIndex">The tile the stables stand on.</param>
-    /// <returns><see langword="true"/> when the fresh horse was taken.</returns>
-    public bool ActionToStables(int tileIndex)
+    /// <returns>Whether the fresh horse was taken and what happened to the cavalry.</returns>
+    public StablesResult ActionToStables(int tileIndex)
     {
-        if (_hero.IsObjectTypeVisited(Mp2ObjectType.Stables))
+        bool tookFreshHorse = false;
+
+        if (!_hero.IsObjectTypeVisited(Mp2ObjectType.Stables))
         {
-            return false;
+            _hero.SetVisited(tileIndex, Mp2ObjectType.Stables);
+            _hero.IncreaseMovePoints(GameStatic.GetMovementPointBonus(Mp2ObjectType.Stables));
+            tookFreshHorse = true;
         }
 
-        _hero.SetVisited(tileIndex, Mp2ObjectType.Stables);
-        _hero.IncreaseMovePoints(GameStatic.GetMovementPointBonus(Mp2ObjectType.Stables));
+        ArmyUpgradeResult upgrade = _hero.Army.HasMonster(MonsterType.Cavalry)
+            ? ActionToUpgradeArmyObject(Mp2ObjectType.Stables)
+            : new ArmyUpgradeResult(ArmyUpgradeOutcome.NothingToUpgrade, []);
 
-        return true;
+        return new StablesResult(tookFreshHorse, upgrade);
     }
 
     /// <summary>

@@ -64,10 +64,11 @@ public sealed partial class MapSphinx : MapObject
     }
 
     /// <summary>The resources the sphinx gives to a hero who answers correctly.</summary>
-    public Funds Resources { get; private init; }
+    /// <remarks>不是 <c>init</c>：答案对了之后由 <see cref="Reset"/> 清空，第二次来就没什么可给了。</remarks>
+    public Funds Resources { get; private set; }
 
     /// <summary>The artifact the sphinx gives; <see cref="ArtifactType.Unknown"/> for none.</summary>
-    public ArtifactType Artifact { get; private init; }
+    public ArtifactType Artifact { get; private set; }
 
     /// <summary>The correct answers, in lower case.</summary>
     public IReadOnlyList<string> Answers { get; private set; } = [];
@@ -96,7 +97,11 @@ public sealed partial class MapSphinx : MapObject
     /// Whether the sphinx is worth asking at all, <c>MapSphinx::valid</c> (<c>maps_objects.h:117</c>): a
     /// sphinx without a reward or without a riddle is dropped by the caller.
     /// </summary>
-    public bool IsValid { get; private init; }
+    /// <remarks>
+    /// 答对一次就由 <see cref="Reset"/> 清成 <see langword="false"/>：`valid` 在这里的意思是「还有奖可拿」，
+    /// 不是「这块瓦片还在」。
+    /// </remarks>
+    public bool IsValid { get; private set; }
 
     /// <summary>
     /// Whether only the first four characters of an answer count, <c>isTruncatedAnswer</c>. The MP2 loader
@@ -141,6 +146,20 @@ public sealed partial class MapSphinx : MapObject
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Empties the sphinx once it has paid out, <c>MapSphinx::reset()</c> (<c>maps_objects.h:120</c>).
+    /// </summary>
+    /// <remarks>
+    /// 谜语与答案都留在瓦片上（参考也一样，没人会去擦它们），清的只有<b>奖品</b>和 `valid`：再来的人听到的
+    /// 还是同一段谜语，只是答对了也没什么可拿。
+    /// </remarks>
+    public void Reset()
+    {
+        Artifact = ArtifactType.Unknown;
+        Resources = default;
+        IsValid = false;
     }
 
     /// <summary>

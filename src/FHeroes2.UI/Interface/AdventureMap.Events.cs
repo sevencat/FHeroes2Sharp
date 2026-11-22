@@ -285,7 +285,7 @@ public sealed partial class AdventureMap
             return;
         }
 
-        hero.ActionSpellCast(spell, World.Current);
+        hero.ActionSpellCast(spell, World.Current, _spellCastHost);
 
         // The spell consumes spell points (and maybe movement points) and can move the hero, so the terrain music
         // and the ambient sounds have to be worked out again.
@@ -630,7 +630,7 @@ public sealed partial class AdventureMap
         }
         else if (InterfaceFocus.GetFocusCastle() is { } castle)
         {
-            _dialogs.OpenCastleDialog(castle);
+            OpenCastleScreenOf(castle);
         }
 
         return AdventureEventResult.Cancel;
@@ -647,7 +647,7 @@ public sealed partial class AdventureMap
         }
         else if (InterfaceFocus.GetFocusCastle() is { } castle)
         {
-            _dialogs.OpenCastleDialog(castle);
+            OpenCastleScreenOf(castle);
         }
     }
 

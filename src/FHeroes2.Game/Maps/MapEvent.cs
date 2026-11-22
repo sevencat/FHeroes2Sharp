@@ -20,8 +20,8 @@ namespace FHeroes2.Game.Maps;
 /// <para>
 /// The reference keeps a <c>secondarySkill</c> and an <c>experience</c> field as well. The MP2 loader never
 /// writes them — only the newer map format does, and a save carries them from 1.1.06 on — so reading an MP2
-/// block leaves them at their empty defaults. The <c>isAllow()</c> and <c>SetVisited()</c> helpers are left for
-/// the code that visits an event: nothing reads this object yet.
+/// block leaves them at their empty defaults. <see cref="IsAllow"/> and <see cref="SetVisited"/> are consumed by
+/// <c>HeroActions.ActionToEvent</c>, which is also the only place that touches this object after loading.
 /// </para>
 /// </remarks>
 public sealed partial class MapEvent : MapObject
@@ -67,7 +67,11 @@ public sealed partial class MapEvent : MapObject
     public bool IsSingleTimeEvent { get; private init; }
 
     /// <summary>The colors the event fires for; a bit set of <see cref="PlayerColor"/>.</summary>
-    public PlayerColor Colors { get; private init; }
+    /// <remarks>
+    /// 不是 <c>init</c>：一次性事件触发后由 <see cref="SetVisited"/> 把它清成 0，从此对谁都不再触发
+    /// （<c>maps_objects.h:81-86</c>）。瓦片与对象本身都还在，只是再也放不出东西来。
+    /// </remarks>
+    public PlayerColor Colors { get; private set; }
 
     /// <summary>The message of the event, empty when the block carries none.</summary>
     public string Message { get; private set; } = string.Empty;
@@ -89,6 +93,31 @@ public sealed partial class MapEvent : MapObject
     /// (<c>world.cpp:1304-1309</c>).
     /// </summary>
     internal void FixFrenchCharacters() => Message = MapTextCodec.FixFrenchCharacters(Message);
+
+    /// <summary>
+    /// Whether the event fires for a player of this color, <c>MapEvent::isAllow()</c> (<c>maps_objects.h:81</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只有一条规矩：颜色对得上。已经触发过的一次性事件 <see cref="Colors"/> 是 0，于是对谁都不再成立——
+    /// 这个对象不会变脏，脏的是它自己的颜色位。
+    /// </remarks>
+    /// <param name="color">The color of the hero's kingdom.</param>
+    /// <returns><see langword="true"/> when the event applies.</returns>
+    public bool IsAllow(PlayerColor color) => (Colors & color) != 0;
+
+    /// <summary>
+    /// Marks the event as used up, <c>MapEvent::SetVisited()</c> (<c>maps_objects.h:84</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只有一次性事件会清颜色；常驻事件（收过路费那种）被踩多少次都该照旧生效。
+    /// </remarks>
+    public void SetVisited()
+    {
+        if (IsSingleTimeEvent)
+        {
+            Colors = PlayerColor.None;
+        }
+    }
 
     /// <summary>
     /// Reads the block of a ground event, <c>MapEvent::LoadFromMP2()</c> (<c>maps_objects.cpp:44</c>).

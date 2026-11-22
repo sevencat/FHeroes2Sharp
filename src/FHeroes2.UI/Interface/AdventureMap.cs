@@ -65,6 +65,30 @@ public sealed partial class AdventureMap : BaseInterface
     public AdventureMapDialogs Dialogs => _dialogs;
 
     /// <summary>
+    /// Takes over a town screen, the <c>Game::OpenCastleDialog()</c> call of the reference that the port routes to a
+    /// scene: returning <see langword="true"/> means the host switched the scene itself.
+    /// </summary>
+    /// <remarks>
+    /// 参考的城堡屏是一个阻塞的模态循环（<c>Game::OpenCastleDialog</c>），端口的城堡屏是宿主的一个场景
+    /// （<c>CastleScene</c>），所以这里留一个钩子：宿主接管就返回 <see langword="true"/>，没人接管就退回屏幕自己的
+    /// 模态窗口（<see cref="AdventureMapDialogs.OpenCastleDialog"/>）。与退出热键交给宿主的做法一样，这是「谁换模式」
+    /// 的显式委托，不是兜底。
+    /// </remarks>
+    public Func<CastleTown, bool>? OpenCastleScreen { get; set; }
+
+    /// <summary>
+    /// Opens a town screen, <c>Game::OpenCastleDialog()</c>: the host first, the modal window when it declines.
+    /// </summary>
+    /// <param name="castle">The town to show.</param>
+    private void OpenCastleScreenOf(CastleTown castle)
+    {
+        if (OpenCastleScreen?.Invoke(castle) != true)
+        {
+            _dialogs.OpenCastleDialog(castle);
+        }
+    }
+
+    /// <summary>
     /// Tells the screen which map it draws and where, the data the View World event reads off the reference's
     /// <c>Interface::AdventureMap</c> (<c>GetGameArea().GetROI()</c> and <c>GetVisibleTileROI()</c>).
     /// </summary>
@@ -120,6 +144,7 @@ public sealed partial class AdventureMap : BaseInterface
     {
         _display = display;
         _audioManager = audioManager;
+        _spellCastHost = new SpellCastHost(this);
     }
 
     /// <summary>
@@ -572,7 +597,8 @@ public sealed partial class AdventureMap : BaseInterface
 
         if ((hideInterface && settings.IsShowRadar) || (combined & (Redraw.RadarCursor | Redraw.Radar)) != 0)
         {
-            Radar.RedrawRadar(combined.HasFlag(Redraw.Radar), Players.HumanColors());
+            // 参考用当前玩家的盟友色：Hot Seat 里换人也要换雷达的雾（interface_radar.cpp:243）。
+            Radar.RedrawRadar(combined.HasFlag(Redraw.Radar), Players.FriendColors());
         }
 
         if ((hideInterface && settings.IsShowIcons) || combined.HasFlag(Redraw.Icons))

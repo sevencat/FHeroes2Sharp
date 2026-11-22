@@ -721,7 +721,7 @@ public sealed partial class AdventureMap
                 return AdventurePanelResult.Cancel;
 
             case IconsPanelActionKind.OpenCastleDialog:
-                _dialogs.OpenCastleDialog(action.Castle!, events);
+                OpenCastleScreenOf(action.Castle!);
 
                 return AdventurePanelResult.Cancel;
 

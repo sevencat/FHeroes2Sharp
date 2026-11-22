@@ -98,7 +98,7 @@ public sealed partial class AdventureMap
             }
             else
             {
-                _dialogs.OpenCastleDialog(otherCastle);
+                OpenCastleScreenOf(otherCastle);
             }
 
             break;

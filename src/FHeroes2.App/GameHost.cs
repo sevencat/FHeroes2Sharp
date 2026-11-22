@@ -283,6 +283,15 @@ public sealed class GameHost : IDisposable
                 break;
             }
 
+            // --cursor is the synthetic pointer of a screenshot: the real one must not steal the hover
+            // state, so the synthetic position is pushed into the event state after the real events.
+            // Scenes that read the pointer out of LocalEvent (the adventure map, the View World window)
+            // then hover exactly where the command line asked.
+            if (_syntheticCursor && _options.Cursor is { } syntheticCursor)
+            {
+                _le.OnMouseMotion(syntheticCursor);
+            }
+
             // --left-click replays one click from inside the loop, i.e. after the event batch and
             // before the scene update, which is the frame order a player produces. Doing it in
             // CreateScenes would skip the first frames of the new scene.
@@ -384,17 +393,12 @@ public sealed class GameHost : IDisposable
                         }
                         else if (_adventure is { } moving)
                         {
-                            Point? cursor = ToLogical(evt.Motion.X, evt.Motion.Y);
-
                             // The View World window drags its map with the same left button, so the
-                            // pointer goes to the window while it is open.
+                            // pointer goes to the window while it is open; the adventure map itself
+                            // reads the pointer out of LocalEvent.
                             if (moving.ViewWorld is { } viewWorld)
                             {
-                                viewWorld.DragTo(cursor);
-                            }
-                            else
-                            {
-                                moving.SetCursor(cursor);
+                                viewWorld.DragTo(ToLogical(evt.Motion.X, evt.Motion.Y));
                             }
                         }
                         else
@@ -421,7 +425,6 @@ public sealed class GameHost : IDisposable
                         _castle?.SetCursor(null);
                         _editorMenu?.SetCursor(null);
                         _editor?.SetCursor(null);
-                        _adventure?.SetCursor(null);
                         _adventure?.ViewWorld?.DragTo(null);
                         _menu?.SetCursor(null);
                     }
@@ -848,21 +851,8 @@ public sealed class GameHost : IDisposable
             }
 
             // The left button walks the hero, the right one shows the quick info of the tile under the
-            // pointer for as long as it is held (Interface::MouseRightClick).
-            if (!_syntheticCursor)
-            {
-                adventure.SetCursor(ToLogical(button.X, button.Y));
-            }
-
-            if (button.Button == LeftMouseButton)
-            {
-                adventure.SetLeftButton(button.Down);
-            }
-            else if (button.Button == RightMouseButton)
-            {
-                adventure.SetRightButton(button.Down);
-            }
-
+            // pointer: both arrive through LocalEvent, which ProcessTurnFrame() dispatches to the three
+            // cursor handlers (interface_events.cpp). The host has nothing left to hand over.
             return false;
         }
 
@@ -1837,11 +1827,9 @@ public sealed class GameHost : IDisposable
         // --cursor so the frame can be captured.
         if (_options.QuickInfo && _adventure is { } infoMap && _options.Cursor is { } infoCursor)
         {
-            infoMap.SetCursor(infoCursor);
-            infoMap.SetRightButton(true);
-            GameLog.Info(infoMap.QuickInfo is { } info
-                ? $"Quick info of the tile under the cursor: '{info.Text}'."
-                : "The quick info of the tile under the cursor is empty.");
+            GameLog.Info(infoMap.ShowQuickInfoAt(infoCursor)
+                ? "The quick info of the tile under the cursor is open."
+                : "--quick-info: the cursor is not over the map area.");
         }
 
         GameLog.Info(_menu is null

@@ -110,30 +110,6 @@ public sealed class HeroActionDispatchTests
     }
 
     [Fact]
-    public void AMonsterIsReportedAsUnsupported()
-    {
-        int monster = At(10, 10);
-
-        HeroActions actions = Actions(
-            out World world,
-            out Hero hero,
-            (monster, Object(Mp2ObjectIcnType.Mons32, 0, Mp2ObjectType.ActionMonster, 71)));
-
-        Place(world, hero, At(9, 10));
-
-        HeroActionResult result = actions.Action(monster, world);
-
-        // 参考在这里进战斗；端口不静默略过，而是明说「还不会」。
-        Assert.Equal(HeroActionKind.Unsupported, result.Kind);
-        Assert.Equal(Mp2ObjectType.Monster, result.ObjectType);
-        Assert.False(result.Changed);
-        Assert.Null(result.Payload);
-
-        // 模式位照参考置上：参考在 switch 之前就置，不管那一支能不能干活。
-        Assert.True(hero.Modes.HasFlag(HeroModes.Action));
-    }
-
-    [Fact]
     public void APatchOfGrassIsNoAction()
     {
         HeroActions actions = Actions(out World world, out Hero hero);

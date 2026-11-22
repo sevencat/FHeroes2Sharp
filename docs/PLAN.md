@@ -78,7 +78,7 @@
 
 | 阶段 | 内容 | 前置 | 规模 | 收口标志 |
 | --- | --- | --- | --- | --- |
-| **P0** | 收桩：G6.9b 第 5–6 步 + J（§5.3） | — | 小 | 冒烟/git 里没有自建绘制，全量测试绿 |
+| **P0** ✅ | 收桩：G6.9b 第 5–6 步 + J（§5.3） | — | 小 | 冒烟/git 里没有自建绘制，全量测试绿 |
 | **P1** | 冒险层闭环：对象交互 + 冒险施法 + Interface 解耦（§5.4） | P0 | 中 | 拾取/访问/施法都能走参考路径 |
 | **P2** | AI 收口：`B7` 的 `HeroesAction`/`HeroesMove`（§4） | P1 | 中 | AI 回合能整局跑完 |
 | **P3** | 战斗界面四篇（§5.6） | P0、P2 | **最大**（约 6 800 行） | 手动打完整场战斗 |
@@ -100,8 +100,8 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 | 2 | `DrawFrame` → `RedrawInterface` | ✅ |
 | 3 | 滚动源 `AdventureMapView` → `GameArea` | ✅（`MapScrollController` 因编辑器仍在用而保留） |
 | 4 | `Update` → `ProcessTurnFrame` + `FinishHumanTurn` | ✅ 拖拽/边缘卷屏、英雄动画、热键、按钮与状态石点击随之回来 |
-| 5 | 输入三路（光标/左键/右键）→ `MouseCursorArea*` | ⬜ **下一步** |
-| 6 | 删六份自建绘制（`MapFrame`/`IconBar`/`Minimap`/`ButtonsPanel`/`StatusPanelPainter` + 场景面板段） | ⚠️ 雷达/按钮面板/状态石已随第 4 步删；余三份等第 5 步后收 |
+| 5 | 输入三路（光标/左键/右键）→ `MouseCursorArea*` | ✅ 全走 `LocalEvent`，场景三方法已删 |
+| 6 | 删六份自建绘制（`MapFrame`/`IconBar`/`Minimap`/`ButtonsPanel`/`StatusPanelPainter` + 场景面板段） | ✅ `StatusPanelPainter` + 场景状态行删除；雷达/按钮面板/图标条随第 4 步删；`Game/AdventureMap` 四件留到 P8 给编辑器 |
 
 第 5 步的落点：`UI/Interface/AdventureMap.Mouse.cs` 里已有 `game_startgame.cpp:1615-1736` 的三个鼠标处理，
 场景的三路输入改调它，光标主题由 `AdventureMap.Cursor.cs` 的 `UpdateCursor` 给出；`AdventureMapView` 的事件段
@@ -109,17 +109,18 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 
 **收桩之后立刻要还的账**（用户同意放到最后统一修）：
 
-1. 视野中心与英雄差约 1.5 格——先排除冒烟模式里 `LocalEvent.Current.CursorPosition` 默认 `(0,0)`
-   落在边带造成的漂移，再对拍 `SetCenter(GetCenterOf(tile))` 与瓦片绘制原点；
-2. 雷达全黑（`Radar.Build` 之后仍空）；
+1. 视野中心与英雄差约 1.5 格——冒烟漂移已排除（`--cursor` 第 5 步起进 `LocalEvent`），
+   剩下的对拍 `SetCenter(GetCenterOf(tile))` 与瓦片绘制原点；
+2. ~~雷达全黑~~ 已修：`Radar._hide` 默认值错（`true` → `false`），另把雾色改 `FriendColors()`；
 3. 地图上的零星条带；
 4. 迷雾在端口里存了两份（`MapFog` 与 `Tile._fogColors`），`World.SyncTilesFog` 只是治标，合并成参考的单份；
 5. 面板拖动只画轮廓、松手不落位（`AdventurePanelResult` 补一个 `Commit` 字段）；
 6. 基线改为「与参考一致」，按参考渲染重新生成并在 `tests/baselines/README.md` 记明差异；
 7. `FinishHumanTurn` 的 `Win`/`Lose`/`HighScore`/战役四支现在只记一行日志，由 P5 与 P4 接管。
 
-**J**：删完自建件后迁测试（`AdventureMapTests` 里针对自建件的用例）、全量 `dotnet test`、
-三件验证（build 0 警告 / test 全绿 / 冒烟退出 0）。
+**J** ✅：`StatusPanelPainterTests`（16 条）随类型一起删，行为由 `StatusPanelTests` 覆盖；其余用例只依赖
+仍保留的 `Game/AdventureMap` 几何。三件验证：build 0 警告 / `dotnet test` 5 481 全绿 / `--enter-map
+--smoke-frames 60` 退出 0。
 
 ### 5.4 P1：冒险层闭环
 
@@ -131,6 +132,26 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
   目的地选取与播放动画；现在直接抛，是 P2 与 AI 施法的共同前置；
 * 解耦：参考 `ai_hero_action.cpp` 的 34 处 `Interface::AdventureMap::Get()`（居中、`setRedraw`、雾方向）
   改成事件或回调，**先定接口再写分支**（这是唯一带架构性的改动）。
+
+**已完成**：
+
+| 项 | 落点 | 状态 |
+| --- | --- | --- |
+| 怪物/城堡/英雄三类遭遇（含战斗入口、占领、失败结算） | `Heroes/HeroActions.Battle.cs`、`HeroActions.Action.cs` 分派 | ✅ |
+| 英雄遣散（战败 / 投降） | `Heroes/Hero.Dismiss.cs` | ✅ |
+| 施法分派与纯状态支（观地、鉴定、召船、次元门、城镇之门/门户、视野、守卫） | `Heroes/Hero.Spells.cs`、`Heroes/IHeroSpellCastHost.cs` | ✅ |
+| 界面侧施法宿主（观地窗口 + 视野文案） | `UI/Interface/AdventureMap.SpellCast.cs` | ✅ |
+| 可取对象：矿/锯木厂/炼金实验室/灯塔、废弃金矿、沉船·坟场·弃船 | `Heroes/HeroActions.Capture.cs` | ✅ |
+| 宝藏点：金字塔、恶魔洞窟 | `Heroes/HeroActions.Treasure.cs` | ✅ |
+| 怪物居所二十一座（白送 / 花钱买 / 先打服）+ 共用的买卖 | `Heroes/HeroActions.Dwelling.cs` | ✅ |
+| 设施类：精灵灯、贸易站、属性四座、炼金术士塔、法师小屋、法师之眼、神谕 | `Heroes/HeroActions.Facility.cs` | ✅ |
+| 狮身人面像、事件瓦片（含 `MapEvent`/`MapSphinx` 两个模型补全） | `Heroes/HeroActions.Landmark.cs` | ✅ |
+| 上下船与海岸、军队升级对象（山丘堡垒/铸造厂/马厩） | `Heroes/HeroActions.Boat.cs`、`Heroes/HeroActions.ArmyUpgrade.cs` | ✅ |
+
+**P1 残留**：漂流瓶（`OBJ_BOTTLE`，要瓦片的 `objectInfo` 留言，数据层还没搬）；次元门目的地框与城镇门户城列表两个
+交互模式（`SpellCastHost` 现答「取消」，不扣法力）；招募窗的地图版（`AskRecruitCount`）、谜语输入框
+（`AskRiddle`）、市场与盗贼公会两份窗口（`OpenMarketplace`/`OpenThievesGuild`）都没有实现方，见 `PROGRESS.md`
+§7.4；`Visions` 的怪物画像元素、`HeroModes.Visions`（参考里没有读者，端口不建）。
 
 ### 5.5 P2：AI 收口
 
@@ -206,14 +227,13 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 ### 5.12 自建删除台账
 
 已删：`Dialogs/FrameBoxChrome.cs`、`Dialogs/StandardWindowChrome.cs`（E-2）、`Widgets/ItemBarLayout.cs`（G2）、
-冒险场景的雷达/按钮面板/状态石三段（P0 第 4 步）。在账：
+冒险场景的雷达/按钮面板/状态石三段（P0 第 4 步）、`Interface/StatusPanelPainter.cs` 与场景的诊断状态行
+（P0 第 6 步）、`AdventureMapView` 的事件段（P0 第 5 步）。在账：
 
 | 端口文件 | 现在的样子 | 由谁接管 | 状态 |
 | --- | --- | --- | --- |
-| `Interface/StatusPanelPainter.cs` | 自算两态状态栏 | `interface_status.cpp` 的 `Interface::StatusPanel` | 场景已不用；类型随 P0 第 6 步删 |
-| `Scenes/AdventureMapScene.cs` 的面板段 | `MapFrame` 美术 + 诊断状态行 | `interface_*.cpp` | 待删（P0 第 6 步） |
-| `AdventureMapView` 的事件段 | 自建事件循环 | `interface_events.cpp` | 待删（P0 第 5 步） |
 | `Game/AdventureMap/MapScrollController.cs` | 自建拖动/边带/滚轮 | `GameArea::QueueEventProcessing` + `ScrollGameArea` | 冒险场景已不用；编辑器仍用，随 P8 删 |
+| `Game/AdventureMap/{MapFrame,IconBar,Minimap,ButtonsPanel}.cs` | 自建绘制/几何 | `interface_*.cpp` | 冒险场景只借 `MapFrame.Viewport` 几何；编辑器仍用，随 P8 删 |
 | `Scenes/MageGuildWindow.cs` | 自建窗口 | `ui_mage_guild.cpp` | 待删（核对后） |
 
 `Widgets/DialogButtonArtwork.cs`、`Widgets/ButtonArtwork.cs` 复核后**保留**（只是取图缝与 1:1 移植，

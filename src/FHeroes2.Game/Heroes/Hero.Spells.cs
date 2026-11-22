@@ -1,9 +1,14 @@
 using System.Diagnostics;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
+using FHeroes2.Game.System;
+using ArmyStack = FHeroes2.Game.Army.Army;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
@@ -235,12 +240,19 @@ public sealed partial class Hero : ISpellBookOwner
     public bool HaveMovePoints(Spell spell) => _movePoints >= spell.MinMovePoints();
 
     /// <summary>
-    /// Whether the hero can cast the spell right now, <c>HeroBase::CanCastSpell()</c>
-    /// (<c>heroes_base.cpp:378-460</c>).
+    /// Whether the hero can cast the spell at all, <c>HeroBase::CanCastSpell()</c>
+    /// (<c>heroes_base.cpp:379-596</c>).
     /// </summary>
     /// <remarks>
-    /// 参考按顺序六道拒绝：没有魔法书、法力不够、没学会、冒险法术要求英雄在某人麾下、船长不能施冒险法术、
-    /// 船长不能再召一条船。后两条是 <c>SHIPMASTER</c> 位（<see cref="IsShipMaster"/>）的另外两个用处。
+    /// <para>
+    /// 只问英雄自己：魔法书、法力、是否学会，以及「冒险法术要英雄在某人麾下」和「船长不能施召船、城镇之门、
+    /// 城镇门户」。最后一条是 <c>SHIPMASTER</c> 位（<see cref="IsShipMaster"/>）的用处之一——参考只拦这三个，
+    /// 不拦观地之类的冒险法术。
+    /// </para>
+    /// <para>
+    /// 参考同一个函数还继续问世界：移动点够不够、附近有没有海、有没有船可召、最近的城是不是自己站的那座、
+    /// 对手还有没有英雄、脚下是不是矿。那些需要 <see cref="World"/>，在 <see cref="CanCastSpell(Spell, World)"/> 里。
+    /// </para>
     /// </remarks>
     /// <param name="spell">The spell to cast.</param>
     /// <returns>Whether the spell would be cast.</returns>
@@ -251,42 +263,501 @@ public sealed partial class Hero : ISpellBookOwner
             return false;
         }
 
-        if (spell.IsAdventure())
+        if (!spell.IsAdventure())
         {
-            // Adventure spells are cast on the map: they need a hero in somebody's service, and a ship master
-            // already stands on water, where the spell would have nothing to act on.
-            return Color != PlayerColor.None && !IsShipMaster;
+            return true;
         }
 
-        // A ship master has a boat already.
-        return !IsShipMaster || spell.Type != SpellType.SummonBoat;
+        // Adventure spells are cast on the map: they need a hero in somebody's service.
+        return IsValid
+            && Color != PlayerColor.None
+            && (!IsShipMaster
+                || spell.Type is not (SpellType.SummonBoat or SpellType.TownGate or SpellType.TownPortal));
     }
 
     /// <summary>
-    /// Casts an adventure-map spell, <c>Heroes::ActionSpellCast()</c> (<c>heroes_spell.cpp:305-436</c>).
+    /// Whether the hero can cast the spell <b>right now</b>, the world half of <c>HeroBase::CanCastSpell()</c>
+    /// (<c>heroes_base.cpp:412-593</c>).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 参考这个函数本身只是分派：先 <see cref="CanCastSpell"/>，再按法术类型转到 <c>ActionSpellViewMines</c>、
-    /// <c>ActionSpellSummonBoat</c>、<c>ActionSpellTownGate</c>、<c>ActionSpellDimensionDoor</c> 等 —— 每一个都要
-    /// 让玩家在地图上点目的地、再放动画与提示框，它们全在 <c>heroes_spell.cpp</c> 的界面段里。
+    /// 参考把两道门写在一个函数里，端口拆成两层：<see cref="CanCastSpell(Spell)"/> 只问英雄，
+    /// 这一层再问世界——每个冒险法术都有一条「现在施了有没有用」的检查，施法界面的灰按钮问的就是它，
+    /// <see cref="ActionSpellCast"/> 之前也要过这一关。
     /// </para>
     /// <para>
-    /// 那些界面动作随冒险地图一起归 S12；端口在这里先立入口，好让地图层的调用点有一个固定的落点。
-    /// </para>
-    /// <para>
-    /// <b>当前状态：抛 <see cref="NotImplementedException"/>。</b>
+    /// 逐个法术与参考对齐：召船要近海、有船可召、有落点；城镇之门要最近的城不是自己脚下且没有英雄驻守
+    /// （参考只看<b>最近</b>那座，更远的空城不算数）；城镇门户要至少一座空城；鉴定术要求本回合没施过且
+    /// 对手还有英雄；视野要求视野内有怪物；守卫术要求脚下是矿、守卫不是鬼魂，且新守卫比旧的强。
     /// </para>
     /// </remarks>
     /// <param name="spell">The spell to cast.</param>
     /// <param name="world">The world the spell acts on.</param>
-    /// <returns>Whether the spell was cast.</returns>
-    /// <exception cref="NotImplementedException">The adventure-map casting dialogs are not ported yet (S12).</exception>
-    public bool ActionSpellCast(Spell spell, World world)
+    /// <returns>Whether the spell would do anything.</returns>
+    public bool CanCastSpell(Spell spell, World world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        throw new NotImplementedException("Heroes::ActionSpellCast() 依赖冒险地图的目的地选取与动画（planv4 S12）。");
+        if (!CanCastSpell(spell) || !spell.IsAdventure())
+        {
+            return false;
+        }
+
+        if (!HaveMovePoints(spell))
+        {
+            return false;
+        }
+
+        switch (spell.Type)
+        {
+            case SpellType.SummonBoat:
+            {
+                if (!SpellInfo.IsHeroNearWater(world, this))
+                {
+                    return false;
+                }
+
+                int boatSource = SpellInfo.GetSummonableBoat(world, this, GetCurrentMapVersion(), Players.Get(Color));
+                int boatDestination = SpellInfo.GetPossibleBoatPosition(world, this);
+
+                return boatSource >= 0 && boatDestination >= 0;
+            }
+
+            case SpellType.TownGate:
+            {
+                CastleTown? castle = FindNearestCastleTownGate(world);
+
+                // 参考先拒「没有城」，再拒「最近的城就是脚下这座」，最后拒「最近的城里有英雄」——
+                // 注意它不往更远的空城找，所以有英雄驻守的最近城会让整个法术无效。
+                return castle is not null && castle.TileIndex != MapIndex && world.GetHero(castle) is null;
+            }
+
+            case SpellType.TownPortal:
+                return FindTownPortalTowns(world).Count > 0;
+
+            case SpellType.IdentifyHero:
+            {
+                GameKingdom kingdom = world.Kingdoms.GetKingdom(Color);
+
+                if (kingdom.Modes.HasFlag(KingdomModes.IdentifyHero))
+                {
+                    return false;
+                }
+
+                // 参考还问 opponentsCanRecruitMoreHeroes()，但那两个分支的答案都是「拒绝」：对手一个英雄都没有时，
+                // 无论还能不能招都白施。所以这里只问有没有英雄。
+                return kingdom.OpponentsHaveHeroes(color => world.Kingdoms.GetKingdom(color));
+            }
+
+            case SpellType.Visions:
+                return world.GetVisibleMonstersAroundHero(this).Count > 0;
+
+            case SpellType.Haunt:
+            case SpellType.SetEGuardian:
+            case SpellType.SetAGuardian:
+            case SpellType.SetFGuardian:
+            case SpellType.SetWGuardian:
+            {
+                Tile tile = world.GetTile(MapIndex);
+
+                if (tile.GetMainObjectType(world, false) != Mp2ObjectType.Mine)
+                {
+                    return false;
+                }
+
+                Troop guardians = world.GetCapturedObject(MapIndex).Guardians;
+
+                if (guardians.Monster == MonsterType.Ghost)
+                {
+                    return false;
+                }
+
+                return spell.Type == SpellType.Haunt
+                    || SpellInfo.GetGuardianMonsterCount(spell, (uint)GetPower()) > guardians.Count;
+            }
+
+            default:
+                return true;
+        }
+    }
+
+    /// <summary>
+    /// Casts an adventure-map spell, <c>Heroes::ActionSpellCast()</c> (<c>heroes_spell.cpp:359-421</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考这个函数自己只是分派：先 <c>CanCastSpell()</c>，再按法术转到 <c>ActionSpellViewMines</c>、
+    /// <c>ActionSpellSummonBoat</c>、<c>ActionSpellTownGate</c>、<c>ActionSpellDimensionDoor</c> 等，
+    /// 最后统一 <c>SpellCasted()</c> 收费。端口的每一支方法在下面，纯状态的部分照参考写，
+    /// 需要玩家给答案或开窗口的四类点交给 <see cref="IHeroSpellCastHost"/>。
+    /// </para>
+    /// <para>
+    /// <b>次元门是例外</b>：参考在它自己的方法里就 <c>SpellCasted()</c> 了，并且返回假以免外层再收一次钱，
+    /// 端口照抄这个约定（返回值是「外层要不要再收钱」，不是「法术失败」）。
+    /// </para>
+    /// <para>
+    /// 淡入淡出、音效、雷达重绘、屏幕居中都不在这里：按 <see cref="IHeroSpellCastHost"/> 的说法，
+    /// 那是调用方按返回值补的效果，不是游戏状态。
+    /// </para>
+    /// </remarks>
+    /// <param name="spell">The spell to cast.</param>
+    /// <param name="world">The world the spell acts on.</param>
+    /// <param name="host">
+    /// Where the player is asked to pick a destination or town and where the View World window and the Visions
+    /// dialogs open; null means <see cref="NullHeroSpellCastHost"/>.
+    /// </param>
+    /// <returns>Whether the cast did something. False when the spell is unknown to the map, when a pick was
+    /// cancelled, or when Dimension Door already paid for itself.</returns>
+    public bool ActionSpellCast(Spell spell, World world, IHeroSpellCastHost? host = null)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        host ??= NullHeroSpellCastHost.Instance;
+
+        // 参考这一行是 assert：调用方必须已经问过 CanCastSpell。
+        if (spell.Type == SpellType.None || spell.IsCombat() || !CanCastSpell(spell, world))
+        {
+            Debug.Assert(false, "An adventure spell is cast through ActionSpellCast without CanCastSpell passing.");
+
+            return false;
+        }
+
+        bool apply = spell.Type switch
+        {
+            SpellType.ViewMines
+                or SpellType.ViewResources
+                or SpellType.ViewArtifacts
+                or SpellType.ViewTowns
+                or SpellType.ViewHeroes
+                or SpellType.ViewAll => ActionSpellView(spell, host),
+            SpellType.IdentifyHero => ActionSpellIdentifyHero(world),
+            SpellType.SummonBoat => ActionSpellSummonBoat(world),
+            SpellType.DimensionDoor => ActionSpellDimensionDoor(world, host),
+            SpellType.TownGate => ActionSpellTownGate(world),
+            SpellType.TownPortal => ActionSpellTownPortal(world, host),
+            SpellType.Visions => ActionSpellVisions(world, host),
+            SpellType.Haunt
+                or SpellType.SetEGuardian
+                or SpellType.SetAGuardian
+                or SpellType.SetFGuardian
+                or SpellType.SetWGuardian => ActionSpellSetGuardian(spell, world),
+            _ => false,
+        };
+
+        if (!apply)
+        {
+            return false;
+        }
+
+        SpellCasted(spell);
+
+        return true;
+    }
+
+    /// <summary>
+    /// The version of the map being played, for the two spell checks that depend on it,
+    /// <c>Settings::getCurrentMapFileInfo()</c>.
+    /// </summary>
+    /// <returns>The version, <see cref="MapVersion.SuccessionWars"/> when no map is chosen yet.</returns>
+    private static MapVersion GetCurrentMapVersion() =>
+        Settings.Get().CurrentMapFileInfo?.Version ?? MapVersion.SuccessionWars;
+
+    /// <summary>
+    /// Opens the View World window on the mode of a view spell, <c>heroes_spell.cpp:108-142</c>.
+    /// </summary>
+    /// <remarks>
+    /// 关掉窗口也算施法成功——参考的六个 <c>ActionSpellView*</c> 全都无条件返回真，法力照扣。
+    /// </remarks>
+    /// <param name="spell">The view spell that was cast.</param>
+    /// <param name="host">Where the window is opened.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private static bool ActionSpellView(Spell spell, IHeroSpellCastHost host)
+    {
+        host.OpenViewWorld(spell.Type switch
+        {
+            SpellType.ViewMines => ViewWorldMode.ViewMines,
+            SpellType.ViewResources => ViewWorldMode.ViewResources,
+            SpellType.ViewArtifacts => ViewWorldMode.ViewArtifacts,
+            SpellType.ViewTowns => ViewWorldMode.ViewTowns,
+            SpellType.ViewHeroes => ViewWorldMode.ViewHeroes,
+            _ => ViewWorldMode.ViewAll,
+        });
+
+        return true;
+    }
+
+    /// <summary>
+    /// Marks the kingdom as seeing enemy heroes this turn, <c>heroes_spell.cpp:144-152</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在这里弹一句「敌人的英雄现在完全可见」；那句话归界面，端口只置位。
+    /// </remarks>
+    /// <param name="world">The world with the kingdom.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private bool ActionSpellIdentifyHero(World world)
+    {
+        GameKingdom kingdom = world.Kingdoms.GetKingdom(Color);
+
+        // CanCastSpell() 已经拒掉了本回合施过的那一次。
+        Debug.Assert(!kingdom.Modes.HasFlag(KingdomModes.IdentifyHero));
+
+        kingdom.SetModes(KingdomModes.IdentifyHero);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Moves a boat under the hero, <c>heroes_spell.cpp:154-182</c>.
+    /// </summary>
+    /// <remarks>
+    /// 顺序与参考一致：先把船从原格拿走，再在新格放下，最后清掉原格的船主颜色。参考的原格「拿走」是
+    /// 动画结束时由 <c>ObjectFadingOutInfo</c> 做的，端口没有动画，所以直接 <see cref="Tile.RemoveMainObject"/>
+    /// ——与 <c>AI::HeroesCastSummonBoat()</c>（<c>AiHeroAction.cs</c>）同一套写法。
+    /// </remarks>
+    /// <param name="world">The world.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private bool ActionSpellSummonBoat(World world)
+    {
+        Debug.Assert(!IsShipMaster);
+
+        int boatDestination = SpellInfo.GetPossibleBoatPosition(world, this);
+        int boatSource = SpellInfo.GetSummonableBoat(world, this, GetCurrentMapVersion(), Players.Get(Color));
+
+        // CanCastSpell() 已经确认船与落点都在。
+        Debug.Assert(boatDestination >= 0 && boatSource >= 0);
+
+        if (boatDestination < 0 || boatSource < 0)
+        {
+            return false;
+        }
+
+        world.GetTile(boatSource).RemoveMainObject(world);
+        world.GetTile(boatDestination).SetBoat(world, Direction.Right, Color);
+        world.GetTile(boatSource).ResetBoatOwnerColor();
+
+        return true;
+    }
+
+    /// <summary>
+    /// Teleports the hero where the player picked, <c>heroes_spell.cpp:184-231</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这里就 <c>SpellCasted()</c> 并返回假，外层因此不再收费；端口保留这个分工，见
+    /// <see cref="ActionSpellCast"/> 的注释。
+    /// </para>
+    /// <para>
+    /// 参考不增 <see cref="DimensionDoorUses"/>：那是 AI 的射程预算（<c>ai_hero_action.cpp:2445</c>），
+    /// 人类施法不记。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world.</param>
+    /// <param name="host">Where the player picks the landing tile.</param>
+    /// <returns>Always <see langword="false"/> — the price is already paid here.</returns>
+    private bool ActionSpellDimensionDoor(World world, IHeroSpellCastHost host)
+    {
+        int destination = host.SelectDimensionDoorDestination(MapIndex, Spell.DimensionDoorDistance(), IsShipMaster);
+
+        if (world.Geometry?.IsValidAbsIndex(destination) != true)
+        {
+            // 玩家取消：不收费，也不动英雄。
+            return false;
+        }
+
+        MovementHandler.Scout(this, destination);
+        MoveToDest(destination, world);
+        SpellCasted(new Spell(SpellType.DimensionDoor));
+        Path.Reset();
+        MovementHandler.ActionNewPosition(this);
+
+        return false;
+    }
+
+    /// <summary>
+    /// Sends the hero to the nearest free town, <c>heroes_spell.cpp:233-253</c>.
+    /// </summary>
+    /// <param name="world">The world.</param>
+    /// <returns>Whether the hero travelled.</returns>
+    private bool ActionSpellTownGate(World world)
+    {
+        Debug.Assert(!IsShipMaster);
+
+        CastleTown? castle = FindNearestCastleTownGate(world);
+
+        if (castle is null)
+        {
+            // 参考这里是 assert：CanCastSpell() 保证了最近的城存在。
+            Debug.Fail("Town Gate is cast by a hero whose kingdom has no town.");
+
+            return false;
+        }
+
+        HeroesTownGate(world, castle);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Sends the hero to the town the player picked, <c>heroes_spell.cpp:255-268</c>.
+    /// </summary>
+    /// <param name="world">The world.</param>
+    /// <param name="host">Where the player picks the town.</param>
+    /// <returns>Whether the hero travelled.</returns>
+    private bool ActionSpellTownPortal(World world, IHeroSpellCastHost host)
+    {
+        Debug.Assert(!IsShipMaster);
+
+        IReadOnlyList<CastleTown> towns = FindTownPortalTowns(world);
+        int townIndex = host.SelectTownPortalTown(towns);
+
+        if (townIndex < 0)
+        {
+            return false;
+        }
+
+        // 参考拿的是城门的绝对点再换回城；端口的选单直接返回城门下标，于是这里只要确认它是座城。
+        CastleTown? castle = world.GetCastleEntrance(townIndex);
+
+        if (castle is null)
+        {
+            Debug.Fail("Town Portal was given a tile that is not a castle entrance.");
+
+            return false;
+        }
+
+        HeroesTownGate(world, castle);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Shows every monster the hero can see and remembers the stacks, <c>heroes_spell.cpp:270-327</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考每一堆弹一条消息，然后给英雄置 <c>VISIONS</c> 模式位。那个位<b>没有任何读者</b>（只在
+    /// <c>ActionNewPosition()</c> 被清掉），端口因此不建它，免得为一个死位加枚举。
+    /// </remarks>
+    /// <param name="world">The world.</param>
+    /// <param name="host">Where the per-stack messages are shown.</param>
+    /// <returns>Always <see langword="true"/>.</returns>
+    private bool ActionSpellVisions(World world, IHeroSpellCastHost host)
+    {
+        List<int> monsters = world.GetVisibleMonstersAroundHero(this);
+
+        // CanCastSpell() 已经确认视野里有怪物。
+        Debug.Assert(monsters.Count > 0);
+
+        GameKingdom kingdom = world.Kingdoms.GetKingdom(Color);
+
+        foreach (int monsterIndex in monsters)
+        {
+            kingdom.AddMonsterUnderVision(monsterIndex);
+
+            Tile tile = world.GetTile(monsterIndex);
+            Troop troop = tile.GetTroop(world);
+            NeutralMonsterJoiningCondition join = ArmyStack.GetJoinSolution(this, tile, troop, world, kingdom);
+
+            host.ShowMonsterVision(troop, join);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Leaves a guard on the mine the hero stands on, <c>heroes_spell.cpp:329-356</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>HAUNT</c> 是唯一一支会改矿主颜色的守卫：它只在人类手里把矿变成「无主」，好让雷达上的颜色跟着变
+    /// （参考紧接着重绘雷达，那是效果，端口不做）。守卫本身写在 <see cref="CapturedObject.Guardians"/> 上，
+    /// 与参考的 <c>world.GetCapturedObject().GetTroop().Set()</c> 一致。
+    /// </remarks>
+    /// <param name="spell">The guardian spell that was cast.</param>
+    /// <param name="world">The world.</param>
+    /// <returns>Whether a guard was placed.</returns>
+    private bool ActionSpellSetGuardian(Spell spell, World world)
+    {
+        Tile tile = world.GetTile(MapIndex);
+
+        Debug.Assert(tile.GetMainObjectType(world, false) == Mp2ObjectType.Mine);
+
+        uint count = SpellInfo.GetGuardianMonsterCount(spell, (uint)GetPower());
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        tile.SetMineSpell(spell.Type);
+
+        if (spell.Type == SpellType.Haunt && IsControlHuman)
+        {
+            world.CaptureObject(MapIndex, PlayerColor.None);
+        }
+
+        world.GetCapturedObject(MapIndex).Guardians.Set(MonsterSummons.FromSpell(spell.Type), count);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Teleports the hero to a town gate and teaches him the guild's spells, <c>heroes_spell.cpp:66-106</c>.
+    /// </summary>
+    /// <remarks>
+    /// 城镇之门与城镇门户共用这一段：跳过去、清掉路线、进魔法行会。参考的淡入淡出、雷达清点、屏幕居中
+    /// 都是界面效果，不在这里。
+    /// </remarks>
+    /// <param name="world">The world.</param>
+    /// <param name="castle">The town whose gate the hero lands on.</param>
+    private void HeroesTownGate(World world, CastleTown castle)
+    {
+        Debug.Assert(world.GetHero(castle) is null, "A hero does not port into a town that already has one.");
+
+        int destination = castle.TileIndex;
+
+        Debug.Assert(world.Geometry?.IsValidAbsIndex(destination) == true);
+
+        MovementHandler.Scout(this, destination);
+        MoveToDest(destination, world);
+        Path.Reset();
+
+        castle.TrainHeroInMageGuild(this);
+    }
+
+    /// <summary>
+    /// The closest town of the kingdom, occupied or not, <c>getNearestCastleTownGate()</c>
+    /// (<c>spell_info.cpp:186-212</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考<b>不</b>跳过有英雄驻守的城——它挑出最近的一座，再让 <see cref="CanCastSpell(Spell, World)"/> 拒绝。
+    /// </remarks>
+    /// <param name="world">The world the hero stands in.</param>
+    /// <returns>The nearest town, or null when the kingdom has none.</returns>
+    private CastleTown? FindNearestCastleTownGate(World world)
+    {
+        MapGeometry geometry = world.Geometry!.Value;
+
+        return SpellInfo.GetNearestCastle(geometry, world.Kingdoms.GetKingdom(Color).Castles, geometry.GetPoint(MapIndex));
+    }
+
+    /// <summary>
+    /// The towns a Town Portal may go to — the kingdom's towns without a guest hero,
+    /// <c>heroes_spell.cpp:259</c> through <c>Dialog::selectKingdomCastle( kingdom, true )</c>.
+    /// </summary>
+    /// <param name="world">The world the hero stands in.</param>
+    /// <returns>The free towns, in kingdom order.</returns>
+    private List<CastleTown> FindTownPortalTowns(World world)
+    {
+        var towns = new List<CastleTown>();
+
+        foreach (CastleTown castle in world.Kingdoms.GetKingdom(Color).Castles)
+        {
+            if (world.GetHero(castle) is null)
+            {
+                towns.Add(castle);
+            }
+        }
+
+        return towns;
     }
 
     /// <summary>

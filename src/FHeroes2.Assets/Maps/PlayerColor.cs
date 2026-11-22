@@ -28,6 +28,21 @@ public enum PlayerColor : byte
 
     /// <summary>Purple player (index 5).</summary>
     Purple = 0x20,
+
+    /// <summary>
+    /// 「这里的对象已经被谁拿下过，但不属于任何人」，<c>PlayerColor::UNUSED</c> (<c>color.h:55</c>)。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只用它标一种东西：打服过的怪物居所（<c>heroes_action.cpp:2498</c>）。颜色不是 <see cref="None"/> 就说明
+    /// 「守卫已经清过了」，于是再来时直接进招募那一支；把它写成某个玩家的颜色又不对——谁都可以来买，不需要外交。
+    /// </para>
+    /// <para>
+    /// 它和 <see cref="None"/> 的区别只在<b>读</b>的时候有意义：<see cref="PlayerColors.Count"/> 对两者都回 0，
+    /// 所以 <see cref="FHeroes2.Game.World.World.CaptureObject"/> 对它只记账、不画旗。
+    /// </para>
+    /// </remarks>
+    Unused = 0x80,
 }
 
 /// <summary>
@@ -124,8 +139,7 @@ public static class PlayerColors
     /// The printable name of one color, <c>Color::String()</c> (<c>color.cpp:78-100</c>).
     /// </summary>
     /// <remarks>
-    /// 参考把 <c>UNUSED</c>（0x40）叫 <c>"Unknown"</c>，其余不在表里的值叫 <c>"None"</c>。端口的
-    /// <see cref="PlayerColor"/> 没有 <c>Unused</c> 这一位，于是只有「六个颜色 + None」两种答案。
+    /// 参考把 <c>UNUSED</c>（0x80）叫 <c>"Unknown"</c>，其余不在表里的值叫 <c>"None"</c>。
     /// </remarks>
     /// <param name="color">A single color.</param>
     /// <returns>The English name.</returns>
@@ -137,6 +151,7 @@ public static class PlayerColors
         PlayerColor.Yellow => "Yellow",
         PlayerColor.Orange => "Orange",
         PlayerColor.Purple => "Purple",
+        PlayerColor.Unused => "Unknown",
         _ => "None",
     };
 

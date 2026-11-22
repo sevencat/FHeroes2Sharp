@@ -169,6 +169,7 @@ public sealed class ViewWorldZoomTests
     [InlineData(PlayerColor.Orange, 4u)]
     [InlineData(PlayerColor.Purple, 5u)]
     [InlineData(PlayerColor.None, 6u)]
+    [InlineData(PlayerColor.Unused, 6u)]
     public void ColorToOffsetIcn_MapsTheSevenThumbnails(PlayerColor color, uint expected)
     {
         Assert.Equal(expected, ViewWorldZoomLevels.ColorToOffsetIcn(color));
@@ -178,7 +179,9 @@ public sealed class ViewWorldZoomTests
     public void ColorToOffsetIcn_RejectsCombinations()
     {
         Assert.Equal(ViewWorldZoomLevels.UnknownIndex, ViewWorldZoomLevels.ColorToOffsetIcn(PlayerColor.Blue | PlayerColor.Green));
-        Assert.Equal(ViewWorldZoomLevels.UnknownIndex, ViewWorldZoomLevels.ColorToOffsetIcn((PlayerColor)0x80));
+
+        // 0x40 是玩家颜色区里没有定义的一位（参考的 UNUSED 是 0x80，端口已补）。
+        Assert.Equal(ViewWorldZoomLevels.UnknownIndex, ViewWorldZoomLevels.ColorToOffsetIcn((PlayerColor)0x40));
     }
 
     [Theory]

@@ -419,16 +419,16 @@ public sealed class HeroActionsTests
         Hero hero = actions.Hero;
         hero.SetMovePoints(0);
 
-        Assert.True(actions.ActionToStables(700));
+        Assert.True(actions.ActionToStables(700).TookFreshHorse);
         Assert.Equal(400u, hero.MovePoints);
 
-        Assert.False(actions.ActionToStables(700));
+        Assert.False(actions.ActionToStables(700).TookFreshHorse);
         Assert.Equal(400u, hero.MovePoints);
 
         // The stables are a weekly object, so a new week makes the horse fresh again.
         hero.ActionNewWeek();
 
-        Assert.True(actions.ActionToStables(700));
+        Assert.True(actions.ActionToStables(700).TookFreshHorse);
         Assert.Equal(800u, hero.MovePoints);
     }
 
