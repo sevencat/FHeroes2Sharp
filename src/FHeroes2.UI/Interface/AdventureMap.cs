@@ -11,6 +11,7 @@ using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.System;
 using CastleTown = FHeroes2.Game.Castle.Castle;
+using ViewZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 
 namespace FHeroes2.UI.Interface;
 
@@ -37,14 +38,22 @@ namespace FHeroes2.UI.Interface;
 public sealed partial class AdventureMap : BaseInterface
 {
     private readonly PixelBuffer _display;
-    private readonly AudioManager _audioManager;
-    private readonly IAdventureHost _host;
+    /// <summary>The sound card, <c>Audio::</c>; null when the run has none, <c>Audio::isValid() == false</c>.</summary>
+    private readonly AudioManager? _audioManager;
 
     /// <summary>
-    /// The dialogs the events open themselves, i.e. the ones whose whole content the port can already draw; the
-    /// rest still go through <see cref="_host"/>.
+    /// The dialogs the events open themselves, i.e. the ones whose whole content the port can already draw.
     /// </summary>
     private AdventureMapDialogs _dialogs = null!;
+
+    /// <summary>The scrolled map the View World window shows, set by <see cref="AttachView"/>.</summary>
+    private AdventureMapView? _view;
+
+    /// <summary>The map viewport on the screen, in pixels, the <c>GameArea::GetROI()</c> of the reference.</summary>
+    private Rect _viewport;
+
+    /// <summary>The zoom level View World was last left at, <c>conf.ViewWorldZoomLevel</c>.</summary>
+    private ViewZoomLevel _viewWorldZoom = ViewZoomLevel.ZoomLevel2;
 
     /// <summary>
     /// The dialog layer the events and the map itself open their windows through.
@@ -54,6 +63,26 @@ public sealed partial class AdventureMap : BaseInterface
     /// （例如速览面板的阻塞循环），从这里进去。
     /// </remarks>
     public AdventureMapDialogs Dialogs => _dialogs;
+
+    /// <summary>
+    /// Tells the screen which map it draws and where, the data the View World event reads off the reference's
+    /// <c>Interface::AdventureMap</c> (<c>GetGameArea().GetROI()</c> and <c>GetVisibleTileROI()</c>).
+    /// </summary>
+    /// <param name="view">The scrolled map of the screen.</param>
+    /// <param name="viewport">The map viewport on the screen, in pixels.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="view"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// 参考的 <c>EventViewWorld()</c> 把 <c>*this</c> 交给 <c>ViewWorld::ViewWorldWindow()</c>，窗口自己从界面取视口与可见区域；
+    /// 端口不传整块界面，所以由场景在接线时把这两样交给屏幕（与<br/>
+    /// 「对话框只拿它真正用到的值」的分层一致）。
+    /// </remarks>
+    public void AttachView(AdventureMapView view, Rect viewport)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+
+        _view = view;
+        _viewport = viewport;
+    }
 
     /// <summary>
     /// Panels of the screen, built by <see cref="TryCreate"/> rather than by the constructor: C# cannot pass
@@ -82,14 +111,15 @@ public sealed partial class AdventureMap : BaseInterface
 
     /// <summary>Builds the empty screen; the panels are attached by <see cref="TryCreate"/>.</summary>
     /// <param name="display">The frame the screen paints into.</param>
-    /// <param name="audioManager">The sound card, which the focus changes the music on.</param>
-    /// <param name="host">The scene, which opens the dialogs the events ask for.</param>
-    private AdventureMap(PixelBuffer display, AudioManager audioManager, IAdventureHost host)
+    /// <param name="audioManager">
+    /// The sound card, which the focus changes the music on; <see langword="null"/> for a run without one, the
+    /// <c>Audio::isValid() == false</c> of the reference.
+    /// </param>
+    private AdventureMap(PixelBuffer display, AudioManager? audioManager)
         : base(false, display)
     {
         _display = display;
         _audioManager = audioManager;
-        _host = host;
     }
 
     /// <summary>
@@ -98,12 +128,12 @@ public sealed partial class AdventureMap : BaseInterface
     /// </summary>
     /// <param name="display">The frame the screen paints into.</param>
     /// <param name="assets">The opened game data every panel loads its artwork from.</param>
-    /// <param name="audioManager">The sound card, which the focus changes the music on.</param>
-    /// <param name="host">The scene, which opens the dialogs the events ask for.</param>
+    /// <param name="audioManager">
+    /// The sound card, which the focus changes the music on; <see langword="null"/> for a run without one, the
+    /// <c>Audio::isValid() == false</c> of the reference, in which case every sound and every track is dropped.
+    /// </param>
     /// <returns>The screen, or <see langword="null"/> when the game data it needs is missing.</returns>
-    /// <exception cref="ArgumentNullException">
-    /// <paramref name="display"/>, <paramref name="audioManager"/> or <paramref name="host"/> is <see langword="null"/>.
-    /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="display"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
     /// The reference constructor reads the global archives and the settings; the port takes the bundle as an
@@ -118,12 +148,9 @@ public sealed partial class AdventureMap : BaseInterface
     public static AdventureMap? TryCreate(
         PixelBuffer display,
         AssetBundle? assets,
-        AudioManager audioManager,
-        IAdventureHost host)
+        AudioManager? audioManager)
     {
         ArgumentNullException.ThrowIfNull(display);
-        ArgumentNullException.ThrowIfNull(audioManager);
-        ArgumentNullException.ThrowIfNull(host);
 
         // The status panel cannot show an army without the monster portraits, so the whole screen is unavailable.
         if (assets is null || Mons32Sprites.TryCreate(assets) is not { } monsters)
@@ -135,7 +162,7 @@ public sealed partial class AdventureMap : BaseInterface
         bool evilInterface = Settings.Get().IsEvilInterfaceEnabled;
         IcnType buttonSet = evilInterface ? IcnType.Advebtns : IcnType.Advbtns;
 
-        AdventureMap map = new(display, audioManager, host);
+        AdventureMap map = new(display, audioManager);
         IcnViewWorldSpriteSource sprites = new(assets);
 
         map._dialogs = new AdventureMapDialogs(display, assets);
@@ -275,7 +302,7 @@ public sealed partial class AdventureMap : BaseInterface
         GameArea.SetCenter(GetCenterOf(hero.MapIndex));
         _statusPanel.SetState(StatusType.Army);
 
-        if (AdventureSounds.UpdateSoundsOnFocusUpdate && hero.MapIndex >= 0)
+        if (_audioManager is not null && AdventureSounds.UpdateSoundsOnFocusUpdate && hero.MapIndex >= 0)
         {
             AdventureSounds.EnvironmentSoundMixer(World.Current, settings, _audioManager);
             _audioManager.PlayMusicAsync(
@@ -313,7 +340,7 @@ public sealed partial class AdventureMap : BaseInterface
         GameArea.SetCenter(GetCenterOf(castle.TileIndex));
         _statusPanel.SetState(StatusType.Funds);
 
-        if (AdventureSounds.UpdateSoundsOnFocusUpdate)
+        if (_audioManager is not null && AdventureSounds.UpdateSoundsOnFocusUpdate)
         {
             AdventureSounds.EnvironmentSoundMixer(World.Current, settings, _audioManager);
             _audioManager.PlayMusicAsync(
@@ -686,6 +713,44 @@ public sealed partial class AdventureMap : BaseInterface
             previousCenter
             + new Point(newArea.X + (newArea.Width / 2), newArea.Y + (newArea.Height / 2))
             - new Point(previousArea.X + (previousArea.Width / 2), previousArea.Y + (previousArea.Height / 2)));
+    }
+
+    /// <summary>
+    /// Opens the system options window and applies whatever the player changed,
+    /// <c>fheroes2::showSystemOptionsDialog()</c> (<c>dialog_system_options.cpp:366-444</c>).
+    /// </summary>
+    /// <param name="selectLanguage">
+    /// Opens the language picker; <see langword="null"/> means the game ships with English only, which is the
+    /// reference's single-language branch (<c>:400-407</c>). The list of installed translations lives in the
+    /// application layer, so the scene injects the picker, exactly like the <c>selectLanguage</c> function pointer
+    /// the reference passes from <c>game_startgame.cpp</c>.
+    /// </param>
+    /// <param name="environmentSoundMixer">
+    /// Rebuilds the ambient loops after the audio page, the <c>Game::EnvironmentSoundMixer</c> the reference passes
+    /// from the adventure map.
+    /// </param>
+    /// <returns><see langword="true"/> when at least one setting was changed.</returns>
+    /// <remarks>
+    /// 参考的 <c>showSystemOptionsDialog()</c> 是自由函数，靠 <c>Interface::AdventureMap::Get()</c> 单例重画界面；
+    /// 端口把它收成这个屏幕自己的方法，重画用 <see cref="RebuildInterface"/>——先雷达后其余，顺序与参考一致。
+    /// </remarks>
+    public bool ShowSystemOptions(Func<bool>? selectLanguage = null, Action? environmentSoundMixer = null)
+        => _dialogs.OpenSystemOptions(RebuildInterface, _audioManager, environmentSoundMixer, selectLanguage);
+
+    /// <summary>
+    /// Rebuilds the panels and repaints the whole screen, the <c>rebildAdventureMap</c> lambda of
+    /// <c>dialog_system_options.cpp:381-385</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考先重画雷达再重画其余部分：雷达背后有 restorer，顺序反了会让它把旧画面盖回去。端口的场景每帧重画整屏，
+    /// 这里仍按参考的顺序做，好让「改完设置立刻可见」在没有帧循环时也成立。
+    /// </remarks>
+    private void RebuildInterface()
+    {
+        Reset();
+
+        RedrawInterface(Redraw.Radar);
+        RedrawInterface(Redraw.All & ~Redraw.Radar);
     }
 
     /// <inheritdoc />

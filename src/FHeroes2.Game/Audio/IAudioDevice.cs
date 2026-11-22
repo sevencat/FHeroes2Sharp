@@ -70,4 +70,12 @@ public interface IAudioDevice
 
     /// <summary>Whether music is playing, <c>Music::isPlaying()</c>.</summary>
     bool IsMusicPlaying { get; }
+
+    /// <summary>Sets the music volume, <c>Music::setVolume()</c>.</summary>
+    /// <param name="percent">Volume from 0 to 100, the <c>100 * MusicVolume() / 10</c> of the settings window.</param>
+    void SetMusicVolume(int percent);
+
+    /// <summary>Sets the sound effects volume, <c>Mixer::setVolume()</c>.</summary>
+    /// <param name="percent">Volume from 0 to 100, the <c>100 * SoundVolume() / 10</c> of the settings window.</param>
+    void SetSoundVolume(int percent);
 }

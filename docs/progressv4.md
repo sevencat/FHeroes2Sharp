@@ -2430,6 +2430,369 @@ UI 1 365）；冒烟 `--enter-map --smoke-frames 30 --no-audio` 30 帧 **59.8 FP
 所以要先有 `Tile`、`Hero`、`Castle`、`Kingdom`、`MapObjects`、`MapObjectInfo`、`UltimateArtifact`、`EventDate` 各自的算子，
 再写 `World.Persistence.cs`，最后才是 `GameSave.Save`/`Load` 本体与 zlib 包层。
 
+## 2026-11-22 G6.9b（第一步）：声卡可以是空的
+
+`Interface.AdventureMap` 的声卡依赖从「必须有」改成「可以没有」：`TryCreate` 与构造函数的
+`AudioManager` 参数变成 `AudioManager?`，不再 `ThrowIfNull`，用到声音的四处全部显式挡住：
+
+| 位置 | 参考 | 处理 |
+| --- | --- | --- |
+| `SetFocus(Hero)` 的地形音乐 | `interface_focus.cpp:60-86` | `_audioManager is not null` 才混环境音、才换曲 |
+| `SetFocus(Castle*)` 的城堡音乐 | `interface_focus.cpp:88-118` | 同上 |
+| 挖宝的音效/号角 | `heroes_action.cpp` 的 `ActionToUltimateArtifact` | 音效用 `?.`；号角分支单独走一条不建 `MusicRestorer` 的路，拾取与提示抽成局部函数 `Announce()` |
+| `ShowSystemOptions` | `dialog_system_options.cpp:166` | 本来就收 `AudioManager?`，无需改 |
+
+**这不是兜底，而是参考本身就有的状态**：`Audio::isValid()` 为假时（无 SDL_mixer 设备、`--no-audio`），
+参考的 `Mixer::Play`/`Music::Play` 全部是空操作，游戏照常开局。端口原来把「有声音」当成不变量，于是
+`App` 侧（只有 SDL 的 `AudioPlayer`，不是 `AudioManager`）根本构造不出这个屏幕——这是 G6.9b 场景换桩卡住的
+第一道门，现在开了。
+
+新单测 1 条：`Create_WithoutASoundCard_BuildsTheScreen`。全量 **5 497 绿**（Core 284 / Assets 425 / Game 3 266 /
+UI 1 522）；构建 0 错误 0 警告；冒烟 `--enter-map --smoke-frames 30 --no-audio` 37.6 FPS，退出 0。
+
+**下一步（G6.9b 第二步）**：场景里建 `_interface`，`DrawFrame`/`Update`/鼠标键盘三路一起换桩。仍要一次做完
+（只换绘制不换滚动源会错位），但不再有声卡这道门。
+
+## 2026-11-22 G6.9（第二十步）：地图物体动画
+
+`HumanTurn()` 循环体的最后一块补上了：`ProcessTurnFrame` 末尾的 `AnimateMapObjects()`。
+
+```csharp
+if (!GameDelays.ValidateAnimationDelay(DelayType.MapsDelay)) return;
+GameAnimation.UpdateAdventureMapAnimationIndex();
+GetGameArea().SetRedraw();
+```
+
+对应 `game_startgame.cpp:1567-1572`。参考在 `redraw( 0 )` 之前把帧计数加一，瓦片渲染再按它取
+`animationFrames` 序列里的一帧（`maps_tiles_render.cpp:132`）——端口这一侧早就有
+`GameAnimation.AdventureMapAnimationIndex` 与 `TileRendering` 的使用，缺的只是这个「每 `MAPS_DELAY` 推一次」
+的调用点。
+
+**一处差异**：参考在这里 `redraw( 0 )` 直接把画面刷出去，端口由宿主每帧绘制，这一层只把
+`Redraw.GameArea` 记进掩码。
+
+**测试里发现的一个环境事实**：`GameDelays` 的延时表在 `InitAnimateDelays()` 之前全是 0 毫秒，任何一次
+`ValidateAnimationDelay` 都算到点。两条新单测因此在断言前显式调用 `InitAnimateDelays()`，否则「没到点」那条
+必然失败——这也解释了为什么之前的动画相关测试从没暴露过时序问题。
+
+新单测 2 条：`MAPS_DELAY` 到点推一帧、没到点不动。全量 **5 496 绿**（Core 284 / Assets 425 / Game 3 266 / UI 1 521）；
+构建 0 错误 0 警告；冒烟 62.9 FPS，退出 0。
+
+**注意**：这个调用点目前只被 `ProcessTurnFrame` 走到，而 App 的场景还没调它（`GameArea.Redraw` 同理），
+所以运行中的物体动画要等 G6.9b 换桩后才看得见。
+
+## 2026-11-22 G6.9（第十九步）：`HumanTurn()` 的循环出口
+
+`HumanTurn()` 返回前的收尾落成 `AdventureMap.FinishHumanTurn(result, isKingdomVanquished)`：
+
+1. **王国灭绝 → 结束回合**（`:1557-1560`）：参考 `if ( res == CANCEL && !myKingdom.isPlay() ) res = END_TURN;`。
+2. **收起路线**（`:1584-1589`）：回合真的结束时 `GetFocusHeroes()->ShowPath( false )` 并 `setRedraw( REDRAW_GAMEAREA )`，
+   地图上不留一条走不了的路径。
+
+**为什么「王国灭绝」是参数而不是内部读全局。** 参考读 `Settings::CurrentColor()` 与 `world.GetKingdom()`，两个都是全局；
+端口这一层的规矩是「全局状态由宿主读，判断留在这里」（同 `ProcessHotKeys` 的 `exitEvent` 参数）。于是调用方查
+`Kingdom::IsLoss` 后把布尔传进来，判断本身可以完全确定地测。
+
+**没搬的一半**：结束回合时的「失去最后一座城」提示（要 `Kingdom::GetLostTownDays` 与玩家提示窗）与自动存档
+（`:1591-1609`，要存档层），都属于 App 层。
+
+新单测 4 条：不进则放行、王国灭绝则结束回合、退出请求原样带回、结束回合原样返回。
+
+构建 0 错误 0 警告；全量 **5 494 绿**（Core 284 / Assets 425 / Game 3 266 / UI 1 519）；冒烟 55.2 FPS，退出 0。
+
+**下一步（G6.9b 主体）**：场景换桩。三件前置已经探明——`Interface.AdventureMap.TryCreate` 要一个 `AudioManager`
+（App 只有 SDL 侧的 `AudioPlayer`，需要接一个静音设备或等价装配）、`GameArea` 自带滚动与 `Redraw`（地形、雾、英雄、
+怪物、船全能画），所以场景的 `AdventureMapView` 滚动源要整体让位给 `GameArea`，`AdventureMapView` 只留给 View World。
+换桩之后 `DrawFrame` 变成 `RedrawInterface` 一个调用，`Update` 变成 `ProcessTurnFrame` 加 `FinishHumanTurn`，
+`MapFrame` / `IconBar` / `Minimap` / `ButtonsPanel` / `StatusPanelPainter` / `MapScrollController` 六份自建绘制即可删除。
+
+## 2026-11-22 G6.9（第十八步）：`HumanTurn()` 的英雄移动动画与卷屏帧
+
+`HumanTurn()` 的循环体到这里就整条接通了：`ProcessTurnFrame` 按参考次序把五块串起来，场景一帧只调它一个。
+
+| 端口成员 | 参考 | 内容 |
+| --- | --- | --- |
+| `AdventureMap.AnimateHeroMovement( events )` | `game_startgame.cpp:1412-1536` | 一步动画：`heroAnimationFrameCount` 从 `32 - skip` 数到 0，每 `skip` 帧换精灵、视口同步推 `offset * skip`；落格时 `hero.Move()`、视口对准英雄；走完按光标下的瓦片挑光标 |
+| `AdventureMap.IsHeroMoving` | `isHeroMoving`（`:1080`） | 循环局部的「正在走」状态，落成实例属性 |
+| `AdventureMap.ScrollGameArea( events )` | `:1538-1555` | 走动时不卷屏；`SCROLL_DELAY` 到点才 `Scroll()`；拖动卷屏与惯性走 `NeedDragScrollRedraw` / `UpdateInertia` |
+| `AdventureMap.ProcessTurnFrame( events, exitEvent )` | `:1127-1560` | 停下英雄 → 键盘 → 面板 → 动画 → 卷屏，任何一个非 `Cancel` 就结束这一帧 |
+
+**四处差异，都写进了注释：**
+
+* 脚步声：参考在起步时调 `Game::EnvironmentSoundMixer()`，端口的音频在 App 层，由调用方按帧自己混。
+* 视口对准：参考用 `hero->GetCenter()`（像素中心），端口没有对象像素中心，改用瓦片居中，锚点差半个格子。
+* 动作结算：参考走完会看 `hero->isAction()` 再判胜负；端口的对象动作在点下目标格时就地结算，动画层只负责「走完复位」。
+* 淡入：参考在 `isFadeInNeeded()` 时只 `SetUpdateCursor()` 等下一帧；端口没有淡入，直接按光标下的瓦片更新。
+
+**还没接**：循环出口的收尾（开战、进城、胜负）与地图物体动画（`MAPS_DELAY` → `updateAdventureMapAnimationIndex`，端口还没有物体动画索引），都留给 G6.9b 的场景接管。
+
+新单测 4 条（`AdventureMapTests`）：无输入的一帧什么都不做、退出键把宿主的答案带回、没有走动英雄时动画不动、
+不卷屏时 `ScrollGameArea` 不改状态。
+
+构建 0 错误 0 警告；全量 **5 490 绿**（Core 284 / Assets 425 / Game 3 266 / UI 1 515）；冒烟 `--enter-map --smoke-frames 30` 62.3 FPS，退出 0。
+
+## 2026-11-22 G6.9（第十七步）：`HumanTurn()` 的面板派发
+
+`HumanTurn()` 的另一半搬完，`AdventureMap.Turn.cs` 现在有完整的「一帧输入」入口。
+
+| 端口成员 | 参考 | 内容 |
+| --- | --- | --- |
+| `AdventureMap.ProcessPanels( events )` | `game_startgame.cpp:1289-1405` | 捕获 → 拖动卷屏 → 边缘卷屏 → 叠放次序命中（状态面板 → 按钮条 → 图标栏 → 雷达 → 控制面板 → 地图区），返回 `AdventurePanelResult` |
+| `ProcessScrollMargins` | `:1327-1363` | `fastScrollRepeatCount` 数两拍 `SCROLL_START_DELAY` 才开滚，离开边缘清零；`MouseIndicatesFastScroll` 时打开快速卷屏 |
+| `HandleStatusPanel` | `:1299-1303`、`:1366-1370` | 拖动交出 `StatusPanel.Dragging`；右键弹 `"Status Window"` |
+| `HandleButtonsPanel` / `ActivateButton` / `ShowButtonTooltip` | `interface_buttons.cpp:130-243` | 先跑基类边框拖动；八个按钮的 `Event*()`；长按是 `EventResetHeroPath()`；右键是八条 `"Next Hero"` / `"Hero Movement"` … 提示 |
+| `HandleIconsPanel` | `:1311-1319`、`:1378-1382` | `IconsPanelAction` → `SetFocus` + `RedrawFocus` / 开英雄城堡窗 / 速览；`StartedDragging` 交出 `IconsPanel.Dragging` |
+| `HandleRadar` | `:1320`、`:1384-1388` | 右键弹 `"World Map"`；居中已在雷达里做完 |
+| `HandleControlPanel` | `:1390-1394` | 五个开关走 `EventSwitchShow*()`，回合键返回结果 |
+| `ResetCursor` / `ResetCursorIfNoNeedToScroll` | `game_startgame.cpp` 的 `resetCursor()` 一对 | 置回 `CursorTheme.Pointer`，卷屏中不覆盖 |
+| `UI/Interface/AdventureMapResults.cs` | — | 新增 `AdventurePanelResult( Mode, Drag )`，把「拖动已开始」交回调用方 |
+| `UI/Interface/GameArea.cs` | — | `QueueEventProcessing()` 拆出 `QueueEventProcessing( LocalEvent )`，无参版转给 `LocalEvent.Current` |
+
+**四处差异，都写进了注释：**
+
+* 拖动不自己跑循环：参考在 `BorderWindow::QueueEventProcessing()` 里就地泵帧，端口把 `BorderDrag` 交出来由场景接管。
+* 没有窗口焦点概念：参考只在 `Cursor::isFocusActive()` 时做边缘卷屏，端口靠「失焦不投递帧」保证，不另判。
+* 面板拖动后的重绘：参考的 `setRedraw()` 标记脏区，端口每帧整幅重画，不再额外排队。
+* `fastScrollRepeatCount` 是参考循环的局部变量，端口落成 `AdventureMap` 的字段。
+
+**下一步**：英雄移动动画与卷屏帧，见第十八步。
+
+新单测 3 条（`AdventureMapTests`）：无输入无动作、控制面板雷达格切设置、按钮条边框拖动把 `Drag` 交出来。
+
+构建 0 错误 0 警告；全量 **5 486 绿**（Core 284 / Assets 425 / Game 3 266 / UI 1 511）；冒烟 `--enter-map --smoke-frames 30` 63.3 FPS，退出 0。
+
+## 2026-11-22 G6.9（第十六步）：`HumanTurn()` 的键盘块与「停下英雄」
+
+场景接管前的第一块：把 `HumanTurn()` 循环体里跟游戏逻辑无关的那部分搬进 `UI/Interface/AdventureMap.Turn.cs`。
+
+| 端口成员 | 参考 | 内容 |
+| --- | --- | --- |
+| `AdventureMap.IsHeroMovementInterrupted( events )` | `game_startgame.cpp:1130-1138` | 英雄走格子期间「按任意键 / 左键点击 / 右键按下」就是要他停下；调用方先问这一句，为真就跳过键盘块 |
+| `AdventureMap.ProcessHotKeys( events, exitEvent )` | `:1141-1283` | 整条 `else if` 链：退出与取消、回合、下一英雄/下一城镇、新游戏、存档/快速存档、读档、文件与冒险选项、系统选项、拼图、场景信息、施法、王国概览、世界视图、五个面板开关、开始移动、挖宝、休眠、八个方向、四个卷屏、默认动作、打开焦点、按住快速选择 |
+| `HotKeyPressed( events, id )` | `game_hotkeys.cpp:386-394` | 命中时顺手 `setFastScrollStatus( false )`，免得按错键时地图跳很远 |
+| `ScrollByHotKey( direction )` | `:1243-1262` | 拖动卷屏进行中、或 `ScrollSpeed == None` 时不响应 |
+| `QuickSelectHero( events )` | `:1271-1282` | 光标指着可会面的英雄时换回普通指针，点击则切换焦点 |
+
+**两处差异，都写进了注释：**
+
+* 退出热键不自己弹「确认退出」——参考的 `Game::processExitEvent()` 是宿主的活，端口把它做成 `exitEvent`
+  委托参数，玩家取消时它照样返回 `AdventureEventResult.Cancel`，决定权整个留在场景。
+* `HotKeyPressed()` 读传入的帧状态，不读 `LocalEvent.Current` 单例（单例在测试里没法隔离）；`GameHotKeys`
+  里那份读单例的 `HotKeyPressEvent` 原样保留给不接事件的调用方。
+
+**下一步**把同一循环的面板派发（`:1289-1405`）接上，见第十七步。
+
+新单测 9 条（`AdventureMapTests`）：停下英雄的四种输入、没有按键不做事、面板开关只改设置、
+两个退出热键把答案原样带回、链外按键什么都不做。
+
+构建 0 错误 0 警告；UI 测试 **1 508 绿**。
+
+## 2026-11-22 G6.9（第十五步）：删掉 `IAdventureHost`，系统选项改由屏幕自己开
+
+G6.8 尾巴上唯一还挂在宿主接口上的成员就此消失：
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapResults.cs`（由 `AdventureMapHost.cs` 改名） | `game_mode.h:32-53`、`dialog.h:95-104` | 只留 `AdventureEventResult` 与 `AdventureOption` 两个结果枚举，宿主接口删除；`AdventureEventResult` 的文档改成「场景接管前的结果通道」 |
+| `UI/Interface/AdventureMap.cs` | `dialog_system_options.cpp:366-444` | 新增 `ShowSystemOptions( selectLanguage, environmentSoundMixer )`（`showSystemOptionsDialog()` 的完整循环：语言 → 图形 → 音频 → 热键 → 界面 → 回主窗），`RebuildInterface()` 照 `rebildAdventureMap` 先雷达后其余；`TryCreate` 去掉第四个参数 |
+| `UI/Interface/AdventureMap.Events.cs` | `interface_events.cpp:297-300` | `EventSystemDialog()` 改成 `ShowSystemOptions()`，不再转给宿主 |
+| `tests/.../AdventureMapTests.cs` | — | 删 `StubHost` 与 `LastHost`，`TryCreate` 调用改三参 |
+| 注释 | — | `AdventureMap.Mouse.cs`、`IModalScreen.cs`、`GameHost.RunModal`、`ViewWorldDialog.cs`、`AdventureMapDialogs.cs` 里提到宿主的地方改成指向 `AdventureMapDialogs` |
+
+**G6.9 还剩两块，已拆开记进 planv4：**
+
+* **G6.9a：`HumanTurn()` 的输入分派**（`game_startgame.cpp:1007-1610`）。热键块（`:1141-1283`）已搬，
+  见下一步；面板命中顺序（`:1289-1405`，状态面板 → 按钮 → 图标 → 雷达 → 控制面板 → 游戏区，按叠放次序倒着判）
+  还没有落点：`ButtonsPanel.QueueEventProcessing` 返回 `ButtonsPanelAction`、`IconsPanel` 返回
+  `IconsPanelAction`、`Radar` 返回 `RadarAction`、`ControlPanel` 返回 `ControlPanelButton`，还没有一层把它们
+  翻译成 `Event*()` 与 `AdventureEventResult`。`AdventureMap` 因此仍缺完整「一帧事件」的入口。
+* **G6.9b：场景接管**。素材、面板、绘制三样在 `UI.Interface.AdventureMap` 里已经齐了，`AdventureMapScene` 现在
+  仍用自己那份 `MapFrame`/`IconBar`/`Minimap`/`ButtonsPanel`/`StatusPanelPainter`，等 G6.9a 有了事件入口再整块换掉，
+  免得中途出现两套输入分派。
+
+构建 0 错误 0 警告；全量 **5 474 绿**（UI 1 499）；冒烟 `--enter-map --smoke-frames 30` 57.6 FPS，退出 0。
+
+## 2026-11-22 G6.8（第十四步）：图形设置页、分辨率选择器与系统选项主窗口
+
+系统选项的最后一块：`dialog_graphics_settings.cpp`（296 行）、它依赖的 `dialog_resolution.cpp` 的装配，以及
+`dialog_system_options.cpp`（445 行）的主窗口。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/GraphicsSettingsDialog.cs`（新） | `dialog_graphics_settings.cpp:30-296` | `GraphicsSettingsOption`（五个叶子 + `Exit`）、`GraphicsSettingsArtwork`（`SPANEL` 16-19、`RESOLUTION_ICON`、`GAME_OPTION_ICON` 2-3、`EMPTY_OPTION_ICON_BACKGROUND`）、289x(`optionsStepY*2+52`) 页、三上两下网格（分辨率/模式/缩放类型，V-Sync/系统信息）、`TryCreate`/`Draw`/`ProcessEvents`/`Show`/`Apply`；分辨率串按 `drawResolution()` 的 `w x h (xI.F)`，系统信息图标把 `FPS`（黄）或 `N/A`（灰）画在空白图标上 |
+| `UI/Dialogs/SystemOptionsDialog.cs`（新） | `dialog_system_options.cpp:166-361` | `SystemOptionsAction`（五个页面叶子 + `Exit`，参考里从不返回的 `UpdateInterface` 不设）、`SystemOptionsArtwork`（`SPANEL`/`CSPANEL`/`GAME_OPTION_ICON`）、289x(`optionsStepY*3+52`) 九宫格、`TryCreate`/`Draw`/`ProcessEvents`；英雄/敌人速度（点击循环 + 滚轮 ±1 + `GameDelays.UpdateGameSpeed()`）、文本支持、战斗模式三种循环就地改 |
+| `UI/Widgets/OptionItem.cs` | `ui_option_item.cpp:150-160` | 补 `DrawLanguage`（渲染 `SPANEL` 18 + 当前语言名） |
+| `UI/Interface/AdventureMapDialogs.cs` | 三个 `open*` 的装配 | `SelectResolution( LocalEvent? )`（`SCROLL`/`BOARD` + 邪恶版 + `ResolutionDialog`，选完交 `IDisplayControl.SetResolution`）、`OpenGraphicsSettings( Action updateUI, Func<bool>?, bool isMainMenuUI, LocalEvent? )`、`OpenSystemOptions( Action rebuildInterface, AudioManager?, Action? environmentSoundMixer, Func<bool>? selectLanguage, LocalEvent? )`（阻塞循环 + 五个分支转调子页，缺资源打日志不开窗） |
+| `UI/Dialogs/ResolutionDialog.cs` | `dialog_resolution.cpp:61-145` | 行串改成参考的 `640 x 480` / `640 x 480 (x2.0)`（原来的 `640 x 480 x 640` 与 `F6` 倍数偏了），`ActionListPressRight` 的标题改成行串、正文照抄参考的「整数倍更清晰」两段；新增 `FormatRow()` 供核对，文字纵向位置按 `(19 - 字高 + 6) / 2` |
+| `Core/Imaging/ImageOps.cs` | `engine/image.cpp:2771-2872` | 新增区域重采样重载 `Resize( PixelBuffer, in Rect, PixelBuffer, in Rect )`（全屏时把模式图标的 6,6,53,53 放大成 2,2,61,61）；只搬像素层，与参考的这个重载一致 |
+| `tests/.../GraphicsSettingsDialogTests.cs`、`SystemOptionsDialogTests.cs`、`ResolutionDialogTests.cs`（新） | 同上 | 11 + 11 + 4 条：缺帧、页尺寸、五个/九个图标位置与步长、叶子返回、Enter/Escape、右键弹窗、全屏切换推给 `IDisplayControl`、缩放开关只重启渲染器且只对主菜单重画、分辨率叶子只在选中后 `updateUI`、英雄速度循环与滚轮、敌人速度回绕到「不显示」、文本支持开关、战斗三种模式、行串与倍率格式 |
+
+要点与偏差：
+
+* **窗口能力挂在 `IEventEngine.Display`**：参考的图形页直接摸 `fheroes2::engine()` 与 `Display::instance()`，
+  端口上一轮已经把窗口能力收进 `IDisplayControl`。图形页因此收一个 `IDisplayControl?`，为 `null` 时退回
+  `Settings` 与逻辑尺寸，无窗口也能画、也能测。
+* **`Assets::resetScaledBackgroundImages()` / `resetAllScaledImages()` 无对应物**：端口按需生成缩放图、没有全局缓存，
+  所以这两句只体现在「改完调 `updateUI()`」。
+* **`updateUI` 与 `drawMainMenuScreen` 的比较无法直译**：参考靠 `std::function::target` 比函数指针，C# 没有等价物，
+  `Show` 改成收一个 `isMainMenuUI` 布尔，由调用方声明自己的 `updateUI` 是不是主菜单。
+* **全屏热键那段的「恢复 + 重画」不用照搬**：参考只在进循环前渲染一次，所以要 `ImageRestorer` 兜底；端口每帧
+  `Draw` + `Render`，全屏状态变了下一帧自然是对的。
+* **`conf.Save( Settings::configFileName )` 没有落点**：端口还没有配置文件读写层，`Show`/`OpenSystemOptions` 只把
+  「有没有改过」作为返回值交出去。
+* **`DialogAction::UpdateInterface` 从来不返回**：参考枚举里有、`openSystemOptionsDialog()` 里没有任何分支返回它，
+  端口不设这个成员。
+* **`getResolutionStrings()` 用 `&&`、`drawResolution()` 用 `||`**：前者两轴都变才打倍率，后者任一轴变就打，
+  两处按参考各自照搬，测试里各有一条钉住这个差异。
+
+构建 0 错误 0 警告；全量 **5 474 绿**（UI 1 391，新增 26 条）；冒烟 `--enter-map --smoke-frames 30` 65.7 FPS，退出 0。
+
+**下一段**：G6.8 的 17 项到此归零，`IAdventureHost` 上只剩系统选项那一个入口等场景接管（`AdventureMapScene`
+调 `OpenSystemOptions( Reset )`，语言选择器与音频管理器由 App 注入），随后进 G6.9：`AdventureMapScene` 接管
+`AdventureMap`。
+
+## 2026-11-22 G6.8（第十三步）：界面设置与音频两个子窗口
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/InterfaceSettingsDialog.cs` | `dialog_interface_settings.cpp:91-263` | `InterfaceSettingsOption`（四个叶子 + `Exit`）、`InterfaceSettingsArtwork`（`SPANEL`/`CSPANEL`/`ESPANEL`/`ARMY_ESTIMATION_ICON`）、289x272 页、三上两下的图标网格、`TryCreate`/`Draw`/`ProcessEvents`/`Show`（收 `Action updateUI`） |
+| `UI/Dialogs/AudioSettingsDialog.cs` | `dialog_audio.cpp:110-260` | `AudioSettingsArtwork`（`SPANEL` 0-3/10-11）、289x272 页、音量点击/滚轮 `( v + 1 ) % 11` 并把 `100 * v / 10` 推给设备、音乐类型循环（无资料片跳过 Expansion）、3D 开关回调重建环境音、`Show` 返回 `saveConfig` |
+| `UI/Widgets/OptionItem.cs` | `ui_option_item.cpp:63-160` | 补 `DrawInterfaceType`、`DrawScrollSpeed` 与七个布局常量（`ThreeOptionsStepX`/`TwoOptionsStepX`/`OptionsStepY`/`ThreeOptionsOffsetX`/`TwoOptionsOffsetX`/`OptionsOffsetY`/`OptionIconSize`） |
+| `Game/Audio/IAudioDevice.cs` + `AudioManager` | `Music::setVolume`/`Mixer::setVolume` | 新增 `SetMusicVolume(int percent)`/`SetSoundVolume(int percent)`，`AudioManager` 只做转发 |
+| `UI/Interface/AdventureMapDialogs.cs` | 两个 `open*SettingsDialog()` 的装配 | `OpenInterfaceSettings( Action updateUI, LocalEvent? )`、`OpenAudioSettings( AudioManager?, Action? environmentSoundMixer, LocalEvent? )`，缺资源时按参考打日志不开窗 |
+| `tests/.../InterfaceSettingsDialogTests.cs`、`AudioSettingsDialogTests.cs` | 同上 | 8 + 11 条：缺帧、页尺寸、图标位置与步长、四个叶子、分类与音量循环/回绕、滚轮、Enter/Escape、右键弹窗、无设备时音量不动、3D 回调 |
+
+要点与偏差：
+
+* 界面页的 `updateUI()` 端口的对应物是 `AdventureMap.Reset()`，因此 `Show` 把它作为必填 `Action` 参数，与参考的
+  `openInterfaceSettingsDialog( updateUI )` 一致；四个叶子由 `Show` 应用（`SwitchToNextInterfaceType`、
+  `SetHideInterface`、`SetMonochromeCursor`、`SetNumericArmyEstimationView`），滚动速度在页内就地循环。
+* 音频页的 `fromAdventureMap` 用「非空的环境音回调」表达；`Audio::isValid()` 为假时音量项显示 `off` 且点击无效。
+* `IEventEngine` 没有 `isFullScreen()`，参考「全屏状态被全局热键改变后重画」的分支没转，已在文档注释里写明。
+* 参考的 small okay 按钮统一用端口的标准按钮（与既有对话框一致）。
+
+构建 0 错误 0 警告；全量 **5 448 绿**（Core 284，Assets 425，Game 3 266，UI 1 473）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **63.8 FPS**、退出 0。
+
+**下一段**：`dialog_graphics_settings.cpp`（296）与它依赖的 `dialog_resolution.cpp`（未转）、`dialog_system_options.cpp`
+（445）主窗口。图形页要改分辨率、切全屏并重置渲染器，先给 `IEventEngine` 补「全屏/分辨率/渲染器重置」三个方法，
+再接九宫格。
+
+## 2026-11-22 G6.8（第十二步）：热键对话框
+
+系统选项的子窗口里最大的一块，`dialog_hotkeys.cpp`（484 行）转完。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/HotKeysDialog.cs` | `dialog_hotkeys.cpp:307-483` | `HotKeysArtwork`（5 帧滚动条 + 底板 + 按钮）、`HotKeyRow`、`HotKeysDialog : ListBox<HotKeyRow>`（分类列 + 事件名/键名两列 + 滚动条 + OK）；`TryCreate`（三列宽度 150/280/120 起步、按最长文本等比放大、上限屏幕宽 -150，高 `max(屏高-100, 480)`）、`SetCategory`、`BeginWaitingForHotKey`/`CommitHotKey`/`CancelWaitingForHotKey`、`ProcessEvents`、`Show`、`Draw` |
+| `UI/Interface/AdventureMapDialogs.cs` | `openHotkeysDialog()` 的装配 | `OpenHotKeys( LocalEvent? )`：取 `SCROLL`/`BOARD`（邪恶界面用 `SCROLLE`/`BOARDE`）、字体与按钮，`TryCreate` 失败按参考打日志后不开窗，关闭后返回 `IsDirty` |
+| `tests/.../HotKeysDialogTests.cs` | 同上 | 17 条：缺帧/空行不开窗、高度两档、三列位置、宽度关系、默认全事件、分类过滤、同分类点击不变、等待/改键/Enter 不误关窗、Enter 关窗（单按钮窗口 Escape 同 OK）、双击走行回调、右键弹窗、伪事件抛错、无等待时提交无效 |
+
+要点与偏差：
+
+* 端口的 `ListBox` 没有双击计时，「双击」= 点已选中的行（与 `SelectFileView` 一致）；改键等待不再弹
+  参考那个带自定义元素的 `showMessage`，而是把标题换成 `Press any key to set the hotkey:`、把该行键名画成
+  `...`，等待期间先吃掉本帧按键、不处理 OK/Cancel 热键——等价于参考临时置空 `OKAY`/`CANCEL`/`F4`/`F10`。
+* 分类右击与「Okay」右击只填 `Popup`/`TakePopup()`，由 `Show` 里的 `MessageBox` 呈现，对话框本身不弹窗。
+* 热键表仍是静态 `GameHotKeys`；`IsDirty` 只表达「改过了」，`fheroes2.key` 的落盘位置仍归宿主（端口连
+  `fheroes2.cfg` 都还没有写入点，`Settings.Write` 至今无调用者），这一缺口在文档中如实保留。
+
+构建 0 错误 0 警告；全量 **5 429 绿**（Core 284，Assets 425，Game 3 266，UI 1 454）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **59.5 FPS**、退出 0。
+
+**下一段**：`dialog_interface_settings.cpp`（264 行）、`dialog_audio.cpp`（261）、
+`dialog_graphics_settings.cpp`（296），最后 `dialog_system_options.cpp`（445）主窗口，把 `OpenHotKeys` 等
+挂进九宫格并删掉 `IAdventureHost` 的最后一项。
+
+## 2026-11-22 G6.8（第十一步，前置）：热键模型与键名
+
+系统选项的九宫格里「热键」一页要先有热键表，参考的 `game_hotkeys.cpp`（597 行）此前没有转，本步先把它和
+`KeySymGetName()` 落地，下一段再写热键对话框与主窗口。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Input/KeyNames.cs` | `localevent.cpp:1167-1170`（SDL 后端） | `Key` → 大写名字（`RETURN`/`LEFT SHIFT`/`KEYPAD 4`/`#` 等 137 项）与 `TryParse` 反向解析，忽略大小写 |
+| `UI/Input/GameHotKeys.cs` | `game_hotkeys.cpp:88-597` | `HotKeyCategory`（9 组）、`HotKeyEvent`（118 个事件，跳过 `WITH_DEBUG` 项）、默认键表；`Reset`/`HotKeyPressEvent`/`HotKeyHoldEvent`/`GetHotKeyForEvent`/`SetHotKeyForEvent`/`GetHotKeyNameByEventId`/`GetHotKeyEventNameByEventId`/`GetAllHotKeyEvents`/`GetHotKeyCategoryName`/`HotKeySave`/`HotKeyLoad`/`GlobalKeyDownEvent` |
+| `tests/.../HotKeysTests.cs` | 同上 | 13 条：键名全量往返、大小写、默认键、改键、伪事件抛错、存读往返、坏文件忽略、空内容保默认、事件名唯一、分类名、`GetAllHotKeyEvents` 首项、全局开关（Alt/Ctrl 不算） |
+
+要点与偏差：
+
+* 热键表放在 `FHeroes2.UI.Input`（`Key`/`LocalEvent` 所在层），不放在 `Game`：`Game` 不引用 `UI`，参考的
+  `game/` 目录在端口里横跨两层，输入相关的表跟着输入走，与 `GameDelays` 放 `System` 同理。
+* 参考的 `HotKeysLoad( filename )` 会读文件后立刻 `HotKeySave()`；端口没有配置目录，拆成
+  `HotKeyLoad( string content )` 与 `HotKeySave() → string`，文件位置与写入交给宿主，往返可单测。
+* 参考用 `TinyConfig( '=', '#' )` 解析；端口没有这个类，解析内联在 `HotKeyLoad`（`#` 注释、`名字 = 键名`、
+  认不得的跳过），注释已说明。
+* `GlobalKeyDownEvent` 只改 `Settings` 并返回是否命中，不调 `conf.Save()`（持久化留给宿主）；`WITH_DEBUG`
+  的开发者模式与「把控制权交给 AI」两个分支没转。
+* `DefaultDelete` 在参考里归 `GLOBAL` 分类，枚举位置紧跟 `DefaultDown`，照抄；`EditorAutoPlaytest` 归
+  `WORLD_MAP`，也照抄。
+
+构建 0 错误 0 警告；全量 **5 412 绿**（Core 284，Assets 425，Game 3 266，UI 1 437）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **63.7 FPS**、退出 0。
+
+**下一段**：照 `dialog_hotkeys.cpp`（484 行）写热键对话框（分类表格、滚动、改键等待、保存），再接
+`dialog_interface_settings.cpp`（264）、`dialog_audio.cpp`（261）、`dialog_graphics_settings.cpp`（296）与主窗口
+`dialog_system_options.cpp`（445），最后删掉 `IAdventureHost` 的最后一项。
+
+## 2026-11-22 G6.8（第十步）：世界地图搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.cs` | `view_world.cpp:589-795` | 新增 `OpenViewWorld( mode, view, zoomLevel, viewport, events )`：`new ViewWorldMapBuilder( view.Map, view.Tiles, world, view.Objects, view.Monsters, view.Boats, view.FogSprites ).Build( mode )` 建缓存、`ViewWorldRenderer.DrawObjectsIcons( color, mode, cache, world, sprites )` 盖图标、`new ViewWorldWindow( world, mode, color, zoomLevel, viewport, view.VisibleTileArea, cache, _display.Width, _display.Height, sprites )`、`ViewWorldDialog.Show( _display, window, events, showHint: … )` 阻塞到关窗，返回缩放档；`IcnViewWorldSpriteSource` 首次打开时懒加载 |
+| `UI/Dialogs/ViewWorldDialog.cs` | 同上 | 首帧与每帧绘制后补 `input.Engine?.Render( display.Bounds )`，阻塞循环不再依赖调用方呈现（与 `MessageBox.Show` 一致） |
+| `UI/Interface/AdventureMap.cs` | `interface_events.cpp:287-290` | 新增 `AttachView( AdventureMapView view, Rect viewport )` 与 `_view`/`_viewport`/`_viewWorldZoom` 三个字段（`ViewWorldZoomLevel` 对应 `conf.ViewWorldZoomLevel`） |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventViewWorld()` 改走 `_dialogs.OpenViewWorld( ViewWorldMode.OnlyVisible, view, _viewWorldZoom, _viewport )`，视图未接线时直接返回 |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `OpenViewWorld()`，接口 **2 → 1 项**（只剩系统选项） |
+| `tests/.../AdventureMapTests.cs` | 同上 | 2 条：`EventViewWorld` 未接线时平静返回；`AttachView( null )` 抛 `ArgumentNullException` |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 删 `OpenViewWorld` |
+
+要点与偏差：
+
+* 参考的 `EventViewWorld()` 把 `*this` 交给 `ViewWorldWindow`，窗口从界面取视口与可见区域；端口不传整块界面，
+  由屏幕经 `AttachView` 拿到 `AdventureMapView`（含 `Map`/`Tiles`/`Objects`/`Monsters`/`Boats`/`FogSprites`/`VisibleTileArea`）
+  与鼠标视口，这正是 `GameArea::GetROI()`/`GetVisibleTileROI()` 两样的最小集合。
+* `S9` 场景的 `AdventureMapScene._viewWorld`/`ViewWorldOverlay` 是 `GameHost` 驱动的非阻塞覆盖层，属于 G6.9 的
+  场景接管范围，本次不动；`ViewWorldDialog.Show` 与它共用同一个 `ViewWorldWindow`。
+* 玩家色取 `Settings.Get().Players.CurrentColor`，模式按参考传 `OnlyVisible`；缩放档写回 `Settings` 仍留给场景，
+  与「窗口只管画与交互」的分工一致。
+
+构建 0 错误 0 警告；全量 **5 399 绿**（Core 284，Assets 425，Game 3 266，UI 1 424）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **53.8 FPS**、退出 0（`--view-world` 走场景覆盖层，30 帧在计时窗口内完成，
+FPS 显示 0.0 是既有行为，退出 0）。
+
+**下一段**：`IAdventureHost` 只剩系统选项一项。参考 `dialog_system_options.cpp` 尚未移植（约 1 900 行，音频/图形/
+热键三个子对话框 + 整套 `ui_option_item`），是 G6.8 的最后一块，也是 G6.9 前置：先把选项模型与三个子对话框转出来，
+再照本步的样子接进 `AdventureMapDialogs`，接口归零。
+
+## 2026-11-22 G6.8（第九步）：城镇屏搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.cs` | `castle_dialog.cpp:220-859` | 新增 `OpenCastleDialog( castle, events )`：每座城 `CastleScreenArtwork.TryCreate( castle.Color )`（`CREST` 帧随玩家色，邻城可能换色）+ `CastleScreenView` + `CastleDialog`，`World.GetHero( castle )` 找访问英雄，英雄大肖像走 `HeroPortraitIcn.Get( hero.PortraitId )`，船长大肖像走 `CaptainPortrait.TryCreateBig`；`ShowCastleDialog` 循环兑现弹窗；返回 `NextCastle`/`PreviousCastle` 时 `GetAdjacentCastle` 在王国城镇环上走一格重开，其余返回值结束 |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventCastleDialog()` 的两处（聚焦动作后、`EventOpenFocus()`）改走 `_dialogs.OpenCastleDialog( castle )` |
+| `UI/Interface/AdventureMap.Mouse.cs` | 同上 | 点同一格的第二个城镇改走 `_dialogs.OpenCastleDialog( otherCastle )` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `OpenCastleDialog( CastleTown )`，接口 **3 → 2 项** |
+| `tests/.../AdventureMapDialogsTests.cs` | 同上 | 1 条：引擎立即停止时 `OpenCastleDialog` 平静返回（`new CastleTown(0, MapRace.Knight)` + `ChangeColor( Red )`） |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 删 `OpenCastleDialog` |
+
+要点与偏差：
+
+* `CastleScreenArtwork.TryCreate`、`CastleScreenView`、`CastleDialog`、`CaptainPortrait` 都已存在，这一步只接循环——
+  与上一轮「城堡要一整套装配」的判断相比，实际工作量小得多。
+* `CastleDialogRequests.Window`（建造/招募/市场/魔法塔等子窗口）与 `Army`（军队条）仍无兑现方，连同
+  `NextConstructionWindow`/`NextMageGuildWindow` 四个返回值一起按关闭处理，方法文档已逐条标注。
+* 每个邻城重取美术，因为 `CREST` 帧号来自玩家色；`GetAdjacentCastle` 按 `world.GetKingdom( color ).Castles`
+  的索引走环，单城王国返回 `null` 结束。
+
+构建 0 错误 0 警告；全量 **5 397 绿**（Core 284，Assets 425，Game 3 266，UI 1 422）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **65.3 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 2 项——世界地图与系统选项。世界地图建议直接在
+`AdventureMapScene.OpenViewWorld` 落脚（它已有 `_view` 与 `_friends`），把 `IAdventureHost` 的费用降到 1；
+系统选项要先转 `dialog_system_options.cpp`（约 1 900 行，音频/图形/热键三个子对话框与整套 `ui_option_item`），
+是 G6.9 里最大的一块。
+
 ## 2026-11-22 G6.8（第八步）：王国总览搬进 `AdventureMapDialogs`
 
 | 端口文件 | 参考 | 内容 |

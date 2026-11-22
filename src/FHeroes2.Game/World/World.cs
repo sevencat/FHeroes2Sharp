@@ -331,7 +331,40 @@ public sealed partial class World
         int revealed = fog.Reveal(tileIndex % Width, tileIndex / Width, distance, color);
         fog.UpdateDirections(color);
 
+        int column = tileIndex % Width;
+        int row = tileIndex / Width;
+        SyncTilesFog(column - distance, row - distance, column + distance, row + distance);
+
         return revealed;
+    }
+
+    /// <summary>
+    /// 把 <see cref="Fog"/> 的迷雾按矩形抄进瓦片自己那份，<see cref="Tile.SetFogColors"/>。
+    /// </summary>
+    /// <remarks>
+    /// 迷雾在端口里有两份账：<see cref="Fog"/> 给 <c>AdventureMapView</c> 与雷达用，
+    /// <see cref="Tile"/> 的 <see cref="Tile.FogColors"/> 是参考里瓦片自己那份——<c>GameArea</c> 的画图与
+    /// <see cref="TileFog"/> 的方向缓存读的都是它。两份账合并之前，谁动了其中一份就得同步另一份。
+    /// </remarks>
+    private void SyncTilesFog(int minColumn, int minRow, int maxColumn, int maxRow)
+    {
+        if (Fog is not { } fog)
+        {
+            return;
+        }
+
+        int firstColumn = Math.Max(minColumn, 0);
+        int firstRow = Math.Max(minRow, 0);
+        int lastColumn = Math.Min(maxColumn, Width - 1);
+        int lastRow = Math.Min(maxRow, Height - 1);
+
+        for (int row = firstRow; row <= lastRow; ++row)
+        {
+            for (int column = firstColumn; column <= lastColumn; ++column)
+            {
+                _tiles[(row * Width) + column].SetFogColors(fog.GetFogColors(column, row));
+            }
+        }
     }
 
     /// <summary>
@@ -422,6 +455,10 @@ public sealed partial class World
         // whose human color has no hero and no town — still has to leave the table ready to be drawn: the
         // renderer walks the direction masks, not the fog bytes, and a fresh table has none yet.
         Fog?.UpdateDirections(color);
+
+        // 迷雾有两份账：MapFog（AdventureMapView 与雷达按它画）与 Tile._fogColors（参考里 Tile 自己那份，
+        // GameArea 的渲染与 TileFog 的方向缓存读的是它）。这里把 Tile 那份同步过来，否则地图层会按「全雾」画。
+        SyncTilesFog(0, 0, Width - 1, Height - 1);
 
         return revealed;
     }

@@ -72,6 +72,14 @@ public sealed class AudioManager
     /// <summary>The looping sound effects that are heard, exposed for the tests.</summary>
     public AudioLoopEffects LoopEffects => _loopEffects;
 
+    /// <summary>Passes the music volume to the device, <c>Music::setVolume()</c>.</summary>
+    /// <param name="percent">Volume from 0 to 100.</param>
+    public void SetMusicVolume(int percent) => _device.SetMusicVolume(percent);
+
+    /// <summary>Passes the sound effects volume to the device, <c>Mixer::setVolume()</c>.</summary>
+    /// <param name="percent">Volume from 0 to 100.</param>
+    public void SetSoundVolume(int percent) => _device.SetSoundVolume(percent);
+
     /// <summary>
     /// Whether the music folder has a file for a tune, <c>isExternalMusicFileAvailable()</c>.
     /// </summary>

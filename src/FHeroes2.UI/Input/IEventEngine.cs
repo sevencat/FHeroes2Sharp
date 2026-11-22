@@ -54,4 +54,15 @@ public interface IEventEngine
     /// <summary>Waits between two frames, <c>EventProcessing::EventEngine::sleep</c>.</summary>
     /// <param name="milliseconds">How long to wait.</param>
     void Sleep(ulong milliseconds);
+
+    /// <summary>
+    /// The display half of the engine, or <see langword="null"/> when the host has no window to control.
+    /// </summary>
+    /// <remarks>
+    /// The reference reaches the same thing through the global <c>fheroes2::engine()</c>. The port keeps it on the
+    /// engine the dialogs already hold; the application supplies a real implementation, the test fakes leave it
+    /// <see langword="null"/> and the settings page then reports the switches as unavailable instead of pretending
+    /// they worked.
+    /// </remarks>
+    IDisplayControl? Display => null;
 }

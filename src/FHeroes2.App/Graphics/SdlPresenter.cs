@@ -21,11 +21,12 @@ namespace FHeroes2.App.Graphics;
 internal sealed class SdlPresenter : IScreenPresenter
 {
     private readonly IntPtr _window;
-    private readonly IntPtr _renderer;
-    private readonly IntPtr _frameTexture;
-    private readonly IntPtr _logicalTarget;
     private readonly uint[] _conversionBuffer;
     private readonly WindowIcon? _windowIcon;
+
+    private IntPtr _renderer;
+    private IntPtr _frameTexture;
+    private IntPtr _logicalTarget;
 
     private uint[] _lookup;
     private Palette? _paletteInUse;
@@ -52,35 +53,15 @@ internal sealed class SdlPresenter : IScreenPresenter
             throw new InvalidOperationException($"SDL_CreateWindow failed: {SDL.GetError()}");
         }
 
-        _renderer = SDL.CreateRenderer(_window, (string?)null);
-        if (_renderer == IntPtr.Zero)
+        try
         {
-            SDL.DestroyWindow(_window);
-            throw new InvalidOperationException($"SDL_CreateRenderer failed: {SDL.GetError()}");
+            CreateRendererResources();
         }
-
-        _frameTexture = SDL.CreateTexture(
-            _renderer,
-            SDL.PixelFormat.ABGR8888,
-            SDL.TextureAccess.Streaming,
-            logicalSize.Width,
-            logicalSize.Height);
-
-        _logicalTarget = SDL.CreateTexture(
-            _renderer,
-            SDL.PixelFormat.ABGR8888,
-            SDL.TextureAccess.Target,
-            logicalSize.Width,
-            logicalSize.Height);
-
-        if (_frameTexture == IntPtr.Zero || _logicalTarget == IntPtr.Zero)
+        catch
         {
             Dispose();
-            throw new InvalidOperationException($"SDL_CreateTexture failed: {SDL.GetError()}");
+            throw;
         }
-
-        SDL.SetTextureScaleMode(_frameTexture, SDL.ScaleMode.Nearest);
-        SDL.SetTextureBlendMode(_logicalTarget, SDL.BlendMode.None);
 
         _conversionBuffer = new uint[logicalSize.Area];
         _paletteInUse = new Palette();
@@ -239,6 +220,127 @@ internal sealed class SdlPresenter : IScreenPresenter
         EndFrame();
     }
 
+    /// <summary>
+    /// Creates the renderer and the two textures it owns, or re-creates them after a reset.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">SDL refused a surface.</exception>
+    private void CreateRendererResources()
+    {
+        _renderer = SDL.CreateRenderer(_window, (string?)null);
+        if (_renderer == IntPtr.Zero)
+        {
+            throw new InvalidOperationException($"SDL_CreateRenderer failed: {SDL.GetError()}");
+        }
+
+        _frameTexture = SDL.CreateTexture(
+            _renderer,
+            SDL.PixelFormat.ABGR8888,
+            SDL.TextureAccess.Streaming,
+            LogicalSize.Width,
+            LogicalSize.Height);
+
+        _logicalTarget = SDL.CreateTexture(
+            _renderer,
+            SDL.PixelFormat.ABGR8888,
+            SDL.TextureAccess.Target,
+            LogicalSize.Width,
+            LogicalSize.Height);
+
+        if (_frameTexture == IntPtr.Zero || _logicalTarget == IntPtr.Zero)
+        {
+            throw new InvalidOperationException($"SDL_CreateTexture failed: {SDL.GetError()}");
+        }
+
+        SDL.SetTextureScaleMode(_frameTexture, SDL.ScaleMode.Nearest);
+        SDL.SetTextureBlendMode(_logicalTarget, SDL.BlendMode.None);
+    }
+
+    /// <summary>Releases the renderer and both textures, leaving the window in place.</summary>
+    private void ReleaseRendererResources()
+    {
+        if (_logicalTarget != IntPtr.Zero)
+        {
+            SDL.DestroyTexture(_logicalTarget);
+            _logicalTarget = IntPtr.Zero;
+        }
+
+        if (_frameTexture != IntPtr.Zero)
+        {
+            SDL.DestroyTexture(_frameTexture);
+            _frameTexture = IntPtr.Zero;
+        }
+
+        if (_renderer != IntPtr.Zero)
+        {
+            SDL.DestroyRenderer(_renderer);
+            _renderer = IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Switches between borderless full screen and the windowed mode, <c>engine().setFullScreen()</c>.
+    /// </summary>
+    /// <param name="enable">Whether the window has to become full screen.</param>
+    /// <remarks>A refused switch keeps the current mode and is only logged, as in the reference.</remarks>
+    public void SetFullscreen(bool enable)
+    {
+        if (IsFullscreen == enable)
+        {
+            return;
+        }
+
+        if (!SDL.SetWindowFullscreen(_window, enable))
+        {
+            GameLog.Warn($"Fullscreen could not be changed: {SDL.GetError()}");
+            return;
+        }
+
+        _viewport = PresentationViewport.Compute(LogicalSize, OutputSize);
+        GameLog.Info(enable ? "Switched to fullscreen." : "Switched to windowed mode.");
+    }
+
+    /// <summary>
+    /// Resizes the window to a resolution, <c>Display::setResolution()</c>.
+    /// </summary>
+    /// <param name="resolution">The resolution to switch to; its frame buffer must be <see cref="LogicalSize"/>.</param>
+    /// <exception cref="ArgumentException">The resolution changes the logic size, which this presenter cannot do.</exception>
+    /// <remarks>
+    /// The port keeps a fixed 640x480 frame buffer and scales it into the window, so only the window half of the
+    /// resolution is applied; a refused resize keeps the current size and is only logged.
+    /// </remarks>
+    public void SetResolution(ResolutionInfo resolution)
+    {
+        if (resolution.GameSize != LogicalSize)
+        {
+            throw new ArgumentException(
+                $"The presenter draws in {LogicalSize} and cannot switch to the logic size {resolution.GameSize}.",
+                nameof(resolution));
+        }
+
+        if (resolution.ScreenSize == OutputSize)
+        {
+            return;
+        }
+
+        if (!SDL.SetWindowSize(_window, resolution.ScreenWidth, resolution.ScreenHeight))
+        {
+            GameLog.Warn($"The window could not be resized: {SDL.GetError()}");
+            return;
+        }
+
+        _viewport = PresentationViewport.Compute(LogicalSize, OutputSize);
+    }
+
+    /// <summary>
+    /// Rebuilds the renderer and its textures after a scaling change, <c>Display::resetRenderer()</c>.
+    /// </summary>
+    public void ResetRenderer()
+    {
+        ReleaseRendererResources();
+        CreateRendererResources();
+        _viewport = PresentationViewport.Compute(LogicalSize, OutputSize);
+    }
+
     /// <summary>Switches between borderless fullscreen and the windowed mode.</summary>
     public void ToggleFullscreen()
     {
@@ -310,20 +412,7 @@ internal sealed class SdlPresenter : IScreenPresenter
 
         _disposed = true;
 
-        if (_logicalTarget != IntPtr.Zero)
-        {
-            SDL.DestroyTexture(_logicalTarget);
-        }
-
-        if (_frameTexture != IntPtr.Zero)
-        {
-            SDL.DestroyTexture(_frameTexture);
-        }
-
-        if (_renderer != IntPtr.Zero)
-        {
-            SDL.DestroyRenderer(_renderer);
-        }
+        ReleaseRendererResources();
 
         if (_window != IntPtr.Zero)
         {

@@ -599,9 +599,21 @@ public sealed partial class GameArea
     }
 
     /// <summary>Processes the events of the viewport, <c>QueueEventProcessing()</c>.</summary>
-    public void QueueEventProcessing()
+    /// <remarks>
+    /// The reference reads <c>LocalEvent::Get()</c>; the port takes the frame's state as a parameter, and this overload
+    /// is the one that still answers with the process wide state, kept for the callers that have no frame of their own
+    /// (<c>GameHost</c>).
+    /// </remarks>
+    public void QueueEventProcessing() => QueueEventProcessing(LocalEvent.Current);
+
+    /// <summary>Processes the events of the viewport, <c>QueueEventProcessing()</c>.</summary>
+    /// <param name="events">The event state of the frame.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public void QueueEventProcessing(LocalEvent events)
     {
-        LocalEvent localEvent = LocalEvent.Current;
+        ArgumentNullException.ThrowIfNull(events);
+
+        LocalEvent localEvent = events;
         Point mousePosition = localEvent.CursorPosition;
         Settings settings = Settings.Get();
 

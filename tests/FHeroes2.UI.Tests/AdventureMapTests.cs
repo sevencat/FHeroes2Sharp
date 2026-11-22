@@ -16,6 +16,7 @@ using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
 using Xunit;
 
@@ -83,9 +84,422 @@ public sealed class AdventureMapTests : IDisposable
         Settings.Reset();
 
         AdventureMap? map = AdventureMap.TryCreate(new PixelBuffer(640, 480), null,
-            new AudioManager(new StubAudioDevice(), new StubAudioSource(), Settings.Get()), new StubHost());
+            new AudioManager(new StubAudioDevice(), new StubAudioSource(), Settings.Get()));
 
         Assert.Null(map);
+    }
+
+    [Fact]
+    public void Create_WithoutASoundCard_BuildsTheScreen()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        // CreateMap 把全局世界与精灵都装好，随后的这一次只换掉声卡：参考在 Audio::isValid() == false 时照常开局，
+        // 只是每一声、每一轨都被丢弃。
+        _ = CreateMap();
+
+        Assert.NotNull(AdventureMap.TryCreate(new PixelBuffer(640, 480), _assets, null));
+    }
+
+    [Fact]
+    public void EventViewWorld_WithoutAttachedView_DoesNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        // 参考的 EventViewWorld() 把 *this 交给 ViewWorld::ViewWorldWindow()，从界面取地图与视口；端口要先
+        // AttachView。没接视图时它什么都不做，而不是去问宿主——IAdventureHost 已经不再有这一项。
+        map.EventViewWorld();
+    }
+
+    [Fact]
+    public void AttachView_WithoutView_Throws()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        Assert.Throws<ArgumentNullException>(() => map.AttachView(null!, new Rect(0, 0, 1, 1)));
+    }
+
+    [Fact]
+    public void IsHeroMovementInterrupted_WithoutInput_IsFalse()
+    {
+        Assert.False(AdventureMap.IsHeroMovementInterrupted(new LocalEvent()));
+    }
+
+    [Fact]
+    public void IsHeroMovementInterrupted_WithAKeyPress_IsTrue()
+    {
+        // HumanTurn():1135 —— 走路期间按键就是「停下」。
+        Assert.True(AdventureMap.IsHeroMovementInterrupted(Pressed(Key.Escape)));
+    }
+
+    [Fact]
+    public void IsHeroMovementInterrupted_WithALeftClick_IsTrue()
+    {
+        LocalEvent events = new();
+        events.OnMouseButton(true, MouseButtonType.Left, new Point(10, 10));
+        events.OnMouseButton(false, MouseButtonType.Left, new Point(10, 10));
+
+        Assert.True(AdventureMap.IsHeroMovementInterrupted(events));
+    }
+
+    [Fact]
+    public void IsHeroMovementInterrupted_WithARightPress_IsTrue()
+    {
+        LocalEvent events = new();
+        events.OnMouseButton(true, MouseButtonType.Right, new Point(10, 10));
+
+        Assert.True(AdventureMap.IsHeroMovementInterrupted(events));
+    }
+
+    [Fact]
+    public void ProcessHotKeys_WithoutAKeyPress_DoesNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        bool askedToQuit = false;
+
+        AdventureEventResult result = map.ProcessHotKeys(new LocalEvent(), () =>
+        {
+            askedToQuit = true;
+
+            return AdventureEventResult.QuitGame;
+        });
+
+        Assert.Equal(AdventureEventResult.Cancel, result);
+        Assert.False(askedToQuit);
+    }
+
+    [Fact]
+    public void ProcessHotKeys_TogglingTheControlPanel_KeepsThePlayerOnTheMap()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        Settings settings = Settings.Get();
+
+        // 五个 show/hide 事件只在「隐藏界面」模式下动设置（interface_events.cpp:582-590）。
+        settings.SetHideInterface(true);
+        settings.SetShowControlPanel(true);
+
+        AdventureEventResult result = map.ProcessHotKeys(
+            Pressed(GameHotKeys.GetHotKeyForEvent(HotKeyEvent.WorldToggleControlPanel)),
+            () => AdventureEventResult.QuitGame);
+
+        Assert.Equal(AdventureEventResult.Cancel, result);
+        Assert.False(settings.ShowControlPanel);
+    }
+
+    [Theory]
+    [InlineData(HotKeyEvent.GlobalAppQuit)]
+    [InlineData(HotKeyEvent.DefaultCancel)]
+    public void ProcessHotKeys_QuitKeys_AskTheHostAndReportItsAnswer(HotKeyEvent hotKey)
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        int asked = 0;
+
+        AdventureEventResult result = map.ProcessHotKeys(
+            Pressed(GameHotKeys.GetHotKeyForEvent(hotKey)),
+            () =>
+            {
+                ++asked;
+
+                return AdventureEventResult.QuitGame;
+            });
+
+        // 参考把 Game::processExitEvent() 的返回值原样当结果（:1143-1145）：玩家取消时它照样是 CANCEL，
+        // 所以端口把决定权整个交给宿主。
+        Assert.Equal(1, asked);
+        Assert.Equal(AdventureEventResult.QuitGame, result);
+    }
+
+    [Fact]
+    public void ProcessPanels_WithoutInput_ReportsNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        AdventurePanelResult result = map.ProcessPanels(new LocalEvent());
+
+        Assert.Equal(AdventureEventResult.Cancel, result.Mode);
+        Assert.Null(result.Drag);
+    }
+
+    [Fact]
+    public void ProcessPanels_ClickingTheRadarTileOfTheControlPanel_HidesTheRadar()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        Settings settings = Settings.Get();
+
+        // The control panel only answers in the hidden-interface mode (game_startgame.cpp:1390).
+        settings.SetHideInterface(true);
+        settings.SetShowRadar(true);
+
+        // Reset() lays the panels out for the current mode, the way rebildAdventureMap() does.
+        map.Reset();
+
+        ControlPanel? control = map.GetControlPanel();
+        Assert.NotNull(control);
+
+        Point centre = control.RadarRect.Position + new Point(control.RadarRect.Width / 2, control.RadarRect.Height / 2);
+        LocalEvent events = Clicked(centre);
+
+        AdventurePanelResult result = map.ProcessPanels(events);
+
+        Assert.Equal(AdventureEventResult.Cancel, result.Mode);
+        Assert.False(settings.IsShowRadar);
+    }
+
+    [Fact]
+    public void ProcessPanels_GrabbingTheBorderOfTheButtonsPanel_HandsTheDragToTheCaller()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        Settings settings = Settings.Get();
+
+        settings.SetHideInterface(true);
+        settings.SetShowButtons(true);
+        map.Reset();
+
+        Interface.ButtonsPanel? buttons = map.GetButtonsPanel();
+        Assert.NotNull(buttons);
+        Assert.True(buttons.HideInterfaceEnabled);
+
+        Rect area = buttons.GetRect;
+        Point grab = new(area.X + (area.Width / 2), area.Y + 1);
+
+        LocalEvent events = new();
+        events.OnMouseButton(true, MouseButtonType.Left, grab);
+
+        AdventurePanelResult result = map.ProcessPanels(events);
+
+        // The reference would run the loop here; the port hands the drag over and the caller owns it.
+        Assert.NotNull(result.Drag);
+        Assert.Equal(AdventureEventResult.Cancel, result.Mode);
+    }
+
+    [Fact]
+    public void ProcessTurnFrame_WithoutInput_ReportsNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        AdventurePanelResult result = map.ProcessTurnFrame(new LocalEvent(), () => AdventureEventResult.QuitGame);
+
+        Assert.Equal(AdventureEventResult.Cancel, result.Mode);
+        Assert.Null(result.Drag);
+        Assert.False(map.IsHeroMoving);
+    }
+
+    [Fact]
+    public void ProcessTurnFrame_WhenTheMapDelayPassed_AdvancesTheAnimationIndex()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        // 测试环境里的延时表默认全是 0 毫秒（任何一次校验都算到点），先按游戏的启动流程填上真实长度。
+        GameDelays.InitAnimateDelays();
+
+        uint before = GameAnimation.AdventureMapAnimationIndex;
+
+        // MAPS_DELAY 到了才推一帧（game_startgame.cpp:1567-1572）；这里让它一定到点。
+        GameDelays.PassAnimationDelay(DelayType.MapsDelay);
+
+        map.ProcessTurnFrame(new LocalEvent(), () => AdventureEventResult.QuitGame);
+
+        Assert.Equal(before + 1, GameAnimation.AdventureMapAnimationIndex);
+    }
+
+    [Fact]
+    public void ProcessTurnFrame_WhenTheMapDelayHasNotPassed_KeepsTheAnimationIndex()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        GameDelays.InitAnimateDelays();
+
+        uint before = GameAnimation.AdventureMapAnimationIndex;
+
+        // 刚重设过的 250 毫秒延时这一帧一定还没到点，所以不推帧。
+        map.ProcessTurnFrame(new LocalEvent(), () => AdventureEventResult.QuitGame);
+
+        Assert.Equal(before, GameAnimation.AdventureMapAnimationIndex);
+    }
+
+    [Fact]
+    public void ProcessTurnFrame_WithAQuitKey_ReportsTheHostsAnswer()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        int asked = 0;
+
+        AdventurePanelResult result = map.ProcessTurnFrame(
+            Pressed(GameHotKeys.GetHotKeyForEvent(HotKeyEvent.GlobalAppQuit)),
+            () =>
+            {
+                ++asked;
+
+                return AdventureEventResult.QuitGame;
+            });
+
+        // 键盘块排在面板与动画之前（game_startgame.cpp:1141），它的结果直接结束这一帧。
+        Assert.Equal(1, asked);
+        Assert.Equal(AdventureEventResult.QuitGame, result.Mode);
+        Assert.Null(result.Drag);
+    }
+
+    [Fact]
+    public void AnimateHeroMovement_WithoutAWalkingHero_DoesNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        AdventureEventResult result = map.AnimateHeroMovement(new LocalEvent());
+
+        Assert.Equal(AdventureEventResult.Cancel, result);
+        Assert.False(map.IsHeroMoving);
+    }
+
+    [Fact]
+    public void ScrollGameArea_WithoutScrolling_DoesNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        map.ScrollGameArea(new LocalEvent());
+    }
+
+    [Fact]
+    public void FinishHumanTurn_WithoutInput_KeepsTheTurnGoing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        Assert.Equal(AdventureEventResult.Cancel, map.FinishHumanTurn(AdventureEventResult.Cancel, false));
+    }
+
+    [Fact]
+    public void FinishHumanTurn_ForAVanquishedKingdom_EndsTheTurn()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        // 参考的 `if ( res == CANCEL && !myKingdom.isPlay() ) res = END_TURN;`（game_startgame.cpp:1557）。
+        Assert.Equal(AdventureEventResult.EndTurn, map.FinishHumanTurn(AdventureEventResult.Cancel, true));
+    }
+
+    [Fact]
+    public void FinishHumanTurn_WithAQuitRequest_PassesItThrough()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        Assert.Equal(AdventureEventResult.QuitGame, map.FinishHumanTurn(AdventureEventResult.QuitGame, false));
+    }
+
+    [Fact]
+    public void FinishHumanTurn_WithEndTurn_ReportsEndTurn()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        // 结束回合时收起焦点英雄的路线；没有焦点英雄时只是原样返回。
+        Assert.Equal(AdventureEventResult.EndTurn, map.FinishHumanTurn(AdventureEventResult.EndTurn, false));
+    }
+
+    [Fact]
+    public void ProcessHotKeys_AKeyOutsideTheChain_DoesNothing()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+
+        // 回车绑在 DefaultOkay 上，键盘块里没有它，所以这一帧什么都不该发生。
+        AdventureEventResult result = map.ProcessHotKeys(
+            Pressed(GameHotKeys.GetHotKeyForEvent(HotKeyEvent.DefaultOkay)),
+            () => AdventureEventResult.QuitGame);
+
+        Assert.Equal(AdventureEventResult.Cancel, result);
     }
 
     [Fact]
@@ -390,9 +804,6 @@ public sealed class AdventureMapTests : IDisposable
     /// <summary>Whether the archives could be opened; every test here needs them.</summary>
     private bool HasGameData => _assets is not null;
 
-    /// <summary>What the last <see cref="CreateMap"/> handed to the screen, to check the dialogs it asked for.</summary>
-    private StubHost? LastHost { get; set; }
-
     /// <summary>
     /// The quick info boxes the screen asked for, taken instead of the blocking loop of
     /// <see cref="QuickInfoPopup"/>: a test cannot wait for a right button to be released.
@@ -401,6 +812,25 @@ public sealed class AdventureMapTests : IDisposable
 
     /// <summary>The frame the last <see cref="CreateMap"/> painted into.</summary>
     private PixelBuffer? LastDisplay { get; set; }
+
+    /// <summary>A frame in which <paramref name="key"/> was just pressed.</summary>
+    private static LocalEvent Pressed(Key key)
+    {
+        LocalEvent events = new();
+        events.OnKeyboard(key, KeyModifier.None, KeyboardEventState.Down);
+
+        return events;
+    }
+
+    /// <summary>A frame in which the left button was pressed and released on <paramref name="position"/>.</summary>
+    private static LocalEvent Clicked(Point position)
+    {
+        LocalEvent events = new();
+        events.OnMouseButton(true, MouseButtonType.Left, position);
+        events.OnMouseButton(false, MouseButtonType.Left, position);
+
+        return events;
+    }
 
     private AdventureMap CreateMap()
     {
@@ -414,13 +844,11 @@ public sealed class AdventureMapTests : IDisposable
         PixelBuffer display = new(640, 480);
         LastDisplay = display;
 
-        StubHost host = new();
-        LastHost = host;
         LastQuickInfo.Clear();
 
         // The screen now builds its own panels, the way the reference constructor does.
         AdventureMap? map = AdventureMap.TryCreate(display, _assets,
-            new AudioManager(new StubAudioDevice(), new StubAudioSource(), Settings.Get()), host);
+            new AudioManager(new StubAudioDevice(), new StubAudioSource(), Settings.Get()));
 
         if (map is null)
         {
@@ -497,6 +925,14 @@ public sealed class AdventureMapTests : IDisposable
         public void StopMusic()
         {
         }
+
+        public void SetMusicVolume(int percent)
+        {
+        }
+
+        public void SetSoundVolume(int percent)
+        {
+        }
     }
 
     /// <summary>An archive set without a single tune.</summary>
@@ -509,17 +945,5 @@ public sealed class AdventureMapTests : IDisposable
         public byte[]? TryGetSoundBody(M82Sound sound) => null;
 
         public byte[]? TryGetMidi(XmiTrack track, bool ignoreExpansion) => null;
-    }
-
-    /// <summary>The scene the adventure screen asks for dialogs; it records what was asked for.</summary>
-    private sealed class StubHost : IAdventureHost
-    {
-        public void OpenViewWorld()
-        {
-        }
-
-        public void ShowSystemOptions()
-        {
-        }
     }
 }

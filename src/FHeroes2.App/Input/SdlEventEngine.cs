@@ -26,6 +26,7 @@ internal sealed class SdlEventEngine : IEventEngine
     private readonly Func<bool, bool> _poll;
     private readonly Action<Rect> _present;
     private readonly Rect _screenArea;
+    private readonly IDisplayControl? _display;
 
     /// <summary>Connects the host callbacks to the event loop of <see cref="LocalEvent"/>.</summary>
     /// <param name="poll">
@@ -34,16 +35,24 @@ internal sealed class SdlEventEngine : IEventEngine
     /// </param>
     /// <param name="present">Uploads the frame; the area is a hint, the port always uploads all of it.</param>
     /// <param name="screenArea">The logical frame, the bounds of the reference's display.</param>
+    /// <param name="display">
+    /// The window the settings pages can drive, or <see langword="null"/> when the host has no window to control.
+    /// </param>
     /// <exception cref="ArgumentNullException">A callback is <see langword="null"/>.</exception>
-    public SdlEventEngine(Func<bool, bool> poll, Action<Rect> present, Rect screenArea)
+    public SdlEventEngine(Func<bool, bool> poll, Action<Rect> present, Rect screenArea,
+        IDisplayControl? display = null)
     {
         _poll = poll ?? throw new ArgumentNullException(nameof(poll));
         _present = present ?? throw new ArgumentNullException(nameof(present));
         _screenArea = screenArea;
+        _display = display;
     }
 
     /// <inheritdoc />
     public Rect ScreenArea => _screenArea;
+
+    /// <inheritdoc />
+    public IDisplayControl? Display => _display;
 
     /// <inheritdoc />
     public bool HandleEvents(LocalEvent state, bool allowExit, out bool displayRefreshRequired)

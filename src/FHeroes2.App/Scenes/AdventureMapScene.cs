@@ -18,6 +18,9 @@ using FHeroes2.UI.Interface;
 // until the scene is replaced by Interface::AdventureMap.
 using ButtonsPanel = FHeroes2.Game.AdventureMap.ButtonsPanel;
 
+// `AdventureMap` 这个名字同时是 FHeroes2.Game 下的命名空间与 Interface::AdventureMap 这个类，因此用别名钉住后者。
+using AdventureInterface = FHeroes2.UI.Interface.AdventureMap;
+
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.App.Scenes;
@@ -65,8 +68,9 @@ public sealed class AdventureMapScene : IScene
     private readonly Minimap _minimap;
     private readonly MapScrollController _mouse;
     private readonly MapFrame _mapFrame;
-    private readonly IconBar _iconBar;
-    private readonly IconSpriteSet? _iconSprites;
+
+    /// <summary>The ported screen itself, <c>Interface::AdventureMap</c>: it owns the panels and the frame.</summary>
+    private readonly AdventureInterface _interface;
     private readonly ButtonsPanel _buttons;
     private readonly ButtonSpriteSet? _buttonSprites;
     private readonly StatusPanelPainter? _statusPanel;
@@ -104,7 +108,7 @@ public sealed class AdventureMapScene : IScene
         AdventureMapView view,
         Minimap minimap,
         MapFrame mapFrame,
-        IconSpriteSet? iconSprites,
+        AdventureInterface screen,
         ButtonSpriteSet? buttonSprites,
         StatusPanelPainter? statusPanel,
         AdventureOptionsView? optionsArtwork,
@@ -121,8 +125,7 @@ public sealed class AdventureMapScene : IScene
         _minimap = minimap;
         _mouse = new MapScrollController(view);
         _mapFrame = mapFrame;
-        _iconBar = new IconBar(mapFrame.Panel);
-        _iconSprites = iconSprites;
+        _interface = screen;
         _buttons = new ButtonsPanel(mapFrame.Panel);
         _buttonSprites = buttonSprites;
         _statusPanel = statusPanel;
@@ -265,6 +268,52 @@ public sealed class AdventureMapScene : IScene
                 view.CenterOn(focus.X, focus.Y);
             }
 
+            // 屏幕自己建面板、自己生成 GameArea：参考在 StartGame 里 reset() 之后才 SetFocus，
+            // 端口照这个次序来——先 Reset() 摆好边框、雷达、图标条、按钮与状态面板，再按焦点英雄居中。
+            AdventureInterface? screen = AdventureInterface.TryCreate(frame.Pixels, assets, null);
+            if (screen is null)
+            {
+                error = "The monster portraits are not available, so the interface cannot be built.";
+
+                return null;
+            }
+
+            // StartGame() 在 reset() 之后还要把雷达按世界画出来、把状态面板摆回初始态（game_startgame.cpp:745-750），
+            // 这两步在参考里由宿主做，端口同样留给场景。
+            // 开局前把「轮到谁」摆成人类颜色，参考在 reset() 之前就是这么做的（game_startgame.cpp:742），
+            // 迷雾方向与雷达都按这个颜色取 Friends 来算。
+            FHeroes2.Game.System.Settings.Get().Players.SetCurrentColor(FHeroes2.Game.System.Players.HumanColors());
+
+            screen.Reset();
+            screen.GetRadar().Build(world);
+            screen.GetStatusPanel().Reset();
+
+            // 迷雾的方向缓存按刚侦察过的世界重算一次，否则地图层按「全雾」画（game_startgame.cpp:781）。
+            FHeroes2.UI.Interface.GameArea.UpdateMapFogDirections();
+
+            if (Environment.GetEnvironmentVariable("FH2_DEBUG_FOG") is not null)
+            {
+                FHeroes2.Game.Heroes.Hero? hero = session?.FocusHero;
+                int heroIndex = hero?.MapIndex ?? -1;
+                Console.Error.WriteLine(
+                    $"observers={observers} human={FHeroes2.Game.System.Players.HumanColors()} " +
+                    $"current={FHeroes2.Game.System.Settings.Get().Players.CurrentColor} " +
+                    $"friends={FHeroes2.Game.System.Players.FriendColors()} hero={heroIndex} " +
+                    $"fog={World.Current.GetTile(heroIndex).FogDirection}");
+            }
+
+            if (session?.FocusHero is { } actingHero)
+            {
+                screen.SetFocus(actingHero, false);
+            }
+            else if (focus is not null)
+            {
+                screen.GetGameArea().SetCenter(new Point(focus.X, focus.Y));
+            }
+
+            // View World 由屏幕自己开窗，它要读视口与可见区域；两者都来自场景的地图视图。
+            screen.AttachView(view, mapFrame.Viewport);
+
             AdventureMapScene scene = new(
                 frame,
                 assets,
@@ -274,7 +323,7 @@ public sealed class AdventureMapScene : IScene
                 view,
                 minimap,
                 mapFrame,
-                IconSpriteSet.TryCreate(assets),
+                screen,
                 ButtonSpriteSet.TryCreate(assets),
                 StatusPanelPainter.TryCreate(assets),
                 AdventureOptionsArtwork.TryCreate(assets),
@@ -486,6 +535,11 @@ public sealed class AdventureMapScene : IScene
     /// <summary>
     /// Paints the frame, the visible terrain, the icons of the panel, the minimap and the status bar.
     /// </summary>
+    /// <remarks>
+    /// 整块屏幕现在由 <c>Interface::AdventureMap::redraw</c>（端口的 <see cref="AdventureInterface.RedrawInterface"/>）画：
+    /// 它按参考的次序铺边框、画地图区、雷达、图标条、按钮与石头状态面板。场景只做三件它不管的事——把索引缓冲标脏
+    /// （像素直写报告不了自己）、画自己的诊断状态行、再叠上两个浮层。
+    /// </remarks>
     public void DrawFrame(in DiagnosticsState state)
     {
         // The View World window owns the whole display, the way the reference draws it straight into
@@ -497,31 +551,11 @@ public sealed class AdventureMapScene : IScene
             return;
         }
 
-        // The frame is painted first and the map on top of it: ADVBORD already holds the border, the
-        // radar bay and the panel bay, so the only work left is to put the map between them.
         // The map is written straight into the indexed pixels, which cannot report the change, so
         // the whole buffer has to be marked dirty or the presenter would skip the upload.
         _frame.InvalidateAll();
-        _mapFrame.Draw(_frame.Pixels, _dark);
-        _mapFrame.DrawPanel(_frame.Pixels);
+        _interface.RedrawInterface(Redraw.All);
 
-        // The icons of the panel go on top of the brick: the bar starts at 176, one border below the
-        // radar, which is where the brick starts as well.
-        _iconBar.Draw(_frame.Pixels, _iconSprites, _view.Map.Castles);
-
-        // The three status buttons follow the focus hero, the rest of ButtonsPanel::_setButtonStatus.
-        _buttons.Draw(_frame.Pixels, _buttonSprites, CurrentButtonStatus());
-
-        // The stone panel closes the column under the buttons, Interface::StatusPanel::_redraw().
-        DrawStatusPanel();
-
-        // Tiles the map does not cover (only possible at the edges) stay black, which is the colour
-        // of index 0 of KB.PAL and matches the empty border of the reference.
-        _viewportPixels.Clear();
-        _view.Draw(_viewportPixels);
-        ImageOps.Blit(_frame.Pixels, _viewport.Position, _viewportPixels, _viewportPixels.Bounds);
-
-        DrawMinimap();
         DrawStatusBar(state);
 
         // The options dialog is painted over the map that is already there, the way the reference

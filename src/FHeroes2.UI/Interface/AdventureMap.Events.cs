@@ -20,10 +20,10 @@ namespace FHeroes2.UI.Interface;
 /// <para>
 /// <b>Deviations.</b> The reference opens dialogs and message boxes itself, through the global <c>Dialog::</c>
 /// functions and through <c>fheroes2::showStandardTextMessage()</c>, both of which block until the player answers.
-/// The port has no blocking dialogs (a dialog is an object its owner feeds events to), and its adventure screen is
-/// owned by a scene, so every such call is reported to <see cref="IAdventureHost"/> instead. The same applies to
-/// <c>redraw()</c>: the events request a repaint with <see cref="BaseInterface.SetRedraw"/> and let the scene paint,
-/// instead of painting right away.
+/// The port has no blocking dialogs (a dialog is an object its owner feeds events to), so every such call ends up in
+/// <see cref="AdventureMapDialogs"/>, which runs the window loop itself. The same applies to <c>redraw()</c>: the
+/// events request a repaint with <see cref="BaseInterface.SetRedraw"/> and let the frame loop paint, instead of
+/// painting right away.
 /// </para>
 /// <para>
 /// The titles and bodies of the messages are the reference's <c>_()</c> strings. The port has no translation layer
@@ -351,7 +351,19 @@ public sealed partial class AdventureMap
     /// <summary>
     /// Opens the world map, <c>EventViewWorld()</c> (<c>interface_events.cpp:287-290</c>).
     /// </summary>
-    public void EventViewWorld() => _host.OpenViewWorld();
+    /// <remarks>
+    /// 参考把当前玩家色与 <c>OnlyVisible</c> 交给 <c>ViewWorld::ViewWorldWindow()</c>，窗口阻塞到玩家关掉；缩放档写回设置
+    /// （<c>conf.SetViewWorldZoomLevel</c>）留给场景。视图还没接线时（<see cref="AttachView"/> 没被调用）什么都不做。
+    /// </remarks>
+    public void EventViewWorld()
+    {
+        if (_view is not { } view)
+        {
+            return;
+        }
+
+        _viewWorldZoom = _dialogs.OpenViewWorld(ViewWorldMode.OnlyVisible, view, _viewWorldZoom, _viewport);
+    }
 
     /// <summary>
     /// Opens the file options dialog, <c>EventFileDialog()</c> (<c>interface_events.cpp:292-295</c>).
@@ -362,7 +374,11 @@ public sealed partial class AdventureMap
     /// <summary>
     /// Opens the system options dialog, <c>EventSystemDialog()</c> (<c>interface_events.cpp:297-300</c>).
     /// </summary>
-    public void EventSystemDialog() => _host.ShowSystemOptions();
+    /// <remarks>
+    /// 参考只有一句 <c>fheroes2::showSystemOptionsDialog()</c>；<see cref="ShowSystemOptions"/> 上的两个可选参数是给
+    /// 场景注入语言选择器与环境音混音器用的，屏幕自己不开这两个子流程。
+    /// </remarks>
+    public void EventSystemDialog() => ShowSystemOptions();
 
     /// <summary>
     /// Focuses the next castle, or the first one when a hero is focused, <c>EventNextTown()</c>
@@ -533,29 +549,42 @@ public sealed partial class AdventureMap
             return AdventureEventResult.Cancel;
         }
 
-        _audioManager.PlaySound(M82Sound.Digsound);
+        _audioManager?.PlaySound(M82Sound.Digsound);
 
         hero.ResetMovePoints();
         hero.Path.Reset();
 
+        void Announce()
+        {
+            hero.PickupArtifact(ultimateArtifact.Artifact, world);
+
+            _dialogs.ShowMessage("Congratulations!", $"After spending many hours digging here, you have uncovered the {ultimateArtifact.Name}.");
+        }
+
         if (world.DiggingForUltimateArtifact(GetCenterOf(heroIndex)))
         {
-            // The fanfare interrupts the terrain music and has to give it back afterwards.
-            using (new MusicRestorer(_audioManager))
+            // 没有声卡时参考的 Music/Mixer 调用全是空操作，号角与「先停地形音乐再还回去」都没有意义，直接跳过。
+            if (_audioManager is null)
             {
-                if (Settings.Get().IsMusicTypeMidi)
+                Announce();
+            }
+            else
+            {
+                // The fanfare interrupts the terrain music and has to give it back afterwards.
+                using (new MusicRestorer(_audioManager))
                 {
-                    // The MIDI soundtrack has no fanfare track, so the treasure sound stands in for it.
-                    _audioManager.PlaySound(M82Sound.Treasure);
-                }
-                else
-                {
-                    _audioManager.PlayMusicAsync(MusicTrack.UltimateArtifact, MusicPlaybackMode.PlayOnce);
-                }
+                    if (Settings.Get().IsMusicTypeMidi)
+                    {
+                        // The MIDI soundtrack has no fanfare track, so the treasure sound stands in for it.
+                        _audioManager.PlaySound(M82Sound.Treasure);
+                    }
+                    else
+                    {
+                        _audioManager.PlayMusicAsync(MusicTrack.UltimateArtifact, MusicPlaybackMode.PlayOnce);
+                    }
 
-                hero.PickupArtifact(ultimateArtifact.Artifact, world);
-
-                _dialogs.ShowMessage("Congratulations!", $"After spending many hours digging here, you have uncovered the {ultimateArtifact.Name}.");
+                    Announce();
+                }
             }
         }
         else

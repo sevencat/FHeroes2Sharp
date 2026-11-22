@@ -10,6 +10,7 @@ using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Audio;
 using FHeroes2.Game.Gui;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
@@ -22,6 +23,7 @@ using FHeroes2.UI.Widgets;
 
 using CastleTown = FHeroes2.Game.Castle.Castle;
 using GameAssets = FHeroes2.Game.Assets;
+using ViewZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 
 namespace FHeroes2.UI.Interface;
@@ -38,8 +40,8 @@ namespace FHeroes2.UI.Interface;
 /// <c>normalWhite()</c>），四个大按钮取 <c>APANEL.ICN</c>。所有这些都只在第一次用到时读一次。
 /// </para>
 /// <para>
-/// 只负责「画得出来」的那几个窗口：带自定义美术的（城堡、世界地图、系统选项）还要各自的装配器，仍旧走
-/// <see cref="IAdventureHost"/>，等装配器落地后一个一个搬过来。文件菜单的六块大按钮是
+/// 系统选项窗口（<c>dialog_system_options.cpp</c>）连同它的图形页与分辨率选择器都在下面，场景只要调
+/// <see cref="OpenSystemOptions"/>，屏幕自己则由 <c>AdventureMap.EventSystemDialog()</c> 调它。文件菜单的六块大按钮是
 /// <c>game_assets.cpp:1563-1578</c> 用 <c>makeSymmetricBackgroundSprites()</c> 现生成的，生成器（
 /// <see cref="ButtonFactory.MakeSymmetricBackgroundSprites"/>）已在控件层，所以 <see cref="ShowFileOptions"/>
 /// 直接现生成十二帧。
@@ -48,7 +50,10 @@ namespace FHeroes2.UI.Interface;
 /// 与字体，装配器也已经在下面（<see cref="ShowPuzzleMap"/>、<see cref="OpenSpellBook"/>）。英雄窗口的
 /// <see cref="HeroDialogArtwork.Load"/> 与 <see cref="ArmyBarArtwork"/> 都是自取的，另外两个精灵源
 /// （<see cref="ArtifactsBarArtwork"/>、<see cref="SkillBarSpriteSet"/>）也在控件层补上了；王国总览的
-/// <see cref="KingdomOverviewArtwork.Load"/> 同样自取二十余帧，再自己装五个精灵源（<see cref="OpenKingdomOverview"/>）。
+/// <see cref="KingdomOverviewArtwork.Load"/> 同样自取二十余帧，再自己装五个精灵源（<see cref="OpenKingdomOverview"/>）；
+/// 城镇屏的 <see cref="CastleScreenArtwork.TryCreate"/> 早就把帧取齐了，缺的只是把换城的循环接起来
+/// （<see cref="OpenCastleDialog"/>）；世界地图的缓存、图标与窗口由 <see cref="ViewWorldMapBuilder"/>、
+/// <see cref="ViewWorldRenderer"/>、<see cref="ViewWorldWindow"/> 拼成，装配只有一段（<see cref="OpenViewWorld"/>）。
 /// </para>
 /// <para>
 /// 美术缺帧时不抛异常也不假装成功：记一条警告，然后按「玩家取消了」处理——参考在没有游戏数据时根本起不来，端口不会走到这里。
@@ -76,6 +81,27 @@ public sealed class AdventureMapDialogs
 
     /// <summary>The evil variant of <see cref="BoardAssetName"/>, <c>ICN::ADVBORDE</c>.</summary>
     private const string BoardEvilAssetName = "ADVBORDE.ICN";
+
+    /// <summary>Archive entry of the interface option icons, <c>ICN::SPANEL</c>.</summary>
+    private const string SpanelAssetName = "SPANEL.ICN";
+
+    /// <summary>Archive entry of the coloured interface icons, <c>ICN::CSPANEL</c>.</summary>
+    private const string CspanelAssetName = "CSPANEL.ICN";
+
+    /// <summary>Archive entry of the evil panel icons, <c>ICN::ESPANEL</c>.</summary>
+    private const string EspanelAssetName = "ESPANEL.ICN";
+
+    /// <summary>Archive entry of the resolution icon, <c>ICN::RESOLUTION_ICON</c>.</summary>
+    private const string ResolutionIconAssetName = "RESOLUTION_ICON.ICN";
+
+    /// <summary>Archive entry of the graphics and hot key icons, <c>ICN::GAME_OPTION_ICON</c>.</summary>
+    private const string GameOptionIconAssetName = "GAME_OPTION_ICON.ICN";
+
+    /// <summary>Archive entry of the blank option icon the system info label is painted on, <c>ICN::EMPTY_OPTION_ICON_BACKGROUND</c>.</summary>
+    private const string EmptyOptionIconAssetName = "EMPTY_OPTION_ICON_BACKGROUND.ICN";
+
+    /// <summary>Archive entry of the two army estimation icons, <c>ICN::ARMY_ESTIMATION_ICON</c>.</summary>
+    private const string ArmyEstimationAssetName = "ARMY_ESTIMATION_ICON.ICN";
 
     /// <summary>Archive entry of the hero faces, <c>ICN::MINIPORT</c> of the hero panel.</summary>
     private const string MiniportAssetName = "MINIPORT.ICN";
@@ -172,6 +198,9 @@ public sealed class AdventureMapDialogs
     /// <summary>The <c>LOCATORS</c> icons of the castle panel, read on the first castle right click.</summary>
     private IViewWorldSpriteSource? _icons;
     private bool _iconsLoaded;
+
+    /// <summary>The object icons of the View World map, read on the first opening.</summary>
+    private IcnViewWorldSpriteSource? _viewWorldSprites;
 
     /// <summary>The <c>BRCREST</c> sign of the elimination notice, read on the first verdict.</summary>
     private IVanquishedSignArtworkSource? _signArtwork;
@@ -634,6 +663,476 @@ public sealed class AdventureMapDialogs
 
             requests.Clear();
         }
+    }
+
+    /// <summary>
+    /// Opens the whole-map window, <c>ViewWorld::ViewWorldWindow( color, mode, interface )</c>
+    /// (<c>kingdom/view_world.cpp:589-795</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在淡出之后先建缓存（<c>CacheForMapWithResources</c>），再把图标逐个盖上去（<c>DrawObjectsIcons</c>），
+    /// 最后进阻塞循环（<see cref="ViewWorldDialog.Show"/>）。缓存只对这个模式有效——图标与迷雾都按模式烘进去——
+    /// 所以模式一变就要重开，跟参考一致。
+    /// </para>
+    /// <para>
+    /// 返回值是关窗时的缩放档，交给调用方写回设置（参考的 <c>conf.SetViewWorldZoomLevel</c>）；fade 与
+    /// <c>CursorRestorer</c>/<c>RadarRestorer</c> 属于宿主的界面状态，不在窗口里。
+    /// </para>
+    /// </remarks>
+    /// <param name="mode">Which objects to reveal.</param>
+    /// <param name="view">The scrolled map the window shows.</param>
+    /// <param name="zoomLevel">The zoom level to open with.</param>
+    /// <param name="viewport">The map viewport on the screen, in pixels.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>The zoom level the window was left at.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="view"/> is <see langword="null"/>.</exception>
+    public ViewZoomLevel OpenViewWorld(ViewWorldMode mode, AdventureMapView view, ViewZoomLevel zoomLevel,
+        Rect viewport, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+
+        World world = World.Current;
+        PlayerColor color = Settings.Get().Players.CurrentColor;
+        IcnViewWorldSpriteSource sprites = _viewWorldSprites ??= new IcnViewWorldSpriteSource(_assets);
+
+        ViewWorldMapCache cache = new ViewWorldMapBuilder(
+            view.Map,
+            view.Tiles,
+            world,
+            view.Objects,
+            view.Monsters,
+            view.Boats,
+            view.FogSprites).Build(mode);
+
+        ViewWorldRenderer.DrawObjectsIcons(color, mode, cache, world, sprites);
+
+        ViewWorldWindow window = new(
+            world,
+            mode,
+            color,
+            zoomLevel,
+            viewport,
+            view.VisibleTileArea,
+            cache,
+            _display.Width,
+            _display.Height,
+            sprites);
+
+        return ViewWorldDialog.Show(
+            _display,
+            window,
+            events,
+            showHint: (header, body) => ShowMessage(header, body, events));
+    }
+
+    /// <summary>
+    /// Opens the hot key configuration window, <c>fheroes2::openHotkeysDialog()</c>
+    /// (<c>src/fheroes2/dialog/dialog_hotkeys.cpp:307-483</c>).
+    /// </summary>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when at least one binding was changed, i.e. when the caller should save
+    /// <see cref="GameHotKeys.HotKeySave"/>.</returns>
+    /// <remarks>
+    /// 参考在窗口关闭后写 <c>fheroes2.key</c>；端口没有配置目录,窗口只改 <see cref="GameHotKeys"/> 里的表并把
+    /// 「改过了」告诉调用方,落盘位置因此仍是宿主的事（与 <see cref="Settings"/> 的写入一致,目前宿主也还没写）。
+    /// </remarks>
+    public bool OpenHotKeys(LocalEvent? events = null)
+    {
+        if (GetHeaderFont() is not { } headerFont || GetBodyFont() is not { } bodyFont ||
+            GetButtons() is not { } buttons)
+        {
+            return false;
+        }
+
+        bool evil = Settings.Get().IsEvilInterfaceEnabled;
+        IcnSpriteFile? scroll = TryReadIcn(evil ? ScrollEvilAssetName : ScrollAssetName);
+        IcnSpriteFile? board = TryReadIcn(evil ? BoardEvilAssetName : BoardAssetName);
+
+        if (scroll is null || board is null || board.Count == 0)
+        {
+            GameLog.Warn(
+                $"The hot key window artwork is missing ('{ScrollAssetName}' or '{BoardAssetName}'); " +
+                "the window stays closed.");
+
+            return false;
+        }
+
+        HotKeysArtwork artwork = new()
+        {
+            ScrollBarFrames = scroll.Sprites,
+            ScrollBarBackground = board.Sprites[0],
+            Buttons = buttons,
+        };
+
+        if (HotKeysDialog.TryCreate(new Size(_display.Width, _display.Height), artwork, headerFont, bodyFont,
+                headerFont) is not { } dialog)
+        {
+            GameLog.Warn(
+                $"'{ScrollAssetName}' has too few frames for the hot key window; the window stays closed.");
+
+            return false;
+        }
+
+        HotKeysDialog.Show(_display, dialog, events);
+
+        return dialog.IsDirty;
+    }
+
+    /// <summary>
+    /// Opens the interface page of the system options, <c>fheroes2::openInterfaceSettingsDialog()</c>
+    /// (<c>src/fheroes2/dialog/dialog_interface_settings.cpp:217-263</c>).
+    /// </summary>
+    /// <param name="updateUI">
+    /// Rebuilds the interface after a setting changed, the <c>updateUI()</c> of the reference; the adventure map
+    /// passes its <see cref="AdventureMap.Reset"/>.
+    /// </param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when at least one setting was changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="updateUI"/> is <see langword="null"/>.</exception>
+    public bool OpenInterfaceSettings(Action updateUI, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(updateUI);
+
+        if (GetHeaderFont() is not { } headerFont || GetBodyFont() is not { } bodyFont ||
+            GetButtons() is not { } buttons)
+        {
+            return false;
+        }
+
+        IcnSpriteFile? spanel = TryReadIcn(SpanelAssetName);
+        IcnSpriteFile? cspanel = TryReadIcn(CspanelAssetName);
+        IcnSpriteFile? espanel = TryReadIcn(EspanelAssetName);
+        IcnSpriteFile? armyEstimation = TryReadIcn(ArmyEstimationAssetName);
+
+        if (spanel is null || cspanel is null || espanel is null || armyEstimation is null)
+        {
+            GameLog.Warn(
+                $"The interface settings artwork is missing ('{SpanelAssetName}', '{CspanelAssetName}', " +
+                $"'{EspanelAssetName}' or '{ArmyEstimationAssetName}'); the page stays closed.");
+
+            return false;
+        }
+
+        InterfaceSettingsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            CspanelFrames = cspanel.Sprites,
+            EvilSpanelFrames = espanel.Sprites,
+            ArmyEstimationFrames = armyEstimation.Sprites,
+            Buttons = buttons,
+        };
+
+        if (InterfaceSettingsDialog.TryCreate(new Size(_display.Width, _display.Height), artwork, headerFont,
+                bodyFont) is not { } dialog)
+        {
+            GameLog.Warn("The interface settings artwork has too few frames; the page stays closed.");
+
+            return false;
+        }
+
+        InterfaceSettingsDialog.Show(_display, dialog, updateUI, events);
+
+        return dialog.IsDirty;
+    }
+
+    /// <summary>
+    /// Opens the audio page of the system options, <c>Dialog::openAudioSettingsDialog()</c>
+    /// (<c>src/fheroes2/dialog/dialog_audio.cpp:110-260</c>).
+    /// </summary>
+    /// <param name="audio">The audio manager of the scene, or <see langword="null"/> when there is none.</param>
+    /// <param name="environmentSoundMixer">
+    /// Rebuilds the ambient loops after the 3D switch, the <c>Game::EnvironmentSoundMixer()</c> the reference calls
+    /// when <c>fromAdventureMap</c> is set; <see langword="null"/> for the other callers.
+    /// </param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when a setting was changed.</returns>
+    public bool OpenAudioSettings(AudioManager? audio, Action? environmentSoundMixer = null,
+        LocalEvent? events = null)
+    {
+        if (GetHeaderFont() is not { } headerFont || GetBodyFont() is not { } bodyFont ||
+            GetButtons() is not { } buttons)
+        {
+            return false;
+        }
+
+        IcnSpriteFile? spanel = TryReadIcn(SpanelAssetName);
+
+        if (spanel is null)
+        {
+            GameLog.Warn($"The audio settings artwork is missing ('{SpanelAssetName}'); the page stays closed.");
+
+            return false;
+        }
+
+        AudioSettingsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            Buttons = buttons,
+        };
+
+        if (AudioSettingsDialog.TryCreate(new Size(_display.Width, _display.Height), artwork, headerFont, bodyFont,
+                audio) is not { } dialog)
+        {
+            GameLog.Warn("The audio settings artwork has too few frames; the page stays closed.");
+
+            return false;
+        }
+
+        return AudioSettingsDialog.Show(_display, dialog, environmentSoundMixer, events);
+    }
+
+    /// <summary>
+    /// Opens the resolution chooser and switches the window to the chosen mode,
+    /// <c>Dialog::SelectResolution()</c> (<c>dialog_resolution.cpp:283-330</c>).
+    /// </summary>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when a resolution was chosen and handed to the display.</returns>
+    /// <remarks>
+    /// 参考里 <c>Dialog::SelectResolution()</c> 自己调 <c>engine().setResolution()</c>，返回 bool 只是「选没选」；
+    /// 端口把窗口切换交给 <see cref="IDisplayControl.SetResolution"/>，同样只回答选没选。
+    /// </remarks>
+    public bool SelectResolution(LocalEvent? events = null)
+    {
+        IDisplayControl? display = (events ?? LocalEvent.Current).Engine?.Display;
+
+        if (display is null)
+        {
+            GameLog.Warn("There is no display to read the resolutions from; the chooser stays closed.");
+
+            return false;
+        }
+
+        if (GetButtons() is not { } buttons || GetHeaderFont() is not { } headerFont ||
+            GetBodyFont() is not { } bodyFont)
+        {
+            return false;
+        }
+
+        bool evil = Settings.Get().IsEvilInterfaceEnabled;
+        IcnSpriteFile? scroll = TryReadIcn(evil ? ScrollEvilAssetName : ScrollAssetName);
+        IcnSpriteFile? board = TryReadIcn(evil ? BoardEvilAssetName : BoardAssetName);
+
+        if (scroll is null || board is null || board.Count == 0)
+        {
+            GameLog.Warn(
+                $"The resolution chooser artwork is missing ('{ScrollAssetName}' or '{BoardAssetName}'); " +
+                "the chooser stays closed.");
+
+            return false;
+        }
+
+        ResolutionArtwork artwork = new()
+        {
+            ScrollBarFrames = scroll.Sprites,
+            ScrollBarBackground = board.Sprites[0],
+            Buttons = buttons,
+        };
+
+        Size gameSize = new(_display.Width, _display.Height);
+        ResolutionInfo current = new(gameSize.Width, gameSize.Height, display.ScreenSize.Width,
+            display.ScreenSize.Height);
+
+        if (ResolutionDialog.TryCreate(new Size(_display.Width, _display.Height), artwork, headerFont, bodyFont,
+                headerFont, display.GetAvailableResolutions(), current) is not { } dialog)
+        {
+            GameLog.Warn("The resolution chooser has no resolution to offer; the chooser stays closed.");
+
+            return false;
+        }
+
+        if (ResolutionDialog.Show(_display, dialog, events) != DialogButton.Ok || !dialog.IsSelected)
+        {
+            return false;
+        }
+
+        display.SetResolution(dialog.SelectedResolution);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Opens the graphics page of the system options, <c>fheroes2::openGraphicsSettingsDialog()</c>
+    /// (<c>src/fheroes2/dialog/dialog_graphics_settings.cpp:238-295</c>).
+    /// </summary>
+    /// <param name="rebuildInterface">
+    /// Rebuilds the interface after a setting changed, the <c>updateUI()</c> of the reference.
+    /// </param>
+    /// <param name="selectResolution">
+    /// Opens the resolution chooser; <see langword="null"/> falls back to <see cref="SelectResolution"/>.
+    /// </param>
+    /// <param name="isMainMenuUI">
+    /// Whether <paramref name="rebuildInterface"/> redraws the main menu; the reference compares the target of the
+    /// <c>std::function</c> with <c>drawMainMenuScreen</c> before refreshing after a scaling change.
+    /// </param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when at least one setting was changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rebuildInterface"/> is <see langword="null"/>.</exception>
+    public bool OpenGraphicsSettings(Action rebuildInterface, Func<bool>? selectResolution = null,
+        bool isMainMenuUI = false, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(rebuildInterface);
+
+        if (GetButtons() is not { } buttons || GetHeaderFont() is not { } headerFont ||
+            GetBodyFont() is not { } bodyFont)
+        {
+            return false;
+        }
+
+        IcnSpriteFile? spanel = TryReadIcn(SpanelAssetName);
+        IcnSpriteFile? resolutionIcon = TryReadIcn(ResolutionIconAssetName);
+        IcnSpriteFile? gameOption = TryReadIcn(GameOptionIconAssetName);
+        IcnSpriteFile? emptyOption = TryReadIcn(EmptyOptionIconAssetName);
+
+        if (spanel is null || resolutionIcon is null || gameOption is null || emptyOption is null)
+        {
+            GameLog.Warn(
+                $"The graphics settings artwork is missing ('{SpanelAssetName}', '{ResolutionIconAssetName}', " +
+                $"'{GameOptionIconAssetName}' or '{EmptyOptionIconAssetName}'); the page stays closed.");
+
+            return false;
+        }
+
+        GraphicsSettingsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            ResolutionFrames = resolutionIcon.Sprites,
+            GameOptionFrames = gameOption.Sprites,
+            EmptyOptionIconFrames = emptyOption.Sprites,
+            Buttons = buttons,
+        };
+
+        LocalEvent eventState = events ?? LocalEvent.Current;
+        IDisplayControl? display = eventState.Engine?.Display;
+
+        if (GraphicsSettingsDialog.TryCreate(new Size(_display.Width, _display.Height),
+                new Size(_display.Width, _display.Height), artwork, headerFont, bodyFont, display) is not { } dialog)
+        {
+            GameLog.Warn("The graphics settings artwork has too few frames; the page stays closed.");
+
+            return false;
+        }
+
+        return GraphicsSettingsDialog.Show(_display, dialog, rebuildInterface,
+            selectResolution ?? (() => SelectResolution(eventState)), isMainMenuUI, events);
+    }
+
+    /// <summary>
+    /// Opens the system options window, <c>fheroes2::openSystemOptionsDialog()</c>
+    /// (<c>src/fheroes2/dialog/dialog_system_options.cpp:166-361</c>).
+    /// </summary>
+    /// <param name="rebuildInterface">Rebuilds the adventure map after a setting changed, the <c>rebildAdventureMap</c>
+    /// of the reference.</param>
+    /// <param name="audio">The audio manager of the scene, or <see langword="null"/> when there is none.</param>
+    /// <param name="environmentSoundMixer">Rebuilds the ambient loops after the audio page, the
+    /// <c>Game::EnvironmentSoundMixer()</c> the reference passes to the audio page from the map.</param>
+    /// <param name="selectLanguage">
+    /// Opens the language picker; <see langword="null"/> means the game ships with English only, which is the
+    /// reference's single-language branch (<c>:212-215</c>).
+    /// </param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns><see langword="true"/> when at least one setting was changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="rebuildInterface"/> is <see langword="null"/>.</exception>
+    /// <seealso cref="OpenGraphicsSettings"/>
+    /// <seealso cref="OpenInterfaceSettings"/>
+    /// <seealso cref="OpenAudioSettings"/>
+    /// <seealso cref="OpenHotKeys"/>
+    public bool OpenSystemOptions(Action rebuildInterface, AudioManager? audio = null,
+        Action? environmentSoundMixer = null, Func<bool>? selectLanguage = null, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(rebuildInterface);
+
+        if (GetButtons() is not { } buttons)
+        {
+            return false;
+        }
+
+        IcnSpriteFile? spanel = TryReadIcn(SpanelAssetName);
+        IcnSpriteFile? cspanel = TryReadIcn(CspanelAssetName);
+        IcnSpriteFile? gameOption = TryReadIcn(GameOptionIconAssetName);
+
+        if (spanel is null || cspanel is null || gameOption is null)
+        {
+            GameLog.Warn(
+                $"The system options artwork is missing ('{SpanelAssetName}', '{CspanelAssetName}' or " +
+                $"'{GameOptionIconAssetName}'); the window stays closed.");
+
+            return false;
+        }
+
+        SystemOptionsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            CspanelFrames = cspanel.Sprites,
+            GameOptionFrames = gameOption.Sprites,
+            Buttons = buttons,
+        };
+
+        if (SystemOptionsDialog.TryCreate(new Size(_display.Width, _display.Height), artwork) is not { } dialog)
+        {
+            GameLog.Warn("The system options artwork has too few frames; the window stays closed.");
+
+            return false;
+        }
+
+        LocalEvent eventState = events ?? LocalEvent.Current;
+        IEventEngine engine = eventState.Engine
+            ?? throw new InvalidOperationException("The system options window needs an event engine to run.");
+
+        bool dirty = false;
+
+        while (eventState.HandleEvents(sleepAfterEventProcessing: false))
+        {
+            SystemOptionsAction action = dialog.ProcessEvents(eventState);
+
+            if (dialog.TakePopup() is { } popup)
+            {
+                ShowMessage(popup.Header, popup.Body, eventState);
+            }
+
+            if (action == SystemOptionsAction.Exit)
+            {
+                break;
+            }
+
+            switch (action)
+            {
+                case SystemOptionsAction.Language:
+                    if (selectLanguage is null)
+                    {
+                        ShowMessage("Attention",
+                            "Your version of Heroes of Might and Magic II does not support any other languages " +
+                            "than English.", eventState);
+                    }
+                    else if (selectLanguage())
+                    {
+                        dirty = true;
+                    }
+
+                    break;
+                case SystemOptionsAction.Graphics:
+                    dirty |= OpenGraphicsSettings(rebuildInterface,
+                        () => SelectResolution(eventState), events: eventState);
+                    break;
+                case SystemOptionsAction.AudioSettings:
+                    dirty |= OpenAudioSettings(audio, environmentSoundMixer, eventState);
+                    break;
+                case SystemOptionsAction.HotKeys:
+                    dirty |= OpenHotKeys(eventState);
+                    break;
+                case SystemOptionsAction.InterfaceSettings:
+                    dirty |= OpenInterfaceSettings(rebuildInterface, eventState);
+                    break;
+                default:
+                    break;
+            }
+
+            dialog.Draw(_display);
+            engine.Render(_display.Bounds);
+            engine.Sleep(LocalEvent.LoopSleepTimeMs);
+        }
+
+        return dirty || dialog.IsDirty;
     }
 
     /// <summary>

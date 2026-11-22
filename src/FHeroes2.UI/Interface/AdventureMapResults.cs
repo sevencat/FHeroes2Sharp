@@ -1,8 +1,3 @@
-using FHeroes2.Game;
-using FHeroes2.Game.Heroes;
-using FHeroes2.Game.Maps;
-using CastleTown = FHeroes2.Game.Castle.Castle;
-
 namespace FHeroes2.UI.Interface;
 
 /// <summary>
@@ -12,13 +7,18 @@ namespace FHeroes2.UI.Interface;
 /// <remarks>
 /// <para>
 /// The reference returns a game mode because its caller is the <c>StartGame()</c> loop, which switches on it. The
-/// port has scenes instead of that loop (<see cref="AdventureMapScene"/>), so the handful of outcomes an event can
+/// port has scenes instead of that loop (<c>AdventureMapScene</c>), so the handful of outcomes an event can
 /// produce are spelled out here, the same way <c>FileOptionsResult</c> spells out the five outcomes of
 /// <c>Dialog::FileOptions()</c> (ADR-163).
 /// </para>
 /// <para>
 /// <b>Cancel</b> is the reference's "nothing happened, stay on the map", and is what every event that returns
 /// <c>fheroes2::GameMode::CANCEL</c> reports.
+/// </para>
+/// <para>
+/// The dialogs themselves are no longer reported through a host interface: every one of them is an
+/// <see cref="AdventureMapDialogs"/> method, so the events open their windows the way the reference does
+/// (<c>Interface::AdventureMap::Event*()</c> calling <c>Dialog::*</c>) and only the game mode travels back.
 /// </para>
 /// </remarks>
 public enum AdventureEventResult
@@ -49,6 +49,25 @@ public enum AdventureEventResult
 }
 
 /// <summary>
+/// What one frame of panel input asks the loop to do: a game mode plus, when the player grabbed a floating panel, the
+/// drag the caller has to own, the answer of <see cref="AdventureMap.ProcessPanels"/>.
+/// </summary>
+/// <param name="Mode">What the loop should do next.</param>
+/// <param name="Drag">
+/// The drag that started this frame, or <see langword="null"/>. The reference runs its loop inside
+/// <c>BorderWindow::QueueEventProcessing()</c>; the port hands the state object back so the scene can do the pumping.
+/// </param>
+/// <remarks>
+/// Only the panels of the hidden-interface mode have a border to grab, so <paramref name="Drag"/> is
+/// <see langword="null"/> in the normal layout.
+/// </remarks>
+public readonly record struct AdventurePanelResult(AdventureEventResult Mode, BorderDrag? Drag)
+{
+    /// <summary>Nothing happened and nothing is being dragged.</summary>
+    public static AdventurePanelResult Cancel => default;
+}
+
+/// <summary>
 /// What the adventure options dialog offers, <c>Dialog::AdventureOptions()</c>'s return value
 /// (<c>dialog.h:95-104</c>, <c>dialog_adventure.cpp</c>).
 /// </summary>
@@ -68,33 +87,4 @@ public enum AdventureOption
 
     /// <summary>Dig for the ultimate artifact, <c>Dialog::DIG</c>.</summary>
     Dig = 4,
-}
-
-/// <summary>
-/// The dialogs and the rest of the game that the adventure map events call into, i.e. the global functions the
-/// reference reaches from <c>gui/interface_events.cpp</c>: <c>ViewWorld::ViewWorldWindow()</c>, the system and
-/// file dialogs.
-/// The message boxes, the save file picker, the quick info panels, the puzzle map, the spell book, the file
-/// menu, the hero dialog, the town screen, the kingdom overview and <c>checkGameOver()</c> have already moved to
-/// <see cref="AdventureMapDialogs"/>.
-/// </summary>
-/// <remarks>
-/// <para>
-/// The port has no blocking message boxes and no dialog singletons: a dialog is an object the owner creates and
-/// feeds events to (<see cref="Dialogs.MessageBox"/>, <see cref="Dialogs.DialogElement"/>). The owner of the
-/// adventure screen is the scene, so the events report "open this" to it instead of opening anything themselves —
-/// the same split <see cref="IconsPanelAction"/> uses, lifted to the whole screen.
-/// </para>
-/// <para>
-/// <b>Contract only</b> (ADR-163): the events are ported against this interface, and the scene implements it when
-/// G5 wires the two together.
-/// </para>
-/// </remarks>
-public interface IAdventureHost
-{
-    /// <summary>Opens the world map, <c>ViewWorld::ViewWorldWindow( color, OnlyVisible, interface )</c>.</summary>
-    void OpenViewWorld();
-
-    /// <summary>Opens the system options dialog, <c>fheroes2::showSystemOptionsDialog()</c>.</summary>
-    void ShowSystemOptions();
 }

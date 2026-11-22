@@ -21,8 +21,8 @@ namespace FHeroes2.UI.Interface;
 /// <c>Cursor::WithoutDistanceThemes( Cursor::Get().Themes() )</c> instead of looking at the tile again.
 /// </para>
 /// <para>
-/// <b>Deviations.</b> <c>Dialog::QuickInfo()</c> opens a blocking window in the reference and is reported to
-/// <see cref="IAdventureHost"/> here, exactly like the <c>Dialog::*</c> calls of
+/// <b>Deviations.</b> <c>Dialog::QuickInfo()</c> opens a blocking window in the reference and is run by
+/// <see cref="AdventureMapDialogs"/> here, exactly like the <c>Dialog::*</c> calls of
 /// <see cref="AdventureMap.Events.cs"/>. The <c>IS_DEVEL()</c> half of the right-click fog test is dropped: the port
 /// has no development build flag, so a fogged tile always shows its quick info. The <c>assert</c> on the focused hero
 /// not walking is a debug check and has no counterpart.

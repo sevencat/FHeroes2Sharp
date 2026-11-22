@@ -17,7 +17,8 @@ namespace FHeroes2.UI.Dialogs;
 /// </para>
 /// <para>
 /// App 侧另有一份 <c>Scenes/ViewWorldOverlay</c>：主题是「主机收事件、场景收调用」，不能让出线程；这里则是参考那种
-/// 阻塞循环，供 <c>IAdventureHost</c> 的同步实现与测试使用。两者共用 <see cref="ViewWorldWindow"/>，事件分派各一份。
+/// 阻塞循环，供 <c>AdventureMapDialogs.OpenViewWorld()</c> 与测试使用。两者共用 <see cref="ViewWorldWindow"/>，
+/// 事件分派各一份。
 /// </para>
 /// <para>
 /// <b>未搬</b>：fade in/out、<c>CursorRestorer</c>/<c>RadarRestorer</c>、<c>conf.SetViewWorldZoomLevel</c>（返回值交给
@@ -66,6 +67,7 @@ public static class ViewWorldDialog
         // 开窗的第一帧：地图、整块雷达、侧栏与两个按钮（参考 706-708 行）。
         Draw(display, window, zoomPressed: false, exitPressed: false, renderRadarObjects: true);
         invalidate?.Invoke();
+        input.Engine?.Render(display.Bounds);
 
         while (input.HandleEvents())
         {
@@ -120,6 +122,7 @@ public static class ViewWorldDialog
                 input.IsMouseLeftButtonPressedAndHeldInArea(window.ExitButtonArea),
                 renderRadarObjects: changed);
             invalidate?.Invoke();
+            input.Engine?.Render(display.Bounds);
         }
 
         return window.Close();

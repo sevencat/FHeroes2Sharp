@@ -132,7 +132,8 @@ public sealed class GameHost : IDisposable
 
             // The reference installs its engine on the event state once, from the application object;
             // the host does it as soon as the frame it presents exists.
-            _le.Engine = new SdlEventEngine(PumpEvents, _ => _presenter?.Upload(_frame), _frame.Bounds);
+            _le.Engine = new SdlEventEngine(PumpEvents, _ => _presenter?.Upload(_frame), _frame.Bounds,
+                new SdlDisplayControl(_presenter));
 
             if (_options.SystemInfo)
             {
@@ -215,8 +216,8 @@ public sealed class GameHost : IDisposable
     /// 关掉后外层循环接着跑，场景状态自然就是对的。
     /// </para>
     /// <para>
-    /// 可以在事件处理里调用（<c>IAdventureHost</c> 就是这样，宿主方法从 <see cref="PumpEvents"/> 的调用栈
-    /// 里被唤起）：内层再取一次事件是安全的，SDL 的事件队列是全局的，<see cref="_modal"/> 保证不会重复分派。
+    /// 可以在事件处理里调用（覆盖层就是这样，从 <see cref="PumpEvents"/> 的调用栈里被唤起）：内层再取一次
+    /// 事件是安全的，SDL 的事件队列是全局的，<see cref="_modal"/> 保证不会重复分派。
     /// </para>
     /// </remarks>
     /// <param name="screen">Window to run.</param>

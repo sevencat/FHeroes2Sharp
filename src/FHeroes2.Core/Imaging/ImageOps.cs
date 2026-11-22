@@ -613,6 +613,55 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Nearest neighbour resampling of the <paramref name="sourceArea"/> part of <paramref name="source"/> onto
+    /// <paramref name="targetArea"/> of <paramref name="target"/>,
+    /// <c>fheroes2::Resize( const Image &amp;, int32_t, int32_t, int32_t, int32_t, Image &amp;, int32_t, int32_t, int32_t, int32_t )</c>
+    /// (<c>engine/image.cpp:2771</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考先把两个区域裁到各自图像的范围内，任一为空就直接返回；尺寸相同时退化成逐行拷贝。
+    /// 这里同样只搬像素层——参考的这个重载不管透明度层，<c>drawMode</c> 放大图标时就靠「只动像素层」保持边框原样。
+    /// </remarks>
+    public static void Resize(PixelBuffer source, in Rect sourceArea, PixelBuffer target, in Rect targetArea)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+
+        Rect from = sourceArea.Intersect(source.Bounds);
+        Rect to = targetArea.Intersect(target.Bounds);
+
+        if (from.IsEmpty || to.IsEmpty)
+        {
+            return;
+        }
+
+        if (from.Width == to.Width && from.Height == to.Height)
+        {
+            for (int y = 0; y < to.Height; ++y)
+            {
+                source.Pixels.AsSpan(((from.Y + y) * source.Stride) + from.X, from.Width)
+                    .CopyTo(target.Row(to.Y + y).Slice(to.X, to.Width));
+            }
+
+            return;
+        }
+
+        ReadOnlySpan<byte> pixels = source.Pixels;
+        int stride = source.Stride;
+
+        for (int y = 0; y < to.Height; ++y)
+        {
+            int sourceRow = ((from.Y + ((y * from.Height) / to.Height)) * stride) + from.X;
+            Span<byte> destinationRow = target.Row(to.Y + y);
+
+            for (int x = 0; x < to.Width; ++x)
+            {
+                destinationRow[to.X + x] = pixels[sourceRow + ((x * from.Width) / to.Width)];
+            }
+        }
+    }
+
+    /// <summary>
     /// Nearest neighbour resampling of a sprite, transparency layer included:
     /// <c>fheroes2::Resize( const Sprite &amp;, Sprite &amp; )</c> (<c>engine/image.cpp:3087</c>).
     /// </summary>

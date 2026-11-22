@@ -426,6 +426,14 @@ public sealed class AudioManagerTests : IDisposable
             ++StopMusicCalls;
             IsMusicPlaying = false;
         }
+
+        public int MusicVolume { get; private set; } = 100;
+
+        public int SoundVolume { get; private set; } = 100;
+
+        public void SetMusicVolume(int percent) => MusicVolume = percent;
+
+        public void SetSoundVolume(int percent) => SoundVolume = percent;
     }
 
     private sealed class FakeSource : IAudioSource
