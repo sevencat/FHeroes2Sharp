@@ -3,9 +3,9 @@
 > 唯一账本。计划见 [`PLAN.md`](PLAN.md)，决策见 [`DECISIONS.md`](DECISIONS.md)，架构约定见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 > **规则：只追加结论，不改已写下的结论**；状态表随每步更新，历史条目不重写。
 >
-> 2026-11-22 两次压缩：先合并四代账本（`progressv4` 321 KB、`progressv3`、第一代逐日流水），再把已完成的
-> 里程碑与批次压成「结论 + 偏差 + 遗留 + 数字」，过程叙述与中间截图描述删除。原始措辞查 git history，
-> 压缩前最后提交 `673645e`。
+> 2026-11-22 两次压缩：先合并四代账本（第一代逐日流水、AI 批次账、目录推进账），再把已完成的里程碑与批次
+> 压成「结论 + 偏差 + 遗留 + 数字」，过程叙述与中间截图描述删除；随后把旧计划（`planv3`/`planv4`）与旧账本
+> 四份删掉，剩余工作改由 `PLAN.md` §5 的 P0–P8 承载。原始措辞查 git history，压缩前最后提交 `673645e`。
 
 ## 1. 现状（2026-11-22）
 
@@ -35,18 +35,22 @@
 整目录口径见 `PLAN.md` 原则 6，17 个批次全部完成，落点见 `PLAN.md` §3。留下的偏差只有四处：
 
 * `maps`：随机地图生成器（旁支）推迟。
-* `ai`：未转完，见 §4。
+* `ai`：只剩 `HeroesAction`/`HeroesMove` 两个入口（B7/X4），见 §4。
 * `gui`/`dialog`/`game`：只做完第一遍，第二阶段按 1:1 重做（§5）。
 * `editor`：模型层按参考，**窗口未按参考**；`HistoryManager` 一处抛（§7.2）。
 
 ## 4. `ai` 目录（B / X 批次）
 
-B0–B3、B5、B6、X1、X2 已完成。剩余四项，与 `PLAN.md` §4 同一份账：
+B0–B6、B8、X1–X3 全部完成（与 `PLAN.md` §4 同一份账）。2026-11-22 复核时改正了三处过时记录：
 
-* **B4**：`KingdomTurn` 的回合循环（10/11，ADR-195）。
-* **B7**：`HeroesAction` / `HeroesMove`（2/4，等 X4）。
-* **B8**：战斗主循环里的施法行动、塔与投石车（回合循环与近战已落，含反击/幸运/统计）。
-* **X3**：`battle_action` 的法术目标与生效（未开始）；**X4**：`heroes_action` 补全 + 对象交互 + Interface 解耦。
+* **B4 已是 11/11**：`KingdomTurn` 的回合循环已随 `AiPlanner.Hero.cs` 落地，不再抛。
+* **B8 全落**：`BattleArena.Action` 的 `ApplyAction` 十一个分支齐（含 `Spellcast`/`Tower`/`Catapult`），
+  `BattleLoader` 三处正文也补完了；唯一残留是 default 分支里一句过时的异常文案。
+* **X3 全落**：`battle_arena` 的十个查询（`GetTargetsForSpell`、`CanRetreatOpponent`、`IsSpellcastDisabled`、
+  `IsAbleToResurrectFromGraveyard` 等）都在。
+
+**只剩 B7 + X4**：`AiHeroAction.HeroesAction` / `HeroesMove` 仍抛，而 `KingdomTurn` → `HeroesTurn` → `HeroesMove`
+这条链一跑就到它们，所以这是 AI 唯一的阻塞点；仓库里 AI 目录也只剩这两处 `NotImplementedException`。
 
 ## 5. 第二阶段：1:1 还原（2026-11-21 起）
 
@@ -115,8 +119,9 @@ B0–B3、B5、B6、X1、X2 已完成。剩余四项，与 `PLAN.md` §4 同一�
 
 ### 7.1 主线
 
-G6.9b 第 5–6 步（§6.1）→ J（删自建件、迁测试、全量回归）→ 第二阶段其余分组（`battle_interface.cpp`
-及其依赖、设置窗口、语言选择窗口）。`editor/` 按原则 6 排在最后。
+次序按 `PLAN.md` §5.2 的 P0–P8：**P0** 收桩（G6.9b 第 5–6 步 + J，§6.1）→ **P1** 冒险层闭环（对象交互、冒险施法、
+Interface 解耦）→ **P2** AI 收口（B7 两个入口）→ **P3** 战斗界面四篇 → **P4** 战役 → **P5** 高分屏与结局 →
+**P6** 启动缺口 → **P7** 随机地图生成器 → **P8** 编辑器。P3/P4 在 P2 之后可并行，P6 随时可插。
 
 ### 7.2 仍抛 `NotImplementedException` 的 8 处
 
@@ -124,8 +129,8 @@ G6.9b 第 5–6 步（§6.1）→ J（删自建件、迁测试、全量回归）
 | --- | --- | --- |
 | `Game/Ai/AiHeroAction.cs:29` | `HeroesAction` | B7 / X4 |
 | `Game/Ai/AiHeroAction.cs:37` | `HeroesMove` | B7 / X4 |
-| `Game/Artifacts/UltimateArtifact.cs:165` | `GetPuzzleMapSurface()` | `GameArea` 生成器（已完成，需接） |
-| `Game/Campaign/CampaignData.cs:212` | 战役存档字段 | 战役界面（M9） |
+| `Game/Artifacts/UltimateArtifact.cs:165` | `GetPuzzleMapSurface()` | `GameArea.GenerateUltimateArtifactAreaSurface` 已在，直接接 |
+| `Game/Campaign/CampaignData.cs:212` | 战役联盟表合并（`Mp2FileInfo.PlayerUnions` 已存在，可直接写） | P4 |
 | `Game/Editor/HistoryManager.cs:409` | 端口地图格式缺 per-object 元数据表 | 编辑器（S16 余支） |
 | `Game/Heroes/Hero.Spells.cs:289` | `ActionSpellCast()` | 冒险地图目的地选取与动画（第二阶段） |
 | `UI/Interface/BaseInterface.cs:142` | `renderWithFadeInOrPlanRender` | Game 淡入状态（S14） |
@@ -133,8 +138,8 @@ G6.9b 第 5–6 步（§6.1）→ J（删自建件、迁测试、全量回归）
 
 ### 7.3 AI 剩余
 
-同 §4：`KingdomTurn` 回合循环（B4）、`heroes_action` 补全（B7/X4）、战斗施法行动与塔/投石车（B8 余）、
-`battle_action` 法术目标（X3）。
+只有 B7 + X4（§4）：`ai_hero_action.cpp` 的 `HeroesAction` / `HeroesMove` 两个入口，以及它们依赖的对象交互
+分派与 `Interface::AdventureMap::Get()` 解耦。其余批次全部完成。
 
 ### 7.4 界面缺口（非主线，按里程碑挂账）
 
