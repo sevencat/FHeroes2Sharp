@@ -126,7 +126,12 @@ public sealed partial class World
     private MapFog? _fog;
 
     /// <summary>The buried ultimate artifact, <c>_ultimateArtifact</c> (<c>world.cpp:326</c>).</summary>
-    private readonly UltimateArtifact _ultimateArtifact = new();
+    /// <remarks>
+    /// Not <see langword="readonly"/>: the save reader builds the artifact from the file and swaps it in, the same way
+    /// it swaps the town table — the reference reads into the member, the port cannot because every setter of
+    /// <see cref="UltimateArtifact"/> is private to its own reader.
+    /// </remarks>
+    private UltimateArtifact _ultimateArtifact = new();
 
     /// <summary>
     /// Creates an empty world. Use <see cref="Current"/> in production code; this constructor exists

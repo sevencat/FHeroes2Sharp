@@ -29,7 +29,7 @@ namespace FHeroes2.Game.Castle;
 /// when there is one, and the captain only fights when there is nobody home (ADR-134).
 /// </para>
 /// </remarks>
-public sealed class Captain : ISpellBookOwner, IArmyCommander
+public sealed partial class Captain : ISpellBookOwner, IArmyCommander
 {
     /// <summary>
     /// The ceiling on spell power, <c>CAPTAIN_MAX_POWER</c> (<c>captain.cpp:32</c>) — the same 255 a hero's power is

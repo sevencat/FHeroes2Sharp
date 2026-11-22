@@ -247,7 +247,7 @@ public enum EditorOptions : uint
 /// than slow it down.
 /// </para>
 /// </remarks>
-public sealed class Settings
+public sealed partial class Settings
 {
     /// <summary>The default speed of a battle, <c>defaultBattleSpeed</c>.</summary>
     public const int DefaultBattleSpeed = 4;
@@ -386,6 +386,15 @@ public sealed class Settings
 
     /// <summary>The language of the texts, <c>GameLanguage()</c>.</summary>
     public string GameLanguage { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// The language the map's own texts were written in, <c>getLoadedFileLanguage()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 和 <see cref="GameLanguage"/> 分开：前者是玩家选的界面语言，后者是存档里那张图用的语言，读档后不会互相覆盖
+    /// （<c>game_io.cpp:277</c> 只用它决定要不要提示「这张图的文本是别的语言」）。空串表示没读过存档。
+    /// </remarks>
+    public string LoadedFileLanguage { get; private set; } = string.Empty;
 
     /// <summary>The map being played, <c>getCurrentMapFileInfo()</c>; null before one is chosen.</summary>
     public Mp2FileInfo? CurrentMapFileInfo { get; private set; }

@@ -25,7 +25,7 @@ namespace FHeroes2.Game.Spells;
 /// <c>SPELL_SCROLL</c> — do come through.
 /// </para>
 /// </remarks>
-public sealed class SpellStorage : IEnumerable<Spell>
+public sealed partial class SpellStorage : IEnumerable<Spell>
 {
     private readonly List<Spell> _spells = [];
 

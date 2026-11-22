@@ -23,7 +23,7 @@ namespace FHeroes2.Game.Artifacts;
 /// <see cref="ArtifactExchange"/>.
 /// </para>
 /// </remarks>
-public sealed class ArtifactBag
+public sealed partial class ArtifactBag
 {
     /// <summary>Number of slots, <c>BagArtifacts::maxCapacity</c> (<c>artifact.h:300</c>).</summary>
     public const int MaxCapacity = 14;

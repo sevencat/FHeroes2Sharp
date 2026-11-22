@@ -17,7 +17,7 @@ namespace FHeroes2.Game.Maps;
 /// the index directly.
 /// </para>
 /// </remarks>
-public sealed class MapObjects
+public sealed partial class MapObjects
 {
     private readonly Dictionary<int, MapObject> _objects = [];
 

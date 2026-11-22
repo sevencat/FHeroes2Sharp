@@ -28,7 +28,7 @@ namespace FHeroes2.Game.Castle;
 /// town, and tests need to lay it out the same way twice.
 /// </para>
 /// </remarks>
-public sealed class MageGuild
+public sealed partial class MageGuild
 {
     /// <summary>
     /// The spells of each level a guild holds without a library, <c>guildMaxSpellsCount</c>

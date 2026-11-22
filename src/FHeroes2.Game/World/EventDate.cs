@@ -21,7 +21,7 @@ namespace FHeroes2.Game;
 /// and leaves it out of the loading.
 /// </para>
 /// </remarks>
-public sealed class EventDate
+public sealed partial class EventDate
 {
     /// <summary>Smallest block that can be a daily event, <c>MP2::MP2_EVENT_STRUCTURE_MIN_SIZE</c> (<c>mp2.h:37</c>).</summary>
     public const int MinimumStructureSize = 50;

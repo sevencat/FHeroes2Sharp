@@ -77,7 +77,7 @@ public readonly record struct SecondarySkillLevel(SecondarySkill Skill, SkillLev
 /// are already here.
 /// </para>
 /// </remarks>
-public sealed class SecSkills
+public sealed partial class SecSkills
 {
     /// <summary>
     /// The maximum number of secondary skills a hero can have — <c>Heroes::maxNumOfSecSkills</c>

@@ -16,7 +16,7 @@ namespace FHeroes2.Game.Maps;
 /// and, later, a sphinx. A castle keeps its data in the castle table, a hero in the hero table.
 /// </para>
 /// </remarks>
-public abstract class MapObject
+public abstract partial class MapObject
 {
     /// <summary>
     /// Index of the tile the object stands on, <c>MapPosition::GetIndex()</c>. <c>-1</c> until the object
@@ -31,9 +31,21 @@ public abstract class MapObject
 
     /// <summary>Places the object on the tile its information block belongs to, <c>setUIDAndIndex()</c>.</summary>
     /// <param name="tileIndex">Index of the tile.</param>
-    protected void PlaceOn(int tileIndex)
+    protected void PlaceOn(int tileIndex) => PlaceOn(tileIndex, (uint)tileIndex);
+
+    /// <summary>
+    /// Places the object on a tile while keeping a UID that is not the tile index,
+    /// <c>MapBaseObject::SetUID()</c> beside <c>MapPosition::SetIndex()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 存档里两个数是分开写的：位置由坐标换算成索引，UID 单独读。地图文件里两者总相等（<c>setUIDAndIndex()</c>），
+    /// 但存档是另一个写入者，不能替它假设。
+    /// </remarks>
+    /// <param name="tileIndex">Index of the tile.</param>
+    /// <param name="uid">The object id.</param>
+    protected void PlaceOn(int tileIndex, uint uid)
     {
         TileIndex = tileIndex;
-        Uid = (uint)tileIndex;
+        Uid = uid;
     }
 }

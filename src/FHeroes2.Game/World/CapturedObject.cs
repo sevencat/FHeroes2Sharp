@@ -14,7 +14,7 @@ namespace FHeroes2.Game;
 /// entry has an empty army, which is what <c>Troop()</c> is in the reference.
 /// </para>
 /// </remarks>
-public sealed class CapturedObject
+public sealed partial class CapturedObject
 {
     /// <summary>Object type at the moment it was captured, the first half of <c>objCol</c>.</summary>
     public Mp2ObjectType ObjectType { get; private set; } = Mp2ObjectType.None;
@@ -61,7 +61,7 @@ public sealed class CapturedObject
 /// which are added with the fog system.
 /// </para>
 /// </remarks>
-public sealed class CapturedObjects
+public sealed partial class CapturedObjects
 {
     // Sorted like std::map so that iteration is in tile order: GetCountMines and the savegame rely on
     // a stable order and the reference never sorts explicitly.

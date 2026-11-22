@@ -1234,7 +1234,7 @@ public sealed partial class HeroActions
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        return world.GetMapSign(tileIndex)?.Message;
+        return world.GetMapSign(tileIndex)?.Message.Text;
     }
 
     /// <summary>

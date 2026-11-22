@@ -51,7 +51,7 @@ public readonly record struct Recruit(int Id, uint SurrenderDay)
 /// That second mechanic is fheroes2's extension of the original game, which offers only the last one.
 /// </para>
 /// </remarks>
-public sealed class Recruits
+public sealed partial class Recruits
 {
     /// <summary>The first slot, <c>first</c>.</summary>
     public Recruit First { get; private set; } = Recruit.None;

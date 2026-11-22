@@ -79,15 +79,32 @@ public sealed class StreamTests
     }
 
     [Fact]
-    public void ReadingAStringStopsAtTheFirstZero()
+    public void AFixedSizeStringStopsAtTheFirstZero()
     {
-        // A name written by an older build may be padded; the reference cuts the run it read at the first zero.
+        // A padded field of a map header: the reference cuts the run it read at the first zero (getString( size )).
         StreamBuf stream = new();
 
         stream.PutRaw("abc\0def"u8);
         stream.Seek(0);
 
-        Assert.Equal("abc", stream.ReadString());
+        Assert.Equal("abc", stream.ReadString(7));
+    }
+
+    [Fact]
+    public void AStringWithoutASizeIsALengthPrefix()
+    {
+        // serialize.cpp:135-142: operator>>( std::string & ) reads a 32 bit length and then that many bytes,
+        // so the string may hold a zero and the stream may go on after it.
+        StreamBuf stream = new();
+
+        stream.Write("ab\0c");
+        stream.Write(7);
+
+        stream.Seek(0);
+
+        Assert.Equal("ab\0c", stream.ReadString());
+        Assert.Equal(7u, stream.ReadUInt32());
+        Assert.True(stream.Size == 0);
     }
 
     [Fact]

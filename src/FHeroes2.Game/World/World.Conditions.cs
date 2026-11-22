@@ -71,9 +71,10 @@ public sealed partial class World
     /// </summary>
     /// <remarks>
     /// 参考不把文件头存在世界里，它每次判定都去 <c>Settings</c> 拿。端口反过来：文件头就是 <see cref="LoadMap"/>
-    /// 的入参，存在世界里既少一次全局查表，也让判定能在没有 <c>Settings</c> 的测试里跑。
+    /// 的入参，存在世界里既少一次全局查表，也让判定能在没有 <c>Settings</c> 的测试里跑。读档时存档层把
+    /// <c>Settings</c> 里的那份头交回来（<c>game_io.cpp</c> 先读世界、后读设置，世界读的时候还拿不到它）。
     /// </remarks>
-    public Mp2FileInfo? MapInfo { get; private set; }
+    public Mp2FileInfo? MapInfo { get; internal set; }
 
     /// <summary>
     /// The buried ultimate artifact, <c>getUltimateArtifact()</c> (<c>world.h:358</c>).

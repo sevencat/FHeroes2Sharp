@@ -27,7 +27,7 @@ namespace FHeroes2.Game.Maps;
 /// <see cref="IsValid"/> flag, but the decision belongs to the caller that adds the object.
 /// </para>
 /// </remarks>
-public sealed class MapSphinx : MapObject
+public sealed partial class MapSphinx : MapObject
 {
     /// <summary>Smallest block that can be a sphinx, <c>MP2::MP2_RIDDLE_STRUCTURE_MIN_SIZE</c> (<c>mp2.h:39</c>).</summary>
     public const int MinimumStructureSize = 137;

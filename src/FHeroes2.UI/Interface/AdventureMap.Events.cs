@@ -232,7 +232,7 @@ public sealed partial class AdventureMap
         }
         else if (hero.Path.IsValidForMovement(world.Size))
         {
-            _host.ShowMessage(
+            _dialogs.ShowMessage(
                 "Hero Movement Points",
                 "The hero's army cannot move anymore today. The movement points will be refilled tomorrow after you end your turn.");
         }
@@ -308,7 +308,7 @@ public sealed partial class AdventureMap
         World world = World.Current;
 
         if (!kingdom.HeroesMayStillMove(world)
-            || _host.ShowYesNoMessage("End Turn", "One or more heroes may still move, are you sure you want to end your turn?"))
+            || _dialogs.ShowYesNo("End Turn", "One or more heroes may still move, are you sure you want to end your turn?"))
         {
             return AdventureEventResult.EndTurn;
         }
@@ -323,7 +323,7 @@ public sealed partial class AdventureMap
     /// <returns>The result of the dig, if digging was picked.</returns>
     public AdventureEventResult EventAdventureDialog()
     {
-        switch (_host.ShowAdventureOptions(InterfaceFocus.GetFocusType() == GameFocus.Heroes))
+        switch (_dialogs.ShowAdventureOptions(InterfaceFocus.GetFocusType() == GameFocus.Heroes))
         {
         case AdventureOption.World:
             EventViewWorld();
@@ -412,7 +412,7 @@ public sealed partial class AdventureMap
     /// <returns><see cref="AdventureEventResult.NewGame"/>, or <see cref="AdventureEventResult.Cancel"/>.</returns>
     public AdventureEventResult EventNewGame()
     {
-        return _host.ShowYesNoMessage("", "Are you sure you want to restart? (Your current game will be lost.)")
+        return _dialogs.ShowYesNo("", "Are you sure you want to restart? (Your current game will be lost.)")
                    ? AdventureEventResult.NewGame
                    : AdventureEventResult.Cancel;
     }
@@ -434,12 +434,12 @@ public sealed partial class AdventureMap
 
             // System::IsFile() of the reference; the port's file access is System.IO.
             if (File.Exists(fileName)
-                && !_host.ShowYesNoMessage("", "Are you sure you want to overwrite the save with this name?"))
+                && !_dialogs.ShowYesNo("", "Are you sure you want to overwrite the save with this name?"))
             {
                 continue;
             }
 
-            _host.ShowMessage("", _host.SaveGame(fileName) ? "Game saved successfully." : "There was an issue during saving.");
+            _dialogs.ShowMessage("", _host.SaveGame(fileName) ? "Game saved successfully." : "There was an issue during saving.");
 
             return AdventureEventResult.Cancel;
         }
@@ -451,7 +451,7 @@ public sealed partial class AdventureMap
     /// <returns><see cref="AdventureEventResult.LoadGame"/>, or <see cref="AdventureEventResult.Cancel"/>.</returns>
     public AdventureEventResult EventLoadGame()
     {
-        return _host.ShowYesNoMessage("", "Are you sure you want to load a new game? (Your current game will be lost.)")
+        return _dialogs.ShowYesNo("", "Are you sure you want to load a new game? (Your current game will be lost.)")
                    ? AdventureEventResult.LoadGame
                    : AdventureEventResult.Cancel;
     }
@@ -517,14 +517,14 @@ public sealed partial class AdventureMap
 
         if (hero.IsShipMaster)
         {
-            _host.ShowMessage("", "Try looking on land!!!");
+            _dialogs.ShowMessage("", "Try looking on land!!!");
 
             return AdventureEventResult.Cancel;
         }
 
         if (hero.BagArtifacts.IsFull)
         {
-            _host.ShowMessage(
+            _dialogs.ShowMessage(
                 "",
                 "Searching for the Ultimate Artifact is fruitless. Your hero could not carry it even if he found it - all his artifact slots are full.");
 
@@ -533,7 +533,7 @@ public sealed partial class AdventureMap
 
         if (hero.GetMaxMovePoints() > hero.MovePoints)
         {
-            _host.ShowMessage("", "Digging for artifacts requires a whole day, try again tomorrow.");
+            _dialogs.ShowMessage("", "Digging for artifacts requires a whole day, try again tomorrow.");
 
             return AdventureEventResult.Cancel;
         }
@@ -545,7 +545,7 @@ public sealed partial class AdventureMap
         if (!world.GetTile(heroIndex).IsSuitableForUltimateArtifact(world)
             && (!ultimateArtifact.IsAt(heroIndex) || ultimateArtifact.IsFound))
         {
-            _host.ShowMessage("", "Try searching on clear ground.");
+            _dialogs.ShowMessage("", "Try searching on clear ground.");
 
             return AdventureEventResult.Cancel;
         }
@@ -572,12 +572,12 @@ public sealed partial class AdventureMap
 
                 hero.PickupArtifact(ultimateArtifact.Artifact, world);
 
-                _host.ShowMessage("Congratulations!", $"After spending many hours digging here, you have uncovered the {ultimateArtifact.Name}.");
+                _dialogs.ShowMessage("Congratulations!", $"After spending many hours digging here, you have uncovered the {ultimateArtifact.Name}.");
             }
         }
         else
         {
-            _host.ShowMessage("", "Nothing here. Where could it be?");
+            _dialogs.ShowMessage("", "Nothing here. Where could it be?");
         }
 
         SetRedraw(Redraw.Heroes | Redraw.Buttons);

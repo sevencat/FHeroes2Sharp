@@ -979,6 +979,17 @@ public sealed partial class Tile
     public PlayerColor FogColors => _fogColors;
 
     /// <summary>
+    /// Stores the fog colors, the setter half of <c>_fogColors</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference writes the member directly from <c>operator&gt;&gt;</c> (<c>maps_tiles.cpp:1920</c>), which the port's
+    /// own reader does too. <see cref="World"/> needs the same access when it moves the fog between the tile and its
+    /// <see cref="AdventureMap.MapFog"/> table around a save, hence this internal setter.
+    /// </remarks>
+    /// <param name="colors">The colors that still have the tile under the fog.</param>
+    internal void SetFogColors(PlayerColor colors) => _fogColors = colors;
+
+    /// <summary>
     /// Whether any of the players still has the tile under the fog, <c>isFog( PlayerColorsSet )</c>
     /// (<c>maps_tiles.h:301</c>).
     /// </summary>

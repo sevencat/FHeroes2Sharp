@@ -28,7 +28,7 @@ namespace FHeroes2.Game.Artifacts;
 /// which tile, which artifact, whether it was found — is here.
 /// </para>
 /// </remarks>
-public sealed class UltimateArtifact
+public sealed partial class UltimateArtifact
 {
     /// <summary>
     /// The artifact the puzzle hides; <see cref="ArtifactType.Unknown"/> before the map places one.

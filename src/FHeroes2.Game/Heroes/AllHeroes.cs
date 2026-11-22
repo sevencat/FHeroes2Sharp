@@ -23,7 +23,7 @@ namespace FHeroes2.Game.Heroes;
 /// for Price of Loyalty and Resurrection maps (<c>heroes.cpp:2291</c>).
 /// </para>
 /// </remarks>
-public sealed class AllHeroes : IReadOnlyCollection<Hero>
+public sealed partial class AllHeroes : IReadOnlyCollection<Hero>
 {
     private readonly Hero?[] _slots = new Hero?[Hero.IdCount];
 

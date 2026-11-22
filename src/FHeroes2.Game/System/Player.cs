@@ -24,7 +24,7 @@ namespace FHeroes2.Game.System;
 /// the end of that turn, and it is the only place where the actual value follows the planned one.
 /// </para>
 /// </remarks>
-public sealed class Player : BitModes
+public sealed partial class Player : BitModes
 {
     /// <summary>
     /// How much of a human player's income the handicap takes away, <c>Player::HandicapStatus</c>

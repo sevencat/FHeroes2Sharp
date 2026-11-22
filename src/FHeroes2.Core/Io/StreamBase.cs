@@ -146,12 +146,30 @@ public abstract class StreamBase
     /// <returns>The string, empty when the stream has nothing left.</returns>
     public virtual string ReadString(int size = 0)
     {
-        byte[] raw = GetRaw(size);
-        int length = Array.IndexOf(raw, (byte)0);
+        if (size <= 0)
+        {
+            // serialize.cpp:135-142: a std::string is a 32 bit length and then exactly that many bytes.
+            int length = ReadInt32();
 
-        return length < 0
+            if (length <= 0)
+            {
+                if (length < 0)
+                {
+                    SetFail();
+                }
+
+                return string.Empty;
+            }
+
+            return Encoding.Latin1.GetString(GetRaw(length));
+        }
+
+        byte[] raw = GetRaw(size);
+        int end = Array.IndexOf(raw, (byte)0);
+
+        return end < 0
             ? Encoding.Latin1.GetString(raw)
-            : Encoding.Latin1.GetString(raw, 0, length);
+            : Encoding.Latin1.GetString(raw, 0, end);
     }
 
     /// <summary>Writes a boolean as one byte, <c>operator&lt;&lt;( StreamBase &amp;, bool )</c>.</summary>

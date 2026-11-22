@@ -97,9 +97,30 @@ public sealed class RoStreamBuf : StreamBase
     }
 
     /// <summary>Reads a length prefixed string without allocating the raw run, <c>getString()</c>.</summary>
-    /// <param name="size">How many bytes to read, or zero for the rest of the view.</param>
+    /// <param name="size">How many bytes to read, or zero to read a 32 bit length first.</param>
     /// <returns>The string, empty when the view starts with a zero byte.</returns>
-    public override string ReadString(int size = 0) => Encoding.Latin1.GetString(GetStringView(size));
+    public override string ReadString(int size = 0)
+    {
+        if (size > 0)
+        {
+            return Encoding.Latin1.GetString(GetStringView(size));
+        }
+
+        // serialize.cpp:135-142: a std::string is a 32 bit length and then exactly that many bytes.
+        int length = ReadInt32();
+
+        if (length <= 0)
+        {
+            if (length < 0)
+            {
+                SetFail();
+            }
+
+            return string.Empty;
+        }
+
+        return Encoding.Latin1.GetString(GetRawView(length));
+    }
 
     /// <summary>A view is read-only; writing raises <see cref="NotSupportedException"/>.</summary>
     /// <param name="value">Ignored.</param>

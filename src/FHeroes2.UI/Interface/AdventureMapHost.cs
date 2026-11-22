@@ -91,17 +91,6 @@ public enum AdventureOption
 /// </remarks>
 public interface IAdventureHost
 {
-    /// <summary>Shows a standard message with an OK button, <c>fheroes2::showStandardTextMessage( header, body, Dialog::OK )</c>.</summary>
-    /// <param name="header">The yellow title; empty for a message without one.</param>
-    /// <param name="body">The white body text.</param>
-    void ShowMessage(string header, string body);
-
-    /// <summary>Asks a yes/no question, <c>fheroes2::showStandardTextMessage( header, body, Dialog::YES | Dialog::NO )</c>.</summary>
-    /// <param name="header">The yellow title; empty for a message without one.</param>
-    /// <param name="body">The white body text.</param>
-    /// <returns>Whether the player chose yes.</returns>
-    bool ShowYesNoMessage(string header, string body);
-
     /// <summary>Opens the hero dialog, <c>Game::OpenHeroesDialog( hero, true, true )</c>.</summary>
     /// <param name="hero">The hero to show.</param>
     void OpenHeroesDialog(Hero hero);
@@ -142,11 +131,6 @@ public interface IAdventureHost
 
     /// <summary>Opens the scenario information, <c>Dialog::GameInfo()</c>.</summary>
     void OpenScenarioInformation();
-
-    /// <summary>Opens the adventure options dialog, <c>Dialog::AdventureOptions( openFromHero )</c>.</summary>
-    /// <param name="openFromHero">Whether the dialog was opened while a hero is selected.</param>
-    /// <returns>Which option the player picked.</returns>
-    AdventureOption ShowAdventureOptions(bool openFromHero);
 
     /// <summary>Opens the file options dialog, <c>Dialog::FileOptions()</c>.</summary>
     /// <returns>What the player asked for.</returns>

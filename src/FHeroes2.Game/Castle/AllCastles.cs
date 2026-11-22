@@ -37,7 +37,7 @@ namespace FHeroes2.Game.Castle;
 /// would silently point at the next town.
 /// </para>
 /// </remarks>
-public sealed class AllCastles : IReadOnlyList<Castle>
+public sealed partial class AllCastles : IReadOnlyList<Castle>
 {
     /// <summary>
     /// The most towns a map can hold, <c>maximumCastles</c> (<c>castle.h:380</c>) — the number of entries in a map

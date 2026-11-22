@@ -112,6 +112,36 @@ public sealed class MapFog
     public Direction GetDirection(int column, int row) => _directions[(row * Width) + column];
 
     /// <summary>
+    /// The colors that still have the tile under the fog — the same value as <see cref="Maps.Tile.FogColors"/>
+    /// once the two are in step.
+    /// </summary>
+    /// <param name="column">Column of the tile.</param>
+    /// <param name="row">Row of the tile.</param>
+    /// <returns>The colors that have not revealed the tile.</returns>
+    public PlayerColor GetFogColors(int column, int row) => (PlayerColor)_fog[(row * Width) + column];
+
+    /// <summary>
+    /// Stores which colors have the tile under the fog, without touching the mask of <see cref="GetDirection"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Reveal"/> is the only writer during play — this one exists for the save loader, which has the colours
+    /// per tile in the file and no discs to reveal. Rebuilding them by revealing would lose the parts of the map the
+    /// player has already seen.
+    /// </para>
+    /// <para>
+    /// The masks are <b>not</b> stored in a save: the reference keeps them as derived data and recomputes them with
+    /// <c>Maps::updateFogDirectionsInArea()</c> after a load (<c>game_startgame.cpp:863</c> for a blank map,
+    /// <c>:922</c> and <c>interface_gamearea.cpp:869</c> for a player). The caller of this method is expected to
+    /// follow the load with <see cref="UpdateDirections"/> for the colours it is about to draw.
+    /// </para>
+    /// </remarks>
+    /// <param name="column">Column of the tile.</param>
+    /// <param name="row">Row of the tile.</param>
+    /// <param name="colors">The colors that have the tile under the fog.</param>
+    internal void SetFog(int column, int row, PlayerColor colors) => _fog[(row * Width) + column] = (byte)colors;
+
+    /// <summary>
     /// Reveals the disc around a tile for <paramref name="colors"/> — <c>Maps::ClearFog</c>: every
     /// tile whose distance is below <see cref="SquaredRevealLimit"/> loses the fog of those colors.
     /// </summary>

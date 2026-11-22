@@ -25,7 +25,7 @@ namespace FHeroes2.Game.System;
 /// copies here is part of the editor's own format.
 /// </para>
 /// </remarks>
-public sealed class Players
+public sealed partial class Players
 {
     /// <summary>The number of colours a map can have, <c>maxNumOfPlayers</c>.</summary>
     public const int MaxPlayers = 6;

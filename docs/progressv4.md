@@ -2207,6 +2207,374 @@ UI 全量均 1 249 绿，抖动不再复现。
 `SaveGame` 依赖 `GameSave.Save`（仍抛 `NotImplementedException`，等世界序列化），`CheckGameOver` 依赖尚未移植的
 `GameOver::Result::checkGameOver`；之后才是 `AdventureMapScene` 接管与删除自建面板。
 
+## 2026-11-22 G6.6（5/5）：英雄与城堡
+
+存档里最后两个大件。英雄和城堡共用 `HeroBase` 的那一段（`heroes_base.cpp:618-680`），所以先写 `Captain`——它是
+「没有名字的英雄」——再写 `Hero`，最后写两张表：`AllHeroes`（定长 73 槽）与 `AllCastles`（计数 + 逐个）。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Spells/SpellStorage.Persistence.cs`（新） | `spell_storage.h:37-52`、`spell.cpp:812` | 计数 `u32` + 每个法术的 `i32` id |
+| `Game/Artifacts/ArtifactBag.Persistence.cs`（新） | `artifact.h:296-312`、`artifact.cpp:505-512` | 定长 14 槽，每槽「神器 id + `u32` ext」；ext 端口留空 |
+| `Game/Heroes/SecSkills.Persistence.cs`（新） | `skill.h:120-135` | 计数 `u32` + 每个「技能 `i32` + 等级 `i32`」 |
+| `Game/Heroes/HeroPath.Persistence.cs`（新） | `route.cpp:380-409` | 1.0.7 前先读一个空字；可见标志、计数、每步「起点 + 方向 + 代价」，落点重建 |
+| `Game/Castle/MageGuild.Persistence.cs`（新） | `mageguild.cpp:485-500` | 普通槽计数 + 库槽计数，各按法术等级放回 |
+| `Game/Castle/Captain.Persistence.cs`（新） | `heroes_base.cpp:618-680` | 四主属性 → `(-1,-1)` 位置 → 模式 → 魔法点 → 移动点 → 魔法书 → 背包 |
+| `Game/Heroes/Hero.Persistence.cs`（新） | `heroes.cpp:2560-2646` | HeroBase 段 + 名字、颜色、经验、技能、部队、id、头像、种族、脚下物体、路线、朝向、精灵、巡逻、访问表、地面区域 |
+| `Game/Castle/Castle.Persistence.cs`（新） | `castle.cpp:2411-2460` | 位置、模式、种族、已建、禁用、船长、颜色、名字、法师公会、六格招募、驻军；读完 `_postLoad` |
+| `Game/Heroes/AllHeroes.Persistence.cs`（新） | `heroes.cpp:2648-2697` | 计数必须是 73；1.0.10 前首尾槽互换 |
+| `Game/Castle/AllCastles.Persistence.cs`（新） | `castle.cpp:2462-2500` | 计数 + 逐个城市，读时先清空 |
+| `tests/.../HeroSaveTests.cs`（新） | 同上 | 7 条 |
+| `tests/.../CastleSaveTests.cs`（新） | 同上 | 6 条 |
+
+要点：
+
+* **主属性是 attack、defence、knowledge、power**：知识在力量前。写反了往返照样通过，但读出来的英雄力量和知识互换——只能
+  用手写字节钉住（`HeroSaveTests.ThePrimarySkillsGoAttackDefenceKnowledgePower`）。
+* **`modes` 不是端口的字段**：城堡的两个位（今天可建、自定义驻军）从属性合成，读的时候再拆开；`UNUSED_ALLOW_CASTLE_CONSTRUCTION`
+  只作为 1.1.01 之前「禁用建筑」的来源存在。英雄的模式与移动点则只写 0、读了丢掉。
+* **1.0.10 的 id 差一**：英雄块里的 id 与头像整体 +1，老存档的 72 号是 `UNKNOWN`，读进 `UnknownId`（0）；`Hero` 测试用
+  一份 1.0.05 的手写块一次钉住四道门（位置老序、路线空字、脚下物体 `int32`、巡逻中心两个 `int16`）。
+* **访问表是 `std::set`**：端口存插入序，写时按 index 升序；否则同一份数据会写出不同字节。
+* **`MageGuild` 的库槽是一级一格**：初版把库表当普通表传给同一个读取器，读到三级以上就 `LevelOffsets` 越界。改成独立的
+  `ReadLibrarySpells`（每级一格、放不下就丢），并加了一条 16 个法术的往返测试，确保库槽真的非空。
+* **`AllHeroes` 的槽在端口是 `null`**：参考每个槽都有对象（含 `UNKNOWN` 占位），写时用临时空英雄补位、读时读进临时对象丢弃。
+  顺手让「槽为空但文件里是有效 id」的英雄留在表里，读档因此不再依赖事先 `Init`。
+* **城堡读档要先有无位置的构造**：端口的 `TileIndex` 构造后只读，所以 `internal Castle()` 建在 0 号格、再由文件覆盖；
+  `AllCastles.ReadFrom` 读之前清空列表与瓦片字典，否则旧城会留着。
+
+构建 0 错误 0 警告；Game 测试 3 215 → **3 228**，全量 **5 293 绿**（Core 284，Assets 416，UI 1 365）；冒烟
+`--enter-map` 30 帧 58.1 FPS，退出 0。
+
+**下一段**：`World.Persistence.cs`（地图对象表、王国、英雄表、城堡表与设置都在手上了，`World` 只负责调度与版本门），
+然后是把这些算子接进 `GameSave.Save` 与 zlib 包层。
+
+## 2026-11-22 G6.6（收尾）：世界本体、Save/Load 与 zlib 包层
+
+存档的最后一段：先把 `World` 的调度写完，再把整份游戏塞进 zlib 块，最后补两条链（世界 → 设置 → 结局 → 可选战役段）。
+到这一步 `GameSave` 里没有 `NotImplementedException` 了，存档→读档→再存档能回到同一串字节。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/World/World.Persistence.cs`（新） | `world.cpp:1448-1515` | `WriteTo` / `ReadFrom`：宽高、瓦片、英雄表、城堡表、王国表、谣言、定时事件、占领表、终极宝物、日/周/月、胜负条件的两个英雄 id、地图对象、种子；读完 `PostLoad( false, true )` |
+| 同上 | `world.cpp:1456-1476` | 1.0.10 之前宽高是 `uint16`，胜负 id 在读完月之后、读地图对象之前 `++`（顺序不能换） |
+| 同上 | `world.cpp:1478-1508` | 1.1.06 之前按占领表重画矿井（自己那格 + 右上那格）与灯塔的旗子；越界坐标夹在表内，不照参考读 `vec_tiles[-1]` |
+| 同上 | 端口自有 | 迷雾在 `MapFog`（游戏里改的那张表）与 `Tile.FogColors`（文件里的那份）之间两头搬；读坏时 `ForgetMap` 把世界退回「没有地图」 |
+| `Game/System/GameSave.cs` | `game_io.cpp:116-164` | `Save( filePath, autoSave )`：魔数、版本的十进制串、`uint16` 版本、`HeaderSAV`、单个 zlib 块（World → Settings → GameOverResult → 战役段）、收尾魔数；`AutoSave()` 与 `QuickSave()` 只差 `autoSave` |
+| 同上 | `game_io.cpp:166-305` | `Load( filePath )`：四道明文闸 → 解压 → PoL 资源检查 → 四段读回 → 收尾魔数校验 → `World.Current.MapInfo = settings.CurrentMapFileInfo`、`LastSaveName` |
+| 同上 | `game_io.cpp:316-330` | `SaveCompletedCampaignScenario()` 写 `<存档基名>_Complete.sav` |
+| `tests/.../WorldSaveTests.cs`（新） | 同上 | 7 条：整世界字节往返、开头三个 int32、迷雾随世界回来、读档换掉旧地图、瓦片数不符、截断、无地图拒存 |
+| `tests/.../GameSaveTests.cs` | 同上 | 新增 8 条，整类 19 条 |
+
+要点：
+
+* **迷雾只存颜色**。方向掩码是派生数据，参考读档后由 `updateFogDirectionsInArea()` 按玩家重算
+  （`game_startgame.cpp:863`、`:922`、`interface_gamearea.cpp:869`）。原实现把「颜色 + 方向」一起搬，读回来的方向还是上一局的；
+  现在 `MapFog.SetFog` 只写颜色，测试里也显式 `UpdateDirections` 之后才比 `CountFogged()`。
+* **读失败不留半张图**。`World.ReadFrom` 自己 `ForgetMap`（尺寸清零、瓦片与迷雾丢掉、`SetFail`）；压缩块解不开时
+  `GameSave.Load` 根本走不到 `World.ReadFrom`，正在玩的那局还在——两条用例分别钉住这两种失败。
+* **`Save` 的两处主动偏差**：开文件前先判「有没有地图」（参考照写 0x0 的世界），并替参考的 `initDataDir()`
+  （`game_init.cpp:205-209`）建出 `files/save`。端口没有启动建目录这一步，`StreamFile` 也不建，干净安装上第一次
+  自动存档原本会失败；两条都写在方法注释里。
+* **战役段的有无由 `settings.IsCampaignGameType` 决定**（`game_io.cpp:149-151`、`:257-265`），非战役档读到那里直接是收尾魔数。
+  「读档后要不要进选关界面」留给调用方——参考在 `GameMode` 上分叉，端口没有那个枚举。
+* **这类用例会改写四个进程级单例**（`World.Current`、`Settings.Get()`、`GameOverResult.Current`、`CampaignSaveData.Get()`），
+  所以 `GameSaveTests` 挂到 `SettingsSingletonCollection` 上串行跑；全量 5 308 绿说明没有串味。
+
+构建 0 错误 0 警告；Game 测试 3 228 → **3 243**（新增 15：世界 7 + 存档 8），全量 **5 308 绿**（Core 284，Assets 416，
+UI 1 365）；冒烟 `--enter-map --smoke-frames 30 --no-audio` 30 帧 **59.8 FPS**，退出 0。
+
+**下一段**：把存档层接到界面上——`IAdventureHost.SaveGame` / `LoadGame` 的兑现（App 侧写盘与 `SelectFile` 列表）、
+主菜单的 LOAD GAME、`GameInfo` 对话框（地图头已经在 `Settings.CurrentMapFileInfo` 里），以及读档后按玩家重算一次迷雾方向。
+
+## 2026-11-22 G6.6（4/5，续）：王国、拼图与酒馆
+
+地图对象之后是王国——它是 `World` 里唯一「按玩家分开、又互相引用」的块，所以城堡与英雄在文件里写的是**索引和 id**，
+读回来要靠世界查对象。顺带把两个挂在王国下面的东西做完：拼图位图和酒馆的两个名额。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Kingdom/Puzzle.Persistence.cs`（新） | `puzzle.cpp:311-321`、`365-430` | 48 个 `'0'`/`'1'` 的字符串，然后四个区的「计数 `u8` + 瓦片号 `u8`」 |
+| `Game/Heroes/Recruits.Persistence.cs`（新） | `heroes_recruits.cpp:106-121` | 两个名额，每个「英雄 id `i32` + 投降日 `u32`」；1.0.10 前 id 整体差一 |
+| `Game/Kingdom/Kingdom.Persistence.cs`（新） | `kingdom.cpp:905-946` | 十三个字段：模式、颜色、国库、无城天数、城堡、英雄、酒馆、访问表、拼图、帐篷、两个视图指针、视野集合 |
+| `Game/Kingdom/Kingdoms.Persistence.cs`（新） | `kingdom.cpp:948-956` | 计数 `u32` + 七个王国 |
+| `tests/.../KingdomSaveTests.cs`（新） | 同上 | 11 条 |
+
+要点：
+
+* **拼图字符串的第一个字符是 47 号瓦片**：`std::bitset::to_string()` 先打高位，读的一侧每取一个字符 `<<= 1` 再
+  `set(0)`，所以最后一个字符落进 bit 0。写反了就是「整张画上下颠倒」，而往返自证完全看不出来——只能用手写字节钉住。
+* **城堡与英雄写的是索引和 id**：`VecCastles`/`VecHeroes` 在内存里是指针，文件里是 `int32` 的入口瓦片与英雄 id
+  （`castle.cpp:2462-2498`、`heroes.cpp:2493-2558`）。读回来过世界查对象，查不到按参考判存档损坏——`SetFail()` 后跳过该项。
+* **1.0.10 的 id 差一**：那之前 `UNKNOWN` 是 72、之后是 0，整个 id 空间下移一位，所以老存档读英雄 id（王国里的和酒馆里的）
+  都要加一，并且要拦下 72 这个「老 UNKNOWN」（`heroes.cpp:2517-2535`）。
+* **四道版本门**：颜色 1.1.09 前是 `int32`；1.1.00 前第二版在两个视图指针前多一个空字；`IndexObject` 的类型在 1.1.03
+  前第一版前是 `int32`；视野集合 1.1.18 之前根本不存在，老存档读到就清空（`kingdom.cpp:915-943`）。
+* **`std::set` 必须按升序写**：视野集合在参考里是有序容器，按端口 `HashSet` 的枚举顺序写会让同样的内容变成不同的字节。
+* **`Kingdoms` 的数量不是七就判失败**：端口是定长七槽（六色 + 未知），参考的 `std::vector` 会顺着文件长大，多出来的槽
+  游戏根本不读；这里宁可失败也不半填。
+* 拼图位图宽度不对（不是 48）也判失败：参考会静默地只写一半进那四十八位里。
+
+构建 0 错误 0 警告；Game 测试 3 204 → **3 215**，全量 **5 280 绿**（Core 284，Assets 416，UI 1 365）；冒烟
+`--enter-map` 30 帧，退出 0。
+
+**下一段**：`Hero`（`HeroBase` 那一串：等级、经验、技能、部队、背包、魔法书、巡逻点）与 `Castle`（建筑位图、建造队列、
+驻军），两件都齐了才轮到 `World.Persistence.cs`。
+
+## 2026-11-22 G6.6（4/5）：地图上的数据对象
+
+叶子块之后是三类「地面数据对象」：事件、狮鹫身前的谜语、路牌。它们的共同祖先是 `MapBaseObject`——位置加 UID——所以
+算子也分两层写：基类管位置，三类各管自己的负载。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Maps/MapObject.Persistence.cs`（新） | `maps_objects.cpp:324-342`、`position.cpp:39-58` | 位置是两个 `int16` 加 UID `u32`；1.1.03 之前顺序是「空字 → UID → 坐标」 |
+| `Game/Maps/MapEvent.Persistence.cs`（新） | `maps_objects.cpp:344-376` | 资源 → 神器（id + ext）→ 两个 bool → 颜色 → 消息 → 技能 → 经验 |
+| `Game/Maps/MapSphinx.Persistence.cs`（新） | `maps_objects.cpp:378-396` | 资源 → 神器 → 答案（计数 + 字符串）→ 谜面 → 有效 → 四字比较标志 |
+| `Game/Maps/MapSign.Persistence.cs`（新） | `maps_objects.cpp:398-417` | 位置 + 消息；1.1.07 起消息带语言标签 |
+| `Game/Maps/MapObjects.Persistence.cs`（新） | `world.cpp:1383-1446` | 计数 `u32` → 每项「UID + 类型 + 对象体」，类型 1.1.03 前是 `int32` |
+| `Game/Maps/MapEvent.cs`（补） | `maps_objects.h:95-96` | 补 `SecondarySkill` 与 `Experience` 两个字段——地图文件不写它们，存档从 1.1.06 起写 |
+| `Game/Maps/MapSign.cs`（改） | `game_string.h` | `Message` 从 `string` 改为 `LocalizedString`：语言标签要跟着路牌进存档 |
+| `tests/.../WorldMapObjectsSaveTests.cs`（新） | 同上 | 9 条 |
+
+要点：
+
+* **位置是两个 `int16`，不是 `Point` 的两个 `int32`**：`position.cpp:41` 对 0.9.4 之前的格式专门提过这一点。端口存的是
+  瓦片索引（ADR-068），所以两个方向都过 `MapGeometry`：写的时候 `GetPoint`，读的时候 `GetIndexFromAbsPoint`。
+* **UID 写两遍**：外层是 `std::map` 的键，对象体里 `MapBaseObject` 又写一次。读的时候参考拿对象体里的那份当准，两者不等
+  就判存档损坏（`world.cpp:1432-1437`），端口照办。
+* **`MapSign.Message` 换成 `LocalizedString` 是必须的**：1.1.07 起路牌消息带「有语言」标志和一个语言字节，用 `string`
+  根本写不出来。代价是三个调用点，都只是取 `.Text`。
+* **`MapEvent` 补两个字段**：`SecondarySkill`、`Experience` 在 MP2 里永远是空，但存档从 1.1.06 起无条件写，不补就没法写
+  存档。补的时候顺手把「端口没有这两个字段」的旧注释改成了「只有新地图格式和存档填它们」。
+* **版本的先后是有交叠的**：狮鹫谜语的「四字比较」门在 1.1.00 之前，而位置的老序持续到 1.1.03 之前，所以那条老格式测试
+  必须按老序写字节——不能只挑一个新序版本去测老标志。
+* **未知类型判损坏**：参考 `assert(0)` 后 `setFail()` 并跳过，端口不 assert，直接 `SetFail()` + `continue`。
+
+构建 0 错误 0 警告；全量 **5 269 绿**（Core 284，Game 3 204，Assets 416，UI 1 365）；冒烟 `--enter-map` 30 帧，退出 0。
+
+**下一段**：`Hero`、`Castle`、`Kingdom` 三个大件。`Kingdom` 要 `VecHeroes`/`VecCastles` 的算子（写的是对象在容器里的
+序号，不是指针）、`Recruits`、`PuzzleMaps`、`monstersUnderVision`（1.1.80 起）；`Hero` 要 `HeroBase` 那一串（等级、经验、
+技能、部队、背包、魔法书、巡逻点）；`Castle` 要建筑位图与建造队列。三件都齐了才轮到 `World.Persistence.cs`。
+
+## 2026-11-22 G6.6（3/4）：世界侧的叶子块
+
+`World` 的字段顺序定下来之后，先把它下面不依赖英雄与城堡的那几块各自做完——每个都是「往上一层的原材料」，先做完才能
+保证 `World.Persistence.cs` 只写调度、不写位宽。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Maps/ObjectPart.Persistence.cs`（新） | `maps_tiles.cpp:1885-1908` | 层类型 `u8` → uid `u32` → ICN 类型 `u8` → 图像序号 `u8`；1.0.09 前层类型要与 `0x03` 掩一次、中间还夹两个 `bool` |
+| `Game/Maps/Tile.Persistence.cs`（新） | `maps_tiles.cpp:1910-1964` | 十三个字段；1.1.04 前主对象部件要拆开读、层类型挪到两个部件表之后，1.1.00 前对象类型只有一字节 |
+| `Game/Resources/Funds.Persistence.cs`（新） | `resource.cpp:660-689` | 七个 `int32`，写序是木/水银/矿/硫/晶/宝/金 |
+| `Game/World/EventDate.Persistence.cs`（新） | `world.cpp:1671-1690` | 资源 → AI 标志 → 首日 → 周期 → 颜色 → 消息 → 标题；1.1.09 前颜色是 `int32` |
+| `Game/Artifacts/UltimateArtifact.Persistence.cs`（新） | `artifact_ultimate.cpp:58-70` | 神器 id → `ext` → 瓦片 → 已找到 → 偏移；`ext` 恒写 0 |
+| `Game/World/CapturedObject.Persistence.cs`（新） | `world.cpp:1327-1335`、`1443-1444` | 表是 `std::map` 形态：计数 `u32` + 每项索引 `i32` + 对象类型 `u16` + 颜色 `u8` + 守卫部队 |
+| `tests/.../WorldSaveBlockTests.cs`（新） | 同上 | 9 条 |
+
+要点：
+
+* **`std::array<uint32_t, 3>` 的元数据是十六字节不是十二**：数组算子先写元素个数（`serialize.h:409-415`），所以瓦片里要
+  先写 `3`。读的时候参考会在个数不为 3 时清零并失败，端口照做（`SetFail()`）。
+* **枚举宽度一律用端口自己的宽度写是错的**：`Direction` 在端口是 32 位、文件里是 `uint16_t`；`Mp2ObjectType` 在文件里
+  1.1.00 前是一字节；`PlayerColorsSet` 是 `PlayerColor` 的底层类型，而 `PlayerColor` 在参考里是 `uint8_t`，1.1.09 之前却按
+  `int32` 写。这四处都显式转型，并且各有一条手写字节的测试——只靠往返自证发现不了位宽错误。
+* **`UltimateArtifact` 的 `ext` 恒写 0**：参考的 `Artifact` 是 `{ id, ext }`，`ext` 存的是魔法卷轴上的法术；端口没有这个
+  字段，而拼图埋的神器永远不是卷轴（`artifact_ultimate.cpp:36-44`）。
+* **`CapturedObjects` 的键是瓦片索引**，值是 `std::pair<MapObjectType, PlayerColor>` 加 `Troop`；端口用
+  `SortedDictionary` 就是为了让写序和 `std::map` 一致。
+* **1.1.08 的矿井修复没做**：`setInitialObjectInfo()` 仍未移植（`TileMetadata` 的清单里写着「not here yet」），所以那条门
+  留着带注释的空位，不去写替代实现——老存档里被改坏的矿井会保持原样。这是已知的行为差，等 `maps_tiles_helper` 那一支
+  补上再回填。
+
+构建 0 错误 0 警告；全量 **5 260 绿**（Core 284，Game 3 195，Assets 416，UI 1 365）；冒烟 `--enter-map` 30 帧 62.5 FPS，
+退出 0。
+
+**下一段**：`MapObjects`（要 `MapPosition`、`MapMessage`、`SecondarySkill` 三个算子），随后是 `Hero`、`Castle`、`Kingdom`
+三个大件，最后 `World.Persistence.cs` 与 `GameSave.Save`/`Load` 本体。
+
+## 2026-11-22 G6.6（2/3）：玩家槽与设置项
+
+第一段留下的两块明文补齐：玩家（含焦点）与设置项。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/System/PlayerFocus.Persistence.cs`（新） | `players.cpp:205-242` | 焦点：`int32` 种类 + `int32` 索引；读时按索引回世界找英雄或城堡 |
+| `Game/System/Player.Persistence.cs`（新） | `players.cpp:244-281` | 位集字 → 控制器 → 颜色 → 种族 → 盟友 → 名字 → 焦点 → AI 性格 → 难度；1.0.09 前多读一个整型、1.1.09 前颜色与盟友是 `int32` |
+| `Game/System/Players.Persistence.cs`（新） | `players.cpp:551-599` | 颜色集合 → 当前颜色（1.1.09 前 `int32`，之后 `uint8`）→ 按颜色顺序逐个玩家 |
+| `Game/System/Settings.Persistence.cs`（新） | `settings.cpp:1280-1310` | 语言 → 地图信息 → 难度 → 玩法 → 玩家；1.1.01 前跳过一条整型 |
+| `Game/System/Settings.cs`（补） | `settings.h:451`、`game_io.cpp:277` | `LoadedFileLanguage`：存档里的语言与界面语言分开两个字段 |
+| `tests/.../PlayerSettingsSaveTests.cs`（新） | 同上 | 6 条 |
+| `tests/.../SaveFormatSamples.cs`（新） | `maps_fileinfo.cpp:664-680` | 按版本写老格式地图块的工具，两个测试类共用 |
+
+要点：
+
+* **位宽不能跟着端口走，只能跟着参考走**：`MapRace` 在端口是 `byte`，参考写的是 `int32_t`；`PlayerColor` 在端口也是
+  `byte`，而 1.1.09 之前参考写的是 `int32_t`。照端口自己的宽度写会让后面每个字段错位三个字节，所以这两种情况各有
+  一条手写字节的测试，不靠往返自证。
+* **`Players.Get` 是静态的**，`Init` 把槽位登记到静态表里；`Players.Read` 只能走 `Init(colors)` 再逐个读，不能追加。
+* **`HandicapStatus` 是 `Player` 的嵌套枚举**，写出去是 `uint8`。
+* **AI 自动控制那对字段不存**：参考在 `players.h:229-234` 明说「不应存到任何地方」，它描述的是此刻谁在行动。
+* **`SetName` 会把与默认名相同的名字当成默认名清空**，默认名就是颜色名（`PlayerColors.Describe`）；测试里用 `"Greta"`
+  而不是 `"Green"`，否则写进去的是空串。
+* **设置项只存五样**：语言、地图信息、难度、玩法、玩家槽。音量、分辨率、移动速度这些都留在配置文件里。
+* **读档语言不覆盖界面语言**：`LoadedFileLanguage` 是新加的字段，`GameLanguage` 保持玩家的选择。
+* **测试要还原全局状态**：设置是单例、`Players` 有静态槽位表，改完不还原会让后面的字体/文本测试用上别的语言——第一次
+  跑全量时正是这样挂了 3 条（`TextTests`、`FontCharHandlerTests`），加 `Settings.Reset()` + `Players.Clear()` 后正常。
+
+构建 0 错误 0 警告；全量 **5 251 绿**（Core 284，Game 3 186，Assets 416，UI 1 365）；冒烟 `--enter-map` 正常退出。
+
+**下一段**：`World` 的 `Write`/`Read`。参考 `world.cpp:1448-1515` 的字段顺序是
+`width/height` → `Tiles` → `Heroes` → `Castles` → `Kingdoms` → `_customRumors` → `_dailyEvents` → `map_captureobj` →
+`_ultimateArtifact` → `_day/_week/_month` → 胜负条件的英雄 id → `MapObjects` → `_seed`，读完后 `PostLoad( false, true )`。
+所以要先有 `Tile`、`Hero`、`Castle`、`Kingdom`、`MapObjects`、`MapObjectInfo`、`UltimateArtifact`、`EventDate` 各自的算子，
+再写 `World.Persistence.cs`，最后才是 `GameSave.Save`/`Load` 本体与 zlib 包层。
+
+## 2026-11-22 G6.6（1/3）：存档的明文段
+
+`GameSave` 的六个入口此前全是 `NotImplementedException`：缺 `World`/`Settings` 的序列化，也缺「用户数据目录」这个
+概念。这一轮把**不需要压缩、也不需要世界状态的那几段**先落地——读档界面要的就是这几段。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Core/Io/StreamBase.cs`、`RoStreamBuf.cs`（修） | `serialize.cpp:135-142` | 无参 `ReadString()` 改成读 32 位长度前缀；带 `size` 的仍按 NUL 截断 |
+| `Assets/Maps/Mp2FileInfo.cs`（补） | `maps_fileinfo.h:196-256` | `PlayerUnions`、`Timestamp`、`WorldDay/Week/Month`、`MainLanguage`、`CreatorNotes` |
+| `Game/System/SaveFileInfo.cs`（新） | `maps_fileinfo.cpp:664-728` | 存档里的地图信息块：写（裸文件名、`uint8` 位集、`uint16` 参数）与读（两个版本门） |
+| `Game/System/GameDataDirectory.cs`（新） | `system.cpp:310-395` | `System::GetDataDirectory` / `GetHomeDirectory`：Linux 走 `XDG_DATA_HOME`，macOS 走 `Application Support`，Windows 走 `$HOME/.fheroes2` 再退 `%APPDATA%` |
+| `Game/System/GameSave.cs`（补） | `game_io.cpp:64-103`、`307-355`、`377-380` | `GetSaveDir()` 真实现；`SaveFileHeader`（`HeaderSAV`）带 `Create`/`Write`/`Read`；`LoadSav2FileInfo` 真实现 |
+| `tests/.../GameSaveTests.cs`（新） | 同上 | 11 条 |
+
+要点：
+
+* **`ReadString()` 原来是个真 bug**：它写的时候带长度前缀（`StreamBase.Write( string )`），读的时候却「读到底再按 NUL
+  截断」，所以带字符串的记录（`LocalizedString`、`Highscores`、`Puzzle`）本身就无法自洽。参考的
+  `operator>>( std::string & )` 是先读 32 位长度，现在按参考改；带 `size` 的重载保持 NUL 截断，因为 MP2 那 428 字节的
+  定长字段靠它。原来那条 Core 测试记的是错语义，改成两条：定长的截断、无参的读前缀。
+* **两个尾巴各有版本门**：`mainLanguage` 在 1.1.03 之前不存在，`creatorNotes` 在 1.1.15 之前不存在。版本由
+  `GameSave.VersionOfCurrentSaveFile` 给出，所以 `SaveFileInfo.Read` 收的是 `SaveFileFormat`——参考从全局
+  `versionOfCurrentSaveFile` 直接取，端口用参数，测试才能同时覆盖新旧两种格式。
+* **存档里的地图信息和 MP2 头是两套编码**：存档是逐字段按类型写（字符串带长度前缀、颜色 `uint8`、条件参数 `uint16`），
+  MP2 是定长 428 字节。所以不能复用 `Mp2FileInfo.ToHeaderBytes`。
+* **`LoadSav2FileInfo` 的四道闸**照参考顺序：魔数、版本区间、`fs.fail()`、玩法掩码。最后一闸是「这个档不属于当前玩法」，
+  读档界面靠它把战役档从单图存档里筛掉。返回的 `FilePath` 是完整路径，不是头里那个裸文件名。
+* **`GameDataDirectory`** 有个 `OverrideRoot`：测试和将来的启动参数用它换目录。参考在没有 `$HOME` 时调 SDL，端口没有
+  SDL，那一档退到 `ApplicationData`——真机上不会走到，写进注释了。
+* **未做**：`Save`/`Load` 本体（要 `World`、`Settings` 的 `Write`/`Read` 与 `Compression::Zip` 包层）、`AutoSave`、
+  `QuickSave`、`SaveCompletedCampaignScenario`。这几项都还是 `NotImplementedException`，不是临时兜底。
+
+构建 0 错误 0 警告；全量 **5 245 绿**（Core 284，Game 3 180，新增 11）；冒烟 `--enter-map` 62.6 FPS，退出 0。
+
+## 2026-11-22 G6.5（7/7）：城堡屏的三件套
+
+`Castle::OpenDialog()`（`castle/castle_dialog.cpp:196-859`）的 660 行此前只以 App 的 `CastleScene`（2 373 行）的场景形态存在，
+`UI/Dialogs/CastleDialog.cs` 只有 `Result` 枚举与两行字符串。这轮把循环与分派搬进 UI 层。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/CastleDialog.cs`（重写） | `castle_dialog.cpp:196-859` | `CastleDialog` 类：`Draw` / `ProcessEvents` / `Show`；`ReturnValue` 七值；`ResolveBuilding` 静态分派；`CastleDialogHotKeys`；`CastleDialogRequests` + `CastleDialogRequest` / `CastleDialogWindow` |
+| `tests/.../CastleDialogTests.cs`（新） | 同上 | 16 条 |
+
+要点：
+
+* **一帧一帧**，与 `HeroDialog` 同构：`Draw(target)` 画整屏（交给 `CastleScreenView`），`ProcessEvents(events, hotKeys)`
+  吃一帧输入，`Show(target, events)` 跑循环。参考在同一个函数里阻塞开子窗口，端口把子窗口交回调用方。
+* **分派照抄**：住所按 `Castle.GetActualDwelling()` 归一（点基础住所、升级已建则开升级档），魔法塔按
+  `BuildingType.MageGuild` 掩码，`Tent` 先查 `IsBuildingDisabled(BUILD_CASTLE)` 再决定是弹「不许升级」还是开买城窗口，
+  队长/雕像/护城河/魔泉/神殿只弹说明。`ResolveBuilding` 是纯函数，(窗口, 弹窗) 两个出口，脱离屏幕可测。
+* **一帧只取一次点击**：`CastleScreenInput.TakeAction()` 有副作用（取走动作），所以 `ProcessEvents` 取出后传给
+  `TryTakeResult` 与 `ProcessBuildings`，两处不会再各取一次。
+* **状态栏三级**：军队栏的 `Message` → 光标下区域（`CastleScreenView.GetStatusMessage`）→ 日期（`GetDateString`）。
+  参考在这三级之上还有 exit/income/箭头的覆盖，`GetStatusMessage` 已经按那个优先级排过。
+* **两个时钟**：建筑绕圈按 `DelayType.CastleAroundDelay` 递增到 255 回 1；英雄渐显按 `CastleItemUpdateDelay` 每拍 +9；
+  `FadeBuilding.Update` 吃同一个节拍。渐显 / 淡入期间整屏不收输入（参考 497-498 行）。
+* **未搬**：整窗的 `fadeInDisplay`、冒险地图的快速滚动开关、`ButtonRestorer`、音效；英雄渐显的中间 alpha 没有混合，
+  视图在 `HeroAlpha > 0` 时直接画人，所以「招到英雄」是闪现而不是渐显——已在类注释里写明。
+* `SetCastle` 没做：参考的切城是 `Game::OpenCastleDialog` 重新构造一屏，端口同样由调用方新建 `CastleDialog`。
+
+构建 0 错误 0 警告；全量 **5 233 绿**（UI 1 365，新增 16）；冒烟 `--enter-map` 30 帧 63.2 FPS，退出 0。
+
+## 2026-11-22 G6.5（6/7）：世界地图的 UI 层模态循环
+
+`ViewWorldWindow` 在 Game 层早就完整（开窗、缩放、雷达、拖拽、按钮都返回 `changed`），但 UI 层没有参考那个阻塞
+循环，App 用的是「主机收事件、场景收调用」的 `ViewWorldOverlay`。这轮把参考的循环补进 UI。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ViewWorldDialog.cs`（新） | `kingdom/view_world.cpp:700-795` | `Show( display, window, events, showHint, invalidate )` 返回 `ZoomLevel`；首帧「地图 + 整块雷达 + 侧栏」；循环里分派退出/缩放/雷达/拖拽/滚轮/右键提示；`IsCloseHotKey` 实现 `Game::HotKeyCloseWindow()`（Escape + Enter） |
+| `tests/.../ViewWorldDialogTests.cs`（新） | 同上 | 5 条 |
+
+要点：
+
+* 参考 717-762 行的分派顺序照抄：退出 → 缩放按钮 → 光标在雷达 → 左键按在可视区（首帧 `Press`，之后 `DragTo`）→
+  滚轮 → 右键提示。拖拽结束条件也是参考那句「左键不在可视区按下」或「光标离开可视区」。
+* 两个按钮的按下态用 `IsMouseLeftButtonPressedAndHeldInArea` 喂给 `DrawChrome`，与参考的 `drawOnState` 一致。
+* 右键提示不自己画：`showHint` 回调把（标题，正文）交给宿主，参考那里调的是 `showStandardTextMessage`。
+* `invalidate` 每帧回调一次——端口直接写索引像素，屏幕呈现归宿主。
+* **未搬**：fade in/out、`CursorRestorer`/`RadarRestorer`、`conf.SetViewWorldZoomLevel`（返回值交调用方写回）、
+  退出后复位界面设置。这些是宿主的界面状态。
+* App 的 `ViewWorldOverlay` 保持原样：两条路共用 `ViewWorldWindow`，事件分派各一份（阻塞型 / 主机型）。
+
+测试用假世界 + 实心色精灵，不依赖游戏数据：首帧把草地画进可视区、停机时返回打开时的缩放档、点 EXIT 关闭、
+右键缩放按钮触发提示、热键判定。
+
+构建 0 错误 0 警告；全量 **5 221 绿**（UI 1 348 → 1 353，新增 5）；冒烟 `--enter-map` 58.9 FPS、
+`--view-world --enter-map` 退出 0。
+
+## 2026-11-22 G6.5（5/7）：城堡的快速信息面板
+
+`Dialog::QuickInfo` 有三个分支（瓦片、英雄、城堡），前两个的英雄版早已能画，城堡版只有文字模型。这轮补上城堡那种。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/CastleQuickInfoArtwork.cs`（新） | `dialog_quickinfo.cpp:597-691` 取图的几行 | `QWIKTOWN.ICN` 帧 0、`LOCATORS`/`LOCATORE` 帧 23、`FLAG32.ICN` 全 14 帧；`TryCreate( assets, evilInterface )` 与 `Create( box, castleIcon, flags )` 两个入口 |
+| `UI/Dialogs/CastleQuickInfoView.cs`（新） | 同上 | 城名居中 → 空城图标 + `CastleIconPainter` 盖种族小图标 → 左右两面旗 → `"Defenders:"` → 守军两行小肖像（`Army.DrawMultipleMonsterLines`）或 `"None"` / `"Unknown"` |
+| `UI/Dialogs/QuickInfoDialog.cs` | 同上 | 新增 `TryCreateCastleView(...)`，把模型接到视图；类注释改写，明确瓦片面板是唯一缺口 |
+| `tests/.../CastleQuickInfoTests.cs`（新） | 同上 | 9 条 |
+
+要点：
+
+* 布局常量照抄参考：内容区是框内 `(22, 9)` 起的 `192x154`；名字 `+3`；图标 `+13` 居中；旗在图标左右 `5` 像素、下移 `4`；`"Defenders:"` 在图标底边 `+2`；守军 `+21`；`"None"`/`"Unknown"` `+47`。
+* 旗帜索引复用 `HeroQuickInfoArtwork.GetLeftFlagIndex( color )`——参考里英雄与城堡走的就是同一个 `getCastleLeftFlagIcnIndex`，偶数帧左旗、奇数帧右旗。
+* 「看不看得清」需要 `Settings` 与 `Kingdom`，端口把它算完作为 `detailedView` 传进来，视图只负责画。判定逻辑留给调用方（App 的 `AdventureMapScene`）。
+* **未搬**：参考的 `CursorRestorer` / `ImageRestorer` / `RadarUpdater`（端口每帧整屏重画），以及「按住右键期间一直显示」的循环——弹出时机由场景决定，和英雄框的处理一致。
+* 测试全部用自造帧 + 实心块字体，不依赖游戏数据；`TryCreate` 读存档那条单独留着，本机无 AGG 时直接返回（不构成假绿）。
+
+**G6.5 剩余两项**：`CastleDialog.Show`（`castle_dialog.cpp` 的 `OpenDialog()` 660 行状态机，App 的 2 373 行 `CastleScene` 是同一套逻辑的场景形态）与 `ViewWorld` 的 UI 层模态包装（`ViewWorldWindow` 已在 Game 层，`ViewWorldOverlay` 在 App 层跑通，缺的是 `UI/Dialogs` 里那个 `Show`）。
+
+构建 0 错误 0 警告，全量 **5 216 绿**（UI 1 339 → 1 348，新增 9）；冒烟 `--enter-map` 30 帧 51.1 FPS，退出 0。
+
+## 2026-11-22 G6.8（第一步）：冒险地图自绘的消息框、是-否框与冒险选项
+
+参考在 `interface_events.cpp` 里直接调全局对话框函数，因为 `AGG` 缓存与 `Font::Get()` 都是全局的。端口的地图屏幕
+已经拿到 `AssetBundle`，所以「画得出来」的那几个窗口可以就地把美术读出来，不必再转发给宿主。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.cs`（新） | `fheroes2::showStandardTextMessage` 的两处、`Dialog::AdventureOptions` | `ShowMessage` / `ShowYesNo`（`SYSTEM.ICN` 的 1..4 帧做 OKAY/CANCEL、`FONT.ICN` 黄/白两色表做标题与正文，全部惰性读一次）、`ShowAdventureOptions`（`APANEL.ICN` + `SYSTEM.ICN` 拼 `AdventureOptionsView`）、`ToAdventureOption`（`switch ( result )` 的映射） |
+| `UI/Interface/AdventureMap.cs` | — | `TryCreate` 里建 `AdventureMapDialogs`，不再为这三件事问 `IAdventureHost` |
+| `UI/Interface/AdventureMap.Events.cs` | `interface_events.cpp` | 7 处 `ShowMessage`、4 处 `ShowYesNoMessage`、1 处 `ShowAdventureOptions` 改为自绘 |
+| `UI/Interface/AdventureMapHost.cs` | — | 删掉三个成员，`IAdventureHost` 从 17 项缩到 14 项 |
+| `tests/.../AdventureMapDialogsTests.cs`（新） | 同上 | 10 条：`ToAdventureOption` 的七个入参（四扇门 + Cancel/Ok/None）、消息框与是-否框能被停机的引擎关掉、冒险选项在被关掉时算取消 |
+
+要点：
+
+* 字体走 `BitmapFont.Load( bundle, Normal, PaletteId.YellowFont / WhiteFont )`，正对应参考的
+  `FontType::normalYellow()` / `normalWhite()`；App 侧 `GameFonts` 的 TrueType 回落是后来的扩展，UI 层不该依赖它。
+* 美术缺帧时不抛也不假装成功：记警告后按「玩家取消」处理（参考没有游戏数据时根本起不来）。
+* `ShowMessage`/`ShowYesNo`/`ShowAdventureOptions` 都接受可选 `LocalEvent`，与 `MessageBox.Show` 一致，测试才好停机。
+* 另一处结构偏差：`SYSTEM.ICN` 的 OKAY/CANCEL 四帧映射在 UI 侧另有一份（App 的 `SystemButtonArtwork` 是 internal 且
+  拿 `AssetBundle`），两边帧号必须一起改。
+
+**G6.8 剩余 14 项**：英雄 / 城堡 / 王国总览 / 魔法书 / 谜题地图 / 世界地图 / 场景信息 / 系统选项 / 存档选择 / 读档 /
+存档 / 快速信息 / `CheckGameOver` / 游戏内系统菜单。它们的对话框虽然已有阻塞 `Show`，但构造它们需要各自的装配器
+（`HeroDialogArtwork`、`KingdomOverviewArtwork`、`SpellBookArtwork`、谜题图片、`ViewWorld` 窗口），而这些装配器今天只存在
+于 App、且多数还没写；`SaveGame` 还要等 G6.6 的世界序列化。**结论：G6.8 不能一次性删掉 `IAdventureHost`，必须等这些
+装配器与 G6.5 剩余项落地**，计划表已照此更新。
+
+构建 0 错误 0 警告，全量 **5 207 绿**（UI 1 329 → 1 339，新增 10）；冒烟 `--enter-map` 30 帧 49.4 FPS、
+`--adventure-options --enter-map` 20 帧 37.6 FPS，均退出 0（本机 `AssetLocator` 能解析到游戏数据，因此三条真开窗口的
+测试不是空跑）。
+
 ## 2026-11-22 G6.1（前半）：LocalEvent.HandleEvents 与事件引擎契约
 
 G6 放弃「事件只报告要开什么」的请求式契约，改回参考的同步路径：对话框自己写

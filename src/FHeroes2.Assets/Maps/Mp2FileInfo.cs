@@ -25,7 +25,7 @@ namespace FHeroes2.Assets.Maps;
 /// </list>
 /// </para>
 /// </summary>
-public sealed record Mp2FileInfo
+public sealed partial record Mp2FileInfo
 {
     /// <summary>Size of the map information block that precedes the tile data.</summary>
     public const int HeaderSize = 428;
@@ -108,6 +108,41 @@ public sealed record Mp2FileInfo
 
     /// <summary>Product the map belongs to; derived from the file extension.</summary>
     public MapVersion Version { get; init; }
+
+    /// <summary>
+    /// The side each player belongs to, per player index; <see cref="PlayerColor.None"/> for a player outside
+    /// any alliance.
+    /// </summary>
+    /// <remarks>Only a save file carries the alliances; the MP2 header computes them from the map's own bytes.</remarks>
+    public IReadOnlyList<PlayerColor> PlayerUnions { get; init; } =
+        [PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None];
+
+    /// <summary>
+    /// When the save was written, in seconds since the Unix epoch, <c>FileInfo::timestamp</c>.
+    /// </summary>
+    /// <remarks>Only a save file carries it; the save list sorts on it so the newest file comes first.</remarks>
+    public uint Timestamp { get; init; }
+
+    /// <summary>The day of the world date when the save was written, <c>FileInfo::worldDay</c>.</summary>
+    public uint WorldDay { get; init; }
+
+    /// <summary>The week of the world date when the save was written, <c>FileInfo::worldWeek</c>.</summary>
+    public uint WorldWeek { get; init; }
+
+    /// <summary>The month of the world date when the save was written, <c>FileInfo::worldMonth</c>.</summary>
+    public uint WorldMonth { get; init; }
+
+    /// <summary>
+    /// The language the map's texts are in, as the raw <c>SupportedLanguage</c> code of the save file.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>FileInfo::mainLanguage</c> 是 <c>fheroes2::SupportedLanguage</c>，那个枚举在 Game 层；这一层只存原始
+    /// 字节，换算交给 <c>SaveFileInfo</c>。0 是英文，也是「不知道」时用的值。
+    /// </remarks>
+    public byte MainLanguage { get; init; }
+
+    /// <summary>Notes the map maker left in a map of the fheroes2 format, <c>FileInfo::creatorNotes</c>.</summary>
+    public string CreatorNotes { get; init; } = string.Empty;
 
     /// <summary>
     /// The 428 header bytes the map was read from, <see langword="null"/> when the header was built

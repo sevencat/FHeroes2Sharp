@@ -135,7 +135,7 @@ public struct Cost
 /// <c>operator&lt;&lt;</c>/<c>operator&gt;&gt;</c>（要 <c>IStreamBase</c>）。
 /// </para>
 /// </remarks>
-public struct Funds
+public partial struct Funds
 {
     /// <summary>Creates an empty bag; every field is zero, like <c>Funds() = default</c>.</summary>
     /// <remarks>参考：<c>resource.h:66</c> Funds() = default。</remarks>

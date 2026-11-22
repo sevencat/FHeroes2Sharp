@@ -20,7 +20,7 @@ namespace FHeroes2.Game.Maps;
 /// and <c>default( ObjectPart )</c> would give a zero index instead.
 /// </para>
 /// </remarks>
-public struct ObjectPart : IEquatable<ObjectPart>
+public partial struct ObjectPart : IEquatable<ObjectPart>
 {
     /// <summary>Image index that means "the part carries no sprite", <c>icnIndex{ 255 }</c> of the reference.</summary>
     public const byte EmptyIcnIndex = 255;

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Resources;
 
 namespace FHeroes2.Game.Maps;
@@ -17,12 +18,13 @@ namespace FHeroes2.Game.Maps;
 /// like the reference does (<c>maps_objects.cpp:123</c>).
 /// </para>
 /// <para>
-/// The reference keeps a <c>secondarySkill</c> and an <c>experience</c> field as well; the MP2 loader never
-/// writes them (only the newer map format does), so the port does not have them. The <c>isAllow()</c> and
-/// <c>SetVisited()</c> helpers are left for the code that visits an event: nothing reads this object yet.
+/// The reference keeps a <c>secondarySkill</c> and an <c>experience</c> field as well. The MP2 loader never
+/// writes them — only the newer map format does, and a save carries them from 1.1.06 on — so reading an MP2
+/// block leaves them at their empty defaults. The <c>isAllow()</c> and <c>SetVisited()</c> helpers are left for
+/// the code that visits an event: nothing reads this object yet.
 /// </para>
 /// </remarks>
-public sealed class MapEvent : MapObject
+public sealed partial class MapEvent : MapObject
 {
     /// <summary>Smallest block that can be an event, <c>MP2::MP2_EVENT_STRUCTURE_MIN_SIZE</c> (<c>mp2.h:37</c>).</summary>
     public const int MinimumStructureSize = 50;
@@ -69,6 +71,18 @@ public sealed class MapEvent : MapObject
 
     /// <summary>The message of the event, empty when the block carries none.</summary>
     public string Message { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// The secondary skill the event teaches, <c>secondarySkill</c> (<c>maps_objects.h:95</c>).
+    /// </summary>
+    /// <remarks>
+    /// Only the newer map format and the save format fill this; an MP2 ground event leaves it at the empty
+    /// <see cref="SecondarySkillLevel"/> whose <see cref="SecondarySkillLevel.IsValid"/> is <see langword="false"/>.
+    /// </remarks>
+    public SecondarySkillLevel SecondarySkill { get; private init; }
+
+    /// <summary>The experience the event gives, <c>experience</c> (<c>maps_objects.h:96</c>).</summary>
+    public int Experience { get; private init; }
 
     /// <summary>
     /// Restores the stolen French characters of the message, <c>World::fixFrenchCharactersInStrings()</c>

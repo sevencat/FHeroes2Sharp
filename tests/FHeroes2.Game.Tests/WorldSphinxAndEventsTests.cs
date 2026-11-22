@@ -179,11 +179,11 @@ public sealed class WorldSphinxAndEventsTests
         World world = new();
         world.LoadMap(MapWithSign(SignBlock("Voil@ l'>le.")));
 
-        Assert.Equal("Voil@ l'>le.", world.GetMapSign(ObjectTileIndex)!.Message);
+        Assert.Equal("Voil@ l'>le.", world.GetMapSign(ObjectTileIndex)!.Message.Text);
 
         world.FixFrenchCharactersInStrings();
 
-        Assert.Equal("Voilà l'île.", world.GetMapSign(ObjectTileIndex)!.Message);
+        Assert.Equal("Voilà l'île.", world.GetMapSign(ObjectTileIndex)!.Message.Text);
     }
 
     [Fact]

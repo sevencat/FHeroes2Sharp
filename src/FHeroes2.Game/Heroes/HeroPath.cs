@@ -24,7 +24,7 @@ namespace FHeroes2.Game.Heroes;
 /// rendering side) and <c>String</c> (a debug helper that needs the object and direction names).
 /// </para>
 /// </remarks>
-public sealed class HeroPath
+public sealed partial class HeroPath
 {
     private readonly List<RouteStep> _steps = [];
 

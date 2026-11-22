@@ -139,7 +139,7 @@ public sealed partial class Hero
     }
 
     /// <summary>The id of the hero, <c>GetID()</c> (<c>heroes.h:330</c>).</summary>
-    public int Id { get; }
+    public int Id { get; private set; }
 
     /// <summary>
     /// The race of the hero, <c>GetRace()</c>. The class of the hero — knight, barbarian and so on — and

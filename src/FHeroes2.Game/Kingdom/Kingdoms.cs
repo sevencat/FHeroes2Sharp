@@ -20,7 +20,7 @@ namespace FHeroes2.Game.Kingdom;
 /// 空判断。
 /// </para>
 /// </remarks>
-public sealed class Kingdoms
+public sealed partial class Kingdoms
 {
     /// <summary>
     /// How many playable colors a world can have, <c>Color::Count()</c>.

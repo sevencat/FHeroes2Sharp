@@ -31,7 +31,7 @@ public enum FocusKind
 /// a reset can never be read back as a focus.
 /// </para>
 /// </remarks>
-public sealed class PlayerFocus
+public sealed partial class PlayerFocus
 {
     /// <summary>What is selected, the <c>first</c> half of the reference pair.</summary>
     public FocusKind Kind { get; private set; }

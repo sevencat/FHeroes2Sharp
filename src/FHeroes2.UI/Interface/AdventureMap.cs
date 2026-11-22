@@ -41,6 +41,12 @@ public sealed partial class AdventureMap : BaseInterface
     private readonly IAdventureHost _host;
 
     /// <summary>
+    /// The dialogs the events open themselves, i.e. the ones whose whole content the port can already draw; the
+    /// rest still go through <see cref="_host"/>.
+    /// </summary>
+    private AdventureMapDialogs _dialogs = null!;
+
+    /// <summary>
     /// Panels of the screen, built by <see cref="TryCreate"/> rather than by the constructor: C# cannot pass
     /// <see langword="this"/> to an argument of its own constructor, and the panels must be attached to this very
     /// screen — their repaint requests and their focus both go through it.
@@ -123,6 +129,7 @@ public sealed partial class AdventureMap : BaseInterface
         AdventureMap map = new(display, audioManager, host);
         IcnViewWorldSpriteSource sprites = new(assets);
 
+        map._dialogs = new AdventureMapDialogs(display, assets);
         map._iconsPanel = new IconsPanel(map, display, world, sprites, evilInterface);
         map._statusPanel = new StatusPanel(map, display, world, sprites, monsters);
         map._buttonsPanel = CreateButtonsPanel(display, sprites, buttonSet);

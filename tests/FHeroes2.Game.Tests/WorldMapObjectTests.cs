@@ -34,7 +34,7 @@ public sealed class WorldMapObjectTests
 
         MapSign sign = world.GetMapSign(ObjectTileIndex)!;
 
-        Assert.Equal("Treasure east of here.", sign.Message);
+        Assert.Equal("Treasure east of here.", sign.Message.Text);
         Assert.Equal(ObjectTileIndex, sign.TileIndex);
         Assert.Equal((uint)ObjectTileIndex, sign.Uid);
         Assert.Single(world.MapObjects.All);
@@ -47,7 +47,7 @@ public sealed class WorldMapObjectTests
         world.LoadMap(MapWithObjectTile(SignTile(), SignBlock(string.Empty)));
 
         // The reference fills the message with a random line; the port has no language table here yet.
-        Assert.Equal(string.Empty, world.GetMapSign(ObjectTileIndex)!.Message);
+        Assert.Equal(string.Empty, world.GetMapSign(ObjectTileIndex)!.Message.Text);
     }
 
     [Fact]

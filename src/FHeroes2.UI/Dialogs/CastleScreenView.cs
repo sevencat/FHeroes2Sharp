@@ -16,7 +16,7 @@ namespace FHeroes2.UI.Dialogs;
 /// </summary>
 /// <remarks>
 /// <para>
-/// 这一层只画与命中，不跑循环：切城、点建筑、开子窗口都由调用方按 <see cref="CastleDialog.Result"/> 决定
+/// 这一层只画与命中，不跑循环：切城、点建筑、开子窗口都由调用方按 <see cref="CastleDialog.ReturnValue"/> 决定
 /// （<c>castle_dialog.cpp:470-859</c> 的循环留给场景层）。
 /// </para>
 /// <para>

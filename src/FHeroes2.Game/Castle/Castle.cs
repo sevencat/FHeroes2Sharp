@@ -119,7 +119,7 @@ public sealed partial class Castle
     }
 
     /// <summary>The tile the town stands on, <c>Castle::GetIndex()</c>.</summary>
-    public int TileIndex { get; }
+    public int TileIndex { get; private set; }
 
     /// <summary>
     /// The town's race, <c>_race</c>. Fixed once the town exists — a random castle gets its race from the map block

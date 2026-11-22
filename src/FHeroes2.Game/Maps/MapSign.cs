@@ -13,12 +13,13 @@ namespace FHeroes2.Game.Maps;
 /// of the string, so the buffer never runs out.
 /// </para>
 /// <para>
-/// <b>What is missing</b>: the reference keeps a <c>LocalizedString</c> and fills an empty message with a
-/// random line (<c>setDefaultMessage()</c>, <c>maps_objects.cpp:315</c>). The port has neither the
-/// language table nor a random source in the map loader, so an empty message stays empty.
+/// <b>What is missing</b>: the reference fills an empty message with a random line (<c>setDefaultMessage()</c>,
+/// <c>maps_objects.cpp:315</c>). The port has no random source in the map loader, so an empty message stays
+/// empty. The message itself is a <see cref="LocalizedString"/> like the reference's, because the language tag
+/// travels with the sign through a save file.
 /// </para>
 /// </remarks>
-public sealed class MapSign : MapObject
+public sealed partial class MapSign : MapObject
 {
     /// <summary>Smallest block that can be a sign, <c>MP2::MP2_SIGN_STRUCTURE_MIN_SIZE</c> (<c>mp2.h:41</c>).</summary>
     public const int MinimumStructureSize = 10;
@@ -34,13 +35,13 @@ public sealed class MapSign : MapObject
     }
 
     /// <summary>The message of the sign, empty when the block carries none.</summary>
-    public string Message { get; private set; } = string.Empty;
+    public LocalizedString Message { get; private set; }
 
     /// <summary>
     /// Restores the stolen French characters of the message, <c>World::fixFrenchCharactersInStrings()</c>
     /// (<c>world.cpp:1296-1302</c>).
     /// </summary>
-    internal void FixFrenchCharacters() => Message = MapTextCodec.FixFrenchCharacters(Message);
+    internal void FixFrenchCharacters() => Message = new LocalizedString(MapTextCodec.FixFrenchCharacters(Message.Text), Message.Language);
 
     /// <summary>
     /// Reads the block of a sign or a bottle, <c>MapSign::LoadFromMP2()</c> (<c>maps_objects.cpp:286</c>).
@@ -64,7 +65,8 @@ public sealed class MapSign : MapObject
 
         sign = new MapSign
         {
-            Message = MapTextCodec.Decode(data[MessageOffset..]),
+            // An MP2 block carries no language tag: the text is whatever the map author typed.
+            Message = new LocalizedString(MapTextCodec.Decode(data[MessageOffset..])),
         };
 
         sign.PlaceOn(tileIndex);
