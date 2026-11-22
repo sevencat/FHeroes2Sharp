@@ -12,11 +12,8 @@ using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
-
-// The ported Interface::ButtonsPanel lives next to the self drawn one this scene still uses; the alias pins the latter
-// until the scene is replaced by Interface::AdventureMap.
-using ButtonsPanel = FHeroes2.Game.AdventureMap.ButtonsPanel;
 
 // `AdventureMap` 这个名字同时是 FHeroes2.Game 下的命名空间与 Interface::AdventureMap 这个类，因此用别名钉住后者。
 using AdventureInterface = FHeroes2.UI.Interface.AdventureMap;
@@ -26,20 +23,20 @@ using CastleTown = FHeroes2.Game.Castle.Castle;
 namespace FHeroes2.App.Scenes;
 
 /// <summary>
-/// The adventure map of a started scenario, milestone M4. It shows the ground and object layers of
-/// the selected MP2 map, scrolls with the arrow keys and reports the map and the viewport in a
-/// status bar.
+/// The adventure map of a started scenario, milestone M4, and now a thin shell over
+/// <see cref="AdventureInterface"/> (<c>Interface::AdventureMap</c>).
 ///
 /// <para>
-/// The scene is deliberately thin: <see cref="AdventureMapView"/> knows how a tile becomes pixels,
-/// <see cref="MapFrame"/> owns the interface frame (<c>ADVBORD.ICN</c>, the 448x448 viewport, the radar
-/// bay and the panel bay), and the scene only puts them together. <see cref="IconBar"/> fills the top
-/// of the panel bay with the castle icons of the map and <see cref="ButtonsPanel"/> puts the eight
-/// interface buttons below them. The fog of war closes the map passes (<see cref="MapFog"/> over
-/// <c>CLOF32.TIL</c> / <c>CLOP32.ICN</c>), the resource bar, paths and the fog free reveal are later
-/// milestones.
-/// The reference composition (<c>Maps::redrawBottomLayerObjects</c> followed by the top layer, then the
-/// interface) is what those will plug into.
+/// What the scene still owns is what the ported screen cannot reach: it builds the world and the session
+/// once, it feeds the frame to the turn loop (<see cref="Update"/>: panels, hot keys, animation, scrolling and
+/// the end of turn), it answers the two requests the screen hands back (the castle screen of a left click and
+/// the exit of the loop, <see cref="ExitEvent"/>), and it draws the two windows that are still scene owned
+/// (View World and the adventure options).
+/// </para>
+/// <para>
+/// 第 4 步之前的自建件（雷达、按钮面板、状态石、视口卷屏）已经全部让给屏幕，见 <c>PROGRESS.md</c> §6.1b。
+/// 地图的绘制与卷屏都归 <see cref="GameArea"/>，瓦片换算走 <c>GetValidTileIdFromPoint()</c>，场景不再自己
+/// 记偏移；<see cref="AdventureMapView"/> 只剩给 View World 与编辑器用的几何。
 /// </para>
 /// <para>
 /// The fog is <b>not</b> the scene's own: the scene loads the map into <see cref="World.Current"/> and
@@ -65,27 +62,21 @@ public sealed class AdventureMapScene : IScene
     private readonly World _world;
     private readonly AdventureSession? _session;
     private readonly AdventureMapView _view;
-    private readonly Minimap _minimap;
-    private readonly MapScrollController _mouse;
+    private Point? _cursor;
+
+    /// <summary>A panel drag the screen handed over, <see langword="null"/> while no panel is grabbed.</summary>
+    private BorderDrag? _drag;
+
     private readonly MapFrame _mapFrame;
 
     /// <summary>The ported screen itself, <c>Interface::AdventureMap</c>: it owns the panels and the frame.</summary>
     private readonly AdventureInterface _interface;
-    private readonly ButtonsPanel _buttons;
-    private readonly ButtonSpriteSet? _buttonSprites;
-    private readonly StatusPanelPainter? _statusPanel;
-    private readonly Rect _statusArea;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
-    private readonly Rect _radar;
     private readonly Rect _statusBar;
     private readonly byte _dark;
 
-    private bool _leftHeld;
-    private bool _radarGrabbed;
     private CastleTown? _castleRequest;
-
-    private StatusPanelState _statusState = StatusPanelState.Day;
 
     private readonly IViewWorldSpriteSource? _viewWorldSprites;
     private readonly PlayerColor _friends;
@@ -106,11 +97,8 @@ public sealed class AdventureMapScene : IScene
         World world,
         AdventureSession? session,
         AdventureMapView view,
-        Minimap minimap,
         MapFrame mapFrame,
         AdventureInterface screen,
-        ButtonSpriteSet? buttonSprites,
-        StatusPanelPainter? statusPanel,
         AdventureOptionsView? optionsArtwork,
         IViewWorldSpriteSource? viewWorldSprites,
         Sprite? quickInfoFrame,
@@ -122,25 +110,15 @@ public sealed class AdventureMapScene : IScene
         _world = world;
         _session = session;
         _view = view;
-        _minimap = minimap;
-        _mouse = new MapScrollController(view);
+
         _mapFrame = mapFrame;
         _interface = screen;
-        _buttons = new ButtonsPanel(mapFrame.Panel);
-        _buttonSprites = buttonSprites;
-        _statusPanel = statusPanel;
         _optionsArtwork = optionsArtwork;
         _viewWorldSprites = viewWorldSprites;
         _quickInfoFrame = quickInfoFrame;
         _friends = friends;
         _viewport = mapFrame.Viewport;
         _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
-        _radar = mapFrame.Radar;
-
-        // The stone panel hangs under the buttons down to the bottom border, the _statusPanel.SetPosition
-        // of the reference (game_interface.cpp), which leaves 480 - 392 - 16 = 72 pixels, one frame of
-        // STONBACK.ICN.
-        _statusArea = StatusPanelPainter.AreaFor(mapFrame.Panel, _buttons.Area, frame.Size.Height, MapFrame.BorderWidth);
 
         // The status line goes on the bottom border, where the frame art leaves the strip empty; the
         // panel bay above it belongs to the interface buttons of later milestones.
@@ -169,12 +147,6 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>The hero the movement and the next-hero button act on, <c>Interface::AdventureMap::GetFocus()</c>.</summary>
     public Hero? FocusHero => _session?.FocusHero;
-
-    /// <summary>The minimap panel in the top right corner.</summary>
-    public Minimap Minimap => _minimap;
-
-    /// <summary>Where the minimap is drawn, the radar area of the reference layout.</summary>
-    public Rect RadarArea => _radar;
 
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => _view.Map.Info.Name;
@@ -261,8 +233,6 @@ public sealed class AdventureMapScene : IScene
                 fogSprites,
                 world);
 
-            Minimap minimap = Minimap.Build(map);
-
             if (focus is not null)
             {
                 view.CenterOn(focus.X, focus.Y);
@@ -291,17 +261,6 @@ public sealed class AdventureMapScene : IScene
             // 迷雾的方向缓存按刚侦察过的世界重算一次，否则地图层按「全雾」画（game_startgame.cpp:781）。
             FHeroes2.UI.Interface.GameArea.UpdateMapFogDirections();
 
-            if (Environment.GetEnvironmentVariable("FH2_DEBUG_FOG") is not null)
-            {
-                FHeroes2.Game.Heroes.Hero? hero = session?.FocusHero;
-                int heroIndex = hero?.MapIndex ?? -1;
-                Console.Error.WriteLine(
-                    $"observers={observers} human={FHeroes2.Game.System.Players.HumanColors()} " +
-                    $"current={FHeroes2.Game.System.Settings.Get().Players.CurrentColor} " +
-                    $"friends={FHeroes2.Game.System.Players.FriendColors()} hero={heroIndex} " +
-                    $"fog={World.Current.GetTile(heroIndex).FogDirection}");
-            }
-
             if (session?.FocusHero is { } actingHero)
             {
                 screen.SetFocus(actingHero, false);
@@ -321,11 +280,8 @@ public sealed class AdventureMapScene : IScene
                 world,
                 session,
                 view,
-                minimap,
                 mapFrame,
                 screen,
-                ButtonSpriteSet.TryCreate(assets),
-                StatusPanelPainter.TryCreate(assets),
                 AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
                 QuickInfoArtwork.TryCreate(assets),
@@ -458,37 +414,154 @@ public sealed class AdventureMapScene : IScene
         return _viewWorldZoom;
     }
 
-    /// <summary>Advances the edge scroll of the mouse and the walk animation of the heroes.</summary>
+    /// <summary>
+    /// One frame of the turn loop, the body of <c>Interface::AdventureMap::HumanTurn()</c>
+    /// (<c>game_startgame.cpp:1127-1609</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的循环体做七件事：收键、派发面板（含边缘卷屏与拖拽卷屏）、传英雄的走动动画、按面板的结论收回合、
+    /// 判断王国的胜负。前四件都在屏幕里（<see cref="AdventureInterface.ProcessTurnFrame"/> 与
+    /// <see cref="AdventureInterface.FinishHumanTurn"/>），场景只剩屏幕管不了的三件：接管面板拖动、把界面焦点
+    /// 同步回会话、把「这一帧要求做什么」落到会话与宿主上。
+    /// </para>
+    /// <para>
+    /// 两个旧浮层（View World 与冒险选项）打开时整帧都不跑：参考里这两个窗口有自己的循环，地图的循环挂在它们下面。
+    /// 端口的这两层窗口仍是场景自己压帧，所以只在这里让开。
+    /// </para>
+    /// <para>
+    /// <paramref name="elapsedSeconds"/> 不参与计算：卷屏的节流与惯性都走 <c>GameDelays</c> 的全局表、
+    /// 动画走 <see cref="GameArea"/> 自己的帧计数，参考同样不把帧时递进这两处。
+    /// </para>
+    /// </remarks>
+    /// <param name="elapsedSeconds">Seconds since the previous frame; not used.</param>
     public void Update(double elapsedSeconds)
     {
-        _mouse.Update(elapsedSeconds);
+        _ = elapsedSeconds;
 
-        if (_session is null)
+        if (_viewWorld is not null || _options is not null)
         {
             return;
         }
 
-        // The reference's main loop calls Heroes::Move() once per frame, only for the heroes whose movement
-        // is enabled; Move() advances the sprite by one frame and, when the sprite reaches the last frame of
-        // the step, lands the hero on the next tile. The step-by-step position inside a tile is not a field
-        // of the hero: it is a function of the sprite frame, which is why the drawing reads SpriteIndex and
-        // Offset from the hero and never keeps its own copy.
-        foreach (Hero hero in _world.Heroes)
+        LocalEvent events = LocalEvent.Current;
+
+        AdventurePanelResult panel = _interface.ProcessTurnFrame(events, RequestExit);
+
+        PumpDrag(panel.Drag, events);
+
+        // The kingdom that has neither a hero nor a town cannot act, so the reference turns its "nothing to do"
+        // into an end of turn, the `!myKingdom.isPlay()` branch of FinishHumanTurn().
+        AdventureEventResult result = _interface.FinishHumanTurn(panel.Mode, IsKingdomVanquished());
+
+        FollowInterfaceFocus();
+
+        if (result != AdventureEventResult.Cancel)
         {
-            if (!hero.IsMoveEnabled)
-            {
-                continue;
-            }
-
-            bool stepped = hero.Move(false, _world);
-            hero.Offset = hero.GetCurrentPixelOffset();
-
-            // The view follows the acting hero, GameArea::SetCenter( hero->GetCenter() ) after each step.
-            if (stepped && ReferenceEquals(hero, _session.FocusHero))
-            {
-                CentreOnHero(hero);
-            }
+            HandleResult(result);
         }
+    }
+
+    /// <summary>
+    /// What the scene does when the screen asks to leave the map, the <c>Game::processExitEvent()</c> the reference
+    /// hands to <c>HumanTurn()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 问「确定退出吗」与换场景都是宿主（<c>GameHost</c>）的事：它拿得到场景管理器，场景拿不到。宿主没接这一手时
+    /// 按「取消」处理，也就是留在图上，和参考里玩家答「否」一样。
+    /// </remarks>
+    /// <returns>The decision to give back to the turn loop.</returns>
+    private AdventureEventResult RequestExit() => ExitEvent?.Invoke() ?? AdventureEventResult.Cancel;
+
+    /// <summary>
+    /// What the host wants done when the player asks to leave the map, wired up by <c>GameHost</c>.
+    /// </summary>
+    /// <remarks>
+    /// 宿主在这里换场景（回主菜单）并把「取消」还给循环：场景换不了自己，所以它只负责转达。
+    /// </remarks>
+    public Func<AdventureEventResult>? ExitEvent { get; set; }
+
+    /// <summary>The acting kingdom has no hero and no town, the <c>!myKingdom.isPlay()</c> of the turn loop.</summary>
+    /// <returns><see langword="true"/> when the current player cannot act any more.</returns>
+    private bool IsKingdomVanquished() => _session is not null && _session.Kingdom.IsLoss;
+
+    /// <summary>
+    /// Carries the interface focus back into the session.
+    /// </summary>
+    /// <remarks>
+    /// 热键与按钮改的是界面的焦点（<c>Settings.Players.Current.Focus</c>，<c>EventNextHero()</c> 与点击英雄都写它），
+    /// 而会话自己那份焦点是给存档与状态栏用的。两份不能各走各的，所以每帧把界面那份搬回去；界面没有焦点英雄
+    /// （例如只点了一座城）时不动会话，免得把焦点清空。
+    /// </remarks>
+    private void FollowInterfaceFocus()
+    {
+        if (_session is { } session && InterfaceFocus.GetFocusHeroes() is { } hero)
+        {
+            session.SetFocus(hero);
+        }
+    }
+
+    /// <summary>
+    /// Acts on what the turn frame asked the loop to do, the <c>return res</c> of <c>HumanTurn()</c>.
+    /// </summary>
+    /// <param name="result">The decision of the frame.</param>
+    private void HandleResult(AdventureEventResult result)
+    {
+        switch (result)
+        {
+            case AdventureEventResult.EndTurn:
+                EndTurn();
+
+                break;
+
+            case AdventureEventResult.NewGame:
+            case AdventureEventResult.LoadGame:
+            case AdventureEventResult.QuitGame:
+                // 开新局、读档、退出都要换场景，那是宿主的活；参考在这三个值上离开这张图，端口先回主菜单。
+                GameLog.Info($"The adventure map asked for '{result}', so the map is left.");
+                RequestExit();
+
+                break;
+
+            default:
+                // 胜负、高分与战役的入口都还没有接：先把值记下来，免得它被悄悄吞掉。
+                GameLog.Info($"The adventure map returned '{result}', which has no handler yet.");
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Carries a panel drag across frames, the blocking loop of <c>BorderWindow::QueueEventProcessing()</c>
+    /// (<c>interface_border.cpp:494-523</c>).
+    /// </summary>
+    /// <param name="drag">The drag the frame started, or <see langword="null"/>.</param>
+    /// <param name="events">Input state of the frame.</param>
+    /// <remarks>
+    /// 参考在松手时把面板摆到轮廓的位置（<c>BorderWindow::SetPosition</c>），而端口的
+    /// <see cref="AdventurePanelResult"/> 只带轮廓不带「是哪个面板」，所以这里先只画轮廓、松手丢掉。
+    /// 只有隐藏界面模式有可抓的面板，正常布局下 <paramref name="drag"/> 一直是 <see langword="null"/>。
+    /// </remarks>
+    private void PumpDrag(BorderDrag? drag, LocalEvent events)
+    {
+        if (drag is not null)
+        {
+            _drag = drag;
+        }
+
+        if (_drag is null)
+        {
+            return;
+        }
+
+        if (!events.IsMouseLeftButtonPressed)
+        {
+            _drag = null;
+
+            return;
+        }
+
+        _drag.MoveTo(events.CursorPosition);
     }
 
     /// <summary>
@@ -558,6 +631,10 @@ public sealed class AdventureMapScene : IScene
 
         DrawStatusBar(state);
 
+        // The outline of a grabbed panel goes over the map and under the dialogs, the order the reference
+        // draws it in inside its drag loop.
+        _drag?.Draw(_frame.Pixels);
+
         // The options dialog is painted over the map that is already there, the way the reference
         // draws its blocking dialog straight into the display.
         if (_options is { } options)
@@ -575,97 +652,69 @@ public sealed class AdventureMapScene : IScene
     {
     }
 
-    /// <summary>Scrolls the view by map pixels, clamped to the map.</summary>
-    public void ScrollBy(int dx, int dy) => _view.ScrollBy(dx, dy);
-
-    /// <summary>Scrolls the view by whole tiles, the arrow keys of the reference.</summary>
-    public void ScrollByTiles(int columns, int rows) =>
-        _view.ScrollBy(columns * _view.Tiles.TileWidth, rows * _view.Tiles.TileHeight);
-
-    /// <summary>scrolls the view back to the top left corner, which is where a scenario starts without heroes.</summary>
-    public void ScrollToStart() => _view.ScrollTo(0, 0);
-
-    /// <summary>The mouse of the terrain: drag, edge scroll and wheel.</summary>
-    public MapScrollController Mouse => _mouse;
+    /// <summary>Scrolls the map area by map pixels, clamped to the map, <c>GameArea::ShiftCenter()</c>.</summary>
+    public void ScrollBy(int dx, int dy) => _interface.GetGameArea().ShiftCenter(new Point(dx, dy));
 
     /// <summary>
-    /// Records the pointer. A press that started on the minimap keeps centring the map while it is
-    /// held, which is the <c>MouseClickLeft || isMouseLeftButtonPressedInArea</c> branch of
-    /// <c>Radar::QueueEventProcessing</c>: one branch for the click and for the drag across the panel.
+    /// Records the pointer. The radar, the panels and the terrain are no longer hit tested here: the ported
+    /// screen reads the pointer out of <see cref="LocalEvent"/> once a frame and dispatches the three cursor
+    /// handlers (<c>interface_events.cpp</c>). The scene keeps the point only for the click it still owns.
     /// </summary>
     /// <param name="cursor">Pointer in logical pixels, or <see langword="null"/> outside the window.</param>
-    public void SetCursor(Point? cursor)
-    {
-        if (_radarGrabbed && _leftHeld && cursor is { } point && _radar.Contains(point))
-        {
-            CentreOnRadar(point);
-        }
-
-        _mouse.SetCursor(cursor);
-    }
+    public void SetCursor(Point? cursor) => _cursor = cursor;
 
     /// <summary>
-    /// Records the left button. A press on the minimap is consumed by the radar, a press on the button
-    /// panel by the buttons and a press on the terrain lays the route of the focus hero; everything else
-    /// is the drag of the terrain, and a release ends both.
+    /// Records the left button and lays the route of the focus hero when the press lands on the terrain.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 面板、雷达与状态石的点击已经归屏幕（<c>ProcessPanels</c> 的叠放次序与三路光标处理），这里只剩地图区里的两件事：
+    /// 点自己的城要进城堡屏（<see cref="TakeCastleRequest"/>，参考的 <c>Game::OpenCastleDialog</c>），点地形给焦点
+    /// 英雄铺路。
+    /// </para>
+    /// <para>
+    /// 瓦片按 <c>GameArea::GetValidTileIdFromPoint()</c> 换算，不再自己减视口原点：卷屏已经归地图区，场景手里那份
+    /// 偏移是旧的，按它算会偏半格。
+    /// </para>
+    /// </remarks>
     /// <param name="down">Whether the left button is now held.</param>
     public void SetLeftButton(bool down)
     {
-        _leftHeld = down;
+        GameArea gameArea = _interface.GetGameArea();
 
-        if (down && _mouse.Cursor is { } cursor)
+        if (!down || _cursor is not { } cursor || !gameArea.Roi.Contains(cursor))
         {
-            if (_radar.Contains(cursor))
-            {
-                _radarGrabbed = true;
-                CentreOnRadar(cursor);
-                return;
-            }
-
-            if (ClickPanel(cursor))
-            {
-                return;
-            }
-
-            // A press on the stone cycles the state, Interface::StatusPanel::QueueEventProcessing(): the date,
-            // then the kingdom, then back again. The army state is not drawn yet, so it is not in the cycle.
-            if (_statusPanel is not null && _statusArea.Contains(cursor))
-            {
-                _statusState = _statusState == StatusPanelState.Day ? StatusPanelState.Funds : StatusPanelState.Day;
-
-                return;
-            }
-
-            // A press on one of the acting kingdom's towns asks for its screen, Game::OpenCastleDialog of the
-            // castle branch of the terrain click. The town answers for its whole footprint (gate, walls, roofs).
-            if (_session is { } acting
-                && _viewport.Contains(cursor)
-                && _view.TileAt(cursor) is { } tile
-                && _world.GetCastle(tile.X, tile.Y) is { } town
-                && town.Color == acting.CurrentColor)
-            {
-                _castleRequest = town;
-
-                return;
-            }
-
-            // The reference's MouseLeftClick on the terrain: the focus hero gets the route of world.getPath()
-            // and starts walking. Without a session (a map with no human player) the press stays a drag.
-            if (_session?.FocusHero is { } hero
-                && _viewport.Contains(cursor)
-                && TrySetHeroPath(hero, cursor))
-            {
-                return;
-            }
+            return;
         }
 
-        if (!down)
+        int index = gameArea.GetValidTileIdFromPoint(cursor);
+
+        if (index < 0 || index >= _world.Size)
         {
-            _radarGrabbed = false;
+            return;
         }
 
-        _mouse.SetLeftButton(down);
+        int tileX = index % _world.Width;
+        int tileY = index / _world.Width;
+
+        // A press on one of the acting kingdom's towns asks for its screen. The town answers for its whole
+        // footprint (gate, walls, roofs), which is the `world.getTile( index ).getObject() == MP2::OBJ_CASTLE`
+        // branch of MouseLeftClick.
+        if (_session is { } acting
+            && _world.GetCastle(tileX, tileY) is { } town
+            && town.Color == acting.CurrentColor)
+        {
+            _castleRequest = town;
+
+            return;
+        }
+
+        // The reference's MouseLeftClick on the terrain: the focus hero gets the route of world.getPath() and
+        // starts walking. Without a session (a map with no human player) the press stays a drag.
+        if (_session is { } session && session.FocusHero is { } hero)
+        {
+            session.SetPath(hero, index);
+        }
     }
 
     /// <summary>
@@ -691,20 +740,26 @@ public sealed class AdventureMapScene : IScene
         if (!down
             || _quickInfoFrame is null
             || _fonts is null
-            || _mouse.Cursor is not { } cursor
-            || !_viewport.Contains(cursor))
+            || _cursor is not { } cursor)
         {
             return;
         }
 
-        Point tile = _view.TileAt(cursor);
+        GameArea gameArea = _interface.GetGameArea();
 
-        if (tile.X < 0 || tile.Y < 0 || tile.X >= _world.Width || tile.Y >= _world.Height)
+        if (!gameArea.Roi.Contains(cursor))
         {
             return;
         }
 
-        Tile mapTile = _world.GetTile(tile.X, tile.Y);
+        int index = gameArea.GetValidTileIdFromPoint(cursor);
+
+        if (index < 0 || index >= _world.Size)
+        {
+            return;
+        }
+
+        Tile mapTile = _world.GetTile(index);
 
         // 没有会话就没有「轮到谁」，也就没有王国可问；此时只给不需要世界状态的那几支文字。
         string text = _session is null
@@ -723,9 +778,9 @@ public sealed class AdventureMapScene : IScene
     /// Ends the turn of the current player, the END TURN button and the <c>E</c> key of the reference.
     /// </summary>
     /// <remarks>
-    /// The session changes the player or the day; the scene only follows up on the map (recentring on the
-    /// hero of the player who is now acting) and on the log, because the next redraw asks the session for
-    /// the new buttons and the new status bar.
+    /// 会话换人或换天之后，屏幕有三样东西要跟着换：当前色（界面焦点、状态石与雷达都按它取数）、焦点英雄与视野中心。
+    /// 参考在 <c>HumanTurn()</c> 的收尾里靠 <c>Interface::Basic::SetFocus()</c> 与状态栏自己的 <c>Reset()</c>
+    /// 做到，端口没有换幕的黑板，所以在这里一次推完。
     /// </remarks>
     public void EndTurn()
     {
@@ -735,70 +790,19 @@ public sealed class AdventureMapScene : IScene
         }
 
         _session.EndTurn();
-        CentreOnFocusHero();
+
+        FHeroes2.Game.System.Settings.Get().Players.SetCurrentColor(_session.CurrentColor);
+
+        if (_session.FocusHero is { } hero)
+        {
+            _interface.SetFocus(hero, false);
+        }
+        else
+        {
+            CentreOnFocusHero();
+        }
 
         GameLog.Info($"End turn: day {_session.DayCount}, {_session.CurrentColor} plays.");
-    }
-
-    /// <summary>
-    /// Moves the focus to the next hero of the acting kingdom, the next hero button and the <c>TAB</c> key.
-    /// </summary>
-    public void NextHero()
-    {
-        if (_session is null)
-        {
-            return;
-        }
-
-        if (_session.NextHero() is null)
-        {
-            GameLog.Info("The acting kingdom has no hero to focus.");
-
-            return;
-        }
-
-        CentreOnFocusHero();
-    }
-
-    /// <summary>
-    /// Reacts to a left press on the button panel: the two buttons the port can already honour do their
-    /// job, the rest report that they are not wired up yet.
-    /// </summary>
-    /// <param name="cursor">Pointer in logical pixels.</param>
-    /// <returns><see langword="true"/> when the press landed on a button.</returns>
-    public bool ClickPanel(Point cursor)
-    {
-        if (!_buttons.Area.Contains(cursor))
-        {
-            return false;
-        }
-
-        foreach (AdventureButton button in Enum.GetValues<AdventureButton>())
-        {
-            if (!_buttons.AreaOf(button).Contains(cursor))
-            {
-                continue;
-            }
-
-            switch (button)
-            {
-                case AdventureButton.NextHero:
-                    NextHero();
-                    break;
-
-                case AdventureButton.EndTurn:
-                    EndTurn();
-                    break;
-
-                default:
-                    GameLog.Info($"The '{button}' button is not wired up yet.");
-                    break;
-            }
-
-            return true;
-        }
-
-        return false;
     }
 
     /// <summary>
@@ -875,62 +879,17 @@ public sealed class AdventureMapScene : IScene
         return null;
     }
 
-    /// <summary>
-    /// What <see cref="ButtonsPanel"/> should show, <c>Interface::ButtonsPanel::_setButtonStatus</c>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The reference asks the focus hero four things: whether the route is valid (movement glyph), whether
-    /// he may still walk it (<c>MayStillMove</c>), whether the object under him may be visited again (the
-    /// action glyph) and whether he carries a spell book and has spell points (the spell button). The port
-    /// keeps the same four answers and drops only the "hero is asleep" case, which needs a mode the port
-    /// has not modelled.
-    /// </para>
-    /// <para>
-    /// The next hero button is enabled when some hero of the kingdom can still move, which is what the
-    /// reference's <c>_getNextHeroIndex( currentHero )</c> does by ending the search at that hero.
-    /// </para>
-    /// </remarks>
-    /// <returns>The state of the three conditional buttons.</returns>
-    public AdventureButtonStatus CurrentButtonStatus()
-    {
-        if (_session is not { } session || session.FocusHero is not { } hero)
-        {
-            return AdventureButtonStatus.WithoutHero;
-        }
-
-        bool hasRoute = hero.Path.IsValidForMovement(_world.Size);
-        bool canWalk = hasRoute && hero.IsActive && hero.Path.HasAllowedSteps(hero.MovePoints);
-        bool canVisit = !hasRoute
-            && hero.IsActive
-            && Mp2ObjectTypes.IsRevisitAllowedForObject(_world.GetTile(hero.MapIndex).MainObjectType, false);
-
-        HeroMovementIcon movement = hasRoute
-            ? (canWalk ? HeroMovementIcon.Walk : HeroMovementIcon.Reset)
-            : (canVisit ? HeroMovementIcon.Action : HeroMovementIcon.Reset);
-
-        bool hasMobileHero = false;
-        foreach (Hero kingdomHero in session.Kingdom.Heroes)
-        {
-            if (kingdomHero.IsActive && kingdomHero.MovePoints > 0)
-            {
-                hasMobileHero = true;
-                break;
-            }
-        }
-
-        return new AdventureButtonStatus(
-            movement,
-            IsMovementEnabled: canWalk || canVisit,
-            IsSpellEnabled: hero.IsActive && hero.HasSpellBook && hero.SpellPoints > 0,
-            IsNextHeroEnabled: hasMobileHero,
-            HasValidPath: hasRoute);
-    }
-
     /// <summary>Rolls the map with the wheel by whole tiles, one tile per notch.</summary>
     /// <param name="columns">Tiles to scroll right; negative scrolls left.</param>
     /// <param name="rows">Tiles to scroll down; negative scrolls up.</param>
-    public void ScrollByWheel(int columns, int rows) => _mouse.ScrollByWheel(columns, rows);
+    public void ScrollByWheel(int columns, int rows)
+    {
+        GameArea gameArea = _interface.GetGameArea();
+
+        gameArea.SetCenterInPixels(
+            gameArea.CurrentCenterInPixels
+            + new Point(columns * _view.Tiles.TileWidth, rows * _view.Tiles.TileHeight));
+    }
 
     /// <summary>Centres the map on the focus hero, the <c>SetCenter()</c> of a new turn.</summary>
     public void CentreOnFocusHero()
@@ -951,69 +910,7 @@ public sealed class AdventureMapScene : IScene
         }
 
         int width = _view.Map.Width;
-        _view.CenterOn(hero.MapIndex % width, hero.MapIndex / width);
-    }
-
-    /// <summary>
-    /// Lays the route of <paramref name="hero"/> to the tile under <paramref name="cursor"/>.
-    /// </summary>
-    /// <param name="hero">The focus hero.</param>
-    /// <param name="cursor">Pointer in logical pixels.</param>
-    /// <returns><see langword="true"/> when the press landed on a tile of the map.</returns>
-    private bool TrySetHeroPath(Hero hero, Point cursor)
-    {
-        Point tile = _view.TileAt(new Point(cursor.X - _viewport.X, cursor.Y - _viewport.Y));
-
-        if (tile.X < 0 || tile.Y < 0 || tile.X >= _view.Map.Width || tile.Y >= _view.Map.Height)
-        {
-            return false;
-        }
-
-        return _session!.SetPath(hero, (tile.Y * _view.Map.Width) + tile.X);
-    }
-
-    /// <summary>
-    /// Centres the map on the tile under a point of the minimap, <c>GameArea::SetCenter( tile )</c>
-    /// of the reference; the clamp of the view keeps points outside the panel harmless.
-    /// </summary>
-    private void CentreOnRadar(Point cursor)
-    {
-        Point tile = _minimap.TileAt(new Point(cursor.X - _radar.X, cursor.Y - _radar.Y));
-        _view.CenterOn(tile.X, tile.Y);
-    }
-
-    /// <summary>
-    /// Paints the stone panel: the date, or the kingdom's counts, <c>Interface::StatusPanel::_redraw()</c>.
-    /// </summary>
-    /// <remarks>
-    /// The panel shows nothing but the stone before the first day of the game, which is the reference's
-    /// <c>world.CountDay() == 0</c> early return. The kingdom counts need a started session; a viewer scene
-    /// (a map without a human player) still has the calendar, so only the funds are left at zero.
-    /// </remarks>
-    private void DrawStatusPanel()
-    {
-        if (_statusPanel is null || _fonts is null)
-        {
-            return;
-        }
-
-        StatusPanelState state = _world.DayCount == 0 ? StatusPanelState.Unknown : _statusState;
-        StatusPanelDate date = new((int)_world.Month, (int)_world.Week, (int)_world.Day);
-
-        StatusPanelKingdom kingdom = _session is { } session
-            ? new StatusPanelKingdom(
-                session.Kingdom.CountCastles(), session.Kingdom.CountTowns(), session.Kingdom.Treasury)
-            : default;
-
-        _statusPanel.Draw(_frame.Pixels, _statusArea, state, date, kingdom, _fonts.Small, _fonts.Normal);
-    }
-
-    private void DrawMinimap()
-    {
-        // The radar bay of the frame is exactly the size of the minimap, so the picture covers it; the
-        // one pixel rectangle is what the reference draws around it as well.
-        _minimap.Draw(_frame.Pixels, _radar.Position, _view.VisibleTileArea);
-        ImageOps.DrawRect(_frame.Pixels, _radar, Minimap.BlackColor);
+        _interface.GetGameArea().SetCenter(new Point(hero.MapIndex % width, hero.MapIndex / width));
     }
 
     private void DrawStatusBar(in DiagnosticsState state)
@@ -1031,8 +928,8 @@ public sealed class AdventureMapScene : IScene
         int top = _statusBar.Y;
         int leftEdge = _statusBar.X + StatusBarPadding;
 
-        string right = FormattableString.Invariant(
-            $"viewport {_view.Scroll.X},{_view.Scroll.Y}  |  v{BuildInfo.Version}");
+        Point centre = _interface.GetGameArea().CurrentCenterInPixels;
+        string right = FormattableString.Invariant($"center {centre.X},{centre.Y}  |  v{BuildInfo.Version}");
         int rightX = Math.Max(
             _statusBar.Right - StatusBarPadding - GlyphText.Measure(font, right), leftEdge);
         GlyphText.DrawLine(font, _frame.Pixels, new Point(rightX, top), right);

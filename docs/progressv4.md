@@ -2430,6 +2430,109 @@ UI 1 365）；冒烟 `--enter-map --smoke-frames 30 --no-audio` 30 帧 **59.8 FP
 所以要先有 `Tile`、`Hero`、`Castle`、`Kingdom`、`MapObjects`、`MapObjectInfo`、`UltimateArtifact`、`EventDate` 各自的算子，
 再写 `World.Persistence.cs`，最后才是 `GameSave.Save`/`Load` 本体与 zlib 包层。
 
+## 2026-11-22 G6.9b（第三步）：滚动源换成 `GameArea`
+
+场景不再有自己的一套坐标：所有移动视口的入口都落在 `Interface::AdventureMap` 的 `GameArea` 上。
+
+| 场景入口 | 现在落到 | 参考 |
+| --- | --- | --- |
+| `ScrollBy(dx, dy)` | `GameArea.ShiftCenter(new Point(dx, dy))` | `GameArea::ShiftCenter` |
+| `ScrollByTiles(cols, rows)` | 同上，按瓦片宽高换算 | `GameArea::SetScroll` / 方向键 |
+| `ScrollToStart()` | `GameArea.SetCenter(new Point(0, 0))` | `GameArea::SetCenter` |
+| `ScrollByWheel(cols, rows)` | `GameArea.SetCenterInPixels(centre + 偏移)` | `GameArea::SetCenterInPixels` |
+| `CentreOnHero(hero)` | `GameArea.SetCenter( tile )` | `AdventureMap::SetFocus` |
+| 雷达拖动 | `GameArea.SetCenter( tile )` | `AdventureMap::ProcessPanels` |
+| 每帧边带 | 新 `UpdateScroll()` | `game_startgame.cpp:1236-1262` |
+
+```csharp
+private void UpdateScroll()
+{
+    GameArea gameArea = _interface.GetGameArea();
+    Size display = _frame.Size;
+    Point cursor = LocalEvent.Current.CursorPosition;
+
+    gameArea.SetScroll(
+        BaseInterface.IsScrollLeft(cursor) ? ScrollingType.Left
+        : BaseInterface.IsScrollRight(cursor, display) ? ScrollingType.Right
+        : BaseInterface.IsScrollTop(cursor) ? ScrollingType.Top
+        : BaseInterface.IsScrollBottom(cursor, display) ? ScrollingType.Bottom
+        : ScrollingType.None);
+
+    _interface.ScrollGameArea(LocalEvent.Current);
+}
+```
+
+方向由场景按光标位置给出，位移与节流仍归 `AdventureMap::ScrollGameArea`（`game_startgame.cpp:1539-1555`：
+延迟、`GameArea::Scroll`、`NeedDragScrollRedraw`、`UpdateInertia`、重画掩码都在它里面），场景不重复实现。
+
+场景侧的 `MapScrollController`（`_mouse`）删除，光标改由 `Point? _cursor` 记住。**该类本身留着**——编辑器
+`EditorScene` 还在用它；等编辑器也换成 `LocalEvent` 那套输入再一起删。
+
+### 效果
+
+- **地图上的英雄画出来了**：上一轮它不在视野里，根因就是绘制（`GameArea`）与滚动（`AdventureMapView`）
+  两套坐标；统一之后 `SetFocus` 摆的位置就是画的位置。
+- 滚轮、方向键、边带、雷达拖动四条路现在推的都是同一个 `GameArea`，不会再出现「滚了但画没动」。
+- 右/中键拖拽卷屏暂时丢了：它本来由场景的 `MapScrollController` 提供，参考里这份逻辑在
+  `GameArea::QueueEventProcessing`（拖动阈值、`_mouseDraggingMovement`、惯性），等点击那一路一起接上就回来。
+
+### 仍待办（用户同意留到最后）
+
+1. 视野中心与英雄还差一点（约 1.5 格、横向更多），`SetCenter(GetCenterOf(tile))` 与瓦片绘制原点的对齐。
+   **注意先排除干扰项**：冒烟模式没有真实光标，`LocalEvent.Current.CursorPosition` 是 `(0,0)`，正好落在左边带里，
+   于是每帧都在往左上卷——截图里那个「不居中」有一部分是这个漂移造成的，不是 `SetCenter` 本身的错；
+2. 雷达全黑（`Radar.Build` 之后仍空）；
+3. 地图上的零星条带/方块；
+4. 基线与参考渲染的差异不再当回归：`VerifyAdventureMapBaseline.ps1` 仍报 139 753 / 307 200，属预期。
+
+构建 0 错误 0 警告，全量 **5 497 绿**。
+
+## 2026-11-22 G6.9b（第二步）：场景开始用 `Interface::AdventureMap` 画（未完成，勿发布）
+
+场景 `AdventureMapScene` 现在持有 `Interface::AdventureMap`（别名 `AdventureInterface`），整块屏幕由它画：
+
+```csharp
+_frame.InvalidateAll();
+_interface.RedrawInterface(Redraw.All);
+DrawStatusBar(state);          // 场景自己的诊断行
+if (_options is { } options) options.Draw();
+_quickInfo?.Draw(_frame.Pixels);
+```
+
+`_mapFrame`/`_iconBar`/`_buttons`/`_statusPanel`/`DrawMinimap`/`_viewportPixels` 不再出现在绘制路径里（还留着，输入路径仍在用）。
+`TryCreate` 按参考 `StartGame()` 的次序装配：`SetCurrentColor( HumanColors() )`（`game_startgame.cpp:742`）→ `Reset()`
+→ `GetRadar().Build( world )` → `GetStatusPanel().Reset()`（`:745-750`）→ `GameArea.UpdateMapFogDirections()`（`:781`）
+→ `SetFocus( hero, false )` → `AttachView( view, viewport )`。
+
+### 踩到的真问题：迷雾有两份账
+
+第一版渲染出来**整张地图全是雾**。原因是端口把迷雾存了两份：
+
+- `MapFog`（`Game/AdventureMap/MapFog.cs`）：`AdventureMapView` 与雷达按它画；
+- `Tile._fogColors`（`Map/Tile.cs`）：参考里瓦片自己那份，`GameArea` 的渲染（`GameArea.Render.cs:516`、`:956`）
+  与 `TileFog` 的方向缓存（`IsFogForAll`）读的都是它。
+
+`World.ClearFog()` 只揭 `MapFog`，从没人写 `Tile._fogColors`，所以 `FogDirection` 一直是 `All`。已加
+`World.SyncTilesFog(rect)`，在 `ClearFog` 的两个重载里把 `MapFog` 抄进瓦片。**这是治标**：两份账该合成一份
+（参考只有 `Tile::_fog`），合并之前任何一处 `Fog.Reveal` 都要记得同步。
+
+### 现在的样子与还差的
+
+`pwsh tools/scripts/VerifyAdventureMapBaseline.ps1` 仍报 140 016 / 307 200 像素不同，四个可见缺陷：
+
+1. **地图整体下移约 1.5 格**：`GameArea.SetCenter(GetCenterOf(hero.MapIndex))` 与老的
+   `AdventureMapView.CenterOn(...)` 对不齐，需要拿两条路径的 `GetCenterOf`/`SetCenterToTile` 对拍；
+2. **地图上的英雄没画**（图标条里在）；
+3. **雷达全黑**（`Radar.Build` 之后仍空）；
+4. **地图中间有横向条带**，像是部分行的瓦片错位。
+
+另外两条差异是**换桩的应有结果**，不该当回归：图标条现在只列当前玩家的（参考行为，老 `IconBar` 画了全部），
+石头状态面板现在画了当前玩家的英雄（老 `StatusPanelPainter` 没画）。因此 planv4 里「截图与现在一致」这条
+验收线本身要改：应当是「截图与参考一致」，基线需要按参考渲染重新生成并在 `tests/baselines/README.md` 记明差异。
+
+构建 0 错误 0 警告，全量 **5 497 绿**。回退路径：把 `DrawFrame` 恢复成 `git show HEAD:` 里那版即可，其余改动
+（`SyncTilesFog`、`SetCurrentColor`、`UpdateMapFogDirections`）独立成立。
+
 ## 2026-11-22 G6.9b（第一步）：声卡可以是空的
 
 `Interface.AdventureMap` 的声卡依赖从「必须有」改成「可以没有」：`TryCreate` 与构造函数的

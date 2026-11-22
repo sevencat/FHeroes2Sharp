@@ -19,6 +19,7 @@ using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
+using FHeroes2.UI.Interface;
 using FHeroes2.UI.Widgets;
 using SDL3;
 
@@ -912,12 +913,17 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
-    /// Handles the keys of the adventure map: the arrow keys scroll by one tile, <c>TAB</c> takes the next
-    /// hero (with <c>H</c> as an alias) and <c>E</c> ends the turn (the <c>WORLD_NEXT_HERO</c> and
-    /// <c>WORLD_END_TURN</c> hot keys of the reference), Home returns to the top left corner and Escape goes
-    /// back to the main menu (the reference opens the system dialog there; that dialog belongs to a later
-    /// milestone).
+    /// Handles the keys of the two windows the scene still owns, View World and the adventure options dialog.
     /// </summary>
+    /// <remarks>
+    /// 其余热键都归屏幕：<c>PumpEvents()</c> 先把每个键写进 <see cref="LocalEvent"/>，
+    /// <c>Interface::AdventureMap::ProcessHotKeys()</c> 在场景的 <c>Update</c> 里读它（Esc、E、Tab/H、方向键、
+    /// Home、V 等，见 <c>game_startgame.cpp</c> 与 <c>interface_events.cpp</c>）。这两个浮层仍是场景自己压帧，
+    /// 参考里它们的循环挂在地图循环之上，所以键盘在这里截住。
+    /// </remarks>
+    /// <param name="key">The key that was pressed.</param>
+    /// <param name="adventure">Scene the key belongs to.</param>
+    /// <returns><see langword="true"/> when the client must stop, which no map key ever does.</returns>
     private bool HandleAdventureKey(in SDL.KeyboardEvent key, AdventureMapScene adventure)
     {
         // The View World window is modal and takes the whole keyboard: Escape closes it, everything
@@ -947,54 +953,7 @@ public sealed class GameHost : IDisposable
             return false;
         }
 
-        switch (key.Key)
-        {
-            case SDL.Keycode.Escape:
-                ReturnToMenu();
-                return false;
-
-            // V opens the adventure options dialog, the door the reference paints into the bottom
-            // border; the World button of that dialog opens the View World window, and --view-world
-            // opens it directly for captures.
-            case SDL.Keycode.V when !key.Repeat:
-                if (adventure.OpenAdventureOptions())
-                {
-                    GameLog.Info("Opened the adventure options dialog.");
-                }
-
-                return false;
-
-            case SDL.Keycode.E when !key.Repeat:
-                adventure.EndTurn();
-                return false;
-
-            case SDL.Keycode.Tab or SDL.Keycode.H when !key.Repeat:
-                adventure.NextHero();
-                return false;
-
-            case SDL.Keycode.Left:
-                adventure.ScrollByTiles(-1, 0);
-                return false;
-
-            case SDL.Keycode.Right:
-                adventure.ScrollByTiles(1, 0);
-                return false;
-
-            case SDL.Keycode.Up:
-                adventure.ScrollByTiles(0, -1);
-                return false;
-
-            case SDL.Keycode.Down:
-                adventure.ScrollByTiles(0, 1);
-                return false;
-
-            case SDL.Keycode.Home:
-                adventure.ScrollToStart();
-                return false;
-
-            default:
-                return false;
-        }
+        return false;
     }
 
     /// <summary>
@@ -1505,6 +1464,7 @@ public sealed class GameHost : IDisposable
             return;
         }
 
+        scene.ExitEvent = LeaveAdventureMap;
         _adventure = scene;
         _scene = scene;
     }
@@ -1569,8 +1529,22 @@ public sealed class GameHost : IDisposable
             return;
         }
 
+        scene.ExitEvent = LeaveAdventureMap;
         _adventure = scene;
         _scene = scene;
+    }
+
+    /// <summary>
+    /// Answers the exit request of the turn loop: the map goes back to the main menu and the loop is told that
+    /// nothing is left to do, the port's stand-in for <c>Game::processExitEvent()</c> followed by
+    /// <c>GameMode::MAIN_MENU</c>.
+    /// </summary>
+    /// <returns>Always <see cref="AdventureEventResult.Cancel"/>: the map is already behind the scene.</returns>
+    private AdventureEventResult LeaveAdventureMap()
+    {
+        ReturnToMenu();
+
+        return AdventureEventResult.Cancel;
     }
 
     /// <summary>Leaves the adventure map and goes back to the main menu.</summary>
