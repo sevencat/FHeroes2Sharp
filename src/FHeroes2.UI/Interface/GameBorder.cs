@@ -35,13 +35,13 @@ namespace FHeroes2.UI.Interface;
 public static class GameBorder
 {
     /// <summary>Width of the frame border, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int BorderWidth = 16;
+    public const int BorderWidth = UiConstants.BorderWidthPx;
 
     /// <summary>Side of one map tile in pixels, <c>fheroes2::tileWidthPx</c>; also the repeat step of the border tiles.</summary>
-    public const int TileWidth = 32;
+    public const int TileWidth = UiConstants.TileWidthPx;
 
     /// <summary>Width of the radar column, <c>fheroes2::radarWidthPx</c>.</summary>
-    public const int RadarWidth = 144;
+    public const int RadarWidth = UiConstants.RadarWidthPx;
 
     /// <summary>Size of the artwork every run is cut from.</summary>
     public static readonly Size ArtworkSize = new(640, 480);

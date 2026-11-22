@@ -11,6 +11,7 @@ namespace FHeroes2.UI.Tests;
 /// <see cref="BorderWindow"/> and <see cref="BorderDrag"/>, the floating panels of
 /// <c>gui/interface_border.cpp:420-524</c>.
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class BorderWindowTests
 {
     [Fact]

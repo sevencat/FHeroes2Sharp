@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
@@ -262,6 +263,130 @@ public sealed class MessageBox
     /// <param name="hotKey">Hot key that was pressed.</param>
     /// <returns>Value of the button the key stands for, or <see cref="DialogButton.None"/>.</returns>
     public DialogButton ProcessHotKey(ButtonHotKey hotKey) => _buttons?.ProcessHotKey(hotKey) ?? DialogButton.None;
+
+    /// <summary>
+    /// Runs the box until one of its buttons closes it, the blocking loop of <c>Dialog::Message</c> /
+    /// <c>fheroes2::showMessage</c> (<c>ui_dialog.cpp:113-260</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is the first caller of <see cref="LocalEvent.HandleEvents"/> in the port: the reference's
+    /// dialog turns the events itself and does not return until the player answers, which is exactly
+    /// what the <see cref="IEventEngine"/> contract was added for.
+    /// </remarks>
+    /// <param name="target">
+    /// Indexed frame to draw into and to submit; it must already contain the scene behind the box,
+    /// because the reference's dialog only paints its own area over the display.
+    /// </param>
+    /// <param name="header">The yellow title; empty for a message without one.</param>
+    /// <param name="body">The white body text.</param>
+    /// <param name="headerFont">Font of the title.</param>
+    /// <param name="bodyFont">Font of the body.</param>
+    /// <param name="buttons">
+    /// Buttons to show, as in <see cref="Create"/>. The port has no process wide artwork, so a call that
+    /// must return has to pass both <paramref name="buttons"/> and <paramref name="buttonArtwork"/>; the
+    /// default keeps <see cref="Create"/> from demanding artwork for a box that is not supposed to close.
+    /// </param>
+    /// <param name="buttonArtwork">Artwork of the standard buttons; the port's sprite sheet.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>
+    /// The button that closed the box, or <see cref="DialogButton.None"/> when the client was asked to
+    /// exit before the player answered.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// No <see cref="IEventEngine"/> is attached to the event state, so the box has nothing to wait on.
+    /// </exception>
+    public static DialogButton Show(PixelBuffer target, string header, string body, IGlyphSource headerFont,
+        IGlyphSource bodyFont, DialogButton buttons = DialogButton.None, IDialogButtonArtworkSource? buttonArtwork = null,
+        LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(headerFont);
+        ArgumentNullException.ThrowIfNull(bodyFont);
+
+        MessageBox box = Create(header, body, headerFont, bodyFont, buttons: buttons, buttonArtwork: buttonArtwork);
+
+        return Run(box, target, events ?? LocalEvent.Current);
+    }
+
+    /// <summary>
+    /// Runs an already composed box until one of its buttons closes it, the same loop as
+    /// <see cref="Show(PixelBuffer, string, string, IGlyphSource, IGlyphSource, DialogButton, IDialogButtonArtworkSource?, LocalEvent?)"/>.
+    /// </summary>
+    /// <remarks>
+    /// 需要 <see cref="Create"/> 才能拼出的框（带 <see cref="DialogElement"/> 的那种，比如玩家把某人踢出局时的徽记）
+    /// 用这个入口跑：参考的 <c>showMessage( header, body, buttons, elements )</c> 就是「先拼后跑」一步到底，
+    /// 端口的 <see cref="Create"/> 与这个循环正好是它的两半。
+    /// </remarks>
+    /// <param name="target">Indexed frame to draw into and to submit, as in <see cref="Show"/>.</param>
+    /// <param name="box">The composed box to run.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>The button that closed the box, or <see cref="DialogButton.None"/> when the client was asked to exit.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="box"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">No <see cref="IEventEngine"/> is attached.</exception>
+    public static DialogButton Show(PixelBuffer target, MessageBox box, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(box);
+
+        return Run(box, target, events ?? LocalEvent.Current);
+    }
+
+    /// <summary>The event loop of <see cref="Show"/>, the <c>while ( le.HandleEvents() )</c> of the reference.</summary>
+    private static DialogButton Run(MessageBox box, PixelBuffer target, LocalEvent events)
+    {
+        IEventEngine engine = events.Engine ?? throw new InvalidOperationException(
+            "MessageBox.Show() needs an event engine: attach LocalEvent.Engine before calling it.");
+
+        Stopwatch clock = Stopwatch.StartNew();
+        bool leftDown = false;
+        DialogButton answer = DialogButton.None;
+
+        while (answer == DialogButton.None)
+        {
+            // The box owns the frame: no presentation and no sleep inside HandleEvents, the loop submits
+            // the frame after drawing and then waits, the reference's render() + 1 ms pair.
+            if (!events.HandleEvents(sleepAfterEventProcessing: false))
+            {
+                return DialogButton.None;
+            }
+
+            TimeSpan elapsed = clock.Elapsed;
+            clock.Restart();
+
+            if (events.HasMouseMoved)
+            {
+                box.SetCursor(events.CursorPosition);
+            }
+
+            bool down = events.IsMouseLeftButtonPressed;
+
+            if (down != leftDown)
+            {
+                leftDown = down;
+                answer = box.SetLeftButton(down);
+            }
+
+            if (answer == DialogButton.None)
+            {
+                if (events.IsKeyPressed(Key.Enter) || events.IsKeyPressed(Key.Space))
+                {
+                    answer = box.ProcessHotKey(ButtonHotKey.Okay);
+                }
+                else if (events.IsKeyPressed(Key.Escape))
+                {
+                    answer = box.ProcessHotKey(ButtonHotKey.Cancel);
+                }
+            }
+
+            box.Update(target, elapsed);
+            box.Draw(target);
+
+            engine.Render(target.Bounds);
+            engine.Sleep(LocalEvent.LoopSleepTimeMs);
+        }
+
+        return answer;
+    }
 
     /// <summary>
     /// Offers one frame of input to the elements, the loop <c>showMessage()</c> runs inside its dialog.

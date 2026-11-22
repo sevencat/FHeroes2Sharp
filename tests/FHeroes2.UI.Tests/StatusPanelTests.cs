@@ -19,6 +19,7 @@ namespace FHeroes2.UI.Tests;
 /// <summary>
 /// <see cref="StatusPanel"/>, <c>Interface::StatusPanel</c> (<c>gui/interface_status.cpp:55-524</c>).
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class StatusPanelTests
 {
     public StatusPanelTests() => Settings.Reset();

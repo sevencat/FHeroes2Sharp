@@ -186,7 +186,7 @@ public sealed class ScenarioSelectionDialog
     public const int OkayOffsetY = 410;
 
     /// <summary>How far the shadow hangs below and to the left of the panel, <c>fheroes2::shadowWidthPx</c>.</summary>
-    public const int ShadowOffset = 16;
+    public const int ShadowOffset = UiConstants.ShadowWidthPx;
 
     /// <summary>
     /// The five map size filters in the order of the buttons; <see cref="MapSize.None"/> is the

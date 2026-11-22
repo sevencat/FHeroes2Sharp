@@ -50,12 +50,12 @@ public sealed class IconBarTests
     }
 
     [Fact]
-    public void ARandomCastleHasNoIcon()
+    public void ARandomCastleUsesTheEditorFrames()
     {
-        // The reference answers 25 and 26 here, but those are the editor's "random castle" icons and
-        // LOCATORS.ICN only has 25 frames: a map always stores the race a castle resolved to.
-        Assert.Null(IconBar.CastleFrame(MapRace.Random, hasFort: true));
-        Assert.Null(IconBar.CastleFrame(MapRace.Random, hasFort: false));
+        // Race::RAND answers 25 and 26 in the reference: the two "random castle" icons the editor uses for a
+        // victory/loss condition. A race the data cannot hold answers nothing, where the reference falls back to 1.
+        Assert.Equal(25, IconBar.CastleFrame(MapRace.Random, hasFort: true));
+        Assert.Equal(26, IconBar.CastleFrame(MapRace.Random, hasFort: false));
         Assert.Null(IconBar.CastleFrame(MapRace.None, hasFort: true));
     }
 

@@ -14,7 +14,7 @@ namespace FHeroes2.Game;
 /// 位与，不能用相等。端口用常量而不是 <c>enum</c>：这些值只做位运算，套一层枚举反而要在每处转换。
 /// </para>
 /// </remarks>
-public static class GameOver
+public static partial class GameOver
 {
     /// <summary>No condition at all.</summary>
     public const uint ConditionNone = 0x0000_0000;

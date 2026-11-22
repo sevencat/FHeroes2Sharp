@@ -31,10 +31,10 @@ namespace FHeroes2.UI.Dialogs;
 public sealed class FrameBorder : IDisposable
 {
     /// <summary>Frame width of the default constructor, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int DefaultBorderWidth = 16;
+    public const int DefaultBorderWidth = UiConstants.BorderWidthPx;
 
     /// <summary>Width of the shadow strip the window artwork carries, <c>fheroes2::shadowWidthPx</c>.</summary>
-    public const int ShadowWidth = 16;
+    public const int ShadowWidth = UiConstants.ShadowWidthPx;
 
     /// <summary>File of the good frame artwork, <c>ICN::SURDRBKG</c>.</summary>
     public const string GoodArtworkName = "SURDRBKG.ICN";

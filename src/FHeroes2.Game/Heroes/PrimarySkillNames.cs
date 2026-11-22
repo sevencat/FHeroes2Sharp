@@ -19,4 +19,24 @@ public static class PrimarySkillNames
         PrimarySkill.Knowledge => "Knowledge",
         _ => string.Empty,
     };
+
+    /// <summary>
+    /// The sentence saying what a primary skill does, <c>Skill::Primary::StringDescription( skill, nullptr )</c>
+    /// (<c>skill.cpp:282-323</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的这个函数接受一个可空的英雄：给了英雄就再追加一段「当前加成」。战役奖励弹窗（<c>ui_campaign.cpp:119</c>）
+    /// 传的是 <c>nullptr</c>，所以这里只落无英雄的那一半。带英雄的版本要等 <c>skill.cpp</c> 的逐函数核对。
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <returns>The sentence, empty for <see cref="PrimarySkill.Unknown"/>.</returns>
+    public static string GetDescription(PrimarySkill skill) => skill switch
+    {
+        PrimarySkill.Attack => "The hero's attack skill is a bonus added to each unit's attack skill.",
+        PrimarySkill.Defense => "The hero's defense skill is a bonus added to each unit's defense skill.",
+        PrimarySkill.Power => "The hero's spell power determines the duration or power of a spell.",
+        PrimarySkill.Knowledge =>
+            "The hero's knowledge determines how many spell points the hero may have. Under normal circumstances, a hero is limited to 10 spell points per level of knowledge.",
+        _ => string.Empty,
+    };
 }

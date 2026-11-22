@@ -83,6 +83,25 @@ public sealed class SpellBook
     /// <param name="spellCount">How many spells the new list has.</param>
     public void BeginSession(SpellBookFilter displayable, bool restorePreviousState, int spellCount)
     {
+        BeginSession(displayable, restorePreviousState);
+        ClampStartIndex(spellCount);
+    }
+
+    /// <summary>
+    /// Starts a session without knowing how long the resulting list is, the state block at the top of
+    /// <c>SpellBook::Open</c> (<c>spell_book.cpp:203-221</c>) up to the point where the reference builds the
+    /// list.
+    /// </summary>
+    /// <remarks>
+    /// The reference filters first and checks the stored index against the list afterwards; the port cannot,
+    /// because the filter the session picks decides which list to build. A caller therefore starts the
+    /// session with this overload, builds the list for <see cref="Filter"/> and then calls
+    /// <see cref="ClampStartIndex"/>.
+    /// </remarks>
+    /// <param name="displayable">The filter the caller insists on, or <see cref="SpellBookFilter.All"/>.</param>
+    /// <param name="restorePreviousState">Whether the previous page and filter may be kept.</param>
+    public void BeginSession(SpellBookFilter displayable, bool restorePreviousState)
+    {
         if (displayable == SpellBookFilter.All)
         {
             Filter = SpellBookFilter.Adventure;
@@ -93,7 +112,16 @@ public sealed class SpellBook
             Filter = displayable;
             StartIndex = 0;
         }
+    }
 
+    /// <summary>
+    /// Drops a stored index that is past the end of the list, the
+    /// <c>_startSpellIndex &gt;= displayedSpells.size()</c> guard of <c>SpellBook::Open</c>
+    /// (<c>spell_book.cpp:219-221</c>).
+    /// </summary>
+    /// <param name="spellCount">How many spells the list of <see cref="Filter"/> has.</param>
+    public void ClampStartIndex(int spellCount)
+    {
         if (StartIndex >= spellCount)
         {
             StartIndex = 0;

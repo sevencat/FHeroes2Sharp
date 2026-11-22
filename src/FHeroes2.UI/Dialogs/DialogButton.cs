@@ -65,4 +65,28 @@ public enum DialogButton
 
     /// <summary>Dig for the ultimate artifact, <c>Dialog::DIG</c>; a result of the adventure options dialog.</summary>
     Dig = 0x1000,
+
+    // The six buttons of the file menu have no bit in the reference: they are plain
+    // fheroes2::ButtonGroup entries and the dialog switches on their index
+    // (dialog_file.cpp:55-60). The port needs an identity for every button it puts in a
+    // ButtonGroup, so they get their own bits here; FileOptionsDialog.FromDialogButton()
+    // maps them back to the index.
+
+    /// <summary>Start a new game, the first button of the file menu.</summary>
+    NewGame = 0x2000,
+
+    /// <summary>Load a saved game, the second button of the file menu.</summary>
+    LoadGame = 0x4000,
+
+    /// <summary>Restart the scenario, the third button of the file menu.</summary>
+    Restart = 0x8000,
+
+    /// <summary>Save the game, the fourth button of the file menu.</summary>
+    SaveGame = 0x10000,
+
+    /// <summary>Quick save, the fifth button of the file menu.</summary>
+    QuickSave = 0x20000,
+
+    /// <summary>Quit the application, the sixth button of the file menu.</summary>
+    Quit = 0x40000,
 }

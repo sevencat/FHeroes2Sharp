@@ -75,7 +75,7 @@ public sealed partial class ArmyBar
     /// <returns>The slot index, or <c>-1</c> outside the bar or past the last slot.</returns>
     public int GetItemIndexAt(Point position)
     {
-        int index = _layout.IndexAt(position);
+        int index = IndexAt(position);
 
         return index < ItemsCount ? index : -1;
     }
@@ -124,7 +124,7 @@ public sealed partial class ArmyBar
             return default;
         }
 
-        Rect area = _layout.GetItemRect(index);
+        Rect area = GetItemRect(index);
 
         ArmyBarEvent cursor = ActionBarCursor(index, events);
 
@@ -135,7 +135,7 @@ public sealed partial class ArmyBar
 
         if (events.MouseClickLeft(area))
         {
-            if (index == _selectedIndex)
+            if (index == SelectedIndex)
             {
                 return ActionBarLeftMouseDoubleClick(index, hotKey);
             }
@@ -144,7 +144,7 @@ public sealed partial class ArmyBar
 
             if (click.Handled)
             {
-                _selectedIndex = index;
+                Select(index);
             }
             else
             {
@@ -187,7 +187,7 @@ public sealed partial class ArmyBar
             return default;
         }
 
-        Rect area = _layout.GetItemRect(index);
+        Rect area = GetItemRect(index);
 
         ArmyBarEvent cursor = ActionBarCursor(index, other);
 
@@ -202,7 +202,7 @@ public sealed partial class ArmyBar
 
             if (click.Handled)
             {
-                _selectedIndex = index;
+                Select(index);
             }
             else
             {
@@ -253,7 +253,7 @@ public sealed partial class ArmyBar
             return default;
         }
 
-        Rect area = _layout.GetItemRect(index);
+        Rect area = GetItemRect(index);
 
         if (events.IsMouseLeftButtonPressedInArea(area))
         {

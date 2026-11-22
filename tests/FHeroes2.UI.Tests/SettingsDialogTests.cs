@@ -3,6 +3,7 @@ using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using GameAssets = FHeroes2.Game.Assets;
 
@@ -221,6 +222,91 @@ public sealed class SettingsDialogTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => dialog.Option(1));
         Assert.Throws<ArgumentOutOfRangeException>(() => dialog.OptionArea(-1));
+    }
+
+    [Fact]
+    public void Show_ThrowsWhenNoEngineIsAttached()
+    {
+        SettingsDialog dialog = CreateDialog(["Language"], out _);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            dialog.Show(new PixelBuffer(640, 480), new LocalEvent(() => 0)));
+    }
+
+    [Fact]
+    public void Show_ReturnsOkWhenTheEngineClicksIt()
+    {
+        SettingsDialog dialog = CreateDialog(["Language"], out Rect okayArea);
+        Point centre = new(okayArea.X + (okayArea.Width / 2), okayArea.Y + (okayArea.Height / 2));
+
+        using AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            LocalEvent events = new(() => 0);
+            FakeEngine engine = new()
+            {
+                OnFrame = (state, frame) =>
+                {
+                    if (frame == 0)
+                    {
+                        state.OnMouseMotion(centre);
+                        state.OnMouseButton(true, MouseButtonType.Left, centre);
+                    }
+                    else
+                    {
+                        state.OnMouseButton(false, MouseButtonType.Left, centre);
+                    }
+                },
+            };
+
+            events.Engine = engine;
+
+            Assert.Equal(DialogButton.Ok, dialog.Show(new PixelBuffer(640, 480), events));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    /// <summary>An event engine that plays a scripted frame at a time and stops after a few of them.</summary>
+    private sealed class FakeEngine : IEventEngine
+    {
+        public Rect ScreenArea => new(0, 0, 640, 480);
+
+        public int Frames { get; private set; }
+
+        public Action<LocalEvent, int>? OnFrame { get; set; }
+
+        public bool HandleEvents(LocalEvent state, bool allowExit, out bool displayRefreshRequired)
+        {
+            displayRefreshRequired = false;
+
+            if (Frames >= 8)
+            {
+                return false;
+            }
+
+            OnFrame?.Invoke(state, Frames++);
+
+            return true;
+        }
+
+        public void Render(Rect area)
+        {
+        }
+
+        public void Sleep(ulong milliseconds)
+        {
+        }
     }
 
     /// <summary>

@@ -195,6 +195,14 @@ public sealed record Mp2FileInfo
     /// <summary>Colors that either side may play (<c>FileInfo::AllowCompHumanColors</c>).</summary>
     public PlayerColor SharedColors => HumanPlayers & ComputerPlayers;
 
+    /// <summary>
+    /// Whether the race of a color may still be picked, <c>FileInfo::AllowChangeRace()</c>
+    /// (<c>maps_fileinfo.h:140-143</c>).
+    /// </summary>
+    /// <param name="color">The color to ask about.</param>
+    /// <returns>True when the map left that player's race open.</returns>
+    public bool AllowChangeRace(PlayerColor color) => (RandomRacePlayers & color) != PlayerColor.None;
+
     /// <summary>Number of colors a human may control.</summary>
     public int HumanPlayerCount => PlayerColors.Count(HumanPlayers);
 

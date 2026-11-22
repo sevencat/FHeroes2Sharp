@@ -12,6 +12,7 @@ namespace FHeroes2.UI.Tests;
 /// <c>makeSymmetricBackgroundSprites()</c>. The label itself is drawn with the bitmap font of the game,
 /// so the tests hand the plates in and look at the geometry only.
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class ButtonFactoryTests
 {
     [Fact]

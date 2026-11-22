@@ -189,9 +189,9 @@ public sealed class CastleScreenView
         // 帧 1 是被选中时的框（`army_bar.cpp:300`）。不设这一对，格子既没有底板也没有 43×43 的尺寸。
         bar.SetStripBackground(_artwork.ArmySlot, _artwork.ArmyCursor);
 
-        bar.Layout.SetTableSize(new Size(CastleDialogLayout.ArmyBarColumns, 1));
-        bar.Layout.SetInBetweenItemsOffset(new Size(CastleDialogLayout.ArmyBarItemSpacing, 0));
-        bar.Layout.SetRenderingOffset(origin);
+        bar.SetTableSize(new Size(CastleDialogLayout.ArmyBarColumns, 1));
+        bar.SetInBetweenItemsOffset(new Size(CastleDialogLayout.ArmyBarItemSpacing, 0));
+        bar.SetRenderingOffset(origin);
 
         return bar;
     }

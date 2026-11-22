@@ -5,6 +5,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.App.Audio;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
+using FHeroes2.App.Input;
 using FHeroes2.App.Scenes;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
@@ -17,6 +18,7 @@ using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using SDL3;
 
@@ -44,6 +46,13 @@ public sealed class GameHost : IDisposable
     private readonly FrameTimer _timer = new();
     private readonly bool _syntheticCursor;
 
+    /// <summary>
+    /// The event state every frame is fed into, the reference's <c>LocalEvent::Get()</c>
+    /// (<c>localevent.h:186</c>). It is process wide on purpose: <c>GameArea</c>, <c>ItemsBar</c> and
+    /// the dialogs query it without being handed one.
+    /// </summary>
+    private readonly LocalEvent _le = LocalEvent.Current;
+
     private AssetBundle? _assets;
     private H2DResources? _h2d;
     private Palette _palette = new();
@@ -54,6 +63,7 @@ public sealed class GameHost : IDisposable
     private AudioPlayer? _audio;
     private IScene? _scene;
     private IScene? _drawnScene;
+    private IModalScreen? _modal;
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
@@ -119,6 +129,10 @@ public sealed class GameHost : IDisposable
             _presenter = new SdlPresenter(ScreenBuffer.DefaultSize, _options.WindowScale, _options.Fullscreen);
 
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
+
+            // The reference installs its engine on the event state once, from the application object;
+            // the host does it as soon as the frame it presents exists.
+            _le.Engine = new SdlEventEngine(PumpEvents, _ => _presenter?.Upload(_frame), _frame.Bounds);
 
             if (_options.SystemInfo)
             {
@@ -189,6 +203,69 @@ public sealed class GameHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Runs <paramref name="screen"/> on top of the current scene until it closes, the port's stand-in for
+    /// the blocking dialogs of the reference (<c>Dialog::Message</c> opens its own loop and returns when the
+    /// player has answered).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的对话框自己转事件循环，关掉才返回；端口的主循环是「每帧拉一次场景」的状态机，所以这里再起一层
+    /// 同样的循环：取事件（只交给窗口）→ 场景重绘 → 窗口画上去 → 上传。窗口开着时输入不再流进下面的场景，
+    /// 关掉后外层循环接着跑，场景状态自然就是对的。
+    /// </para>
+    /// <para>
+    /// 可以在事件处理里调用（<c>IAdventureHost</c> 就是这样，宿主方法从 <see cref="PumpEvents"/> 的调用栈
+    /// 里被唤起）：内层再取一次事件是安全的，SDL 的事件队列是全局的，<see cref="_modal"/> 保证不会重复分派。
+    /// </para>
+    /// </remarks>
+    /// <param name="screen">Window to run.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="screen"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">Another window is already open.</exception>
+    public void RunModal(IModalScreen screen)
+    {
+        ArgumentNullException.ThrowIfNull(screen);
+
+        if (_modal is not null)
+        {
+            // 参考同时只会有一个嵌套对话框；再开一个说明调用方把栈写错了，不能悄悄叠上去。
+            throw new InvalidOperationException("Only one modal window can be open at a time.");
+        }
+
+        Stopwatch clock = Stopwatch.StartNew();
+        double previous = clock.Elapsed.TotalSeconds;
+        _modal = screen;
+
+        try
+        {
+            while (!screen.IsFinished && _running)
+            {
+                // The window loop owns the frame state too: the events of this frame must not pile up
+                // on the ones of the frozen scene below.
+                _le.BeginFrame();
+
+                if (!PumpEvents())
+                {
+                    _running = false;
+                    break;
+                }
+
+                double now = clock.Elapsed.TotalSeconds;
+
+                // 与主循环同样的钳位理由：拖动窗口不该让动画跳帧。
+                double elapsed = Math.Clamp(now - previous, 0.0, 0.5);
+                previous = now;
+
+                screen.Update(_frame, elapsed);
+                Draw();
+            }
+        }
+        finally
+        {
+            _modal = null;
+        }
+    }
+
     private void Loop()
     {
         Stopwatch clock = Stopwatch.StartNew();
@@ -196,7 +273,10 @@ public sealed class GameHost : IDisposable
 
         while (_running)
         {
-            if (!PumpEvents())
+            // The frame starts at the event state, like the reference: LocalEvent::HandleEvents resets
+            // the one-shot states, lets the engine poll, and skips presenting because this loop draws
+            // and uploads right after, which is the reference's HandleEvents( false ) + render() pair.
+            if (!_le.HandleEvents(sleepAfterEventProcessing: false, allowExit: true))
             {
                 break;
             }
@@ -242,20 +322,48 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>Drains the SDL event queue; returns <see langword="false"/> when the client must stop.</summary>
-    private bool PumpEvents()
+    /// <param name="allowExit">
+    /// Whether a close request may end the client. Dialogs pass <see langword="false"/> and leave the
+    /// decision to <see cref="LocalEvent.ProcessQuitEvent"/>, the reference's quit hook
+    /// (<c>localevent.cpp:1299-1305</c>).
+    /// </param>
+    private bool PumpEvents(bool allowExit = true)
     {
         while (SDL.PollEvent(out SDL.Event evt))
         {
+            // The state is fed before any scene sees the event: the reference's engine pushes every
+            // event into LocalEvent, and the scene handlers read the state afterwards
+            // (localevent.cpp:1265-1313).
+            FeedLocalEvent(evt);
+
             switch ((SDL.EventType)evt.Type)
             {
                 case SDL.EventType.Quit:
                 case SDL.EventType.WindowCloseRequested:
+                    if (!allowExit && !_le.ProcessQuitEvent())
+                    {
+                        // A window without the exit hook ignores the close request, like the reference.
+                        break;
+                    }
+
                     return false;
 
                 case SDL.EventType.KeyDown when HandleKeyDown(evt.Key):
                     return false;
 
                 case SDL.EventType.MouseMotion:
+                    // A modal window owns the pointer while it is open: the scene below keeps its state
+                    // (it is frozen) and only the window reacts.
+                    if (_modal is { } modal)
+                    {
+                        if (!_syntheticCursor)
+                        {
+                            modal.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                        }
+
+                        break;
+                    }
+
                     // With --cursor the synthetic pointer is what a screenshot should show, so the
                     // real one must not steal the hover state.
                     if (!_syntheticCursor)
@@ -296,6 +404,16 @@ public sealed class GameHost : IDisposable
                     break;
 
                 case SDL.EventType.WindowMouseLeave:
+                    if (_modal is { } leavingModal)
+                    {
+                        if (!_syntheticCursor)
+                        {
+                            leavingModal.SetCursor(null);
+                        }
+
+                        break;
+                    }
+
                     if (!_syntheticCursor)
                     {
                         _castle?.SetCursor(null);
@@ -310,6 +428,12 @@ public sealed class GameHost : IDisposable
 
                 case SDL.EventType.MouseButtonDown:
                 case SDL.EventType.MouseButtonUp:
+                    if (_modal is { } clickedModal)
+                    {
+                        HandleModalButton(clickedModal, evt.Button);
+                        break;
+                    }
+
                     if (HandleMouseButton(evt.Button))
                     {
                         return false;
@@ -318,6 +442,13 @@ public sealed class GameHost : IDisposable
                     break;
 
                 case SDL.EventType.MouseWheel:
+                    // A modal window has no list to roll in this milestone, so the wheel stops at it
+                    // instead of scrolling the frozen scene below.
+                    if (_modal is not null)
+                    {
+                        break;
+                    }
+
                     // SDL reports a positive y when the wheel turns away from the user, which rolls
                     // a list up and moves the view towards the top of the map. The town screen has
                     // nothing to scroll, so the wheel is dropped while it is open.
@@ -361,6 +492,86 @@ public sealed class GameHost : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Pushes one SDL event into <see cref="_le"/>, the translation the reference's engine does inside
+    /// <c>handleEvents</c> (<c>localevent.cpp:1658-1747</c>).
+    /// </summary>
+    /// <param name="evt">Event taken from the SDL queue.</param>
+    private void FeedLocalEvent(in SDL.Event evt)
+    {
+        switch ((SDL.EventType)evt.Type)
+        {
+            case SDL.EventType.MouseMotion:
+                _le.OnMouseMotion(ToCursor(evt.Motion.X, evt.Motion.Y));
+                break;
+
+            case SDL.EventType.MouseButtonDown:
+            case SDL.EventType.MouseButtonUp:
+                {
+                    MouseButtonType button = evt.Button.Button switch
+                    {
+                        LeftMouseButton => MouseButtonType.Left,
+                        RightMouseButton => MouseButtonType.Right,
+                        2 => MouseButtonType.Middle,
+                        _ => MouseButtonType.Unknown,
+                    };
+
+                    if (button != MouseButtonType.Unknown)
+                    {
+                        _le.OnMouseButton(
+                            (SDL.EventType)evt.Type == SDL.EventType.MouseButtonDown,
+                            button,
+                            ToCursor(evt.Button.X, evt.Button.Y));
+                    }
+
+                    break;
+                }
+
+            case SDL.EventType.MouseWheel:
+                {
+                    int notches = evt.Wheel.IntegerY != 0 ? evt.Wheel.IntegerY : (int)Math.Sign(evt.Wheel.Y);
+
+                    // SDL reports a positive y when the wheel turns away from the user, which is a
+                    // positive offset for the reference and what isMouseWheelUp() asks for.
+                    if (notches != 0)
+                    {
+                        _le.OnMouseWheel(new Point(0, notches));
+                    }
+
+                    break;
+                }
+
+            case SDL.EventType.KeyDown:
+            case SDL.EventType.KeyUp:
+                {
+                    Key key = SdlKeyMap.ToKey((int)evt.Key.Key);
+
+                    if (key != Key.None)
+                    {
+                        _le.OnKeyboard(
+                            key,
+                            SdlKeyMap.ToModifier((int)evt.Key.Mod),
+                            (SDL.EventType)evt.Type == SDL.EventType.KeyDown
+                                ? KeyboardEventState.Down
+                                : KeyboardEventState.Up);
+                    }
+
+                    break;
+                }
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Cursor position in logical pixels; the raw position when the pointer is over the letterbox and
+    /// the viewport refuses to convert it, which keeps the state machine out of screen bounds like the
+    /// reference does.
+    /// </summary>
+    private Point ToCursor(float x, float y) =>
+        ToLogical(x, y) ?? new Point((int)MathF.Round(x), (int)MathF.Round(y));
+
     /// <summary>Handles a key press; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleKeyDown(in SDL.KeyboardEvent key)
     {
@@ -377,6 +588,14 @@ public sealed class GameHost : IDisposable
 
             default:
                 break;
+        }
+
+        // Escape / Enter / Space are the standard buttons of whichever window is open: the modal owns
+        // every key while it is up, the scene below is frozen.
+        if (_modal is { } modal)
+        {
+            HandleModalKey(modal, key);
+            return false;
         }
 
         if (_editor is { } editor)
@@ -461,6 +680,55 @@ public sealed class GameHost : IDisposable
                     && !key.Repeat
                     && _menu.Select((char)key.Key) is { } hotKeyAction
                     && HandleMenuAction(hotKeyAction);
+        }
+    }
+
+    /// <summary>Routes a mouse button event to the window that owns the frame.</summary>
+    /// <remarks>
+    /// 点击自带坐标，所以即使 <c>--cursor</c> 让移动事件被忽略，合成点击也能落到窗口里的按钮上——和城镇
+    /// 界面同样的处理。
+    /// </remarks>
+    private void HandleModalButton(IModalScreen modal, in SDL.MouseButtonEvent button)
+    {
+        modal.SetCursor(ToLogical(button.X, button.Y));
+
+        switch (button.Button)
+        {
+            case LeftMouseButton:
+                modal.SetLeftButton(button.Down);
+                break;
+
+            case RightMouseButton:
+                modal.SetRightButton(button.Down);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>Maps the keys that stand for the standard buttons of a window, <c>Dialog::YES_NO</c>'s Enter.</summary>
+    private static void HandleModalKey(IModalScreen modal, in SDL.KeyboardEvent key)
+    {
+        if (key.Repeat)
+        {
+            return;
+        }
+
+        switch (key.Key)
+        {
+            case SDL.Keycode.Escape:
+                modal.HotKey(ButtonHotKey.Cancel);
+                break;
+
+            case SDL.Keycode.Return:
+            case SDL.Keycode.KpEnter:
+            case SDL.Keycode.Space:
+                modal.HotKey(ButtonHotKey.Okay);
+                break;
+
+            default:
+                break;
         }
     }
 
@@ -1374,6 +1642,8 @@ public sealed class GameHost : IDisposable
         // The reference paints the readout over the finished frame and then draws that frame
         // (ui_tool.cpp:288 SystemInfoRenderer::preRender / postRender).
         _systemInfo?.Draw(_frame.Bounds, _frame.Pixels);
+
+        _modal?.Draw(_frame);
 
         _presenter.Upload(_frame);
 

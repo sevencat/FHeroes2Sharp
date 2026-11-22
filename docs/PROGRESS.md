@@ -8022,3 +8022,196 @@ ADR-118 的状态；英雄名只有英文原文；玩家配色与 `AlphaBlit` �
 
 **验证**：全量 `dotnet test FHeroes2Sharp.slnx` → **4 554 通过 / 0 失败**（Core 236 + Assets 416 + UI 875 + Game 3027），
 `dotnet build` 0 错误 0 警告。
+
+## 王国总览对话框 ✅（2026-11-22）
+
+`kingdom_overview.cpp` 整篇转完：两个列表（英雄 / 城堡）、它们的行、收入与资金两条底栏，以及
+`Kingdom::openOverviewDialog()` 的布局与事件处理。参考的模态 `while ( le.HandleEvents() )` 拆成
+「`ProcessEvents` 回答要不要重画 + `Draw` 画一帧」，与端口其它窗口一致。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/KingdomOverviewArtwork.cs` | `Assets::getImage()` 调用点 | `OVERVIEW` 6/7/8/10/11/13/14、`OVERBACK` 0、`SCROLL` 0-4、`CSLMARKER` 0、`BUTTON_KINGDOM_*` 0/1，外加大头照/技能/神器/部队/住所条所需的贴图源 |
+| `UI/Dialogs/KingdomOverviewLists.cs` | `redrawCommonBackground()`（`:95-120`）、`StatsHeroesList`（`:169-394`）、`StatsCastlesList`（`:448-685`） | 滚动条装配、行板的四行循环与那两条黄线、表头三行标题、`Refresh()`、`updateHeroArmyBars()`；几何常量收进 `KingdomOverviewLayout` |
+| `UI/Dialogs/KingdomHeroRow.cs` | `StatsHeroesList::RedrawBackground/RedrawItem` | 英雄行（头像 + 四项主技能右对齐 + 两支部队条 + 神器）与城堡行（城名/驻军/来访英雄/周产量/住所条/指挥官头像） |
+| `UI/Dialogs/KingdomOverviewRequests.cs` | 循环里打开的各个子对话框 | 请求袋：英雄/城镇对话框、两个快速信息、指挥官信息、收益、灯塔、标准消息、部队交互、`needFadeIn` |
+| `UI/Dialogs/KingdomOverviewWindow.cs` | `openOverviewDialog()`（`:763-959`） | 640×480 窗口、三枚按钮（540/361、540/406、540/454）、`(1,360,535,60)` 收益区、`(124,459,289,16)` 金币区、随精灵宽的灯塔区、`RedrawIncomeInfo()`、`RedrawFundsInfo()`、`CapturedExtInfoString()` |
+
+要点：
+
+* **按钮状态就是列表状态**：参考在 `:810-823` 用 `press()`/`release()` 把当前列表钉在按钮上，端口每帧在 `Draw` 里
+  走 `DrawOnPress`/`DrawOnRelease`；点击判定用 `isReleased()` 的对应物 `!IsPressed`，所以点已按下的那枚不会重复切换。
+* **列表的点击也走请求袋**：`ActionListSingleClick`/`ActionListPressRight`（头像格 30×30）与
+  `ActionListCursor`（部队条）都只填 `Requests`，由场景打开对话框；`MergeRequests()` 把列表那份并进窗口这份。
+* **子窗口立刻淡入**：`needFadeIn` 来自「刚打开过英雄/城镇窗口」，端口把它翻成「这一帧必须重画」，真正的淡入由场景做。
+* **资金面板每帧重画**：参考只在城堡模式下重画（`:925-928`，因为资金只可能在城里变），端口每帧从 `OVERBACK` 重贴整窗，
+  不重画就会把面板擦掉；数值与位置不变。
+* **右键帮助变成 `DialogPopup`**：`:850-858` 的三句标准消息（Heroes / Towns-Castles / Exit）落进请求袋，与其它窗口一致。
+* **热键走参数**：端口还没有热键表，`KingdomOverviewHotKeys.CloseWindow`（Escape 或 Enter）由场景解码后传入。
+* **滚动位置存在王国上**：构造时读 `TopHeroInKingdomView`/`TopCastleInKingdomView`，`Close()` 写回（`:942-943`）。
+* **冒险地图的重画掩码只报自己那一位**：英雄列表重建（雇/解雇英雄）时置 `WorldMapRedrawMask |= Redraw.Heroes`
+  （`:913-919`）；`getRedrawMask()`、`ResetFocus()`、`RedrawFocus()` 与关闭时的 `setFastScrollStatus( false )`、
+  淡出都属于场景，已写在 `Close()` 的文档注释里。
+
+**验证**：`dotnet build FHeroes2Sharp.slnx` 0 错误 0 警告；`dotnet test tests/FHeroes2.UI.Tests` → **1 191 通过 / 0 失败**。
+首轮只求转完，本窗口的行为测试按计划放到逐函数核对那一轮。
+
+**遗留**：App 侧入口（`AdventureMapHost.OpenKingdomOverview()` 仍只有接口，`GameHost`/`AdventureMapScene` 没有模态
+覆盖层）；`SecondarySkillsBar`/`ArtifactsBar` 的交互仍只读（`ArtifactsBar` 的类文档已列出它缺的那几个对话框）；
+行文本、收入与资金面板的逐像素对拍留到逐函数核对那一轮。
+（`Interface::redrawHeroesIcon` 不算缺：端口由 `HeroPortraitPainter.DrawSmall` + `IconsPanel` 承担。）
+
+## 灯塔信息框与收入框的描述 ✅（2026-11-22）
+
+`gui/ui_kingdom.cpp` 的两个函数至此都有落点：
+
+* `UI/Dialogs/LighthouseInfo.cs`：`showLighthouseInfo()`（`ui_kingdom.cpp:51-90`）。六个 `OBJNMUL2` 部件
+  （阴影 60/71/72、塔身 59/61/73）按偏移拼成 160×(64+塔顶高) 的整图，灯室位置取 62 号帧的偏移；动画是
+  `agg/icn.cpp:549-553` 给出的 62-70 九帧，元素顺序与参考一致（灯塔、数量）。标题是复数
+  `StringObject( OBJ_LIGHTHOUSE, 2 )`，端口 `Mp2ObjectName` 只出单数，故 `Header` 单列常量。
+  帧间隔默认 250 ms（`MAPS_DELAY` 初值），要跟随游戏速度时由调用方传 `GameDelays.GetAnimationDelayValue( DelayType.MapsDelay )`。
+  与 `KingdomIncome` 一样只做 `Dialog::ZERO` 那一版：谁来创建、什么时候销毁都在场景手里。
+* `UI/Dialogs/KingdomIncome.cs`：右键图标弹出的内容补上 `ResourceText.Description`，对应
+  `ResourceDialogElement::showPopup()`（`ui_dialog.cpp:451-454`），不再只给资源名。
+
+`LighthouseInfoTests`（`tests/FHeroes2.UI.Tests/`）5 条：帧数不足、三个空参、非正帧间隔、元素构成与 160×96 尺寸、
+可替换文案。需要位图字体与消息框边框的用例在有档案时才跑，与 `KingdomIncomeTests` 同一套 `GlobalArchiveCollection`。
+
+**验证**：`dotnet build FHeroes2Sharp.slnx` 0 错误 0 警告；`dotnet test tests/FHeroes2.UI.Tests` → **1 199 通过 / 0 失败**。
+
+### 顺手补的 `StandardWindow` 缺件
+
+`StandardWindow.RenderScrollbarBackground()`（`ui_window.cpp:400-431`）：列表滚动条那道 16 px 宽的凹槽
+（`ADVBORD.ICN` 0 号帧 536,176 帽 + 536,196 中段重复 + 536,285 脚），外加左缘与脚下四步阴影。端口此前没有这个方法，
+后面所有带滚动条的列表窗口（`ItemSelectionWindow` 那一族）都要用。`StandardWindowScrollbarTests` 3 条：
+三段拼接、阴影覆盖范围、空参。
+
+## 物件选择窗口与选法术 ✅（2026-11-22）
+
+`dialog_selectitems.cpp` 的入游戏骨架落地：`ItemSelectionWindow` 基类、`SelectEnumSpell` 子类，以及
+`selectSpell()` 拆出来的建表 / 尺寸 / 开窗三件套。`ItemSelectionWindow` 是后面法术书、宝物、怪物、
+技能等一系列「列表选一个东西」窗口的共同底座，先把它按参考逐段转完，再挂第一个子类。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ItemSelectionWindow.cs` | `ItemSelectionWindow`（`dialog_selectitems.h:61-193`、`.cpp:889-1081`、`1013-1057`） | `ListBox<int32_t>` 的端口（行是 `ItemSelectionEntry`）+ `StandardWindow`、标题/描述、列表区、凹槽、滚动按钮、OK/CANCEL；`Draw` 画一帧，`ProcessEvents` 吃一帧 |
+| `UI/Dialogs/ItemSelectionWindowArtwork.cs` | 构造里的 `AGG::GetICN()` 调用 | `SCROLL`/`SCROLLE` 0-4、`ADVBORD` 0、`BUTTON_SMALL_OKAY_GOOD` 与 `BUTTON_SMALL_CANCEL_GOOD` 0/1 |
+| `UI/Dialogs/SpellSelectionWindow.cs` | `SelectEnumSpell`（`.h:366-381`、`.cpp:379-421`） | 行高 55、图标偏移 37、文字偏移 80、名字按 `activeArea.width - 80 - 55` 截断、右键弹法术说明；`SelectSpell()` 对应 `SetCurrent( spellId )` |
+| `UI/Dialogs/SpellSelectDialog.cs`（重写） | `Dialog::selectSpell()`（`.cpp:1116-1160`） | `DialogHeightDeduction = 150`、`DialogSize()`、`BuildSpellList()`（随机项插最前）、`TryCreate()`（空表返回 null，由场景显示提示） |
+
+几何逐项对齐参考：列表区 `(activeArea.x + 10, activeArea.y + 30 + listOffsetY, width - 40, height - 70 - listOffsetY)`，
+无描述时 `listOffsetY = 0`、有描述时是描述行高 + 3；行区再内缩 5；凹槽 `(activeArea.x + width - 25, listRoi.y, 16, listRoi.height)`；
+滚动条轨道 `(凹槽 x + 3, listRoi.y + 19, 10, listRoi.height - 38)`；上下按各在 `+1` 与 `-15`；
+OK/CANCEL 距左下/右下 `(20, 7)`，阴影偏移仍是 `(-5, 5)`。
+
+要点：
+
+* **循环拆成两半**：参考在 `selectItemsEventProcessing()` 里 `while ( res == ZERO )` 自己画自己读事件；端口 `Draw` 负责
+  石框、两段文字、列表（含阴影与凹槽）与两枚按钮，`ProcessEvents` 负责按钮点击/热键、右键帮助、列表点击与双击，
+  关闭结果落在 `Result`（`DialogButton.None` 表示还开着）。一帧只回答一件事，所以参考里「右键弹帮助后同帧继续处理列表」
+  在端口变成下一帧再处理那一行。
+* **凹槽位置单独存一份**：`RenderScrollbarBackground()` 的矩形决定落点，参考传的是 16 px 宽、在 listRoi 右缘的矩形，
+  不能直接把整个列表区传进去（会画到列表左边）。`GrooveArea` 因此独立于 `ListArea`，测试按 16 px 宽与右缩 25 像素断言。
+* **双击等于 OK**：`ActionListDoubleClick` 只置标志，`ProcessEvents` 在这一帧把 `Result` 置为 OK，与参考
+  `_isDoubleClicked` 后结束循环同义；单键、上下键在基类里什么都不做，也照参考。
+* **右键说明不用 `SpellInfo`**：参考 `ActionListPressRight` 打开 `Dialog::SpellInfo( spellId )`（带英雄数值的完整说明）。
+  端口的 `SpellDialogElement` 目前是「名字 + `Spell::GetDescription()`」，这里返回同样的 `DialogPopup`，等
+  `getSpellDescription()` 那一轮再换成带英雄数值的版本。
+* **不转 toggle 按钮**：`_buttonToggleOn/Off` 与 `enableToggleButtons()` 只有未转的 `MultiArtifactSelection` 用，
+  基类先不建这两个按钮，虚接口（`ActionListPressRight`/`ActionListDoubleClick`）按参考保留。
+
+**验证**：`dotnet build FHeroes2Sharp.slnx` 0 错误 0 警告；`dotnet test FHeroes2Sharp.slnx` →
+**5 023 通过 / 0 失败**（Core 283 + Assets 416 + Game 3 109 + UI 1 215），新增 `ItemSelectionWindowTests` 16 条
+（窗口尺寸、列表合法性、随机项位置、等级与排除、空表返回 null、列表区/行区/轨道/按钮几何、初始选中、
+双击回 OK、取消回 CANCEL、右键弹说明、凹槽像素落点、空参）。
+
+**下一步**（未开工）：`SpellBook` 一族（`spell_book.cpp` / `spell_book_ui.cpp`），用这个底座开法术书页；
+`MultiArtifactSelection` 需要时再把 toggle 按钮补齐。
+
+**遗留**：App 侧还没有把 `SpellSelectDialog.TryCreate()` 接到任何场景（点法术书才会用）；右键说明待
+`getSpellDescription()`（`ui_dialog.cpp:90-269`）转完换成带英雄数值的版本；行文本与图标的逐像素对拍留到核对那一轮。
+
+## 法术书窗口 ✅（2026-11-22）
+
+`spell_book.cpp` 整篇收口：`SpellBook::Open()`（施法书，`:194-403`）与 `SpellBook::Edit()`（编辑书，
+`:405-505`）合成一个双模式窗口，配上一个独立的绘制器与资源袋。原先只有 `SpellBookView` 占位，本轮删除。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/SpellBookArtwork.cs`（新） | `getSpellBookSize()`（`:61-84`）、`:225-232` 的 `getImage()` | `ICN::BOOK` 的页 0、冒险签 3、战斗签 4、关书签 5、法力签 6、直角 7，加上 `ICN::SPELLS` 全部帧；`GetBookSize( Filter )` 取「画得出的书签里最低的底边」 |
+| `UI/Dialogs/SpellBookRenderer.cs`（新） | `SpellBookRedrawSpells()`（`:86-122`）、`SpellBookRedrawManaPoints()`（`:124-141`）、`spellBookRedrawLists()`（`:143-192`） | 双栏 12 行（白/灰小字、名字 + `[消耗]`、宽 80 换行）、法力签三位数字、页与四枚书签、直角拼角、`addShadow` |
+| `UI/Dialogs/SpellBookWindow.cs`（新，约 740 行） | `SpellBook::Open()`、`SpellBook::Edit()` | `TryOpen()` / `TryEdit()` 两个工厂，`Draw` + `ProcessEvents` + `SpellBookFrame`，命中区与状态栏，编辑模式的增删 |
+| `Game/Spells/SpellBook.cs`（改） | `:200-221` | 拆出 `BeginSession( filter, restore )` 与 `ClampStartIndex( count )`，原三参重载转调二者 |
+| `Game/Heroes/ISpellBookOwner.cs`（改） | `heroes_base.h` | 增 `SpellPoints`、`GetMaxSpellPoints()`、`CanCastSpell( spell )`、`BagArtifacts` |
+| `App/Fonts/GameFonts.cs`（改） | `FontType::smallWhite()` | 新增 `SmallWhite`（`SMALFONT` + `PaletteId.WhiteFont`），灰色行仍用 `Small` |
+| `UI/Dialogs/SpellBookView.cs`（删） | — | 占位类，被 `SpellBookWindow` 取代 |
+
+要点：
+
+* **两模式一个类**：参考是两个函数、两段几乎相同的循环。端口 `Editing => _book is null` 区分：施法书的页与过滤器
+  存在传进来的 `SpellBook` 里（参考存在英雄的书里），编辑书用私有 `_pageIndex`，关闭时不写回任何状态
+  （参考注释就写着「编辑法术书不需要记住上次打开的页」）。
+* **`restorePreviousState` 对 `Filter::ALL` 无效**：参考 `:203-206` 里 `ALL` 分支无条件把过滤器打回冒险、页码归零，
+  只有「指定单一标签」的会话才谈得上记忆。端口照抄，测试也按这条写（同一本书用 `All` 重开必然回到第一页）。
+* **编辑模式不弹选法术框**：参考在点空位时直接 `Dialog::selectSpell( NONE, false, spellsToExclude )` 并 `Append`。
+  端口返回 `SpellBookAction.ChooseSpellToAdd`，由调用方用 `ExcludedSpells`（书里已有的全部法术）开
+  `SpellSelectDialog`，选完回来调 `AddSpell()`；`RemoveSpell()` 对应右键那条分支。
+* **半本书的另一枚标签既不画也不答**：`displayable != Combat/Adventure` 决定贴哪枚书签，点击与状态栏同样按这个条件
+  放行，与 `SpellBook::SelectFilter` 的拒绝一致。
+* **书高看标签**：`GetBookSize()` 里 `CloseBookmark` 永远计入，两枚标签按 `displayable` 计入。用真实资源时三枚标签的
+  底边都低于页脚，所以三种过滤器都是 320 高；测试用一枚 10 像素高的关书签把这个分支逼出来（`All`/`Combat` 316、
+  `Adventure` 313）。
+* **右页内列反而高 5 像素**：`extraOffsetY = ( ( posX == 1 ) == isRight ) ? 0 : 5`（`:97-98`）减在 `oy` 上，所以画出来
+  右页内列比左页外列高 5 像素（`71 - 20 - 6 + 2 = 47` 对 `66 - 20 - 6 + 2 = 42`）。这是参考的写法，测试按实算值断言。
+* **滚轮方向照参考**：上滚 = 上一屏、下滚 = 下一屏；首页不响应上滚、末屏不响应下滚，状态栏的「上一页」提示同样只在
+  非首页出现（`:270-275`、`:347-351`）。首轮测试把方向写反了，按参考改回。
+* **状态栏只在有话可说时写**：参考从不以空串调用 `statusCallback`，回到默认行是场景的事，端口的 `StatusText` 因此保留
+  上一次的文案；法术格是 `View {name}`，空白处只有 `Filter::ALL` 才给 `View Spells`。
+* **两条给路返回 `null`**：没有魔法书、或要施法却一本空书，参考自己弹框后返回 `Spell::NONE`；端口返回 `null`，
+  句子挂在 `NoMagicBookMessage` / `NoSpellToCastMessage` 上由场景显示。
+* **不能施放的原因只有法力两种**：`DescribeCantCast()` 对应 `HeroBase::CanCastSpell( spell, &message )` 的
+  `heroes_base.cpp:392/396`。其余分支（无书、没抄进书、冒险魔法、船挡路）在参考里是「不该发生」的断言，
+  人类英雄开着书时进不去，端口不编造文案。
+* **`Draw` 只贴合成图**：参考自己 `ImageRestorer` 存背景再 `Blit`；端口把带阴影的 `Composed` 贴到 `Area + ShadowOffset`，
+  背后是什么由场景决定，`Draw` 不擦屏。
+
+**验证**：`dotnet build FHeroes2Sharp.slnx` → 0 错误 0 警告；`dotnet test FHeroes2Sharp.slnx` →
+**5 046 通过 / 0 失败**（Core 283 + Assets 416 + Game 3 109 + UI 1 238），新增 `SpellBookWindowTests` 23 条
+（两条给路、默认冒险页、页记忆与越界丢弃、居中与书签几何、12 格双栏坐标、首页/末屏的法术格数、点选与法力不足弹原因、
+只读点开、右键瞬态、滚轮翻页、标签切换与半本书、关书与法力签、状态栏三句、编辑模式请求/添加/右键删除/取消、
+书高随标签、`Draw` 像素、两种法力文案、空参）。
+
+**下一步**（未开工）：把法术书接到场景（`AdventureMapHost` 里点英雄法术书、英雄界面里的入口），并处理参考
+`SpellBook::Open` 返回后英雄侧的 `Spell::NONE` 分支；`ui_dialog.cpp` 的 `getSpellDescription()` 仍缺，法术书的
+右键说明与 `SpellSelectDialog` 共用这个缺口。
+
+**遗留**：App 侧无调用点（`SpellBookWindow` 目前只有测试在用）；右键法术说明仍是「名字 + `GetDescription()`」；
+`MultiArtifactSelection` 的 toggle 按钮；12 行文本与法术图标的逐像素对拍留到核对那一轮。
+
+## 法术描述（带施法者数值）✅（2026-11-22）
+
+上一节留的 `getSpellDescription()` 缺口补上：`SpellInfo.GetDescription()`（`spell_info.cpp:214-321`）。
+
+| 端口成员 | 参考 |
+| --- | --- |
+| `SpellInfo.GetDescription( spell, caster = null, world = null )` | 表句 + 按 `IsDamage` / `IsSummon` / `IsRestore` / `IsResurrect` / `IsGuardianType` / `TOWNGATE` / `HYPNOTIZE` 追加一段 |
+| `SpellInfo.FillCount( description, count )`（私有） | `updateSpellDescription()`（`:50-64`）：`%{count}` 填 `extraValue`，1/2 写成 `one`/`two`，其余用数字，全部出现处替换 |
+| `SpellInfo.SummonedMonster( type )`（私有） | `Monster::Monster( const Spell & )`（`monster.cpp:77-110`）：四元素召唤与守卫共用一个生物，`Haunt` 是鬼，其余 `Unknown` |
+| `ISpellBookOwner.GetPower()` | `HeroBase::GetPower()`（`heroes_base.h:141`）：接口新增；`Hero` / `Captain` 早就有同名公开成员 |
+
+要点：
+
+* **签名换成接口 + 世界**：参考拿 `HeroBase *` 自己摸王国、地图与城堡；端口收 `ISpellBookOwner` 与可空 `World`，只在分支需要时读。
+* **Town Gate 只写到城名**：参考还会说城里驻着哪个英雄，端口的世界还回答不了「某城里有哪个英雄」；船长书（`caster` 不是英雄）
+  与没给 `world` 时不追加这段，与参考的 `castle == nullptr` 分支同义。
+* **没有对应生物的召唤/守卫法术**：参考是 `assert`，端口返回纯表句（等于 release 构建行为）。
+* `one` 的填法没有测试：`spell_table.cpp` 里没有 `extraValue == 1` 的法术，`FillCount` 又是私有方法。
+
+**验证**：`dotnet build FHeroes2Sharp.slnx` 0 错误 0 警告；`dotnet test FHeroes2Sharp.slnx` →
+**5 053 通过 / 0 失败**（Core 283 + Assets 416 + Game 3 116 + UI 1 238），`SpellInfoTests` 8 → 15 条
+（无施法者的表句与 `two`/数字两种填法、伤害与火系神器、召唤与召唤神器、治疗与复活（含 `Ankh`）、守卫与 `Haunt` 的鬼、
+`Hypnotize` 的控制上限、Town Gate 取最近城与无 `world` 时只给表句）。
+
+**下一步**（未开工）：把文案接到界面——参考在 `SpellDialogElement::showPopup()` 里调 `getSpellDescription( _spell, _hero )`
+（`ui_dialog.cpp:545`），端口的 `SpellDialogElement` 还没有施法者参数，所以法术书与 `SpellSelectDialog` 的右键仍是
+「名字 + 模板句子」；App 侧入口同上一节。

@@ -378,7 +378,105 @@ public sealed class LocalEventTests
         Assert.Equal(0, (int)Key.None);
     }
 
+    [Fact]
+    public void HandleEvents_ThrowsWhenNoEngineIsAttached()
+    {
+        LocalEvent events = CreateEvents();
+
+        Assert.Throws<InvalidOperationException>(() => events.HandleEvents());
+    }
+
+    [Fact]
+    public void HandleEvents_PresentsTheCursorAreaAndSleepsOneMillisecond()
+    {
+        LocalEvent events = CreateEvents();
+        FakeEngine engine = new() { OnHandle = state => state.OnMouseMotion(new Point(5, 6)) };
+
+        events.MouseMotionHook = (x, y) => new Rect(x, y, 3, 3);
+        events.Engine = engine;
+
+        Assert.True(events.HandleEvents());
+
+        // The reference renders the area the cursor layer asked for and then waits one millisecond.
+        Assert.Equal(new Rect(5, 6, 3, 3), Assert.Single(engine.Rendered));
+        Assert.Equal(LocalEvent.LoopSleepTimeMs, Assert.Single(engine.Sleeps));
+    }
+
+    [Fact]
+    public void HandleEvents_PresentsTheWholeFrameWhenARefreshIsRequired()
+    {
+        LocalEvent events = CreateEvents();
+        FakeEngine engine = new() { Refresh = true };
+
+        events.Engine = engine;
+
+        Assert.True(events.HandleEvents());
+
+        // A resize or a palette cycle redraws everything, even without a cursor movement.
+        Assert.Equal(engine.ScreenArea, Assert.Single(engine.Rendered));
+    }
+
+    [Fact]
+    public void HandleEvents_WithoutSleepOnlyRecordsWhatToPresent()
+    {
+        LocalEvent events = CreateEvents();
+        FakeEngine engine = new() { OnHandle = state => state.OnMouseMotion(new Point(5, 6)) };
+
+        events.MouseMotionHook = (x, y) => new Rect(x, y, 3, 3);
+        events.Engine = engine;
+
+        Assert.True(events.HandleEvents(sleepAfterEventProcessing: false));
+
+        // The caller draws right after the call: nothing is presented yet, the area is only deferred
+        // (display.updateNextRenderRoi).
+        Assert.Empty(engine.Rendered);
+        Assert.Empty(engine.Sleeps);
+        Assert.Equal(new Rect(5, 6, 3, 3), events.NextRenderArea);
+    }
+
+    [Fact]
+    public void HandleEvents_ReturnsFalseAndPresentsNothingWhenTheEngineStops()
+    {
+        LocalEvent events = CreateEvents();
+        FakeEngine engine = new() { Stop = true, OnHandle = state => state.OnMouseMotion(new Point(5, 6)) };
+
+        events.Engine = engine;
+
+        Assert.False(events.HandleEvents());
+
+        Assert.Empty(engine.Rendered);
+        Assert.Empty(engine.Sleeps);
+    }
+
     private static LocalEvent CreateEvents() => new(() => 0);
+
+    /// <summary>An event engine that records what <see cref="LocalEvent.HandleEvents"/> asked it to do.</summary>
+    private sealed class FakeEngine : IEventEngine
+    {
+        public Rect ScreenArea => new(0, 0, 640, 480);
+
+        public List<Rect> Rendered { get; } = [];
+
+        public List<ulong> Sleeps { get; } = [];
+
+        public bool Stop { get; set; }
+
+        public bool Refresh { get; set; }
+
+        public Action<LocalEvent>? OnHandle { get; set; }
+
+        public bool HandleEvents(LocalEvent state, bool allowExit, out bool displayRefreshRequired)
+        {
+            displayRefreshRequired = Refresh;
+            OnHandle?.Invoke(state);
+
+            return !Stop;
+        }
+
+        public void Render(Rect area) => Rendered.Add(area);
+
+        public void Sleep(ulong milliseconds) => Sleeps.Add(milliseconds);
+    }
 
     private static void Click(LocalEvent events, Point press, Point release) =>
         Click(events, MouseButtonType.Left, press, release);

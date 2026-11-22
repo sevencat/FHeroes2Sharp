@@ -11,17 +11,22 @@ namespace FHeroes2.Game.Gui;
 /// <para>
 /// 这四个面（好/坏 × 按下/未按下）不在归档里，是从 <c>generateGoodButtonFontBaseShape</c> 那张白纸画出来再
 /// 各自加工：未按下加两层右下阴影和一圈描边，按下把颜色换深、阴影翻到左上，坏字面只是把绿换成红。
-/// 生成一次就够，和归档包无关，所以 <see cref="FontGlyphTable"/> 只缓存一份。
+/// 和归档包无关，但语言会变，所以 <see cref="FontGlyphTable"/> 按语言缓存。
 /// </para>
 /// <para>
-/// 参考的 <c>generateButtonAlphabet</c> 先按代码页补非 ASCII 字形再加工四份；这里只做 ASCII 那份，
-/// 所以 <see cref="AsciiCharSetSize"/> 之后没有第二个面需要的字母。
+/// 参考的 <c>generateButtonAlphabet</c> 先按代码页把 128 帧扩成 256 帧并补上非 ASCII 字形，再加工四份；
+/// 补字形的那五段 <c>generateCPxxxxGoodButtonFont</c> 由 <c>tools/GenerateButtonFontAlphabets.ps1</c>
+/// 逐句转写（<c>ButtonFont.Cp1250.cs</c> 起）。代码页不在那五个里的语言没有补充，表就停在
+/// <see cref="AsciiCharSetSize"/> 帧，和参考一样。
 /// </para>
 /// </remarks>
 internal static partial class ButtonFont
 {
-    /// <summary>Frames of a button face: the whole ASCII range, indexed by the code itself.</summary>
+    /// <summary>Frames of the ASCII base shape: the printable ASCII range, indexed by the code itself.</summary>
     public const int AsciiCharSetSize = 128;
+
+    /// <summary>The width of a non-breaking space in the button font (<c>ui_font.cpp:52</c>).</summary>
+    private const int BigSpaceWidth = 8;
 
     /// <summary>Room left around every letter for the shadows and the contour.</summary>
     private const int Offset = 2;
@@ -48,12 +53,31 @@ internal static partial class ButtonFont
     public readonly record struct Faces(Sprite?[] WhiteReleased, Sprite?[] WhitePressed, Sprite?[] GrayReleased, Sprite?[] GrayPressed);
 
     /// <summary>
-    /// Draws the base shape once and derives the four faces from it, <c>generateButtonAlphabet</c> plus
-    /// <c>updateButtonFont</c>.
+    /// Draws the base shape once, adds the letters <paramref name="language"/> needs and derives the four
+    /// faces from it, <c>generateButtonAlphabet</c> (<c>ui_font.cpp:6808</c>) plus
+    /// <c>updateButtonFont</c> (<c>ui_font.cpp:170</c>).
     /// </summary>
-    public static Faces Create()
+    /// <param name="language">The game language whose text is drawn.</param>
+    /// <returns>The four faces.</returns>
+    public static Faces Create(SupportedLanguage language)
     {
         Sprite[] baseShape = CreateBaseShape();
+        Action<Sprite[]>? generator = GameLanguage.GetCodePage(language) switch
+        {
+            CodePage.Cp1250 => GenerateCp1250Button,
+            CodePage.Cp1251 => GenerateCp1251Button,
+            CodePage.Cp1252 => GenerateCp1252Button,
+            CodePage.Cp1253 => GenerateCp1253Button,
+            CodePage.Cp1254 => GenerateCp1254Button,
+            _ => null,
+        };
+
+        if (generator is not null)
+        {
+            baseShape = Widen(baseShape);
+            generator(baseShape);
+        }
+
         Sprite?[] whiteReleased = new Sprite?[baseShape.Length];
         Sprite?[] whitePressed = new Sprite?[baseShape.Length];
         Sprite?[] grayReleased = new Sprite?[baseShape.Length];
@@ -191,4 +215,26 @@ internal static partial class ButtonFont
     /// <summary>Same content, different anchor, the reference's <c>setPosition</c>.</summary>
     private static Sprite Moved(Sprite letter, int offsetX, int offsetY) =>
         new(letter.Image, offsetX, offsetY, letter.Transform);
+
+    /// <summary>
+    /// Grows the ASCII base shape to <see cref="FontAlphabet.CodePageSize"/> frames, the reference's
+    /// <c>released.insert( released.end(), codePageExtraCharacterCount, firstSprite )</c>
+    /// (<c>ui_font.cpp:5607</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考插进去的是第 0 帧的副本（1×1 透明图），不是同一个对象：后面每个补充字形都会就地改自己的那一帧，
+    /// 共享一张图会连带改掉所有空槽。
+    /// </remarks>
+    private static Sprite[] Widen(Sprite[] ascii)
+    {
+        Sprite[] released = new Sprite[FontAlphabet.CodePageSize];
+        Array.Copy(ascii, released, ascii.Length);
+
+        for (int index = ascii.Length; index < released.Length; ++index)
+        {
+            released[index] = ascii[0].Clone();
+        }
+
+        return released;
+    }
 }

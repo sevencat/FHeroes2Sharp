@@ -90,7 +90,7 @@ public sealed partial class ArmyBar
 
         if (IsSelected)
         {
-            Troop selected = GetTroop(_selectedIndex)!;
+            Troop selected = GetTroop(SelectedIndex)!;
 
             if (ReferenceEquals(troop, selected))
             {
@@ -132,7 +132,7 @@ public sealed partial class ArmyBar
     private ArmyBarEvent ActionBarCursor(int index, ArmyBar other)
     {
         Troop dest = GetTroop(index)!;
-        Troop selected = other.GetTroop(other._selectedIndex)!;
+        Troop selected = other.GetTroop(other.SelectedIndex)!;
 
         // Whether the move would take the other army's last stack (army_bar.cpp:366): the destination bar's
         // _saveLastTroop combined with the source army's own answer.
@@ -180,7 +180,7 @@ public sealed partial class ArmyBar
                 return default; // reset cursor
             }
 
-            Troop selected = GetTroop(_selectedIndex)!;
+            Troop selected = GetTroop(SelectedIndex)!;
             Troop troop = GetTroop(index)!;
 
             // Shift is decided first: clicking a different creature with shift down must not open the split dialog,
@@ -256,7 +256,7 @@ public sealed partial class ArmyBar
     private ArmyBarEvent ActionBarLeftMouseSingleClick(int index, ArmyBar other, ArmyBarHotKey hotKey)
     {
         Troop dest = GetTroop(index)!;
-        Troop selected = other.GetTroop(other._selectedIndex)!;
+        Troop selected = other.GetTroop(other.SelectedIndex)!;
 
         bool sameTroopType = dest.IsValid && dest.Monster == selected.Monster;
 
@@ -317,7 +317,7 @@ public sealed partial class ArmyBar
             return new ArmyBarEvent(true);
         }
 
-        Troop? selected = GetTroop(_selectedIndex);
+        Troop? selected = GetTroop(SelectedIndex);
 
         if (selected is null || troop.Monster != selected.Monster)
         {
@@ -459,7 +459,7 @@ public sealed partial class ArmyBar
             return default;
         }
 
-        Troop selected = GetTroop(_selectedIndex)!;
+        Troop selected = GetTroop(SelectedIndex)!;
         ArmyBarSplit? split = RedistributeArmy(selected, _army!, GetTroop(index)!, _army!);
         ResetSelected();
 
@@ -469,7 +469,7 @@ public sealed partial class ArmyBar
     private ArmyBarEvent ActionBarRightMouseSingleClick(int index, ArmyBar other)
     {
         Troop dest = GetTroop(index)!;
-        Troop selected = other.GetTroop(other._selectedIndex)!;
+        Troop selected = other.GetTroop(other.SelectedIndex)!;
 
         if (!dest.IsValid || dest.Monster == selected.Monster)
         {
@@ -489,7 +489,7 @@ public sealed partial class ArmyBar
             return false;
         }
 
-        Troop selected = GetTroop(_selectedIndex)!;
+        Troop selected = GetTroop(SelectedIndex)!;
         Troop troop = GetTroop(index)!;
 
         // A stack cannot be redistributed into itself, which the reference checks on the pointers

@@ -84,6 +84,81 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Copies <paramref name="sourceArea"/> of <paramref name="source"/> into
+    /// <paramref name="destination"/> mirrored along the axes asked for, the equivalent of
+    /// <c>fheroes2::Flip( in, inX, inY, out, outX, outY, width, height, horizontally, vertically )</c>
+    /// (<c>engine/image.cpp:2398</c>).
+    /// </summary>
+    /// <remarks>
+    /// The transform layer follows the same rules as <see cref="Copy"/>: a single layer destination only
+    /// receives the pixels the source draws, a multi layer destination receives both layers verbatim.
+    /// </remarks>
+    public static void FlipRegion(
+        Sprite source,
+        in Rect sourceArea,
+        Sprite destination,
+        Point destinationOffset,
+        bool horizontally,
+        bool vertically)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+
+        if (!horizontally && !vertically)
+        {
+            Copy(source, sourceArea, destination, destinationOffset);
+
+            return;
+        }
+
+        Rect sourceRect = sourceArea.Intersect(source.Image.Bounds);
+        if (sourceRect.IsEmpty)
+        {
+            return;
+        }
+
+        Point destinationOrigin = new(
+            destinationOffset.X + (sourceRect.X - sourceArea.X),
+            destinationOffset.Y + (sourceRect.Y - sourceArea.Y));
+
+        Rect clipped = new Rect(destinationOrigin, sourceRect.Size).Intersect(destination.Image.Bounds);
+        if (clipped.IsEmpty)
+        {
+            return;
+        }
+
+        int skipX = clipped.X - destinationOrigin.X;
+        int skipY = clipped.Y - destinationOrigin.Y;
+        int sourceStride = source.Image.Stride;
+        int destinationStride = destination.Image.Stride;
+
+        for (int y = 0; y < clipped.Height; ++y)
+        {
+            int sourceY = vertically ? sourceRect.Y + sourceRect.Height - 1 - skipY - y : sourceRect.Y + skipY + y;
+            ReadOnlySpan<byte> sourceRow = source.Image.Row(sourceY);
+            Span<byte> destinationRow = destination.Image.Row(clipped.Y + y);
+            int destinationIndex = ((clipped.Y + y) * destinationStride) + clipped.X;
+
+            for (int x = 0; x < clipped.Width; ++x)
+            {
+                int sourceX = horizontally ? sourceRect.X + sourceRect.Width - 1 - skipX - x : sourceRect.X + skipX + x;
+                int sourceIndex = (sourceY * sourceStride) + sourceX;
+                byte transformId = source.Transform is { } sourceTransform ? sourceTransform[sourceIndex] : (byte)0;
+
+                if (destination.Transform is { } destinationTransform)
+                {
+                    destinationRow[clipped.X + x] = sourceRow[sourceX];
+                    destinationTransform[destinationIndex + x] = transformId;
+                }
+                else if (transformId == 0)
+                {
+                    destinationRow[clipped.X + x] = sourceRow[sourceX];
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Fills <paramref name="area"/> with <paramref name="color"/>, the equivalent of
     /// <c>fheroes2::Fill( Image &amp;, x, y, width, height, color )</c>: the transform bytes of the
     /// filled pixels become <c>0</c>.
@@ -143,6 +218,32 @@ public static partial class ImageOps
             target.Image.Row(clipped.Y + y).Slice(clipped.X, clipped.Width).Clear();
             transform.AsSpan(((clipped.Y + y) * target.Image.Stride) + clipped.X, clipped.Width).Fill(transformId);
         }
+    }
+
+    /// <summary>
+    /// Clears one pixel and puts it in the <paramref name="transformId"/> state, the equivalent of
+    /// <c>fheroes2::SetTransformPixel()</c> (<c>engine/image.cpp:2910</c>).
+    /// </summary>
+    /// <remarks>
+    /// 生成按钮字体的字母时用它切掉升部/降部里多出来的一个点：颜色清成 <c>0</c>，变换层写 <c>1</c>（表示可见）。
+    /// 单层图整段不动（参考也是直接 return）。
+    /// </remarks>
+    /// <param name="target">Sprite to change.</param>
+    /// <param name="x">Column of the pixel.</param>
+    /// <param name="y">Row of the pixel.</param>
+    /// <param name="transformId">Transform id the pixel gets.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    public static void SetTransformPixel(Sprite target, int x, int y, byte transformId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (target.Transform is not { } transform || x < 0 || y < 0 || x >= target.Width || y >= target.Height)
+        {
+            return;
+        }
+
+        target.Image[x, y] = 0;
+        transform[(y * target.Image.Stride) + x] = transformId;
     }
 
     /// <summary>

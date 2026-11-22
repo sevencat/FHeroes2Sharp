@@ -906,54 +906,8 @@ public sealed class HeroIcons : IconsBar<Hero>
     /// <inheritdoc />
     public override void ActionListLongPress(Hero hero) => Panel.RotateHeroPortraits(hero);
 
-    private void DrawPortrait(Hero hero, int px, int py, PixelBuffer output)
-    {
-        if (Sprites.GetSprite(IcnType.Portxtra, 0) is { } background)
-        {
-            ImageOps.BlitSprite(output, new Point(px, py), background);
-        }
-
-        if (Sprites.GetSprite(IcnType.Miniport, hero.PortraitId - 1) is not { } portrait)
-        {
-            return;
-        }
-
-        const int barWidth = 7;
-
-        uint mobilityIndex = hero.GetMobilityIndexSprite(_world);
-
-        if (mobilityIndex > 0 && Sprites.GetSprite(IcnType.Mobility, (int)mobilityIndex) is { } mobility)
-        {
-            ImageOps.Blit(output, new Point(px, py + mobility.OffsetY), mobility.Image,
-                new Rect(0, 0, mobility.Width, mobility.Height));
-        }
-
-        ImageOps.Blit(output, new Point(px + barWidth + 1, py), portrait.Image,
-            new Rect(0, 0, portrait.Width, portrait.Height));
-
-        uint manaIndex = hero.GetManaIndexSprite();
-
-        if (manaIndex > 0 && Sprites.GetSprite(IcnType.Mana, (int)manaIndex) is { } mana)
-        {
-            ImageOps.Blit(output, new Point(px + barWidth + portrait.Width + 2, py + mana.OffsetY), mana.Image,
-                new Rect(0, 0, mana.Width, mana.Height));
-        }
-
-        if (!hero.IsControlHuman || !hero.Modes.HasFlag(HeroModes.Sleeper))
-        {
-            return;
-        }
-
-        if (Sprites.GetSprite(IcnType.Misc4, 14) is not { } sleeper)
-        {
-            return;
-        }
-
-        Sprite patch = new(sleeper.Width - 4, sleeper.Height - 4);
-        ImageOps.Blit(output, new Point(px + 35 + 3, py - 1), patch.Image,
-            new Rect(0, 0, patch.Width, patch.Height));
-        ImageOps.BlitSprite(output, new Point(px + 35 + 1, py - 3), sleeper);
-    }
+    private void DrawPortrait(Hero hero, int px, int py, PixelBuffer output) =>
+        HeroPortraitPainter.DrawSmall(hero, Sprites, _world, new Point(px, py), output);
 }
 
 /// <summary>
@@ -1026,23 +980,6 @@ public sealed class CastleIcons : IconsBar<CastleTown>
     /// <param name="x">Left edge of the icon.</param>
     /// <param name="y">Top edge of the icon.</param>
     /// <param name="output">The frame buffer.</param>
-    public void DrawCastleIcon(CastleTown castle, int x, int y, PixelBuffer output)
-    {
-        ArgumentNullException.ThrowIfNull(castle);
-        ArgumentNullException.ThrowIfNull(output);
-
-        if (IconBar.CastleFrame(castle.Race, castle.IsCastle) is not { } frame)
-        {
-            return;
-        }
-
-        IcnType locatorsType = EvilInterface ? IcnType.Locatore : IcnType.Locators;
-
-        if (Sprites.GetSprite(locatorsType, frame) is not { } icon)
-        {
-            return;
-        }
-
-        ImageOps.BlitSprite(output, new Point(x + icon.OffsetX, y + icon.OffsetY), icon);
-    }
+    public void DrawCastleIcon(CastleTown castle, int x, int y, PixelBuffer output) =>
+        CastleIconPainter.Draw(castle, Sprites, new Point(x, y), output, EvilInterface);
 }

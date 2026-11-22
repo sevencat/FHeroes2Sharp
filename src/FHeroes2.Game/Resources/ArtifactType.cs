@@ -155,6 +155,9 @@ public enum ArtifactType : int
 /// </remarks>
 public static class ArtifactTypes
 {
+    /// <summary>The frame an empty slot asks for, <c>IndexSprite32()</c>'s <c>255</c>.</summary>
+    public const uint UnknownMiniSpriteIndex = 255;
+
     /// <summary>
     /// Whether the id names an artifact a hero can own, <c>Artifact::isValid()</c>.
     /// </summary>
@@ -169,4 +172,24 @@ public static class ArtifactTypes
             && id < (int)ArtifactType.ArtifactCount
             && (id < (int)ArtifactType.Unused84 || id > (int)ArtifactType.Unused86);
     }
+
+    /// <summary>
+    /// The frame of the 32x32 icon in <c>ARTFX</c>, <c>Artifact::IndexSprite32()</c> (<c>artifact.h:236-243</c>).
+    /// </summary>
+    /// <remarks>
+    /// One less than the id, so that the two sprite sets line up with the same numbering. An empty slot has no icon and
+    /// gets the reference's <c>255</c>, which is past the end of the frame list — a caller that draws an empty slot must
+    /// skip it rather than blit that frame.
+    /// </remarks>
+    /// <param name="artifact">The artifact whose icon is wanted.</param>
+    /// <returns>The frame index.</returns>
+    public static uint MiniSpriteIndex(ArtifactType artifact) =>
+        artifact == ArtifactType.Unknown ? UnknownMiniSpriteIndex : (uint)((int)artifact - 1);
+
+    /// <summary>
+    /// The frame of the 64x64 icon in <c>ARTIFACT</c>, <c>Artifact::IndexSprite64()</c> (<c>artifact.h:246-249</c>).
+    /// </summary>
+    /// <param name="artifact">The artifact whose icon is wanted.</param>
+    /// <returns>The frame index, which is the id itself.</returns>
+    public static uint FullSpriteIndex(ArtifactType artifact) => (uint)(int)artifact;
 }

@@ -20,8 +20,8 @@ namespace FHeroes2.Game.Gui;
 /// <c>released[N] = letter;</c>。小写字母与 <c>$</c>、<c>@</c> 等参考本来就不画，留着 1×1 透明图。
 /// </para>
 /// <para>
-/// 未搬：各代码页的补充字形（<c>generateCP1250GoodButtonFont</c> … <c>generateCP1254GoodButtonFont</c>，
-/// <c>ui_font.cpp:5604</c> 起），要 <c>getCodePage( language )</c> 才能选，C# 资产层还没有这个概念。
+/// 各代码页的补充字形（<c>generateCP1250GoodButtonFont</c> … <c>generateCP1254GoodButtonFont</c>，
+/// <c>ui_font.cpp:5604</c> 起）在 <c>ButtonFont.Cp*.cs</c>，本文件只画 ASCII 那段。
 /// </para>
 /// </remarks>
 internal static partial class ButtonFont

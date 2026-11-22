@@ -94,9 +94,9 @@ public sealed class IconBar
     /// <param name="race">Race of the castle.</param>
     /// <param name="hasFort">Whether the castle is fortified, i.e. a castle and not a town.</param>
     /// <returns>
-    /// The frame index, or <see langword="null"/> for a race that has no sprite: the reference maps a
-    /// random castle to frames 25 and 26, which the file does not have (they are the editor's icon of
-    /// "random castle" and the map always stores the race it resolved to).
+    /// The frame index, or <see langword="null"/> for a race the data cannot hold. A random castle is frames 25 and
+    /// 26, the editor's "random castle" icons; the reference asserts and answers 1 (an empty slot frame) for anything
+    /// else, which the port turns into <see langword="null"/> rather than painting a wrong sprite.
     /// </returns>
     public static int? CastleFrame(MapRace race, bool hasFort) =>
         race switch
@@ -107,6 +107,12 @@ public sealed class IconBar
             MapRace.Warlock => (hasFort ? CastleFirstFrame : TownFirstFrame) + 3,
             MapRace.Wizard => (hasFort ? CastleFirstFrame : TownFirstFrame) + 4,
             MapRace.Necromancer => (hasFort ? CastleFirstFrame : TownFirstFrame) + 5,
+
+            // The editor's "random castle" icon lives at frames 25 and 26 (Race::RAND in the reference).
+            MapRace.Random => hasFort ? 25 : 26,
+
+            // The reference asserts and falls back to frame 1, which is an empty slot: answering "nothing" is the
+            // port's way of not painting a wrong sprite for a race the data cannot have.
             _ => null,
         };
 

@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Dialogs;
@@ -293,6 +294,72 @@ public sealed class SettingsDialog
     /// <param name="hotKey">Hot key that was pressed.</param>
     /// <returns>Value of the button the key stands for, or <see cref="DialogButton.None"/>.</returns>
     public DialogButton ProcessHotKey(ButtonHotKey hotKey) => _buttons.ProcessHotKey(hotKey);
+
+    /// <summary>
+    /// Runs the dialog until OK or CANCEL closes it, the event loop of
+    /// <c>dialog::openGameSettings()</c> (<c>dialog_gamesettings.cpp:224-260</c>).
+    /// </summary>
+    /// <remarks>
+    /// The rows change on a click, so the caller reads <see cref="Option"/> for every row after OK and
+    /// applies what changed, exactly like the reference does after its loop.
+    /// </remarks>
+    /// <param name="target">Frame to draw into and to submit; it must already contain the scene behind.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>
+    /// <see cref="DialogButton.Ok"/> or <see cref="DialogButton.Cancel"/>; <see cref="DialogButton.None"/>
+    /// when the client was asked to exit before the player answered.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">No <see cref="IEventEngine"/> is attached.</exception>
+    public DialogButton Show(PixelBuffer target, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        LocalEvent eventState = events ?? LocalEvent.Current;
+        IEventEngine engine = eventState.Engine ?? throw new InvalidOperationException(
+            "SettingsDialog.Show() needs an event engine: attach LocalEvent.Engine first.");
+
+        DialogButton answer = DialogButton.None;
+        bool leftDown = false;
+
+        while (answer == DialogButton.None)
+        {
+            if (!eventState.HandleEvents(sleepAfterEventProcessing: false))
+            {
+                return DialogButton.None;
+            }
+
+            if (eventState.HasMouseMoved)
+            {
+                SetCursor(eventState.CursorPosition);
+            }
+
+            bool down = eventState.IsMouseLeftButtonPressed;
+
+            if (down != leftDown)
+            {
+                leftDown = down;
+                answer = SetLeftButton(down);
+            }
+
+            if (answer == DialogButton.None)
+            {
+                if (eventState.IsKeyPressed(Key.Enter) || eventState.IsKeyPressed(Key.Space))
+                {
+                    answer = ProcessHotKey(ButtonHotKey.Okay);
+                }
+                else if (eventState.IsKeyPressed(Key.Escape))
+                {
+                    answer = Cancel();
+                }
+            }
+
+            Draw(target);
+            engine.Render(target.Bounds);
+            engine.Sleep(LocalEvent.LoopSleepTimeMs);
+        }
+
+        return answer;
+    }
 
     /// <summary>
     /// X of the value of row <paramref name="index"/>: right aligned inside the row, but never left

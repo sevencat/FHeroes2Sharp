@@ -40,15 +40,17 @@ public enum KeyboardEventState
 /// what happened, <c>MouseClickLeft( area )</c> and friends answer what that means.
 /// </para>
 /// <para>
-/// <b>What is not ported.</b> <c>HandleEvents</c> itself, because it is the SDL side of the class: it
-/// polls an <c>EventEngine</c>, sleeps, renders and feeds SDL_mixer. The port keeps
-/// <see cref="BeginFrame"/> (the state reset at the top of <c>HandleEvents</c>,
-/// <c>localevent.cpp:1243-1262</c>) and lets the scene translate SDL events into
-/// <see cref="OnMouseMotion"/>, <see cref="OnMouseButton"/>, <see cref="OnKeyboard"/> and
-/// <see cref="OnMouseWheel"/>. The gamepad (<c>onController*</c>), the two-finger touchpad gesture
-/// (<c>onTouchFingerEvent</c>) and the emulated pointer are not translated: they need SDL devices and
-/// a render loop. <c>KeySymGetName</c> goes through <c>SDL_GetKeyName</c> and is not here either;
-/// <see cref="KeyText"/> has the character side of the keyboard.
+/// <b>How <c>HandleEvents</c> is ported.</b> The reference's <c>HandleEvents</c>
+/// (<c>localevent.cpp:1243-1316</c>) is the frame: reset the one-shot states, let the platform engine
+/// poll and translate the events, render the affected area and sleep. The state reset is
+/// <see cref="BeginFrame"/>, the SDL half is <see cref="IEventEngine"/> and the frame is
+/// <see cref="HandleEvents"/> itself — a dialog can therefore be written exactly like the reference,
+/// <c>while ( le.HandleEvents() ) { ... }</c>. A scene that drives its own loop keeps translating SDL
+/// events into <see cref="OnMouseMotion"/>, <see cref="OnMouseButton"/>, <see cref="OnKeyboard"/> and
+/// <see cref="OnMouseWheel"/> directly. The gamepad (<c>onController*</c>), the two-finger touchpad
+/// gesture (<c>onTouchFingerEvent</c>) and the emulated pointer are still not translated: they need
+/// SDL devices and a render loop. <c>KeySymGetName</c> goes through <c>SDL_GetKeyName</c> and is not
+/// here either; <see cref="KeyText"/> has the character side of the keyboard.
 /// </para>
 /// <para>
 /// The reference has a process-wide instance behind <c>LocalEvent::Get()</c>; the port mirrors that
@@ -64,7 +66,15 @@ public sealed class LocalEvent
     /// </summary>
     public const ulong LongPressTimeoutMs = 850;
 
+    /// <summary>
+    /// How long a frame sleeps after the events have been processed, the reference's
+    /// <c>globalLoopSleepTime</c> (<c>localevent.cpp:1286-1288</c>).
+    /// </summary>
+    public const ulong LoopSleepTimeMs = 1;
+
     private readonly LongPressDelay _longPressDelay;
+
+    private IEventEngine? _engine;
 
     private ActionStates _actionStates = ActionStates.None;
     private Key _currentKey = Key.None;
@@ -98,6 +108,23 @@ public sealed class LocalEvent
     /// (<c>localevent.cpp:1236-1241</c>).
     /// </summary>
     public static LocalEvent Current { get; } = new();
+
+    /// <summary>
+    /// The platform side of <see cref="HandleEvents"/>, the reference's <c>_engine</c>
+    /// (<c>localevent.h:481</c>). The application attaches its implementation, a test attaches a fake.
+    /// </summary>
+    public IEventEngine? Engine
+    {
+        get => _engine;
+        set => _engine = value;
+    }
+
+    /// <summary>
+    /// Area the caller has to present before drawing the next frame, the reference's
+    /// <c>display.updateNextRenderRoi( roi )</c> deferred by <c>HandleEvents( false )</c>
+    /// (<c>localevent.cpp:1302-1304</c>). Empty when nothing is pending.
+    /// </summary>
+    public Rect NextRenderArea { get; private set; }
 
     /// <summary>
     /// Called on every cursor movement with the new position; the rectangle it returns becomes
@@ -158,6 +185,60 @@ public sealed class LocalEvent
         {
             ResetStates(ActionStates.MouseTouch);
         }
+    }
+
+    /// <summary>
+    /// Runs one frame: resets the one-shot states, polls the platform events through <see cref="Engine"/>,
+    /// presents the affected area and sleeps, the reference's <c>HandleEvents</c>
+    /// (<c>localevent.cpp:1243-1316</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is what lets a dialog be written exactly like the reference,
+    /// <c>while ( le.HandleEvents() ) { ... }</c>, instead of being fed one event at a time by a scene.
+    /// </remarks>
+    /// <param name="sleepAfterEventProcessing">
+    /// Whether to present and sleep, the reference's <c>sleepAfterEventProcessing</c>. Pass
+    /// <see langword="false"/> when the caller draws right after the call: the area is then only
+    /// recorded in <see cref="NextRenderArea"/>.
+    /// </param>
+    /// <param name="allowExit">Whether a window close request may end the loop.</param>
+    /// <returns><see langword="false"/> when the application has to stop.</returns>
+    /// <exception cref="InvalidOperationException">No <see cref="Engine"/> is attached.</exception>
+    public bool HandleEvents(bool sleepAfterEventProcessing = true, bool allowExit = false)
+    {
+        IEventEngine engine = Engine
+            ?? throw new InvalidOperationException(
+                "No IEventEngine is attached to this LocalEvent; attach one before calling HandleEvents().");
+
+        NextRenderArea = Rect.Empty;
+        BeginFrame();
+
+        if (!engine.HandleEvents(this, allowExit, out bool displayRefreshRequired))
+        {
+            return false;
+        }
+
+        // "To maintain color cycling animation we need to render the whole frame with an updated palette."
+        Rect renderArea = displayRefreshRequired ? engine.ScreenArea : CursorRenderArea;
+
+        if (sleepAfterEventProcessing)
+        {
+            if (!renderArea.IsEmpty)
+            {
+                engine.Render(renderArea);
+            }
+
+            // The reference subtracts the time the event processing took from its 1 ms budget
+            // (localevent.cpp:1294-1297). The port sleeps the whole millisecond and leaves the real
+            // frame rate to the presenter's vsync.
+            engine.Sleep(LoopSleepTimeMs);
+        }
+        else if (!renderArea.IsEmpty)
+        {
+            NextRenderArea = renderArea;
+        }
+
+        return true;
     }
 
     /// <summary>Whether the cursor moved this frame, <c>hasMouseMoved()</c>.</summary>

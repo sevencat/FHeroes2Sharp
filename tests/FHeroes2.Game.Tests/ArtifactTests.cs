@@ -52,6 +52,19 @@ public class ArtifactTests
     }
 
     [Fact]
+    public void TheSpriteIndicesFollowTheReference()
+    {
+        // ARTIFACT is indexed by the id itself and ARTFX by the id minus one (artifact.h:236-249).
+        Assert.Equal((uint)ArtifactType.UltimateBook, ArtifactTypes.FullSpriteIndex(ArtifactType.UltimateBook));
+        Assert.Equal((uint)ArtifactType.UltimateBook - 1, ArtifactTypes.MiniSpriteIndex(ArtifactType.UltimateBook));
+
+        // The empty slot has no icon at all; the reference points past the end of the frame list.
+        Assert.Equal(ArtifactTypes.UnknownMiniSpriteIndex,
+            ArtifactTypes.MiniSpriteIndex(ArtifactType.Unknown));
+        Assert.Equal(255u, ArtifactTypes.UnknownMiniSpriteIndex);
+    }
+
+    [Fact]
     public void TheNumbersOfAKnownArtifactAreTheReferenceOnes()
     {
         Assert.True(ArtifactTable.Get(ArtifactType.UltimateBook).TryGetBonus(ArtifactBonusType.KnowledgeSkill, out ArtifactBonus book));

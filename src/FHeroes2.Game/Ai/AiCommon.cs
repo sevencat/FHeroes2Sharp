@@ -553,20 +553,8 @@ public static class AiCommon
     /// The hero standing on the castle, <c>world.GetHero( castle )</c> of the reference.
     /// </summary>
     /// <remarks>
-    /// The port's <c>Castle</c> does not know its guests yet, so the hero is found by the tile it stands on; the
-    /// reference does the same lookup inside <c>Castle::BuyBuilding</c>. It is internal because the planner asks the
-    /// same question when it decides whether a castle has anyone to hand its garrison to.
+    /// Kept as a thin alias of <see cref="World.GetHero(CastleTown)"/> for the planner, which asks the same question
+    /// when it decides whether a castle has anyone to hand its garrison to.
     /// </remarks>
-    internal static Hero? FindGuestHero(World world, CastleTown castle)
-    {
-        foreach (Hero hero in world.Heroes)
-        {
-            if (hero.MapIndex == castle.TileIndex)
-            {
-                return hero;
-            }
-        }
-
-        return null;
-    }
+    internal static Hero? FindGuestHero(World world, CastleTown castle) => world.GetHero(castle);
 }

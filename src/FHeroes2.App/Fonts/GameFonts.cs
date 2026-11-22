@@ -31,12 +31,14 @@ public sealed class GameFonts
 
     private GameFonts(
         IGlyphSource small,
+        IGlyphSource smallWhite,
         IGlyphSource normal,
         IGlyphSource yellow,
         IGlyphSource white,
         string description)
     {
         Small = small;
+        SmallWhite = smallWhite;
         Normal = normal;
         Yellow = yellow;
         White = white;
@@ -48,6 +50,16 @@ public sealed class GameFonts
 
     /// <summary><c>SMALFONT.ICN</c>: 8 pixel letters on an 11 pixel line.</summary>
     public IGlyphSource Small { get; }
+
+    /// <summary>
+    /// <c>SMALFONT.ICN</c> converted with <see cref="PaletteId.WhiteFont"/>, <c>FontType::smallWhite()</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reference draws most of the small text of the adventure interface with it — the spell names and
+    /// costs of the spell book, for one — and switches to <see cref="Small"/> (its <c>small{GRAY}</c>) for the
+    /// entries a hero cannot use right now.
+    /// </remarks>
+    public IGlyphSource SmallWhite { get; }
 
     /// <summary><c>FONT.ICN</c> in its original grey, with CJK filled in if a fallback loaded.</summary>
     public IGlyphSource Normal { get; }
@@ -91,10 +103,14 @@ public sealed class GameFonts
             BitmapFont yellow = normal.WithPalette(PaletteId.YellowFont);
             BitmapFont white = normal.WithPalette(PaletteId.WhiteFont);
 
+            // The small white text of the interface, `FontType::smallWhite()`.
+            BitmapFont smallWhite = small.WithPalette(PaletteId.WhiteFont);
+
             TextFont? cjkFace = face ?? TryGetBuiltInFace();
 
             GameFonts fonts = new(
                 Wrap(small, cjkFace),
+                Wrap(smallWhite, cjkFace),
                 Wrap(normal, cjkFace),
                 Wrap(yellow, cjkFace),
                 Wrap(white, cjkFace),

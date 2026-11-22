@@ -126,6 +126,23 @@ public sealed partial class Kingdom
     public KingdomModes Modes => _modes;
 
     /// <summary>
+    /// The row the hero list of the kingdom overview was scrolled to, <c>_topHeroInKingdomView</c>
+    /// (<c>kingdom.h:180</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference keeps this on the kingdom so the overview reopens where it was left; the view writes it back when
+    /// it closes (<c>kingdom_overview.cpp:928</c>).
+    /// </remarks>
+    public int TopHeroInKingdomView { get; set; }
+
+    /// <summary>
+    /// The row the town list of the kingdom overview was scrolled to, <c>_topCastleInKingdomView</c>
+    /// (<c>kingdom.h:181</c>).
+    /// </summary>
+    /// <remarks>See <see cref="TopHeroInKingdomView"/>; the reference writes it at <c>kingdom_overview.cpp:929</c>.</remarks>
+    public int TopCastleInKingdomView { get; set; }
+
+    /// <summary>
     /// The objects any hero of the kingdom has visited, newest first, <c>visit_object</c>.
     /// </summary>
     /// <remarks>

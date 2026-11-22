@@ -685,6 +685,68 @@ public sealed class StandardWindow
     }
 
     /// <summary>
+    /// Paints the groove a list scrollbar sits in, the
+    /// <c>StandardWindow::renderScrollbarBackground()</c> of <c>ui_window.cpp:400-431</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The groove is a 16 pixel wide column cut out of <c>ADVBORD.ICN</c> (<c>ADVBORDE.ICN</c> with the evil
+    /// interface): a 19 pixel cap at (536, 176), the repeatable 88 pixel body at (536, 196) repeated until the
+    /// 19 pixel foot at (536, 285) fits, then a four step shadow on the left of the column and under its foot.
+    /// </para>
+    /// <para>
+    /// As with <see cref="ApplyTextBackgroundShading"/>, the reference reads the frame itself and writes into its
+    /// own output; the port takes both.
+    /// </para>
+    /// </remarks>
+    /// <param name="output">Frame buffer to paint on.</param>
+    /// <param name="roi">Rectangle the groove covers, the full height of the list area.</param>
+    /// <param name="scrollBar">Frame 0 of <c>ADVBORD.ICN</c> or <c>ADVBORDE.ICN</c>.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="output"/> or <paramref name="scrollBar"/> is <see langword="null"/>.
+    /// </exception>
+    public static void RenderScrollbarBackground(PixelBuffer output, in Rect roi, Sprite scrollBar)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(scrollBar);
+
+        const int topPartHeight = 19;
+        const int scrollBarWidth = 16;
+        const int middlePartHeight = 88;
+        const int icnOffsetX = 536;
+        int middleAndBottomPartsHeight = roi.Height - topPartHeight;
+
+        // The cap of the groove.
+        Blit(output, scrollBar, icnOffsetX, 176, roi.X, roi.Y, scrollBarWidth, topPartHeight);
+
+        // The body, cut short by the foot when the last piece would run over it.
+        int middlePartCount = (roi.Height - (2 * topPartHeight) + middlePartHeight - 1) / middlePartHeight;
+        int offsetY = topPartHeight;
+
+        for (int index = 0; index < middlePartCount; ++index)
+        {
+            Blit(output, scrollBar, icnOffsetX, 196, roi.X, roi.Y + offsetY, scrollBarWidth,
+                Math.Min(middlePartHeight, middleAndBottomPartsHeight - offsetY));
+            offsetY += middlePartHeight;
+        }
+
+        // The foot.
+        Blit(output, scrollBar, icnOffsetX, 285, roi.X, roi.Y + middleAndBottomPartsHeight, scrollBarWidth,
+            topPartHeight);
+
+        // The shadow on the left and under the foot, one step per row and per column.
+        for (int index = 0; index < 4; ++index)
+        {
+            int transformId = index + 1;
+
+            ImageOps.ApplyTransform(output, roi.X - transformId, roi.Y + transformId, 1,
+                roi.Height - transformId, transformId);
+            ImageOps.ApplyTransform(output, roi.X - transformId, roi.Y + roi.Height + index, scrollBarWidth, 1,
+                transformId);
+        }
+    }
+
+    /// <summary>
     /// Draws the four small gems into the frame of the window, the
     /// <c>StandardWindow::applyGemDecoratedCorners()</c> of <c>ui_window.cpp:366-398</c>.
     /// </summary>

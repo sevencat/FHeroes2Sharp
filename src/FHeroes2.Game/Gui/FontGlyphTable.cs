@@ -26,8 +26,8 @@ namespace FHeroes2.Game.Gui;
 /// 语义相同：<see cref="Assets.Current"/> 一换，键就变了，旧表自然不再命中。
 /// </para>
 /// <para>
-/// 未搬：<c>BUTTON_*_FONT</c>（<c>generateButtonAlphabet</c> 手工画字形）、小号字体的 CRC 平移修补、
-/// CP1251 帧重排、法语资材的字符还原，以及 <c>ui_language</c> 的字符替换。
+/// 基表在修补、重排之后还要补上语言自己的字母（<see cref="FontAlphabet"/>，参考的 <c>ui_language.cpp:291</c>）；
+/// 按钮字体同理，由 <see cref="ButtonFont"/> 按语言补齐（<c>generateCPxxxxGoodButtonFont</c>）。
 /// </para>
 /// </remarks>
 internal static class FontGlyphTable
@@ -40,8 +40,8 @@ internal static class FontGlyphTable
     /// <summary>Repaired white glyph tables, the base every other face of a size is derived from.</summary>
     private static readonly Dictionary<(AssetBundle? Bundle, FontSize Size), Sprite?[]> BaseTables = new();
 
-    /// <summary>The four button faces, drawn on first use; no archive entry backs them.</summary>
-    private static ButtonFont.Faces? ButtonFaces;
+    /// <summary>The four button faces, drawn on first use per language; no archive entry backs them.</summary>
+    private static readonly Dictionary<SupportedLanguage, ButtonFont.Faces> ButtonFaces = new();
 
     /// <summary>One frame of a generated face; <see langword="null"/> when the frame is absent.</summary>
     /// <param name="size">Glyph size.</param>
@@ -175,17 +175,21 @@ internal static class FontGlyphTable
 
     /// <summary>
     /// Faces of the button font, <c>generateButtonAlphabet</c> (<c>ui_font.cpp:6808</c>). They are drawn
-    /// from scratch, so they depend on no archive and are generated once per process.
+    /// from scratch, so they depend on no archive; only the language tells which letters they carry.
     /// </summary>
     /// <exception cref="NotSupportedException">The reference has no such button colour.</exception>
     private static Sprite?[] GetButtonTable(FontSize size, FontColor color)
     {
+        SupportedLanguage language = GameLanguage.Current;
         ButtonFont.Faces faces;
 
         lock (SyncRoot)
         {
-            ButtonFaces ??= ButtonFont.Create();
-            faces = ButtonFaces.Value;
+            if (!ButtonFaces.TryGetValue(language, out faces))
+            {
+                faces = ButtonFont.Create(language);
+                ButtonFaces[language] = faces;
+            }
         }
 
         return (size, color) switch
@@ -260,6 +264,9 @@ internal static class FontGlyphTable
 
                 // 译版资材的帧序和 ASCII 对不上，重排一步放在修补之后、派生之前。
                 built = FontAssetFixes.Arrange(built, fingerprint, size);
+
+                // 资材没有的字母（西里尔、中欧、土耳其等）由代码页字表补齐，参考在重排之后做（ui_language.cpp:291）。
+                built = FontAlphabet.Apply(GameLanguage.Current, size, built);
             }
 
             BaseTables[key] = built;
@@ -274,13 +281,14 @@ internal static class FontGlyphTable
     /// </summary>
     /// <remarks>
     /// 参考返回的是数组长度：位图字体加载时前面补了 32 个空帧（<c>game_assets.cpp:2555</c>），所以长度 =
-    /// 32 + 帧数；译版资材重排后帧数会变，所以必须问已经排好的表。按钮字体没有前置空帧，长度就是 128。
+    /// 32 + 帧数；译版资材重排后帧数会变，所以必须问已经排好的表。按钮字体没有前置空帧，英语时是 128，
+    /// 补过码页字母的语言是 256。
     /// </remarks>
     /// <param name="size">Font size.</param>
     /// <returns>The highest character code the font covers, a space included.</returns>
     public static uint GetCharacterLimit(FontSize size) =>
         size is FontSize.ButtonReleased or FontSize.ButtonPressed
-            ? (uint)ButtonFont.AsciiCharSetSize
+            ? (uint)GetButtonTable(size, FontColor.White).Length
             : FontCharHandler.GlyphFrameOffset + (uint)GetBaseTable(size).Length;
 
     /// <summary>Draws <paramref name="glyph"/> at twice its size, the way <c>WHITE_LARGE_FONT</c> is grown.</summary>

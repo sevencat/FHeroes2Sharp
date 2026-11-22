@@ -25,8 +25,8 @@ namespace FHeroes2.UI.Dialogs;
 /// gets no element at all.
 /// </para>
 /// <para>
-/// <b>Not ported</b>: <c>Resource::getDescription()</c>, so the right click on an icon asks for a popup with the
-/// resource name and an empty body (<see cref="DialogElement.ProcessEvents"/> of the element).
+/// The right click on an icon asks for the resource popup of <c>ResourceDialogElement::showPopup()</c>
+/// (<c>ui_dialog.cpp:451-454</c>): the resource name over <see cref="ResourceText.Description"/>.
 /// </para>
 /// </remarks>
 public static class KingdomIncome
@@ -106,7 +106,7 @@ public static class KingdomIncome
                 resourceIcons[ResourceIconIndex.Of(item.Key)],
                 item.Value.ToString(CultureInfo.InvariantCulture),
                 ResourceText.Of(item.Key),
-                string.Empty));
+                ResourceText.Description));
         }
 
         return MessageBox.Create(header, body, headerFont, bodyFont, elements, startY, screen);

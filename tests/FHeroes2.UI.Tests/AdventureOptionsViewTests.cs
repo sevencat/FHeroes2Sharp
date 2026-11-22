@@ -2,6 +2,7 @@ using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
@@ -158,6 +159,145 @@ public sealed class AdventureOptionsViewTests
         view.SetLeftButton(true, new Point(260, 190));
 
         Assert.Equal(DialogButton.None, view.SetLeftButton(false, new Point(0, 0)));
+    }
+
+    [Fact]
+    public void Show_ThrowsWhenNoEngineIsAttached()
+    {
+        AdventureOptionsView view = CreateView();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            AdventureOptionsDialog.Show(new PixelBuffer(640, 480), view, true, new LocalEvent(() => 0)));
+    }
+
+    [Fact]
+    public void Show_RunsTheLoopUntilAButtonIsReleased()
+    {
+        AdventureOptionsView view = CreateView();
+        PixelBuffer canvas = new(640, 480);
+
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            LocalEvent events = new(() => 0);
+            FakeEngine engine = new()
+            {
+                OnFrame = (state, frame) =>
+                {
+                    // The first frame presses the world button, the second releases it on the same one.
+                    if (frame == 0)
+                    {
+                        state.OnMouseMotion(new Point(260, 190));
+                        state.OnMouseButton(true, MouseButtonType.Left, new Point(260, 190));
+                    }
+                    else
+                    {
+                        state.OnMouseButton(false, MouseButtonType.Left, new Point(260, 190));
+                    }
+                },
+            };
+
+            events.Engine = engine;
+
+            Assert.Equal(DialogButton.World, AdventureOptionsDialog.Show(canvas, view, true, events));
+
+            // Two frames, each presented: the reference's render() runs once per loop iteration.
+            Assert.Equal(2, engine.Frames);
+            Assert.Equal(2, engine.Rendered.Count);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void Show_IgnoresTheDigButtonWhenDigIsDisabled()
+    {
+        AdventureOptionsView view = CreateView();
+        PixelBuffer canvas = new(640, 480);
+
+        using AssetBundle? assets = OpenArchives();
+
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+
+        try
+        {
+            LocalEvent events = new(() => 0);
+            FakeEngine engine = new()
+            {
+                OnFrame = (state, frame) =>
+                {
+                    // A click on the dig button (the fourth one) is ignored, then Escape closes the box.
+                    if (frame == 0)
+                    {
+                        state.OnMouseMotion(new Point(340, 240));
+                        state.OnMouseButton(true, MouseButtonType.Left, new Point(340, 240));
+                    }
+                    else if (frame == 1)
+                    {
+                        state.OnMouseButton(false, MouseButtonType.Left, new Point(340, 240));
+                    }
+                    else
+                    {
+                        state.OnKeyboard(Key.Escape, KeyModifier.None, KeyboardEventState.Down);
+                    }
+                },
+            };
+
+            events.Engine = engine;
+
+            Assert.Equal(DialogButton.Cancel, AdventureOptionsDialog.Show(canvas, view, false, events));
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    /// <summary>An event engine that plays a scripted frame at a time and stops after a few of them.</summary>
+    private sealed class FakeEngine : IEventEngine
+    {
+        public Rect ScreenArea => new(0, 0, 640, 480);
+
+        public List<Rect> Rendered { get; } = [];
+
+        public int Frames { get; private set; }
+
+        public Action<LocalEvent, int>? OnFrame { get; set; }
+
+        public bool HandleEvents(LocalEvent state, bool allowExit, out bool displayRefreshRequired)
+        {
+            displayRefreshRequired = false;
+
+            if (Frames >= 8)
+            {
+                return false;
+            }
+
+            OnFrame?.Invoke(state, Frames++);
+
+            return true;
+        }
+
+        public void Render(Rect area) => Rendered.Add(area);
+
+        public void Sleep(ulong milliseconds)
+        {
+        }
     }
 
     private static AdventureOptionsView CreateView() =>

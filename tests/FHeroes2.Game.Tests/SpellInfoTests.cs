@@ -175,6 +175,121 @@ public sealed class SpellInfoTests
         }
     }
 
+    [Fact]
+    public void WithoutACasterTheTableSentenceKeepsItsOwnCount()
+    {
+        // updateSpellDescription() writes one and two out and leaves every other number as a digit
+        // (spell_info.cpp:50-64).
+        Assert.Equal(
+            "Removes all negative spells cast upon one of your units, and restores up to 5 HP per level of spell power.",
+            SpellInfo.GetDescription(new Spell(SpellType.Cure)));
+
+        Assert.Equal("Increases the speed of any creature by two.",
+            SpellInfo.GetDescription(new Spell(SpellType.Haste)));
+    }
+
+    [Fact]
+    public void ADamageSpellAddsItsDamage()
+    {
+        Hero hero = Caster(3);
+
+        Assert.Equal(
+            "Causes a giant fireball to strike the selected area, damaging all nearby creatures."
+            + "\n\nThis spell does 30 points of damage.",
+            SpellInfo.GetDescription(new Spell(SpellType.Fireball), hero));
+
+        // The artifacts of the caster count: the fire artifact adds half again.
+        hero.BagArtifacts.Push(ArtifactType.EverhotLavaRock);
+
+        Assert.EndsWith("\n\nThis spell does 45 points of damage.",
+            SpellInfo.GetDescription(new Spell(SpellType.Fireball), hero), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASummoningSpellAddsItsCreatures()
+    {
+        Hero hero = Caster(4);
+
+        Assert.Equal(
+            "Summons Earth Elementals to fight for your army.\n\nThis spell summons\n12 Earth Elementals.",
+            SpellInfo.GetDescription(new Spell(SpellType.SummonEElement), hero));
+
+        // The summoning artifact doubles the count.
+        hero.BagArtifacts.Push(ArtifactType.BookElements);
+
+        Assert.EndsWith("\n\nThis spell summons\n24 Earth Elementals.",
+            SpellInfo.GetDescription(new Spell(SpellType.SummonEElement), hero), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HealingAndResurrectionAddTheirHitPoints()
+    {
+        Assert.EndsWith("\n\nThis spell restores 15 HP.",
+            SpellInfo.GetDescription(new Spell(SpellType.Cure), Caster(3)), StringComparison.Ordinal);
+
+        Hero strong = Caster(2);
+        strong.BagArtifacts.Push(ArtifactType.Ankh);
+
+        Assert.EndsWith("\n\nThis spell restores 200 HP.",
+            SpellInfo.GetDescription(new Spell(SpellType.Resurrect), strong), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AGuardianSpellNamesItsCreatureAndTheMine()
+    {
+        Hero hero = Caster(2);
+
+        Assert.Equal(
+            "Sets Earth Elementals to guard a mine against enemy armies."
+            + "\n\nThis spell summons 8 Earth Elementals to guard the mine.",
+            SpellInfo.GetDescription(new Spell(SpellType.SetEGuardian), hero));
+
+        // Haunt is a guardian too, and the creature it calls is the ghost.
+        Spell haunt = new(SpellType.Haunt);
+
+        Assert.EndsWith(
+            $"\n\nThis spell summons {SpellInfo.GetGuardianMonsterCount(haunt, 2)} Ghosts to guard the mine.",
+            SpellInfo.GetDescription(haunt, hero), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HypnotizeAddsTheHitPointsItControls()
+    {
+        Assert.Equal(
+            "Brings a single enemy unit under your control if its hits are less than 25 times the caster's spell power."
+            + "\n\nThis spell controls up to\n50 HP.",
+            SpellInfo.GetDescription(new Spell(SpellType.Hypnotize), Caster(2)));
+    }
+
+    [Fact]
+    public void TownGateNamesTheNearestTownOfTheKingdom()
+    {
+        World world = HeroOnGrass(out Hero hero, out _);
+
+        CastleTown far = new(24, MapRace.Knight) { Name = "Farhold" };
+        CastleTown near = new(7, MapRace.Knight) { Name = "Stonehelm" };
+
+        world.GetKingdom(hero.Color).AddCastle(far);
+        world.GetKingdom(hero.Color).AddCastle(near);
+
+        // The hero stands on (2, 2); Stonehelm is the tile straight above, Farhold the far corner.
+        Assert.EndsWith("\n\nThe nearest town is Stonehelm.",
+            SpellInfo.GetDescription(new Spell(SpellType.TownGate), hero, world), StringComparison.Ordinal);
+
+        // Without a world the town cannot be looked up and the table sentence stands alone.
+        Assert.DoesNotContain("\n\n", SpellInfo.GetDescription(new Spell(SpellType.TownGate), hero),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>A knight with the given spell power and an empty bag.</summary>
+    private static Hero Caster(int power)
+    {
+        Hero hero = new(1, MapRace.Knight);
+        hero.SetPrimarySkill(PrimarySkill.Power, power);
+
+        return hero;
+    }
+
     /// <summary>A 5 × 5 grass field with the hero at (2, 2) and every neighbour walkable.</summary>
     private static World HeroOnGrass(out Hero hero, out MapGeometry geometry)
     {

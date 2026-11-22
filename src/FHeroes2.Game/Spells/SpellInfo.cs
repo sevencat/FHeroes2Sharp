@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
@@ -6,6 +7,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.System;
 
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -27,9 +29,11 @@ namespace FHeroes2.Game.Spells;
 /// <see cref="GetSummonableBoat"/>, <see cref="IsHeroNearWater"/>) are the rest of the same file.
 /// </para>
 /// <para>
-/// <b>Not ported</b>: <c>getSpellDescription</c> (<c>spell_info.cpp:214-427</c>), the long sentence that wraps these
-/// numbers with the caster's state — it wants a <c>HeroBase</c>, the nearest castle and the map, so it waits for the
-/// spell book screen. The spell's own short description is <see cref="SpellText.GetDescription"/>.
+/// The last one, <see cref="GetDescription"/>, wraps those numbers in the sentences of <c>getSpellDescription()</c>
+/// (<c>spell_info.cpp:214-321</c>). The reference takes a <c>HeroBase *</c> and reaches back into the hero for the
+/// kingdom, the map and the castle; the port takes the <see cref="ISpellBookOwner"/> plus the <see cref="World"/>,
+/// and reads them only in the two branches that need them. The spell's own short description is
+/// <see cref="SpellText.GetDescription"/>.
 /// </para>
 /// </remarks>
 public static class SpellInfo
@@ -388,4 +392,150 @@ public static class SpellInfo
 
         return false;
     }
+
+    /// <summary>
+    /// What a spell does in the caster's own numbers, <c>getSpellDescription()</c>
+    /// (<c>spell_info.cpp:214-321</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference starts from the table sentence and fills its <c>%{count}</c> with the spell's own
+    /// <c>extraValue</c> — spelled out as "one" and "two" (<c>updateSpellDescription</c>,
+    /// <c>spell_info.cpp:50-64</c>) — then appends one more paragraph for the spells whose number depends on the
+    /// caster: damage, summoning, healing, resurrection, guardians, Town Gate and Hypnotize. Without a caster the
+    /// plain table sentence is the answer.
+    /// </para>
+    /// <para>
+    /// <b>Town Gate</b> needs a <see cref="Hero"/> — through a captain's book the reference answers without the
+    /// town — plus the <see cref="World"/> for the kingdom's castles and the map geometry. The reference also names
+    /// the hero standing in that town; the port's world cannot answer which hero is in a town yet, so the sentence
+    /// stops after the town name.
+    /// </para>
+    /// <para>
+    /// The two monster branches assert in the reference when a summoning or guardian spell has no creature of its
+    /// own; the port answers the plain table sentence instead, which is what the reference does in release builds.
+    /// </para>
+    /// </remarks>
+    /// <param name="spell">The spell.</param>
+    /// <param name="caster">The caster, or null for the plain table sentence.</param>
+    /// <param name="world">The world the caster stands in; only Town Gate reads it.</param>
+    /// <returns>The description, its paragraphs separated by a blank line.</returns>
+    public static string GetDescription(Spell spell, ISpellBookOwner? caster = null, World? world = null)
+    {
+        string description = FillCount(spell.GetDescription(), spell.ExtraValue());
+
+        if (caster is null)
+        {
+            return description;
+        }
+
+        uint spellPower = (uint)caster.GetPower();
+        ArtifactBag bag = caster.BagArtifacts;
+
+        if (spell.IsDamage())
+        {
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell does {GetDamage(spell, spellPower, bag)} points of damage.");
+        }
+
+        if (spell.IsSummon())
+        {
+            MonsterType monster = SummonedMonster(spell.Type);
+
+            if (monster == MonsterType.Unknown)
+            {
+                return spell.GetDescription();
+            }
+
+            uint summonCount = GetSummonMonsterCount(spell, spellPower, bag);
+
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell summons\n{summonCount} {MonsterNames.GetPluralName(monster, summonCount)}.");
+        }
+
+        if (spell.IsRestore())
+        {
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell restores {GetHPRestorePoints(spell, spellPower)} HP.");
+        }
+
+        if (spell.IsResurrect())
+        {
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell restores {GetResurrectPoints(spell, spellPower, bag)} HP.");
+        }
+
+        if (spell.IsGuardianType())
+        {
+            MonsterType monster = SummonedMonster(spell.Type);
+
+            if (monster == MonsterType.Unknown)
+            {
+                return spell.GetDescription();
+            }
+
+            uint guardianCount = GetGuardianMonsterCount(spell, spellPower);
+
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell summons {guardianCount} {MonsterNames.GetPluralName(monster, guardianCount)} to guard the mine.");
+        }
+
+        if (spell.Type == SpellType.TownGate && caster is Hero hero && world is not null
+            && world.Geometry is MapGeometry geometry
+            && GetNearestCastle(geometry, world.GetKingdom(hero.Color).Castles, geometry.GetPoint(hero.MapIndex)) is { } castle)
+        {
+            return description + "\n\n" + FormattableString.Invariant($"The nearest town is {castle.Name}.");
+        }
+
+        if (spell.Type == SpellType.Hypnotize)
+        {
+            return description + "\n\n" + FormattableString.Invariant(
+                $"This spell controls up to\n{GetHypnotizeMonsterHPPoints(spell, spellPower, bag)} HP.");
+        }
+
+        return description;
+    }
+
+    /// <summary>
+    /// Fills the <c>%{count}</c> of a table sentence with the spell's own number, <c>updateSpellDescription()</c>
+    /// (<c>spell_info.cpp:50-64</c>).
+    /// </summary>
+    /// <remarks>
+    /// One and two are written out, everything else is a digit — "summons one Air Elemental", "summons 3 …" — and
+    /// every occurrence is replaced.
+    /// </remarks>
+    /// <param name="description">The table sentence of the spell.</param>
+    /// <param name="count">The <c>extraValue</c> of the spell.</param>
+    /// <returns>The sentence with its placeholder filled in.</returns>
+    private static string FillCount(string description, uint count)
+    {
+        string text = count switch
+        {
+            1 => "one",
+            2 => "two",
+            _ => count.ToString(CultureInfo.InvariantCulture),
+        };
+
+        return description.Replace("%{count}", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The creature a summoning or guardian spell brings, <c>Monster::Monster( const Spell &amp; )</c>
+    /// (<c>monster.cpp:77-110</c>).
+    /// </summary>
+    /// <remarks>
+    /// Each element serves both its summoning spell and its guardian, Haunt brings a ghost, and every other spell
+    /// has no creature — the <c>UNKNOWN</c> of the reference, <see cref="MonsterType.Unknown"/> here.
+    /// </remarks>
+    /// <param name="type">The spell.</param>
+    /// <returns>The creature, or <see cref="MonsterType.Unknown"/> for a spell that brings none.</returns>
+    private static MonsterType SummonedMonster(SpellType type) => type switch
+    {
+        SpellType.SetEGuardian or SpellType.SummonEElement => MonsterType.EarthElement,
+        SpellType.SetAGuardian or SpellType.SummonAElement => MonsterType.AirElement,
+        SpellType.SetFGuardian or SpellType.SummonFElement => MonsterType.FireElement,
+        SpellType.SetWGuardian or SpellType.SummonWElement => MonsterType.WaterElement,
+        SpellType.Haunt => MonsterType.Ghost,
+        _ => MonsterType.Unknown,
+    };
 }

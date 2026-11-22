@@ -35,10 +35,10 @@ namespace FHeroes2.UI.Dialogs;
 public sealed class FrameBox
 {
     /// <summary>Width of the text area, <c>fheroes2::boxAreaWidthPx</c>.</summary>
-    public const int AreaWidth = 244;
+    public const int AreaWidth = UiConstants.BoxAreaWidthPx;
 
     /// <summary>Horizontal distance between the text area and the outside of the frame, <c>fheroes2::borderWidthPx</c>.</summary>
-    public const int BorderWidth = 16;
+    public const int BorderWidth = UiConstants.BorderWidthPx;
 
     /// <summary>Gap between the border and the text area, <c>offsetFromBorder</c> of the reference.</summary>
     public const int CornerOffset = 6;

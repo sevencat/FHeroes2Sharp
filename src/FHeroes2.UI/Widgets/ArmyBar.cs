@@ -40,22 +40,12 @@ public enum ArmyBarHotKey
 /// <c>ArmyBar::RedrawItem()</c> (<c>army_bar.cpp:275</c>) and the two of <c>renderMonsterFrame()</c>
 /// (<c>ui_monster.cpp:36</c>).
 /// </summary>
-public interface IArmyBarSprites
+public interface IArmyBarSprites : IMonsterFrameSprites
 {
     /// <summary>A mini monster, <c>MONS32</c>.</summary>
     /// <param name="monster">The creature.</param>
     /// <returns>The 32x32 sprite, or <see langword="null"/> when it is missing.</returns>
     Sprite? GetMiniMonster(MonsterType monster);
-
-    /// <summary>The plate behind a full portrait, <c>STRIP</c> frames 4…10.</summary>
-    /// <param name="race">The creature's race.</param>
-    /// <returns>The sprite, or <see langword="null"/> when it is missing.</returns>
-    Sprite? GetRaceFrame(MapRace race);
-
-    /// <summary>A creature portrait, the <c>MONH</c>-style frame 0 of the creature's own ICN.</summary>
-    /// <param name="monster">The creature.</param>
-    /// <returns>The sprite, or <see langword="null"/> when it is missing.</returns>
-    Sprite? GetMonsterFrame(MonsterType monster);
 }
 
 /// <summary>
@@ -139,7 +129,7 @@ public readonly record struct ArmyBarEvent(
 /// answer as <see cref="ArmyBarHotKey"/> because which key is down is the screen's business.
 /// </para>
 /// </remarks>
-public sealed partial class ArmyBar
+public sealed partial class ArmyBar : ItemsActionBar<Troop>
 {
     /// <summary>The size of a mini monster slot, <c>{ 43, 43 }</c> (<c>army_bar.cpp:212</c>).</summary>
     public const int MiniMonsterItemSize = 43;
@@ -154,12 +144,11 @@ public sealed partial class ArmyBar
     internal const DialogButton InfoButtons =
         DialogButton.Yes | DialogButton.Ok | DialogButton.No | DialogButton.Cancel;
 
-    private readonly ItemsBarLayout _layout = new();
     private Army? _army;
     private Sprite? _background;
     private Sprite? _darkenedBackground;
     private Sprite? _cursor;
-    private int _selectedIndex = -1;
+    private IArmyBarSprites? _sprites;
 
     /// <summary>
     /// Creates a bar, <c>ArmyBar::ArmyBar()</c> (<c>army_bar.cpp:189</c>).
@@ -190,17 +179,12 @@ public sealed partial class ArmyBar
         if (miniSprites)
         {
             Size size = new(MiniMonsterItemSize, MiniMonsterItemSize);
-            _layout.SetSingleItemSize(size);
+            SetSingleItemSize(size);
             _cursor = CreateCursor(size);
         }
-    }
 
-    /// <summary>The table geometry, the reference's <c>ItemsActionBar</c> position members.</summary>
-    /// <remarks>
-    /// The caller sets the table size — five columns and one row for an army bar — and the rendering offset, exactly
-    /// as the screens do in the reference (<c>armyBar.setTableSize( { 5, 1 } );</c>).
-    /// </remarks>
-    public ItemsBarLayout Layout => _layout;
+        SetContentForArmy();
+    }
 
     /// <summary>Whether the bar shows mini monsters, <c>use_mini_sprite</c>.</summary>
     public bool UseMiniSprites { get; }
@@ -229,16 +213,17 @@ public sealed partial class ArmyBar
     public string Message { get; private set; } = string.Empty;
 
     /// <summary>The selected slot, or <c>-1</c>.</summary>
-    public int SelectedIndex => _selectedIndex;
-
-    /// <summary>Whether a slot is selected, <c>isSelected()</c>.</summary>
-    public bool IsSelected => _selectedIndex >= 0;
+    /// <remarks>
+    /// <c>ItemsActionBar::GetSelectedIndex()</c> answers the item count when nothing is selected, because it measures
+    /// the distance to <c>items.end()</c>; the bar's own callers expect <c>-1</c>, so the negative case is folded here.
+    /// </remarks>
+    public int SelectedIndex => IsSelected ? GetSelectedIndex() : -1;
 
     /// <summary>The army shown, <c>_army</c>.</summary>
     public Army? Army => _army;
 
     /// <summary>How many slots the bar acts on: the army's five, or none without an army.</summary>
-    public int ItemsCount => _army is null ? 0 : Army.MaximumTroopCount;
+    public int ItemsCount => ItemCount;
 
     /// <summary>
     /// Replaces the army, <c>ArmyBar::SetArmy()</c> (<c>army_bar.cpp:222</c>).
@@ -253,6 +238,34 @@ public sealed partial class ArmyBar
 
         _army = army;
         ResetSelected();
+        SetContentForArmy();
+    }
+
+    /// <summary>
+    /// Hands the army's five slots to the base class, <c>SetContent( _army-&gt;GetTroops() )</c>.
+    /// </summary>
+    /// <remarks>
+    /// A slot is the army's own <see cref="Troop"/> object, not a copy, so a troop that is merged or emptied anywhere
+    /// else is painted as it is now. Without an army the bar has no items at all, which is what makes
+    /// <see cref="ItemsCount"/> zero and every hit test answer "nothing".
+    /// </remarks>
+    private void SetContentForArmy()
+    {
+        if (_army is null)
+        {
+            SetContent(Array.Empty<Troop>());
+
+            return;
+        }
+
+        Troop[] troops = new Troop[Army.MaximumTroopCount];
+
+        for (int i = 0; i < troops.Length; ++i)
+        {
+            troops[i] = _army.GetTroop(i);
+        }
+
+        SetContent(troops);
     }
 
     /// <summary>
@@ -271,7 +284,7 @@ public sealed partial class ArmyBar
     {
         Debug.Assert(UseMiniSprites, "The reference only builds this background for a mini sprite bar.");
 
-        _layout.SetSingleItemSize(size);
+        SetSingleItemSize(size);
 
         Sprite background = new(size.Width, size.Height);
         ImageOps.FillSprite(background, background.Image.Bounds, fillColor);
@@ -300,7 +313,7 @@ public sealed partial class ArmyBar
 
         _background = background;
         _cursor = cursor;
-        _layout.SetSingleItemSize(new Size(background.Width, background.Height));
+        SetSingleItemSize(new Size(background.Width, background.Height));
 
         // The editor's empty army shows the slot dark with "Default troop" over it (army_bar.cpp:252-257). The
         // reference darkens the frame every time it paints; the table is static, so the port darkens it once.
@@ -310,29 +323,22 @@ public sealed partial class ArmyBar
         _darkenedBackground = darkened;
     }
 
-    /// <summary>Clears the selection, <c>ArmyBar::ResetSelected()</c> (<c>army_bar.cpp:305</c>).</summary>
-    public void ResetSelected() => _selectedIndex = -1;
-
     /// <summary>
     /// Paints the whole bar, <c>ArmyBar::Redraw()</c> (<c>army_bar.cpp:311</c>).
     /// </summary>
     /// <param name="output">The frame buffer.</param>
     /// <param name="sprites">The creature artwork; <see langword="null"/> draws backgrounds and counts only.</param>
+    /// <remarks>
+    /// <c>ItemsBar::Redraw()</c> walks the slots and asks for a background and then an item, so the artwork of this
+    /// frame only has to be remembered before the base class runs.
+    /// </remarks>
     public void Redraw(PixelBuffer output, IArmyBarSprites? sprites = null)
     {
         ArgumentNullException.ThrowIfNull(output);
 
-        for (int i = 0; i < _layout.Count; ++i)
-        {
-            Rect area = _layout.GetItemRect(i);
+        _sprites = sprites;
 
-            RedrawBackground(area, output);
-
-            if (i < ItemsCount)
-            {
-                RedrawItem(i, area, i == _selectedIndex, output, sprites);
-            }
-        }
+        base.Redraw(output);
     }
 
     /// <summary>
@@ -340,7 +346,7 @@ public sealed partial class ArmyBar
     /// </summary>
     /// <param name="area">The slot.</param>
     /// <param name="output">The frame buffer.</param>
-    public void RedrawBackground(Rect area, PixelBuffer output)
+    public override void RedrawBackground(Rect area, PixelBuffer output)
     {
         ArgumentNullException.ThrowIfNull(output);
 
@@ -392,8 +398,21 @@ public sealed partial class ArmyBar
             return;
         }
 
-        Troop troop = _army!.GetTroop(index);
+        DrawTroop(_army!.GetTroop(index), area, selected, output, sprites);
+    }
 
+    /// <summary>
+    /// Paints one slot's monster and count, <c>ItemsActionBar::RedrawItem()</c> (<c>army_bar.cpp:265</c>).
+    /// </summary>
+    /// <param name="troop">The slot's troop.</param>
+    /// <param name="area">Its rectangle.</param>
+    /// <param name="selected">Whether it is selected.</param>
+    /// <param name="output">The frame buffer.</param>
+    public override void RedrawItem(Troop troop, Rect area, bool selected, PixelBuffer output) =>
+        DrawTroop(troop, area, selected, output, _sprites);
+
+    private void DrawTroop(Troop troop, Rect area, bool selected, PixelBuffer output, IArmyBarSprites? sprites)
+    {
         if (!troop.IsValid)
         {
             return;
@@ -434,18 +453,9 @@ public sealed partial class ArmyBar
         else
         {
             // renderMonsterFrame(): the race plate, then the creature portrait at its ICN offset (ui_monster.cpp:36).
-            Sprite? plate = sprites?.GetRaceFrame(troop.GetRace());
-
-            if (plate is not null)
+            if (sprites is not null)
             {
-                ImageOps.BlitSprite(output, new Point(area.X, area.Y), plate);
-            }
-
-            Sprite? frame = sprites?.GetMonsterFrame(troop.Monster);
-
-            if (frame is not null)
-            {
-                ImageOps.BlitSprite(output, new Point(area.X + frame.OffsetX, area.Y + frame.OffsetY), frame);
+                MonsterFrameRenderer.Render(troop.Monster, output, new Point(area.X, area.Y), sprites);
             }
 
             Text text = new(count, FontType.NormalWhite());

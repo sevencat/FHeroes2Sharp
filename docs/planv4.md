@@ -251,24 +251,24 @@
 
 | 参考文件 | 行数 | 端口对应 | 判定 |
 | --- | --- | --- | --- |
-| `ui_tool.cpp` | 861 | `Widgets/ColorFade.cs`、`DisplayFade*.cs`、`*Restorer.cs`、`HeroRacePortrait.cs`、`IntegerValueTyping.cs`、`TextInputField.cs`、`Game/Gui/LocalizedText.cs`、`MovableText.cs`、`SystemInfoRenderer.cs`、`TimedEventValidator.cs` | ①部分：剩 `getLocalizedStrings`（翻译层，不搬）、`UIScrollInertia`（G3 随 `interface_gamearea` 搬） |
+| `ui_tool.cpp` | 861 | `Widgets/ColorFade.cs`、`DisplayFade*.cs`、`*Restorer.cs`、`HeroRacePortrait.cs`、`IntegerValueTyping.cs`、`TextInputField.cs`、`Game/Gui/LocalizedText.cs`、`MovableText.cs`、`SystemInfoRenderer.cs`、`TimedEventValidator.cs`、`Widgets/ScrollInertia.cs` | ①完成（2026-11-22 核实）：`UIScrollInertia` 已在 `ScrollInertia.cs`，`interface_gamearea` 已接；只剩 `getLocalizedStrings`（翻译层，不搬） |
 | `cursor.cpp` | 225 | `Game/Cursor/CursorState.cs`、`CursorImages.cs`、`CursorRestorer.cs`、`ICursorRenderer.cs` | ①部分：缺 `engine/screen.cpp` 的软件光标实现（App 层），距离光标图由资材合成（`game_assets.cpp:3694-3740`）未搬 |
 | `ui_base.cpp` | 27 | 无 | ③纯缺失（`setIMEText` 一类平台钩子） |
 | `ui_button.cpp` | 813 | `Widgets/ButtonFactory.cs`、`ButtonBase.cs`、`ButtonSprite.cs`、`ButtonGroup.cs`、`ButtonArtwork.cs`、`ButtonRestorer.cs`、`Game/Assets/EmptyButtons.cs` | ①完成：剩 `ButtonGroup` 的文本构造函数（唯一调用方 `dialog_selectitems.cpp` 未转）与 `OptionButtonGroup`（依赖 `ActionObject` 观察者，端口无该机制） |
 | `ui_window.cpp` | 541 | `Dialogs/StandardWindow.cs`、`FrameBox.cs`、`Widgets/WindowPadding.cs` | ①部分：`FrameBox` 取的是 `dialog/dialog_box.cpp`，与 `ui_window.cpp` 的 `FrameBox` 不是同一件东西 |
 | `ui_dialog.cpp` | 849 | `Dialogs/DialogElement.cs` | ①完成：元素类齐全；`drawMonsterLine` 属于军队信息窗口（`dialog.cpp`），随 H 一并转 |
 | `ui_text.cpp` | 1132 | `Game/Gui/Text.cs`、`TextBase.cs`、`TextInput.cs`、`MultiFontText.cs`、`TextAlgorithms.cs`、`FontCharHandler.cs` | ①部分：全转完；`getCursorSprite`/`isFontAvailable`/`cursorChar` 落在 `FontCharHandler` |
-| `ui_font.cpp` | 6317 | `Assets/Fonts`（自建字形渲染） | ②未移植：整块待对拍 |
+| `ui_font.cpp` | 6317 | `Game/Gui/FontAlphabet.*`（2026-11-22 新建）、`FontRepairs`、`FontAssetFixes`、`FontFrenchRepairs`、`ButtonFont*`、`FontGlyphTable` | ①部分：`resizeCodePage` / `generateAlphabet` / 八字码页 `generateCPxxxxAlphabet` / 两个阴影助手 / `removeShadows` 已 1:1 落地（四千余条纯数据语句由 `tools/GenerateFontAlphabets.ps1` 从参考逐句转写，见 `FontAlphabet.Cp*.cs`），`modifyBaseNormalFont` / `modifyBaseSmallFont` / `applyFontVerticalGradient` / `generateButtonAlphabet` / `updateButtonFont` / 按钮字体的五个 `generateCPxxxxGoodButtonFont`（`ButtonFont.Cp*.cs`，同一套转写脚本的 `GenerateButtonFontAlphabets.ps1`）/ `addContour` 也已在。**本文件无剩余** |
 | `ui_keyboard.cpp` | 1146 | `Dialogs/VirtualKeyboardLayout.cs`、`VirtualKeyboardArtwork.cs`、`VirtualKeyboardRenderer.cs`、`VirtualKeyboardButton.cs`、`VirtualKeyboardView.cs` | ①全转完；阻塞事件循环改由宿主驱动，`openVirtualNumpad` 的数值校验落在 `ReadNumpad` |
 | `ui_language.cpp` | 327 | `CodePage.cs`、`GameLanguage.cs`、`LanguageSwitcher.cs` | ①转完：语言名单 / 缩写 / 码页 / 切换守卫 |
 | `ui_scrollbar.cpp` / `ui_slider.cpp` / `ui_option_item.cpp` | 213/129/144 | `Widgets/ScrollBar.cs`、`ScrollSlider.cs`、`Slider.cs`、`OptionItem.cs` | 已 1:1（保留） |
-| `ui_castle.cpp` | 271 | `Widgets/ResourcePanel.cs` | ①部分 |
-| `ui_kingdom.cpp` | 78 | 无 | ③纯缺失 |
-| `ui_campaign.cpp` | 190 | 无 | ③纯缺失 |
-| `ui_mage_guild.cpp` | 192 | `Scenes/MageGuildWindow.cs`（自建） | ②未移植 |
-| `ui_monster.cpp` | 56 | 无 | ③纯缺失 |
-| `ui_map_interface.cpp` | 67 | `Widgets/StandardPopupWindow.cs` 部分 | ①部分 |
-| `ui_map_object.cpp` + `ui_object_rendering.h` | 316+52 | 无 | ③纯缺失 |
+| `ui_castle.cpp` | 271 | `Widgets/ResourcePanel.cs`、`Dialogs/CastleFlagPalette.cs`、`Interface/CastleIconPainter.cs`、`Dialogs/CastleScreenView.cs`、`Game/AdventureMap/IconBar.cs` | ①核实 2026-11-22：9 个函数逐个比对，修正 `getCastleIcnIndex` 的 `Race::RAND` 分支（应为 25/26 的编辑器帧，端口原来返回 null 并断言文件没有这两帧） |
+| `ui_kingdom.cpp` | 78 | `UI/Dialogs/LighthouseInfo.cs`、`KingdomIncome.cs` | ①完成（2026-11-22，两个函数都有落点） |
+| `ui_campaign.cpp` | 190 | `UI/Dialogs/CampaignPopupWindows.cs` | ①完成（2026-11-22）：`ShowScenarioBonus` / `ShowAward` 两个窗口 + `BuildMonsterFrame`；顺带补了它依赖的 `PrimarySkillNames.GetDescription` 与 `SecondarySkills.GetDescription` |
+| `ui_mage_guild.cpp` | 192 | `Dialogs/MageGuildDialog.cs`（`renderMageGuildBuilding`）、`Widgets/SpellScrollRow.cs`（`SpellsInOneRow`） | ①核实 2026-11-22：建筑居中（`GetActiveRoi`）、裁剪到左 200 列、随机种族的紫色调色板重映射、卷轴 110 步长与图标/名字位置全部一致；仅 `SpellsInOneRow::setCurrentSpell()` 未移植（只给编辑器用） |
+| `ui_monster.cpp` | 56 | `UI/Widgets/MonsterFrameRenderer.cs` | ①完成（2026-11-22）：`ArmyBar` 原来的内联段改为调用它 |
+| `ui_map_interface.cpp` | 67 | `Widgets/StandardPopupWindow.cs` | ①完成（2026-11-22 核实）：`displayStandardPopupWindow` 及其 `getPopupWindowPosition` 都已在内 |
+| `ui_map_object.cpp` + `ui_object_rendering.h` | 316+52 | `UI/Interface/TileRendering.cs`、`Game/Maps/ObjectRenderingInfo.cs` | ①完成（2026-11-22，随 G3 落地；DTO 就是头文件那一半） |
 | `interface_base.cpp` | 45 | `UI/Interface/BaseInterface.cs`、`UI/Interface/Redraw.cs` | ①部分：`Redraw` 掩码、边缘滚动判定、`GameArea`/`Radar` 持有与重绘队列已转；两个淡入方法待 `Game::validateDisplayFadeIn`（S14） |
 | `interface_border.cpp` | 428 | `UI/Interface/GameBorder.cs`、`UI/Interface/BorderWindow.cs` | ①完成（拖动循环改为宿主驱动的 `BorderDrag`） |
 | `interface_buttons.cpp` | 249 | `UI/Interface/ButtonsPanel.cs` | ①完成（点击返回 `ButtonsPanelAction`，事件由编排器执行；`SavePosition` 待 Settings 位置持久化） |
@@ -277,14 +277,14 @@
 | `interface_focus.cpp` | 237 | `UI/Interface/AdventureMap.cs`（`SetFocus` / `ResetFocus` / `UpdateFocus` / `RedrawFocus`）+ `Game/Audio/AdventureSounds.cs`（焦点音景） | ①完成（2026-11-22） |
 | `interface_gamearea.cpp` | 1053 | `UI/Interface/GameArea.cs` + `UI/Interface/GameArea.Render.cs` | ①完成：几何/滚动/拖动/惯性/命中在 `GameArea.cs`，`Redraw` / `redrawOnlyFog` / `renderTileAreaSelect` / `GenerateUltimateArtifactAreaSurface` 与 tile-unfit 分层在 `GameArea.Render.cs`；只剩 `AdventureMapScene` 的接线（G5） |
 | `interface_icons.cpp` | 433 | `UI/Interface/IconsPanel.cs` | ①完成（隐藏界面时无浮动石框，同 `Radar`；`SavePosition` 只写会话内 Settings；英雄头像按 `PORTXTRA` + `MINIPORT` + 移动力/法力/睡眠标记手绘，未复用 `Hero::PortraitRedraw` 的 `PORT_SMALL`） |
-| `interface_itemsbar.h` | 460 | `Widgets/ItemsBarLayout.cs`（自建） | ②未移植 |
+| `interface_itemsbar.h` | 460 | `Widgets/ItemsBar.cs` + `Widgets/ItemsActionBar.cs` | ①完成 2026-11-22：`ItemsBar<T>`（布局/命中/Redraw/事件分发/`SetContentItems`）与 `ItemsActionBar<T>`（选中、双条拖放、14 个 ActionBar 钩子）。`skill_bar.cpp` 的两条 bar 已改为继承；`ArmyBar`/`ArtifactsBar` 仍走自建 `ItemsBarLayout`，待下一轮接入后删除该类 |
 | `interface_list.h` | 540 | `Widgets/ListBox.cs`、`ListBoxBase.cs` | 已 1:1（保留） |
 | `interface_radar.cpp` | 459 | `UI/Interface/Radar.cs` | ①完成（View World 的拷贝构造 / `RedrawForViewWorld` / `QueueEventProcessingForWorldView` 待 H 的 `ViewWorld::ZoomROIs`；`SavePosition` 待 Settings 位置持久化） |
 | `interface_status.cpp` | 440 | `UI/Interface/StatusPanel.cs` | ①完成（`SavePosition` 只写会话内 Settings，待配置写入器；隐藏界面时无浮动石框，同 `Radar`） |
-| `player_info.cpp` | 380 | 无 | ③纯缺失 |
-| `skill_bar.cpp` | 394 | 无（`SpellScrollRow` 不是它） | ③纯缺失 |
-| `statusbar.cpp` | 62 | 无 | ③纯缺失 |
-| `ui_constants.h` | 33 | 散落在各处的常量 | ①部分 |
+| `player_info.cpp` | 380 | `Widgets/PlayersInfo.cs` | ①完成（2026-11-22）：`UpdateInfo` / `SwapPlayers` / 四个命中测试 / `RedrawInfo` / `QueueEventProcessing` / `ReadOnlyEventProcessing` / `ApplyName`；顺带补了它依赖的 `Mp2FileInfo.AllowChangeRace` 与 `GameScenarioInfo.GetStep4Player` |
+| `skill_bar.cpp` | 394 | `Widgets/SkillBars.cs`（`SkillBarArtwork`、`PrimarySkillsBar`、`SecondarySkillsBar`、`DrawSkillNames`） | ①完成（2026-11-22）：绘制部分；输入（点开说明、编辑器改等级）与 `isEditMode` 分支留给界面与 editor |
+| `statusbar.cpp` | 62 | `UI/Widgets/StatusBar.cs` | ①完成（2026-11-22） |
+| `ui_constants.h` | 33 | `UI/UiConstants.cs` | ①完成（2026-11-22）：五个常量收成单一来源，`GameBorder`/`Radar`/`FrameBox`/`FrameBorder`/`LighthouseInfo`/`StandardPopupWindow`/`ScenarioSelectionDialog` 各自保留自己的名字 |
 
 ### 5.3 执行顺序（一步一收口）
 
@@ -295,7 +295,7 @@
 | A3 | `ScreenPaletteRestorer` / `ApplicationClosureRestorer` / `GameInterfaceTypeRestorer` | `ui_tool.cpp:349-393` | 三件 RAII 换成移植 |
 | A4 | `CreateDeathWaveEffect` / `CreateHolyShoutEffect` / `createRippleEffect` | `ui_tool.cpp:485-652` | 战斗特效接入 |
 | A5 | `renderHeroRacePortrait` | `ui_tool.cpp:841-912` | 英雄对话框改用 |
-| A6 | `getLocalizedText` 两个重载；`getLocalizedStrings` 登记不搬（翻译层）；`UIScrollInertia` 推迟到 G3 | `ui_tool.cpp:890-1077` | 偏差入档 |
+| A6 | `getLocalizedText` 两个重载；`getLocalizedStrings` 登记不搬（翻译层）；`UIScrollInertia` → `Widgets/ScrollInertia.cs`（2026-11-22 核实已落地并有单测） | `ui_tool.cpp:890-1077` | 偏差入档 |
 | A7 | `processIntegerValueTyping`（A 系列漏项）；`RecruitDialog` 换成 `TypeKey` 并由 `RecruitWindowView` 调用。`SelectCountView` 没有键盘入口，留到该窗口补输入时接 | `ui_tool.cpp:766-839` | 招募输入走参考实现 |
 | B | `cursor.cpp` 全量：`CursorState` + `CursorRestorer` + 图源解析（`AdventureMapScene` 从来没有光标选择，原计划这条前提有误） | `cursor.cpp:1-271` | 光标状态机就位，等 App 层的软件指针接 |
 | C | `ui_text.cpp` 收尾：`getCursorSprite`、`isFontAvailable`、`cursorChar`；`TextInputField`（实际在 `ui_tool.cpp`，原计划归在 `ui_text` 有误）。存档 / 战役名输入对话框尚未移植，暂无调用方 | `ui_text.cpp:1398-1432`、`ui_tool.cpp:196-281` | 文本控件齐备，等 D 的屏幕键盘与存档对话框接 |
@@ -309,8 +309,9 @@
 | G4 | `interface_events.cpp` / `interface_focus.cpp` | 共 772 行 | 删 `AdventureMapView` 自建事件 |
 | | 进度：`interface_focus.cpp` 与 `interface_events.cpp` 均已完成（2026-11-22）。事件通过 `IAdventureHost` 契约把对话框交给场景层，未见 `fheroes2::GameMode` 全局枚举（改用 `AdventureEventResult`，与 `FileOptionsResult` 一致）；把事件接到 `AdventureMapScene` 仍属 G5 | | |
 | G5 | 收口：`AdventureMapScene` 只留场景装配 | — | 自建面板代码全部删除 |
-| H | `player_info.cpp`、`skill_bar.cpp`、`statusbar.cpp`、`ui_kingdom.cpp`、`ui_campaign.cpp`、`ui_monster.cpp`、`ui_mage_guild.cpp`、`ui_map_object.cpp`(+`ui_object_rendering.h`)、`ui_map_interface.cpp`、`ui_base.cpp`、`ui_constants.h` | 共 2 300 行 | 各自有 1:1 文件 |
-| I | `ui_font.cpp` 对拍（字形、断词、语言字符表） | 6 317 行 | 所有绘制经由参考 `Font` |
+| G6 | 直接照搬 C++ 的同步对话框路径：补 `LocalEvent::HandleEvents` 的 SDL 侧，每个对话框加 `Show()` 阻塞入口，`interface_events.cpp` 的 17 个 `Event*` 逐行搬，删掉 `IAdventureHost` 抽象 | `engine/localevent.cpp:1243-1316`、`gui/interface_events.cpp`、13 个对话框源文件 | `UI/Input/EventEngine.cs`、各 `Dialogs/*.Show`、`UI/Interface/AdventureMap.Events.cs` | 事件函数与参考逐函数对应，工程里不再有「请求式」对话框契约 |
+| H | `player_info.cpp`、`skill_bar.cpp`、`statusbar.cpp`、`ui_kingdom.cpp`、`ui_campaign.cpp`、`ui_monster.cpp`、`ui_mage_guild.cpp`、`ui_map_object.cpp`(+`ui_object_rendering.h`)、`ui_map_interface.cpp`、`ui_base.cpp`、`ui_constants.h` | 共 2 300 行 | 各自有 1:1 文件。已完成 2026-11-22：`skill_bar.cpp`、`ui_kingdom.cpp`、`statusbar.cpp`（`UI/Widgets/StatusBar.cs`）、`ui_monster.cpp`（`UI/Widgets/MonsterFrameRenderer.cs`，`ArmyBar` 改为调用它）、`ui_campaign.cpp`（`UI/Dialogs/CampaignPopupWindows.cs`）、`ui_constants.h`（`UI/UiConstants.cs`）、`ui_map_interface.cpp`（已核实，`StandardPopupWindow` 里齐全）；`ui_base.cpp` **不适用**（全篇只有一个空的 `ActionObject::senderUpdate()`，端口没有观察者机制）。已完成 2026-11-22 第二轮：`interface_itemsbar.h`（`ItemsBar<T>` + `ItemsActionBar<T>`）、`ArmyBar`/`ArtifactsBar` 接入并删掉自建 `ItemsBarLayout.cs`、`ui_castle.cpp` 与 `ui_mage_guild.cpp` 核实。**本组无剩余** |
+| I | `ui_font.cpp` 对拍（字形、断词、语言字符表）。已完成 2026-11-22 两批：①八字码页字形生成 + `resizeCodePage` + `generateAlphabet` + 阴影/去阴影助手，接进 `FontGlyphTable` 的基表构建；②按钮字体的五个 `generateCPxxxxGoodButtonFont` + `updateButtonFont`（`ButtonFont.Create( language )`，表长随语言 128/256） | 6 317 行 | 所有绘制经由参考 `Font` |
 | J | 清理与回归：删自建文件、迁测试、全量 `dotnet test` | — | 0 自建替代 |
 
 进度：A1（`colorFade`）、A2（淡出/淡入、调色板淡入淡出、反色阴影）、A3（三件作用域守卫 +
@@ -379,7 +380,62 @@ G5 前半（2026-11-22）：`game/game_interface.cpp` 的三个函数与 `game/g
 `ADVBTNS`/`ADVEBTNS` 造四个面板并加载 `ADVBORD.ICN` 边框（`game_interface.cpp:38-61`），另补
 `ControlPanelAreaForInput` 覆写。`MapSprites.Initialize` 已在 `GameHost.LoadGameData()` 里接上，`AdventureMapTests`
 用两个整屏绘制用例（经典布局 / 隐藏界面）证明整屏能画出，并钉住 `Radar.Build()` 与调色板两条前置。**剩余**：App 侧
-`IAdventureHost` 实现（前置是英雄对话框 / 法术书 / 王国总览 / 拼图），最后接管 `AdventureMapScene` 并删自建面板。
+`IAdventureHost` 实现（前置是英雄对话框与城堡对话框；法术书与王国总览已于 2026-11-22 转完），最后接管
+`AdventureMapScene` 并删自建面板。G5 收口第二步（同日）：宿主里的模态帧泵已落地——`App/IModalScreen.cs` 定契约，
+`GameHost.RunModal()` 起内层循环（取事件 → 场景重绘 → 窗口画上去 → 上传，输入不再流进冻结的场景），
+`App/Modals/MessageBoxModal.cs` 是 `Dialog::Message` / `Dialog::YES_NO` 的第一个适配器；`IAdventureHost` 的成员
+现在可以按参考那样「开 → 等 → 取结果」。前置里
+**拼图已转完大半**：`UI.Dialogs.PuzzleMapDialog`（`kingdom/puzzle.cpp` 的 `drawPuzzle()`/`revealPuzzle()`/
+`ShowStandardDialog()` 绘制部分），只剩 `ShowExtendedDialog()`（可移动窗口版）与 App 侧 `OpenPuzzleMaps()` 的接线。
+**技能条已转完**：`UI.Widgets.SkillBars`（`gui/skill_bar.cpp`，`PrimarySkillsBar`/`SecondarySkillsBar` 绘制部分 +
+`RedrawPrimarySkillInfo()`），英雄对话框与王国总览共用。**宝物条已转完**：`UI.Widgets.ArtifactsBar`
+（`resource/artifact.cpp:1104-1183` 绘制部分）。前置链已齐（`ArmyBar` / `ArtifactsBar` / `SkillBars` /
+`PuzzleMapDialog` / `ListBox` / `ScrollBar`），`kingdom/kingdom_overview.cpp` 已于 2026-11-22 整篇转完
+（`UI.Dialogs.KingdomOverviewWindow` + `KingdomOverviewLists` + `KingdomHeroRow` + `KingdomOverviewArtwork` +
+`KingdomOverviewRequests`）。下一步整块转 `heroes/heroes_dialog.cpp`（831 行，`Heroes::OpenDialog()`），
+它同时是 G5 与城堡对话框的前置。
+
+### G6：直接照搬 C++ 的同步对话框路径
+
+**判断：能搬，且只有一处硬缺口。** 参考里没有 `IAdventureHost` 这种东西——`gui/interface_events.cpp` 的 17 个
+`Event*()` 直接在身体里调 `Dialog::*`、`Game::Open*Dialog()`、`Kingdom::openOverviewDialog()`，这些函数自己转
+事件循环、关掉才返回。端口当初为了可测试性把这一层改成了「事件只报告要开什么、由场景实现」的请求式契约
+（ADR-163），对话框因此都做成了「每帧喂事件」的形状。要回到逐行搬，唯一缺的是参考里那条自转循环的地基：
+
+* `LocalEvent::HandleEvents` **没移植**，`Input/LocalEvent.cs:43-52` 明写「not ported」——它被判定为 SDL 侧。
+  参考本体只有 74 行（`localevent.cpp:1243-1316`）：重置状态 → `EventEngine::handleEvents()` → 按需
+  `display.render( roi )` → 睡 1 ms。
+* 端口的 SDL 映射其实已经全在 `App/GameHost.cs`（`PumpEvents` + `HandleKeyDown` + `HandleMouseButton`，约 400 行），
+  呈现全在 `App/Graphics/SdlPresenter`。把它们下沉成 `EventEngine`，`le.HandleEvents()` 就能自转。
+
+补上之后，`interface_events.cpp` 的每个 `Event*()` 都能逐行搬，`IAdventureHost`（连同它的 17 个成员）可以整个删掉，
+`AdventureEventResult` 保留下来当 `fheroes2::GameMode` 的替身。
+
+**影响面**：`GameHost` 主循环改为 `le.HandleEvents()` 驱动（现在是自己 switch 事件）；2a 落的 `IModalScreen` /
+`RunModal` 降级为过渡期的呈现钩子，G6.8 之后只剩少量「非对话框」用途。
+
+| 编号 | 子任务 | 参考 | 端口落点 | 验收 |
+| --- | --- | --- | --- | --- |
+| G6.1 | 事件引擎：SDL → `LocalEvent` 状态，`le.HandleEvents( sleep, allowExit )` | `localevent.cpp:1243-1316` + 引擎侧映射 | **完成（2026-11-22）**：`UI/Input/IEventEngine.cs` + `LocalEvent.HandleEvents` + `NextRenderArea`、`App/Input/SdlEventEngine.cs`、`App/Input/SdlKeyMap.cs`、`GameHost` 填充 `LocalEvent.Current` 且主循环改 `le.HandleEvents( false, true )`；5 条单测 | `--enter-map` 53.4 FPS、`--scene editor` 49.9 FPS，三路冒烟退出 0 |
+| G6.2 | 呈现与睡眠：`display.render( roi )` + 1 ms 睡眠 | `screen.cpp` 的 `render` | **引擎侧完成（2026-11-22）**：`SdlEventEngine.Render`（整帧上传）与 `Sleep`；`SdlPresenter` 未改 | **剩余**：G6.3 首个 `MessageBox.Show` 里验证每帧可见与 CPU 占用 |
+| G6.3 | `MessageBox` 的阻塞入口 `Show( header, body, buttons )` | `ui_dialog.cpp` 的 `showMessage` | **UI 侧完成（2026-11-22）**：`MessageBox.Show(...)` + 私有 `Run`（`le.HandleEvents( false )` → 输入 → `Update`/`Draw` → `Render` + `Sleep`）+ 2 条测试 | **剩余**：`AdventureOptionsDialog` 的真实接入（App 现无 `RunModal` 调用点，随 G6.4 落） |
+| G6.4 | 选项类对话框的 `Show`：`AdventureOptions` / `FileOptions` / `Settings` / `GameInfo` / `SelectFile` | `dialog_adventure.cpp:55-110` 等 | **3/5 完成（2026-11-22）**：`AdventureOptionsDialog.Show` + `AdventureOptionsView.SetCursor`、`SettingsDialog.Show`、`FileOptionsView`（新）+ `FileOptionsDialog.Show` + `DialogButton` 六个身份位、21 条测试；**剩余**：`GameInfo`（等全局 world）、`SelectFile`（等存档目录服务） | `--enter-map` 62.2 FPS、`--adventure-options` 54.2 FPS、`--open-settings` 76.9 FPS，退出 0 |
+| G6.5 | 内容类对话框的 `Show`：`HeroDialog` / 城堡（App 的 `CastleScene`）/ `KingdomOverview` / `PuzzleMap` / `SpellBook` / `ViewWorld` / `QuickInfo` | `heroes_dialog.cpp`、`castle/castle_dialog.cpp`、`kingdom/kingdom_overview.cpp`、`kingdom/puzzle.cpp`、`spell/spell_book.cpp`、`gui/view_world.cpp`、`dialog_quickinfo.cpp` | **4/7 完成（2026-11-22）**：`PuzzleMapDialog.Show`、`SpellBookWindow.Show`、`HeroDialog.Show`（`Requests` 非空时返回 `None` 把窗口交给调用方）、`KingdomOverviewWindow.Show`（返回 `bool`，请求时先画后返回 `false`），16 条测试；**剩余**：`CastleDialog`（循环在 App 的 `CastleScene`）、`ViewWorld`（整窗未移植）、`QuickInfoDialog`（面板渲染未移植） | `--enter-map` 66.4 FPS、`--adventure-options` 51.4 FPS，退出 0 |
+| G6.6 | `GameSave.Save`：World / Settings / GameOver.Result 序列化 | `game/game_save.cpp` | `Game/System/GameSave.cs`（去掉 `NotImplementedException`） | 存档→读档→状态一致的单测 |
+| G6.7 | `GameOver::Result::checkGameOver` + 胜负/玩家对话框 | `game_over.cpp:71-702`、`game_startgame.cpp:251-286` | **完成（2026-11-22）**：`Game/GameOverResult.cs` + `.Persistence.cs`（判定、`GameOverMode`、`GameOverRequests`、五字节存档）、`Game/GameOverText.cs`（`GetString` / `GetDescription` / `GetVictoryMessage` / `GetLossMessage`）、`UI/Dialogs/GameOverDialogs.cs`（`ShowVictory` / `ShowDefeat` / `ShowVanquished` / `ComposeSign`）+ `MessageBox.Show( box )`，48 条单测 | 条件表与文案表单测全绿；`--enter-map` 54.8 FPS，退出 0；两窗口测试需 AGG，本机无数据按约定跳过 |
+| G6.8 | 搬 `interface_events.cpp` 的 17 个 `Event*()`，删 `IAdventureHost` | `gui/interface_events.cpp`（1 063 行） | `UI/Interface/AdventureMap.Events.cs` 改为同步返回 `AdventureEventResult` | 逐函数对照，无「请求式」残留 |
+| G6.9 | `AdventureMapScene` 接管 `AdventureMap`，删自建面板与 `_events` 转接 | — | `App/Scenes/AdventureMapScene.cs` | 截图与现在一致，面板代码归零 |
+
+依赖：G6.1 → G6.2 → G6.3 → G6.4 / G6.5 → G6.8 → G6.9；G6.6 / G6.7 与 G6.4、G6.5 可并行。
+规模：G6.1 约 300 行（含从 `GameHost` 迁出），G6.3~G6.5 约 13 个 `Show` 共 600 行，G6.6 约 800 行，
+G6.7 约 200 行，G6.8 约 400 行，G6.9 以删改为主，合计约 2 800 行。
+
+**法术书已转完**（2026-11-22）：`spell/spell_book.cpp` 整篇落地为 `UI.Dialogs.SpellBookWindow` +
+`SpellBookRenderer` + `SpellBookArtwork`（S2 章节记的 `SpellBookView` 骨架删除，`SpellBook` 拆出
+`BeginSession` / `ClampStartIndex`）。同一轮把 `spell/spell_info.cpp` 的 `getSpellDescription()` 补上：
+`SpellInfo.GetDescription( spell, caster, world )`，`ISpellBookOwner` 加 `GetPower()`。剩下的接缝是把文案接到界面：
+参考在 `SpellDialogElement::showPopup()` 里调它（`ui_dialog.cpp:545`），端口的元素还没拿到施法者；App 侧入口同样未接。
+明细见 `docs/progressv4.md` 末尾的 S2 两节。
 
 ### 5.4 自建删除台账（`gui/` 范围）
 

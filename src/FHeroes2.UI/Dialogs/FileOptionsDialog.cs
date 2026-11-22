@@ -1,3 +1,6 @@
+using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
+
 namespace FHeroes2.UI.Dialogs;
 
 /// <summary>
@@ -82,4 +85,93 @@ public sealed class FileOptionsDialog
         5 => FileOptionsResult.Quit,
         _ => FileOptionsResult.Cancel,
     };
+
+    /// <summary>
+    /// The result of pressing a button of <see cref="FileOptionsView"/>, <see cref="FromButton"/> keyed by
+    /// the identity the port gives the buttons instead of their index.
+    /// </summary>
+    /// <param name="button">Button that was released.</param>
+    /// <returns>
+    /// The outcome; <see cref="FileOptionsResult.Cancel"/> for cancel, the disabled restart button and
+    /// anything else.
+    /// </returns>
+    public static FileOptionsResult FromDialogButton(DialogButton button) => button switch
+    {
+        DialogButton.NewGame => FileOptionsResult.NewGame,
+        DialogButton.LoadGame => FileOptionsResult.LoadGame,
+        DialogButton.SaveGame => FileOptionsResult.SaveGame,
+        DialogButton.QuickSave => FileOptionsResult.QuickSave,
+        DialogButton.Quit => FileOptionsResult.Quit,
+        _ => FileOptionsResult.Cancel,
+    };
+
+    /// <summary>
+    /// Runs the dialog until a button closes it, the event loop of <c>selectFileOption()</c>
+    /// (<c>dialog_file.cpp:78-149</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The reference does more than close on a click: new game and load game go through
+    /// <c>EventNewGame()</c> / <c>EventLoadGame()</c> first, and their own windows can keep the file menu
+    /// open. The port has no game loop to call yet, so <see cref="Show"/> answers as soon as a button is
+    /// released and leaves those windows to the caller, which is also what
+    /// <see cref="AdventureOptionsDialog.Show"/> does.
+    /// </para>
+    /// <para>
+    /// Save game hides the window before it returns in the reference; there is nothing to hide here,
+    /// the caller is expected to draw its own frame over the answer.
+    /// </para>
+    /// </remarks>
+    /// <param name="target">Frame to draw into and to submit; it must already contain the scene behind.</param>
+    /// <param name="view">The window and the buttons, built by <see cref="FileOptionsView.TryCreate"/>.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>
+    /// The outcome of the pressed button, or <see cref="FileOptionsResult.Quit"/> when the client was asked
+    /// to exit before the player answered - the reference keeps <c>QUIT_GAME</c> in that case.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">No <see cref="IEventEngine"/> is attached.</exception>
+    public static FileOptionsResult Show(PixelBuffer target, FileOptionsView view, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(view);
+
+        LocalEvent eventState = events ?? LocalEvent.Current;
+        IEventEngine engine = eventState.Engine ?? throw new InvalidOperationException(
+            "FileOptionsDialog.Show() needs an event engine: attach LocalEvent.Engine first.");
+
+        DialogButton answer = DialogButton.None;
+        bool leftDown = false;
+
+        while (answer == DialogButton.None)
+        {
+            if (!eventState.HandleEvents(sleepAfterEventProcessing: false))
+            {
+                return FileOptionsResult.Quit;
+            }
+
+            if (eventState.HasMouseMoved)
+            {
+                view.SetCursor(eventState.CursorPosition);
+            }
+
+            bool down = eventState.IsMouseLeftButtonPressed;
+
+            if (down != leftDown)
+            {
+                leftDown = down;
+                answer = view.SetLeftButton(down, eventState.CursorPosition);
+            }
+
+            if (answer == DialogButton.None && eventState.IsKeyPressed(Key.Escape))
+            {
+                answer = DialogButton.Cancel;
+            }
+
+            view.Draw(target);
+            engine.Render(target.Bounds);
+            engine.Sleep(LocalEvent.LoopSleepTimeMs);
+        }
+
+        return FromDialogButton(answer);
+    }
 }

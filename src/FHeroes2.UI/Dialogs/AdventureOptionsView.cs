@@ -114,6 +114,10 @@ public sealed class AdventureOptionsView
         return new AdventureOptionsView(window, buttons, cancel);
     }
 
+    /// <summary>Moves the cursor over the dialog, <c>buttons.SetCursor()</c> of the reference loop.</summary>
+    /// <param name="point">Cursor in logical pixels.</param>
+    public void SetCursor(Point? point) => _buttons.SetCursor(point);
+
     /// <summary>
     /// A left button transition over the dialog.
     /// </summary>

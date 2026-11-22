@@ -18,7 +18,7 @@
 | --- | --- | --- | --- |
 | S0 | `agg` `image` `h2d` `audio` `system` | 5 | 完成（2026-11-21） |
 | S1 | `monster` | 3 | 完成（2026-11-21） |
-| S2 | `spell` | 3 | 完成（界面篇为骨架） |
+| S2 | `spell` | 3 | 完成（法术书窗口与法术描述已收口，2026-11-22） |
 | S3 | `resource` | 4 | 完成（2026-11-21） |
 | S4 | `army` | 4 | 完成（2026-11-21） |
 | S5 | `heroes` | 9 | 完成（2026-11-21） |
@@ -1714,3 +1714,700 @@ ADR-197 记为后续同类情况的标准做法。
 **G5 收口剩余**：只剩场景接管（见上一节的三步，第 1 步已完成）。
 
 构建 0 错误 0 警告，全量 **4 965 绿**。
+
+## 2026-11-22 G5 前置第一步：拼图窗口（`kingdom/puzzle.cpp:85-220`）
+
+新增 `src/FHeroes2.UI/Dialogs/PuzzleMapDialog.cs`，把 `drawPuzzle()`、`revealPuzzle()` 与 `ShowStandardDialog()`
+的绘制部分转出来。`kingdom/puzzle.cpp` 里剩下的 `ShowExtendedDialog()`（可移动窗口版）尚未转。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `PuzzleMapDialog.RenderRadarCover()` | `copyToRadar()`：把整张小图 `Copy( VIEWPUZL/EVIWPUZL, radarArea )` 盖在雷达上 |
+| `PuzzleMapDialog.RenderExitButton()` | `addGradientShadow( { -5, 5 } )` + `draw()`/`drawOnState()`，按钮水平居中、距雷达底边 37 px |
+| `PuzzleMapDialog.RenderPicture()` / `BlitUncoveredPiece()` | `drawPuzzle()` 与 `revealPuzzle()` 的贴图循环：已揭开的块按 `alpha` 混合，未揭开的块不透明贴 |
+| `PuzzleMapDialog.AdvanceReveal()` / `RestartReveal()` | `revealPuzzle()` 的动画节拍：250 起、每拍 `-10`、到 0 结束 |
+| `PuzzleMapDialog.IsExitButton()` | `le.MouseClickLeft( buttonExit.area() )` |
+
+要点：
+
+* 块的落点是 `picturePosition + piece.Offset - BorderWidth`，照抄参考的 `dstx + piece.x() - borderWidthPx`：
+  `PUZZLE.ICN` 的帧是按 640×480 整屏切的，边框已经烘进帧里。
+* 参考是阻塞式模态循环，端口是一帧一画：`Render()` 画雷达盖图 + 退出按钮 + 拼图，动画由调用方按节拍调
+  `AdvanceReveal()`。`RevealAlpha` 默认 0（等于动画结束态），255 退化成不透明贴图。
+* `Render()` 每帧先重画雷达盖图再画按钮阴影：阴影是 transform 层，重复叠加会把按钮越涂越黑，重画盖图正好把
+  那一块复位（`ShowExtendedDialog()` 的 `drawControlPanel()` 也是这么做的）。
+* 混合需要调色板：没给 `Palette` 又要混合已揭开的块时抛 `InvalidOperationException`，不猜颜色。
+* `UltimateArtifact.GetPuzzleMapSurface()` 仍是占位，但注释改成「层级偏差」：图的拼装在 `ui` 侧
+  （`GameArea.GenerateUltimateArtifactAreaSurface()` 已转），`Game` 不能反向依赖 `UI`，不要在游戏逻辑里调它。
+
+测试：新增 `tests/FHeroes2.UI.Tests/PuzzleMapDialogTests.cs` 11 个用例（按钮居中与命中、雷达盖图、按下态、未揭开
+时块盖住图、全揭开时只剩图、遮盖混合缺调色板抛、给了调色板能混、动画 250→0 且可重复调用、三个构造参数校验）。
+
+**仍未接上**：`AdventureMap.Events.EventPuzzleMaps()` → `IAdventureHost.OpenPuzzleMaps()` 在 App 侧还没有实现，
+`ShowExtendedDialog()`（可移动窗口版）未转。
+
+构建 0 错误 0 警告，全量 **4 976 绿**。
+
+## 2026-11-22 技能条（`gui/skill_bar.cpp`）
+
+新增 `src/FHeroes2.UI/Widgets/SkillBars.cs`：`ISkillBarSprites`（美术来源接口）、`SkillBarArtwork.CreateMiniPlate()`
+与两条技能条 `PrimarySkillsBar` / `SecondarySkillsBar`。这是王国总览与英雄对话框的共同前置——两处都要摆 34×34 的
+迷你条或 73×70/75×75 的整块条。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `SkillBarArtwork.CreateMiniPlate()` | `GetBarBackgroundSprite()`：34×34 框 + `HSICONS` 第 0 帧 (26,21) 的 32×32 |
+| `PrimarySkillsBar` 迷你形 | 34×34 槽 + `SWAPWIN` 第 0 帧 (217, 52+33i) 裁出的 32×32 图标 + 底部数值（`SetTextOff` 偏移） |
+| `PrimarySkillsBar` 整块形 | 73×70 `PRIMSKIL` 板 + 顶部技能名 + 底部数值 |
+| `SecondarySkillsBar` 迷你形 | 34×34 槽 + `MINISS` 图标 + 右下角等级数 |
+| `SecondarySkillsBar` 整块形 | `SECSKILL` 空板 + `SECSKILL` 技能板 + 名称与等级（超宽时 `FitToOneRow`） |
+| `PrimarySkillsBar.DrawSkillNames()` | `fheroes2::RedrawPrimarySkillInfo()`：x+320 居中、y+62 起、每行 33 px |
+
+要点：
+
+* `ItemsBar::Redraw`（`interface_itemsbar.h:105-139`）是**逐格**画背景再画物品，且表尺寸为 0 时整条不画。端口照抄：
+  两条技能条的 `Redraw()` 先判 `Layout.IsEmpty`，再逐格 `RedrawBackground` + `RedrawItem`（空槽保留底板）。
+* `fheroes2::Blit` 的 4 参数重载（`BlitSprite`）用的是 **sprite 局部坐标**，目标偏移要减掉源矩形的原点；`fheroes2::Copy`
+  对应的 `ImageOps.Blit` 则是「目标点 + 源矩形」直接落位。迷你图标那处裁剪两种语义差别明显，已按前者补偿。
+* 参考里 `Skill::Level::StringWithBonus( _hero, skill )` 会去读世界算招魂加成；端口把加成做成 `NecromancyBonus` 参数，
+  由知道王国的界面传入，控件本身不碰 `World`。
+
+**本轮未做（已在类注释里写明理由）**：
+
+* 输入（点击弹说明、编辑器里改技能等级/清空）——端口控件只负责画，点击由持有它的界面从同一个 `Layout` 驱动。
+* 编辑器分支（`isEditMode` / `allowSkillReset`、变暗的「Default skill」板、`Dialog::SelectCount`）——按总体原则
+  「editor 最后」，等界面接管时再补。
+
+测试：新增 `tests/FHeroes2.UI.Tests/SkillBarsTests.cs` 11 个用例（槽尺寸来源、缺美术抛、无表尺寸不画、迷你/整块像素、
+`SWAPWIN` 裁剪落点、未知技能抛、空槽不画、8 格底板、整块底板、缺板抛）。
+
+**下一步**：`ArtifactsBar`（`resource/artifact.h` 里的 `ArtifactsBar`）——王国总览三件套的最后一块前置；之后才能整块转
+`kingdom/kingdom_overview.cpp`（959 行）。
+
+构建 0 错误 0 警告，全量 **4 987 绿**。
+
+## 2026-11-22 宝物条（`resource/artifact.cpp:1104-1183`）
+
+新增 `src/FHeroes2.UI/Widgets/ArtifactsBar.cs` 与 `IArtifactsBarSprites`。这是王国总览最后一个前置控件——总览给每个
+英雄都建一条 `ArtifactsBar`（`kingdom_overview.cpp:152-154`：`hero, true, false, false, true, nullptr`，表 7×2、格间距
+`{1,8}`）。
+
+| 已实现 | 参考位置 |
+| --- | --- |
+| `IArtifactsBarSprites`：`MiniPlate` / `EmptySlot` / `GetMiniArtifact` / `GetArtifact` | `Assets::getImage( HSICONS/ARTIFACT/ARTFX )` |
+| 迷你形：34×34 金框 + `ARTFX` 32×32 右上角内缩 1 px，先 `Fill` 再贴 | `artifact.cpp:1112-1127`、`1163-1167` |
+| 整块形：`ARTIFACT` 64×64 空槽 + 同尺寸图标 | `artifact.cpp:1128-1137`、`1168-1172` |
+| 选中框：迷你 34×34 单线 214；整块 70×70 三层 190/180/190，外挂 3 px | `artifact.cpp:1124-1136`、`1174-1181` |
+| `Redraw` / `RedrawBackground` / `RedrawItem` / `ResetSelected` / `Select` | `1140-1183` |
+
+要点：
+
+* **光标精灵的透明**：参考用 `spcursor.reset()` 让光标除边框外全透明。端口的 transform 层里 `0` = 照抄、`1` = 跳过，
+  而 `Sprite(w,h)` 默认全是 `0`（整块不透明）。所以光标必须 `Reset()` + 用 `ImageOps.DrawLine(Sprite, …)` 画四条边——
+  该重载画的同时把 transform 清成 `0`，`PixelBuffer` 版的原语做不到（`ArmyBar.CreateCursor` 同法）。
+* `Artifact::IndexSprite32()` / `IndexSprite64()` 在参考里是 `Artifact` 的成员；端口没有 `Artifact` 类（用 `ArtifactType`
+  枚举 + `ArtifactBag`），两个索引函数放进 `ArtifactTypes`：`MiniSpriteIndex()`（空槽返回参考的 255）与 `FullSpriteIndex()`。
+* 参考的 `StatusBar*` 只用来印「不能交易魔法书」，纯画图的控件不需要；输入（点开说明、互换两件宝物、开魔法书、编辑器
+  里选宝物/选卷轴法术）全部依赖尚不存在的对话框，按既有做法留给界面，`Select()` 是它的接缝。
+
+测试：`tests/FHeroes2.UI.Tests/ArtifactsBarTests.cs` 11 个用例（两种尺寸来源、缺美术抛、无表尺寸不画、迷你/整块像素、
+选中框颜色与位置、空槽不画、`Select` 越界抛）；`ArtifactTests` 加 1 个用例覆盖两个图标索引。
+
+**下一步**：前置齐了（`ArmyBar` / `ArtifactsBar` / `SkillBars` / `PuzzleMapDialog` / `ListBox` / `ScrollBar`），可以整块转
+`kingdom/kingdom_overview.cpp`（959 行）。
+
+构建 0 错误 0 警告，全量 **4 999 绿**。
+
+## 2026-11-22 王国总览对话框（`kingdom/kingdom_overview.cpp`）
+
+整篇 959 行转完：两个列表（英雄 / 城堡）、它们的行、收入与资金两条底栏，以及 `Kingdom::openOverviewDialog()`
+的布局与事件处理。参考的模态 `while ( le.HandleEvents() )` 照例拆成「`ProcessEvents` 回答要不要重画 + `Draw` 画一帧」。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/KingdomOverviewArtwork.cs` | `Assets::getImage()` 调用点 | `OVERVIEW` 6/7/8/10/11/13/14、`OVERBACK` 0、`SCROLL` 0-4、`CSLMARKER` 0、`BUTTON_KINGDOM_*` 0/1，加大头像/技能/神器/部队/住所条所需的贴图源 |
+| `UI/Dialogs/KingdomOverviewLists.cs` | `redrawCommonBackground()`（`:95-120`）、`StatsHeroesList`（`:169-394`）、`StatsCastlesList`（`:448-685`） | 滚动条装配、行板的四行循环与两条黄线、表头三行标题、`Refresh()`、`updateHeroArmyBars()`；几何常量收进 `KingdomOverviewLayout` |
+| `UI/Dialogs/KingdomHeroRow.cs` | 两个列表的 `RedrawItem` / `RedrawBackground` | 英雄行（头像 + 四项主技能右对齐 + 两支部队条 + 神器）与城堡行（城名/驻军/来访英雄/周产量/住所条/指挥官头像） |
+| `UI/Dialogs/KingdomOverviewRequests.cs` | 循环里打开的各个子对话框 | 请求袋：英雄/城镇对话框、两个快速信息、指挥官信息、收益、灯塔、标准消息、部队交互、`needFadeIn` |
+| `UI/Dialogs/KingdomOverviewWindow.cs` | `openOverviewDialog()`（`:763-959`） | 640×480 窗口、三枚按钮（540/361、540/406、540/454）、`(1,360,535,60)` 收益区、`(124,459,289,16)` 金币区、随精灵宽的灯塔区、`RedrawIncomeInfo()`、`RedrawFundsInfo()`、`CapturedExtInfoString()` |
+
+要点：
+
+* **按钮状态就是列表状态**：`:810-823` 用 `press()`/`release()` 把当前列表钉在按钮上，端口每帧在 `Draw` 里走
+  `DrawOnPress`/`DrawOnRelease`；点击判定用 `!IsPressed`，点已按下的那枚不会重复切换。
+* **列表的点击也走请求袋**：`ActionListSingleClick`/`ActionListPressRight`（头像格 30×30）与 `ActionListCursor`（部队条）
+  只填 `Requests`，由场景打开对话框；`MergeRequests()` 把列表那份并进窗口这份。
+* **子窗口立刻淡入**：`needFadeIn`（`:285`、`:555`）在端口翻成「这一帧必须重画」，真正的淡入由场景做。
+* **资金面板每帧重画**：参考只在城堡模式下重画（`:925-928`，资金只可能在城里变），端口每帧从 `OVERBACK` 重贴整窗，
+  否则会把面板擦掉；数值与位置不变。
+* **右键帮助变成 `DialogPopup`**：`:850-858` 的三句标准消息进请求袋，与其它窗口一致。
+* **热键走参数**：`KingdomOverviewHotKeys.CloseWindow`（Escape 或 Enter）由场景解码后传入。
+* **滚动位置存在王国上**：构造时读 `TopHeroInKingdomView`/`TopCastleInKingdomView`，`Close()` 写回（`:942-943`）。
+* **冒险地图重画只报自己那一位**：英雄列表重建时置 `WorldMapRedrawMask |= Redraw.Heroes`（`:913-919`）；
+  `getRedrawMask()`、`ResetFocus()`、`RedrawFocus()`、`setFastScrollStatus( false )` 与淡出属于场景，写在 `Close()` 注释里。
+
+测试：本轮只求转完，行为测试按计划留到逐函数核对那一轮。
+
+构建 0 错误 0 警告，`tests/FHeroes2.UI.Tests` **1 191 通过 / 0 失败**。
+
+**遗留**：App 侧入口（`AdventureMapHost.OpenKingdomOverview()` 仍只有接口，`GameHost`/`AdventureMapScene` 没有模态覆盖层）；
+`SecondarySkillsBar`/`ArtifactsBar` 的交互仍只读；行文本与两条底栏的逐像素对拍留到核对那一轮。
+（`Interface::redrawHeroesIcon` 不算缺：端口由 `HeroPortraitPainter.DrawSmall` + `IconsPanel` 承担。）
+
+## 2026-11-22 灯塔信息框与收入说明（`gui/ui_kingdom.cpp`）
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/LighthouseInfo.cs`（新） | `showLighthouseInfo()`（`ui_kingdom.cpp:51-90`） | 六个 `OBJNMUL2` 部件（阴影 60/71/72、塔身 59/61/73）按偏移拼成 160×(64+塔顶高) 的整图，灯室位置取 62 号帧的偏移；动画取 `agg/icn.cpp:549-553` 的 62-70 九帧；标题是复数 `StringObject( OBJ_LIGHTHOUSE, 2 )` |
+| `UI/Dialogs/KingdomIncome.cs`（改） | `ResourceDialogElement::showPopup()`（`ui_dialog.cpp:451-454`） | 右键图标补 `ResourceText.Description`，不再只给资源名 |
+| `UI/Dialogs/StandardWindow.cs`（改） | `RenderScrollbarBackground()`（`ui_window.cpp:400-431`） | 16 px 宽的列表凹槽（`ADVBORD.ICN` 0 号帧 536,176 帽 + 536,196 中段重复 + 536,285 脚）加左缘与脚下四步阴影，后面所有带滚动条的列表窗口都要用 |
+
+要点：只做 `Dialog::ZERO` 那一版——谁来建、什么时候销毁都在场景手里；帧间隔默认 250 ms（`MAPS_DELAY` 初值），
+要跟随游戏速度时由调用方传 `GameDelays.GetAnimationDelayValue( DelayType.MapsDelay )`；端口的 `Mp2ObjectName`
+只出单数，复数标题因此单列常量。
+
+测试：`LighthouseInfoTests` 5 条（帧数不足、三个空参、非正帧间隔、元素构成与 160×96、可替换文案；需要位图字体与消息框
+边框的用例走 `GlobalArchiveCollection`）、`StandardWindowScrollbarTests` 3 条（三段拼接、阴影范围、空参）。
+
+构建 0 错误 0 警告，`tests/FHeroes2.UI.Tests` **1 199 通过 / 0 失败**。
+
+## 2026-11-22 S13 前置：物件选择窗口与选法术（`dialog/dialog_selectitems.cpp`）
+
+`ItemSelectionWindow` 是后面法术书、宝物、怪物、技能等一系列「列表选一个东西」窗口的共同底座，本轮先按参考逐段转完，
+再挂第一个子类 `SelectEnumSpell`。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/ItemSelectionWindow.cs` | `ItemSelectionWindow`（`dialog_selectitems.h:61-193`、`.cpp:889-1081`、`1013-1057`） | `ListBox<int32_t>` 的端口（行是 `ItemSelectionEntry`）+ `StandardWindow`、标题/描述、列表区、凹槽、滚动按钮、OK/CANCEL；`Draw` 画一帧，`ProcessEvents` 吃一帧 |
+| `UI/Dialogs/ItemSelectionWindowArtwork.cs` | 构造里的 `AGG::GetICN()` | `SCROLL`/`SCROLLE` 0-4、`ADVBORD` 0、`BUTTON_SMALL_OKAY_GOOD` 与 `BUTTON_SMALL_CANCEL_GOOD` 0/1 |
+| `UI/Dialogs/SpellSelectionWindow.cs` | `SelectEnumSpell`（`.h:366-381`、`.cpp:379-421`） | 行高 55、图标偏移 37、文字偏移 80、名字按 `activeArea.width - 80 - 55` 截断、右键弹法术说明；`SelectSpell()` 对应 `SetCurrent( spellId )` |
+| `UI/Dialogs/SpellSelectDialog.cs`（重写） | `Dialog::selectSpell()`（`.cpp:1116-1160`） | `DialogHeightDeduction = 150`、`DialogSize()`、`BuildSpellList()`（随机项插最前）、`TryCreate()`（空表返回 `null`，由场景显示提示） |
+
+要点：
+
+* 几何逐项对齐参考：列表区 `(activeArea.x + 10, activeArea.y + 30 + listOffsetY, width - 40, height - 70 - listOffsetY)`，
+  无描述时 `listOffsetY = 0`、有描述时是描述行高 + 3；行区再内缩 5；凹槽 `(activeArea.x + width - 25, listRoi.y, 16, listRoi.height)`；
+  轨道 `(凹槽 x + 3, listRoi.y + 19, 10, listRoi.height - 38)`；上下按各在 `+1` 与 `-15`；OK/CANCEL 距左下/右下 `(20, 7)`。
+* **循环拆成两半**：参考在 `selectItemsEventProcessing()` 里自己画自己读；端口 `Draw` 负责石框、两段文字、列表（含阴影与凹槽）
+  与两枚按钮，`ProcessEvents` 负责按钮/热键、右键帮助、列表点击与双击，关闭结果落在 `Result`（`DialogButton.None` 表示还开着）。
+  一帧只回答一件事，所以「右键弹帮助后同帧继续处理列表」在端口变成下一帧。
+* **凹槽位置单独存一份**：`RenderScrollbarBackground()` 的矩形决定落点，不能把整个列表区传进去（会画到列表左边），
+  所以 `GrooveArea` 独立于 `ListArea`。
+* **双击等于 OK**：`ActionListDoubleClick` 只置标志，`ProcessEvents` 在这一帧把 `Result` 置为 OK；单键、上下键在基类里什么都不做。
+* **不转 toggle 按钮**：`_buttonToggleOn/Off` 与 `enableToggleButtons()` 只有未转的 `MultiArtifactSelection` 用，虚接口按参考保留。
+
+测试：新增 `ItemSelectionWindowTests` 16 条（窗口尺寸、列表合法性、随机项位置、等级与排除、空表返回 `null`、
+列表区/行区/轨道/按钮几何、初始选中、双击回 OK、取消回 CANCEL、右键弹说明、凹槽像素落点、空参）。
+
+**下一步**：法术书一族（见下一节）；App 侧还没有把 `SpellSelectDialog.TryCreate()` 接到场景。
+
+构建 0 错误 0 警告，全量 **5 023 绿**（Core 283 + Assets 416 + Game 3 109 + UI 1 215）。
+
+## 2026-11-22 S2 界面篇收口：法术书窗口（`spell/spell_book.cpp`）
+
+S2 章节里记的 `UI/Dialogs/SpellBookView.cs` 骨架本轮被实体实现取代并删除。`SpellBook::Open()`（`:194-403`）与
+`SpellBook::Edit()`（`:405-505`）合成一个双模式窗口。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/SpellBookArtwork.cs`（新） | `getSpellBookSize()`（`:61-84`）、`:225-232` 的 `getImage()` | `ICN::BOOK` 页 0、冒险签 3、战斗签 4、关书签 5、法力签 6、直角 7，加 `ICN::SPELLS` 全帧；`GetBookSize( Filter )` 取「画得出的书签里最低的底边」 |
+| `UI/Dialogs/SpellBookRenderer.cs`（新） | `SpellBookRedrawSpells()`（`:86-122`）、`SpellBookRedrawManaPoints()`（`:124-141`）、`spellBookRedrawLists()`（`:143-192`） | 双栏 12 行（白/灰小字、名字 + `[消耗]`、宽 80 换行）、法力签三位数、页与四枚书签、直角拼角、`addShadow` |
+| `UI/Dialogs/SpellBookWindow.cs`（新，约 740 行） | `SpellBook::Open()`、`SpellBook::Edit()` | `TryOpen()` / `TryEdit()` 两个工厂、`Draw` + `ProcessEvents` + `SpellBookFrame`、命中区与状态栏、编辑模式增删 |
+| `Game/Spells/SpellBook.cs`（改） | `:200-221` | 拆出 `BeginSession( filter, restore )` 与 `ClampStartIndex( count )`，原三参重载转调二者 |
+| `Game/Heroes/ISpellBookOwner.cs`（改） | `heroes_base.h` | 增 `SpellPoints`、`GetMaxSpellPoints()`、`CanCastSpell( spell )`、`BagArtifacts` |
+| `App/Fonts/GameFonts.cs`（改） | `FontType::smallWhite()` | 新增 `SmallWhite`（`SMALFONT` + `PaletteId.WhiteFont`），灰色行仍用 `Small` |
+| `UI/Dialogs/SpellBookView.cs`（删） | — | 占位类，被 `SpellBookWindow` 取代 |
+
+关键点（细节见 `docs/PROGRESS.md` 的「法术书窗口」一节）：
+
+* `Editing => _book is null` 区分两模式；施法书的页与过滤器存在传进来的 `SpellBook` 里，编辑书用私有 `_pageIndex` 且关闭不回写。
+* `Filter::ALL` 无条件把过滤器打回冒险、页码归零（`:203-206`），`restorePreviousState` 只对单一标签的会话有效。
+* 编辑模式点空位返回 `SpellBookAction.ChooseSpellToAdd`，由调用方用 `ExcludedSpells` 开 `SpellSelectDialog`；右键返回 `RemoveSpell`。
+* 书高看标签：`CloseBookmark` 永远计入，真实资源下三种过滤器都是 320；测试用 10 px 高的关书签逼出 `All`/`Combat` 316、`Adventure` 313。
+* 右页内列比左页外列高 5 px（`extraOffsetY` 减在 `oy` 上，`:97-98`），照参考保留。
+* 滚轮上滚=上一屏、下滚=下一屏；「上一页」提示只在非首页出现（`:270-275`、`:347-351`）。
+* 两条给路返回 `null`，句子挂在 `NoMagicBookMessage` / `NoSpellToCastMessage` 上由场景显示，不在窗口里弹框。
+
+**仍然缺**：App 侧无调用点（窗口目前只有测试在用）；法术格的右键说明仍是「名字 + `GetDescription()`」——本轮之后由下一节的
+`SpellInfo.GetDescription` 补齐。
+
+测试：新增 `SpellBookWindowTests` 23 条（给路、默认冒险页、页记忆与越界丢弃、居中与书签几何、12 格双栏坐标、首页/末屏格数、
+点选与法力不足弹原因、只读点开、右键瞬态、滚轮翻页、标签切换与半本书、关书与法力签、状态栏三句、编辑模式四条、书高随标签、
+`Draw` 像素、两种法力文案、空参）。
+
+构建 0 错误 0 警告，全量 **5 046 绿**。
+
+## 2026-11-22 S2 收尾：法术描述（`spell/spell_info.cpp:214-321`）
+
+`getSpellDescription()` 此前只有「模板句子」的落点，本轮补上按施法者数值拼装的完整版本。
+
+| 端口成员 | 参考 |
+| --- | --- |
+| `SpellInfo.GetDescription( spell, caster = null, world = null )` | `getSpellDescription()`（`:214-321`）：表句 + 按 `IsDamage/IsSummon/IsRestore/IsResurrect/IsGuardianType/TOWNGATE/HYPNOTIZE` 追加一段 |
+| `SpellInfo.FillCount( description, count )`（私有） | `updateSpellDescription()`（`:50-64`）：`%{count}` 填 `extraValue`，1/2 写成 `one`/`two`，其余用数字，全部出现处替换 |
+| `SpellInfo.SummonedMonster( type )`（私有） | `Monster::Monster( const Spell & )`（`monster.cpp:77-110`）：四元素召唤/守卫共用一个生物，Haunt 是鬼，其余 `Unknown` |
+| `ISpellBookOwner.GetPower()` | `HeroBase::GetPower()`（`heroes_base.h:141`）：接口新增，`Hero` / `Captain` 早已有这个公开成员，直接满足 |
+
+偏差（已写进代码注释）：
+
+* 参考收到的是 `HeroBase *`，自己从英雄摸到王国、地图与城堡；端口签名是 `ISpellBookOwner` + 可空 `World`，只有分支需要时才读。
+* **Town Gate 只写到城名**：参考在城名后还会说「城里的英雄是谁」，端口的世界还回答不了「某城里有哪个英雄」，句子到此为止；
+  另外参考走船长书时（`caster` 不是英雄）不给城名，端口同样只在 `caster is Hero` 且给了 `world` 时才追加。
+* 召唤/守卫法术在参考里对「没有对应生物」是 `assert`，端口返回纯表句（等于 release 构建的行为）。
+* `one` 的分支没有测试：`spell_table.cpp` 里没有 `extraValue == 1` 的法术，`FillCount` 又是私有方法。
+
+测试：`SpellInfoTests` 8 → 15 条（无施法者的表句与 `two`/数字两种填法、伤害与火系神器加成、召唤与召唤神器加倍、
+治疗与复活（含 `Ankh`）、守卫与 `Haunt` 的鬼、`Hypnotize` 的控制上限、Town Gate 取最近城与「无 world 时不追加」）。
+
+**下一步**：把描述接到界面——参考是在 `SpellDialogElement::showPopup()` 里调 `getSpellDescription( _spell, _hero )`
+（`ui_dialog.cpp:545`），端口的 `SpellDialogElement` 还没有施法者参数，所以法术书与 `SpellSelectDialog` 的右键仍是
+「名字 + 模板句子」。前置链上还差英雄对话框与王国总览。
+
+构建 0 错误 0 警告，全量 **5 053 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 238）。
+
+> 一次 UI 全量并行运行里 `SkillBarsTests.PrimaryFull_Redraw_PaintsThePlateOfEverySkill` 偶发失败，单跑与随后的全量
+> 均通过，判为既有用例的并行时序脆弱，本轮未改该测试。
+
+> 上节末尾「前置链上还差英雄对话框与王国总览」里，**王国总览已于同一天整篇转完**（见前面的「王国总览对话框」一节）。
+
+## 2026-11-22 英雄指示器、怪物框与状态栏（`heroes_indicator.cpp` / `ui_monster.cpp` / `statusbar.cpp`）
+
+A→J 的 H 行散件里三个独立的界面控件，外加一处口径纠正。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Widgets/HeroIndicators.cs` | `heroes/heroes_indicator.cpp:28-333`、`.h:41-139` | `HeroIndicator` 基类（背景恢复、`SetPos`、`RedrawOnlyBackground`）、`LuckIndicator`、`MoraleIndicator`（亡灵部队时灰化 + 变暗并追加说明）、`ExperienceIndicator`（`40-90` 默认值、超宽改 `M` 缩写）、`SpellPointsIndicator`（单行/双行与背景恢复）、`HeroIndicatorArtwork`（`HSICONS` 1/2/3/4/5/6/7/8 帧）、`HeroIndicatorHelp` |
+| `UI/Widgets/MonsterFrameRenderer.cs` | `ui_monster.cpp:31-59` | `IMonsterFrameSprites`（`STRIP` 种族板、`ICNMonh` 帧 0）、`Render()`：板画在槽位偏移处，像画在偏移 + 自身源偏移处 |
+| `UI/Widgets/StatusBar.cs` | `gui/statusbar.cpp`、`statusbar.h:31-52` | `SetRoi`、`ShowMessage`/`UpdateMessage`：`fitToOneRow( _roi.width )` 裁切、居中、`y + 2`、同一消息返回空区；`BoundaryRect` 用 min/max（与参考一致，不用会把空矩形当「无」的 `Rect.Union`） |
+| `UI/UiConstants.cs` | `ui_constants.h:23-39` | `borderWidthPx` / `radarWidthPx` / `shadowWidthPx` / `boxAreaWidthPx` / `tileWidthPx` 收成单一来源；`GameBorder`、`Radar`、`FrameBox`、`FrameBorder`、`LighthouseInfo`、`StandardPopupWindow`、`ScenarioSelectionDialog` 的常量改成引用它，名字不变 |
+
+要点：
+
+* **`ui_base.cpp` 判定改为「不适用」**：全篇只有一个空的 `ActionObject::senderUpdate()`，端口没有观察者机制，没有可移植的代码。
+* **`MovableText` 早已转完**（`UI/Widgets/MovableText.cs`）但它是 `sealed`，所以 `StatusBar` 用组合而不是继承；偏差写在类注释里。
+* **`ArmyBar` 的内联怪物框换成调用**：`IArmyBarSprites` 现在继承 `IMonsterFrameSprites`，`ArmyBar.RedrawItem` 的 else 分支调 `MonsterFrameRenderer.Render()`，与参考 `ArmyBar` 调 `renderMonsterFrame()` 对齐；`ArmyBarTests` 20 条仍绿。
+* **指示器只回消息不弹框**：`QueueEventProcessing` 返回 `HeroIndicatorHelp`，由窗口转成 `DialogPopup`，与其它控件一致。
+* **测试**：`MonsterFrameRendererTests` 5 条（板、源偏移、遮挡、缺图、按种族取板）；指示器与 `StatusBar` 的像素级对拍依赖全局字体与真实 ICN，留到逐函数核对那一轮。
+
+构建 0 错误 0 警告，全量 **5 058 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 243）。
+
+**H 行剩余**：`player_info.cpp`(380)、`ui_campaign.cpp`(190)、`ui_mage_guild.cpp`(192)、`ui_map_interface.cpp`(①部分)、
+`ui_castle.cpp`(①部分)、`interface_itemsbar.h`(②)、`ui_tool.cpp` 的 `UIScrollInertia`。
+之后按 planv4 的顺序：英雄对话框（G5 的硬前置）→ 城堡对话框 → G5 收口 → I（`ui_font.cpp` 对拍）→ J。
+
+## 2026-11-22 战役奖励弹窗（`gui/ui_campaign.cpp`）
+
+整篇 218 行转完，外加它依赖的两个技能描述函数。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/CampaignPopupWindows.cs` | `ui_campaign.cpp:52-217` | `ICampaignPopupArtwork`（取图交给宿主）、`ShowScenarioBonus()`（7 种奖励）、`ShowAward()`（7 种奖励）、`BuildMonsterFrame()`（`STRIP` 12 上画怪 + `+count`） |
+
+要点：
+
+* **分支照抄**：两者都是「按种类拼一组对话框元素 + `showStandardTextMessage`」。端口把绘制结果（`MessageBox`）交回调用方，不自己渲染。
+* **法术书卷轴走自己的字段**：`ArtifactType.SpellScroll` 时描述取 `ArtifactData.GetDescription( bonusData.ArtifactSpellId )`，与参考 `Artifact::SetSpell()` 后再取描述等价。
+* **升级链按参考终止**：`CreatureCurse`/`CreatureAlliance` 一路 `MonsterUpgrades.GetUpgrade()` 到返回自身为止。
+* **带入部队默认读存档**：`CarryOverForces` 的部队列表可显式传，默认 `CampaignSaveData.Get().CarryOverTroops`。
+* **两个未知种类抛异常**：参考在这两处是 `assert( 0 )`，端口 `ArgumentOutOfRangeException`。
+* **顺带补的前置**（都在 `Game/Heroes`）：`PrimarySkillNames.GetDescription( skill )`（对应 `Skill::Primary::StringDescription( skill, nullptr )`，`skill.cpp:282-323` 的无英雄那一半）与 `SecondarySkills.GetDescription( skill, level )`（对应 `Skill::Secondary::GetDescription( fakeHero )`，`skill.cpp:481-619`）。两者的「带真实英雄/世界」版本要等 `skill.cpp` 逐函数核对，注释里已写明。
+
+顺带核实了两项，文档此前标的是「部分/纯缺失」：
+
+* `ui_map_interface.cpp` 的 `displayStandardPopupWindow` 与 `getPopupWindowPosition` 早已在 `Widgets/StandardPopupWindow.cs` 里，planv4 的判定改为①完成。
+* `ui_constants.h` 五个常量已收成 `UI/UiConstants.cs`，各处只改初始化表达式，公开名字不变。
+
+测试：`CampaignPopupWindows` 的像素对拍依赖真实 ICN 与字体，按计划留到逐函数核对那一轮；本轮只保证转完 + 0 警告。
+
+构建 0 错误 0 警告，全量 **5 058 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 243）。
+`SkillBarsTests.PrimaryFull_Redraw_PaintsThePlateOfEverySkill` 这次全量又偶发失败一次（期望 6 实得 10），单跑 11 条全绿、随后复跑全量 1 243 全绿；与上一轮同一现象，属既有用例在并行下的抖动，本轮未改。
+
+**H 行剩余**：`player_info.cpp`(380，需要先补 `ui_dialog.cpp` 的 `PlayerTypeDialogElement`/`RaceDialogElement`)、
+`interface_itemsbar.h`(460)、`ui_mage_guild.cpp` 与 `ui_castle.cpp` 的逐函数核实、`ui_tool.cpp` 的 `UIScrollInertia`。
+之后仍是：英雄对话框 → 城堡对话框 → G5 → I → J。
+
+## 2026-11-22 玩家面板（`gui/player_info.cpp`）+ 并行抖动根治
+
+`Interface::PlayersInfo` 整篇转完（462 行），并把它依赖的两处补上。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Widgets/PlayersInfo.cs` | `player_info.cpp:47-462`、`player_info.h:36-70` | `IPlayersInfoArtwork`、`PlayerInfoEntry`（五个 ROI）、`PlayersInfoResult`（无操作/重绘/弹窗/改名）、`UpdateInfo`、`SwapPlayers`、`GetFromOpponentClick` / `GetFromOpponentNameClick` / `GetFromClassClick` / `GetPlayerFromHandicapRoi`、`RedrawInfo`、`QueueEventProcessing`、`ReadOnlyEventProcessing`、`ApplyName` |
+| `Game/GameScenarioInfo.cs` | `game_scenarioinfo.cpp:526-529` | `GetStep4Player()`：`game_scenarioinfo.cpp` 整屏属 S14-1，先把排图标要用的这一个函数落在它的目标文件里 |
+| `Assets/Maps/Mp2FileInfo.cs`（改） | `maps_fileinfo.h:140-143` | `AllowChangeRace( color )` |
+| `UI/Dialogs/InputStringDialog.cs`（改） | `ui_dialog.cpp` 的 `inputString` | 加 `initialText`：参考的 `std::string & res` 既是初值也是结果，端口原来只有结果那一半 |
+
+要点：
+
+* **一排从右往左画**：阴影画在图标的 `x - 5` 处，从左往右画会让左格的阴影压到右邻的图标上。
+* **`GetStep4Player` 的居中**：`id * width * 6 / count` 加上右侧剩余槽位的一半，2 个玩家时落在 1/4 与 3/4 处（已用单测钉住）。
+* **单人局换人**：人类颜色多于一个时参考是 `assert( 0 )`，端口抛 `InvalidOperationException`；换人时把手气从旧颜色搬到新颜色、旧颜色清零。
+* **手气只在人类格可点**：参考查 `GetControl() & CONTROL_AI`，端口用原始 `Control` 位而不是 `IsControlAi`（后者会把 `Human|AI` 归一成 AI，行为就变了）。
+* **事件返回值**：参考返回 `bool`，端口要把弹窗与改名提示带出去，所以返回 `PlayersInfoResult`；改名由调用方跑 `InputStringDialog` 再调 `ApplyName`，取消与清空都保持原名。
+* **测试**：`PlayersInfoTests` 6 条（`GetStep4Player` 两人/满员/零人、ROI 布局、四个命中测试、清选中、改名规则）。`RedrawInfo` 的像素对拍要真 `NGEXTRA` 与字体，留到逐函数核对那一轮。
+
+**顺带根治了那条偶发失败**：`SkillBarsTests.PrimaryFull_Redraw_PaintsThePlateOfEverySkill` 期望 6 实得 10，
+原因是技能条画技能名要用全局字体，而字体表跟着 `GameAssets.Current` 变；`BorderWindowTests`、`ButtonFactoryTests`、
+`HeroQuickInfoTests`、`StatusPanelTests` 这四个类会换 `GameAssets.Current` 却没进 `GlobalArchiveCollection`，
+于是并行时它们塞进去的桩资源包字体被另一条线程拿去画字，`10` 就是桩字体里的调色板值。四个类补上
+`[Collection(GlobalArchiveCollection.Name)]`，`SkillBarsTests` 作为「读资源」的一方也一并进集合。改完连跑四次
+UI 全量均 1 249 绿，抖动不再复现。
+
+构建 0 错误 0 警告，全量 **5 064 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 249）。
+
+**H 行剩余**：`interface_itemsbar.h`(460，要替换自建的 `ItemsBarLayout`，牵动 `ArmyBar`/`ArtifactsBar`/`SkillBars`)、
+`ui_mage_guild.cpp` 与 `ui_castle.cpp` 的逐函数核实。
+之后：英雄对话框 → 城堡对话框 → G5 → I → J。
+
+## 2026-11-22 道具格基类（`gui/interface_itemsbar.h`）
+
+参考的 460 行模板拆成两个 C# 类（C# 没有模板，两个都得是泛型基类）：
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Widgets/ItemsBar.cs` | `interface_itemsbar.h:35-311` | `ItemsBar<T>`：`SetContent` / `SetContentItems` / `SetItemsCountPerRow` / `SetTableSize` / `SetSingleItemSize` / `SetInBetweenItemsOffset` / `SetRenderingOffset`、`CalculateRoi` / `CalculateItemPositions`、`GetItemIterPos`、`Redraw`、`QueueEventProcessing`、`RedrawBackground` / `RedrawItem` / `RedrawItemIter` / `ActionCursorItemIter` / `ActionBarCursor` / `ActionBarLeftMouseSingleClick` / `ActionBarRightMouseHold` |
+| `UI/Widgets/ItemsActionBar.cs` | `interface_itemsbar.h:313-508` | `ItemsActionBar<T>`：选中（`IsSelected` / `GetSelectedItem` / `GetSelectedPos` / `GetSelectedIndex` / `ResetSelected`）、双条 `QueueEventProcessing(other)`、`ActionCrossItemBarDrag`，以及 14 个 `ActionBar*` 钩子（单击/双击/按下/释放/按住/右键，各有一参和两参版本） |
+
+要点：
+
+* **items 存下标，不存拷贝**。参考 `std::vector<Item *>` 指向调用方容器；端口 `SetContent` 保存容器本身 + 下标表，`ItemAt()` 每次回查，于是英雄新学的技能、刚换的部队都立刻反映出来。`Skill::Primary::Type`、`Artifact` 这类枚举是值类型，只有下标间接才能做到这一点。
+* **格子多于道具只画背景**。`Redraw` 按 `itemPos` 遍历格子，`items` 用尽后仍画背景、不再画道具；`GetItemIterPos` 同样在 items 用尽后停止推进游标，所以空槽的命中判定返回「无」。
+* **`GetSelectedIndex()` 的「无选中」是道具数**，不是 -1 —— 参考取 `std::distance( begin, cur )`，`cur == end()` 时刚好等于道具数，端口照抄。
+* **自定义每行格子数**：只有列表长度等于行数时才生效，否则原样保存但任何计算都不看它（参考每次用之前都先比长度）。
+* **`Redraw*` / `ActionBar*` 是 public**，`RedrawItemIter` / `ActionCursorItemIter` / `SetContentItems` 是 protected——与参考 `interface_itemsbar.h` 的段划分一致。
+* **`skill_bar.cpp` 的两条 bar 已接入**：`PrimarySkillsBar : ItemsBar<PrimarySkill>`、`SecondarySkillsBar : ItemsBar<SecondarySkillLevel>`，各自只留 `RedrawBackground` / `RedrawItem` 两个钩子，`Redraw` 与 `Layout` 中转全部删掉（`KingdomHeroRow.cs` 与 `SkillBarsTests.cs` 同步改为直接调用）。
+* **测试**：`ItemsBarTests` 8 条（无表尺寸不画、区域与位置、格间距、整体偏移、自定义行数、空槽命中、只画有货的槽、ActionBar 初始状态与重置）。
+
+构建 0 错误 0 警告，全量 **5 072 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 257）。
+
+**剩余**：`ArmyBar`（441 行 + `ArmyBar.Input.cs`）与 `ArtifactsBar`（314 行）还挂在自建 `ItemsBarLayout` 上，要改成继承
+`ItemsActionBar<T>`，把现有的 Redraw / 选中 / 双条拖放改成钩子——它们的 sprites 是逐次传入的（`Redraw(output, sprites)`），
+需要先存成字段才能进钩子。两者迁完后 `ItemsBarLayout.cs` 即可删除。之后才是 `ui_mage_guild.cpp` / `ui_castle.cpp` 核实。
+
+### 续：两个操作条接入 + 自建布局删除 + 两个文件核实（同日）
+
+**`ArmyBar : ItemsActionBar<Troop>`**、**`ArtifactsBar : ItemsActionBar<ArtifactType>`**：
+
+* 内容换成 `SetContent` 持有。`ArmyBar.SetContentForArmy()` 把军队那五个 `Troop` 对象（不是拷贝）交给基类，
+  所以任何地方合并/清空部队后画出来的就是当下的值；`SetArmy` 换军队时重设内容。`ArtifactsBar` 直接交 `Artifacts`。
+* 选中交给基类。`ItemsActionBar` 新增 `Select( int )`：参考的 `curItemPos` 是 protected、只由点击写，端口子类需要
+  「无输入也要能框住某格」（神器条画光标、编辑器预览），所以补了这个入口，`Select( -1 )` 等于 `ResetSelected()`，
+  越界抛 `ArgumentOutOfRangeException`。
+* `SelectedIndex` 仍是 `-1` 表示未选：基类 `GetSelectedIndex()` 按参考语义在未选时返回道具数，这一层在子类里折回 `-1`。
+* `Redraw(PixelBuffer, sprites)` 保留原签名（把 sprites 存进 `_sprites` 再调 `base.Redraw`），因为基类钩子没有 sprites 参数；
+  绘制内核拆成 `DrawTroop`，`RedrawItem(int, ...)` 的公开便捷重载与 `RedrawItem(Troop, ...)` 钩子都走它。
+* `ArtifactsBar` 的 `Redraw` / `Layout` / `IsSelected` / `ResetSelected` / `Select` 全部删掉改用基类。
+
+**`ItemsBarLayout.cs` 已删除**，`ArmyBar` / `ArtifactsBar` / 两条技能条 / 三个屏幕类（`CastleScreenView`、`KingdomHeroRow`、
+`KingdomOverviewLists`）与测试里的 `.Layout.` 中转全部去掉。删除时一次过宽的替换误伤了 10 个与 `CastleDialogLayout` 相关的
+文件（`view.Layout.X` → `view.X`），已按 `git diff` 逐对还原，最终 `git diff --stat` 对这 10 个文件为空。
+
+**`ui_castle.cpp` 核实**（9 个函数）：调色板四个助手与 `CastleFlagPalette` 逐条一致；`drawCastleIcon` / `drawResourcePanel` /
+`drawCastleName` / `drawCastleDialogBuilding` 的落点与参数一致。**找出一处偏差并修正**：`getCastleIcnIndex` 的
+`Race::RAND` 分支在参考里是 `isCastle ? 25 : 26`（编辑器「随机城堡」图标），端口原来返回 null 并注释断言「文件没有这两帧」；
+按参考改为 25/26，`_ => null` 保留给数据不可能出现的种族（参考是 `assert(0)` 后回落 1，会画出空槽帧）。测试
+`ARandomCastleHasNoIcon` 随之改为 `ARandomCastleUsesTheEditorFrames`。
+
+**`ui_mage_guild.cpp` 核实**（2 个函数）：`renderMageGuildBuilding` 落在 `MageGuildDialog.DrawGuildBuilding` ——
+`GetActiveRoi` 定水平居中、精灵底边压在 `offset.y + 290`、裁剪到左 200 列、随机种族复制一份再套紫色调色板，四项都对得上；
+`SpellsInOneRow` 落在 `SpellScrollRow` —— 110 步长、折起 `+7`、图标 `x+3+(w-iw)/2` / `y+31-ih/2`、名字 `x+18,y+57,78` 全一致。
+唯一没移植的是 `setCurrentSpell()`（只给编辑器用）。
+
+构建 0 错误 0 警告，全量 **5 072 绿**（Core 283 + Assets 416 + Game 3 116 + UI 1 257）。
+
+**H 行至此收口**。下一步是 I 行：英雄对话框（`heroes_dialog.cpp` + `heroes.cpp` 的对话框部分）。
+
+## 2026-11-22 I（一）：`gui/ui_font.cpp` 的八字码页字形生成
+
+资材里只有 ASCII 字形，西里尔、中欧、土耳其、波罗的等语言的字母由参考在启动时用「拷现成字母的像素 + 补几个点 + 重算阴影」
+拼出来。这一步把那段生成器整块搬过来，并接进 `FontGlyphTable` 的基表构建。
+
+| 端口文件（新） | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Gui/FontAlphabet.cs` | `ui_font.cpp:168` `resizeCodePage`、`6762` `generateAlphabet`、`54`/`59`/`64` 两个阴影助手与 `removeShadows` | `Apply( language, size, table )`：判语言 → 取码页 → 扩到 256 槽 → 生成 → 折回帧表；`NeedsGeneratedAlphabet` 对应 `ui_language.cpp:291 updateAlphabet` 的判据 |
+| `Game/Gui/FontAlphabet.Cp1250.cs` … `FontAlphabet.Iso8859_3.cs` | `186/1371/2398/3463/3792/4033/4519/4719` 八个 `generateCPxxxxAlphabet` | 逐句转写，1037 / 855 / 926 / 252 / 202 / 401 / 165 / 190 条语句 |
+| `tools/GenerateFontAlphabets.ps1` | 同上 | 解析参考文本、按语句模板转成 C# 的生成脚本；文件头写「Generated … do not edit」 |
+| `Core/Imaging/ImageOps.Sprites.cs` | `engine/image.cpp:2398` `fheroes2::Flip` | 新增 `FlipRegion( source, sourceArea, destination, destinationOffset, horizontally, vertically )` |
+| `Game/Gui/FontGlyphTable.cs` | `ui_language.cpp:291` | 基表在 `FontAssetFixes.Arrange` 之后调用 `FontAlphabet.Apply( GameLanguage.Current, size, built )` |
+
+要点：
+
+* **两套索引**：参考的 `icnVsSprite` 以码位 0–255 索引（`resizeCodePage` 把 128 帧前置补齐到 256），端口以「字符 − 0x20」索引，
+  所以生成前后各做一次 `Expand` / `Compact`；空图像（`resizeCodePage` 留下的 0×0）在折回时变 `null`，与参考的空帧同义。
+* **一个参考函数拆成两个方法**：参考每个函数先处理 `ICN::FONT` 再处理 `ICN::SMALFONT`，端口两张表分开构建，
+  脚本在遇到 `ICN::SMALFONT` 时切换输出列表，生成 `Generate<Cp>Normal` 与 `Generate<Cp>Small`。
+* **块作用域**：参考用 `{ }` 隔离每个 `temp` 并复用 `offset`，C# 不能重复声明同名局部量；脚本丢弃花括号并给 `temp` 唯一名。
+* **`font[a] = font[b]`** 是参考的按值拷贝（`vector<Sprite>`），端口写 `.Clone()`，不会把生成结果写回 ASCII 源图。
+* **判据**：英文配英文资材不生成；语言与资材语言不同、或资材是法语/俄语时生成；法语资材配英文按 CP1252 生成
+  （`ui_language.cpp:291-336`）。仓库自带资材是英文，所以英文流程仍是提前返回，行为不变。
+
+测试（新 `tests/FHeroes2.Game.Tests/FontAlphabetTests.cs`，7 例）：英文不生成（同一实例返回）、俄语生成 CP1251 的 `0xC0`
+且是 `A` 的副本、`0xA0` 是 6×1（小号 4×1）的不断行空格、波兰语 `0xA5` 比 `A` 高 3 像素、大号不生成、连跑两种语言不改 ASCII 字形，
+以及用仓库自带 `FONT.ICN` 的真实字形跑一遍 CP1250（真实字形尺寸才是那些绝对坐标语句的输入）。
+
+构建 0 错误 0 警告，全量 **5 100 绿**（Core 283 + Assets 416 + Game 3 123 + UI 1 278）。
+
+## 2026-11-22 I（二）：按钮字体的非 ASCII 字母
+
+普通字体补完字母后，按钮字体（`BUTTON_*_FONT`）也得有同一套字母，否则语言一换、按钮上的文字就断在 ASCII 边界。
+这一批把参考剩下的五段 `generateCPxxxxGoodButtonFont`（`ui_font.cpp:5604-6807`）和 `updateButtonFont`（`:170`）搬完。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Gui/ButtonFont.Cp1250.cs` … `ButtonFont.Cp1254.cs`（新） | 五个 `generateCPxxxxGoodButtonFont` | 逐句转写，各 300 余条语句；头注释标「Generated … do not edit」 |
+| `tools/GenerateButtonFontAlphabets.ps1`（新） | 同上 | 转写脚本；按钮版比普通版多出 `SetPixel` / `DrawLine` / `Flip` / `Blit` / `SetTransformPixel` 与 `for ( charCode : {...} )` 循环，全部有对应模板，未知语句直接抛错 |
+| `Core/Imaging/ImageOps.Sprites.cs` | `engine/image.cpp:2910` `fheroes2::SetTransformPixel` | 新增 `SetTransformPixel( sprite, x, y, transformId )`：清像素 + 写变换层，越界与单层图直接返回 |
+| `Game/Gui/ButtonFont.cs` | `generateButtonAlphabet` / `updateButtonFont` | `Create( SupportedLanguage )`：按码页选补充方法 → `Widen`（128 帧按参考 `insert` 扩成 256 帧，每格一份 1×1 副本）→ 补字母 → 派生四个面；新增 `BigSpaceWidth = 8` |
+| `Game/Gui/FontGlyphTable.cs` | `getCharacterLimit` | 按钮面按语言缓存（`Dictionary<SupportedLanguage, Faces>`），字符上限改成实际表长（英语 128、补过字母的语言 256） |
+
+要点：
+
+* 参考的 `released[N].resize( w, h )` + `released[N].reset()` 合成一次 `ButtonFont.Create( w, h, old )`，`setPosition` 走
+  `Moved`（Sprite 不可变，换一个共享图层的锚点）；赋值句 `released[a] = released[b]` 一律 `.Clone()`，否则后面就地
+  `DrawLine` 会把源字母一起改掉。
+* `fheroes2::Blit( src, dst, true )` 与 `fheroes2::Flip(...)` 都落到 `ImageOps.FlipRegion`：按钮字母带变换层，
+  FlipRegion 对多层目标会同时写颜色层与变换层，与参考一致。
+* 只有 CP1250–CP1254 五个码页有按钮补充（参考的 switch 就这么选的），越南语（CP1258）、罗马尼亚语（ISO-8859-16）、
+  世界语（ISO-8859-3）按参考保持 128 帧。
+
+测试（新 `tests/FHeroes2.Game.Tests/ButtonFontTests.cs`，5 例）：英语 128 帧四个面一致、俄语 256 帧且 `0xC0` 是
+10+2×2 宽的独立字形、不断行空格 8×1、土耳其语有 `0xDD`/`0xFD`、无补充的码页停在 128、俄语下四个面 0x20–0xFF 全非空。
+
+构建 0 错误 0 警告，全量 **5 105 绿**（Core 283 + Assets 416 + Game 3 128 + UI 1 278）。
+
+**I 行至此收口**，`ui_font.cpp` 无剩余。A→J 只剩 G5（App 侧 `IAdventureHost` 与 `AdventureMapScene` 接管、删自建面板）
+与 J（清理、测试迁移、全量回归）。
+
+## 2026-11-22 G5（2a）：宿主里的模态帧泵
+
+`IAdventureHost` 的 17 个成员全是同步返回（`bool ShowYesNoMessage(...)`、`bool OpenSpellBook( hero, out Spell )`），
+而 App 的主循环是「每帧拉一次场景」的状态机，弹窗都只是场景里的 overlay，没有同步阻塞这条路。这一批先把
+「同步返回」的地基落下来。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/IModalScreen.cs`（新） | `Dialog::Message` / `Dialog::YES_NO` 等自己转的循环 | 窗口契约：`IsFinished` + `SetCursor` / `SetLeftButton` / `SetRightButton` / `HotKey` + `Draw` / `Update`，输入面与 UI 层对话框一致 |
+| `App/GameHost.cs` | 同上 | 新增 `RunModal( IModalScreen )`：内层取事件 → 场景重绘 → 窗口画上去 → 上传，`_modal` 保证输入不再流进下面场景；`Draw()` 在 `_systemInfo` 之后、`Upload` 之前画窗口 |
+| `App/Modals/MessageBoxModal.cs`（新） | `Dialog::Message` / `Dialog::YES_NO` | `MessageBox` 的适配器：按到的标准按钮写进 `Answer` 并置 `IsFinished`，`Create(...)` 直接对应两个参考函数 |
+
+要点：
+
+* 泵可以在事件处理里被调用——`IAdventureHost` 的方法正是从 `PumpEvents` 的调用栈里唤起；内层再调
+  `PumpEvents` 是安全的（SDL 事件队列全局，`_modal` 挡住重复分派），这与参考「在事件处理里开对话框」同构。
+* 鼠标移动 / 离开 / 按键 / 滚轮在窗口打开时全部改投窗口，滚轮不落到冻结的场景；`Escape` → `Cancel`、
+  `Enter`/`Space` → `Okay`，与 `Dialog::YES_NO` 的键位一致。
+* `F11`（全屏）、`F12`（截图）仍在窗口之前处理，属于引擎级按键。
+* `_presenter` 为空的诊断屏下不开窗口；同一时刻只允许一个窗口，嵌套调用直接抛异常，不做静默叠加。
+
+构建 0 错误 0 警告，全量 **5 105 绿**；`--enter-map --smoke-frames 30` 冒烟正常（58.6 FPS，无行为变化）。
+
+**G5 剩余**：`IAdventureHost` 的 17 个成员接线（`HeroDialog` / `KingdomOverviewWindow` / `PuzzleMapDialog` /
+`SpellBookWindow` / `GameInfoDialog` / `AdventureOptionsDialog` / `FileOptionsDialog` / `SettingsDialog` /
+`SelectFileDialog` / `QuickInfoDialog` 都已在，`OpenCastleDialog` / `OpenViewWorld` 走场景回调），其中
+`SaveGame` 依赖 `GameSave.Save`（仍抛 `NotImplementedException`，等世界序列化），`CheckGameOver` 依赖尚未移植的
+`GameOver::Result::checkGameOver`；之后才是 `AdventureMapScene` 接管与删除自建面板。
+
+## 2026-11-22 G6.1（前半）：LocalEvent.HandleEvents 与事件引擎契约
+
+G6 放弃「事件只报告要开什么」的请求式契约，改回参考的同步路径：对话框自己写
+`while ( le.HandleEvents() ) { ... }`。这需要把当初判定为「SDL 侧、不移植」的 `HandleEvents` 补回来。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Input/IEventEngine.cs`（新） | `EventProcessing::EventEngine`（`localevent.h:40`、`localevent.cpp:1265-1313`） | UI 层的平台侧契约：`ScreenArea` + `HandleEvents( state, allowExit, out displayRefreshRequired )` + `Render( area )` + `Sleep( ms )`，不含任何 SDL 依赖 |
+| `UI/Input/LocalEvent.cs` | `HandleEvents`（`localevent.cpp:1243-1316`） | 新增 `Engine` / `NextRenderArea` / `LoopSleepTimeMs` / `HandleEvents( sleep, allowExit )`：`BeginFrame()` → 引擎取事件 → 需要整帧刷新时渲染 `ScreenArea`、否则渲染 `CursorRenderArea` → 睡 1 ms；`sleep=false` 时只记 `NextRenderArea`（`display.updateNextRenderRoi`） |
+| `tests/FHeroes2.UI.Tests/LocalEventTests.cs` | 同上 | 五条用例：未挂引擎抛异常；按光标区域渲染并睡 1 ms；整帧刷新；`sleep=false` 只记账；引擎返回 false 时不渲染不睡 |
+
+要点：
+
+* 类注释从「`HandleEvents` 没移植」改成「状态重置是 `BeginFrame`，SDL 半是 `IEventEngine`，帧是 `HandleEvents`」，
+  手柄 / 触摸板 / 模拟指针仍未移植（需要 SDL 设备）。
+* 没有把 SDL 引进 `FHeroes2.UI`：应用侧将实现 `SdlEventEngine`，测试用假引擎，两条路都不改对话框代码。
+* `LocalEvent.Current` 是进程级实例，`GameArea` / `ItemsBar` / `ItemsActionBar` 已经在读它，但 App 至今没填——这一批
+  之后由 `SdlEventEngine` 填，那些读取路径才第一次有真实状态。
+
+构建 0 错误 0 警告，全量 **5 110 绿**（新增 5 条）。
+
+**G6.1 剩余（App 侧）**：`SdlEventEngine`（SDL 事件 → `OnMouseMotion` / `OnMouseButton` / `OnMouseWheel` /
+`OnKeyboard`，键盘需要 `SDL.Keycode` → `UI.Input.Key` 的映射表，App 现在完全没有这张表）、`GameHost` 各 case 填充
+`LocalEvent.Current`、主循环改 `le.HandleEvents( false, true )` 驱动（`Draw()` 紧接着自己上传，对应参考的
+`HandleEvents(false)` + `render()`）。
+
+## 2026-11-22 G6.1（后半）+ G6.2（引擎侧）：主循环交给 LocalEvent
+
+前半只有契约，这一批把 SDL 那半接上，主循环第一次由 `le.HandleEvents()` 驱动。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `App/Input/SdlKeyMap.cs`（新） | `EventEngine::handleEvents` 的 `SDLK_*` 分支（`localevent.cpp:1450-1660`） | `SDL` keycode → `UI.Input.Key`：字母/数字用 ASCII 连续区段加偏移，标点逐个列，特殊键按 `SDL_SCANCODE_TO_KEYCODE` 的值（F1~F12、方向、PageUp/Down、Home/End、小键盘、左右修饰键）；`ToModifier` 把 `SDL_Keymod` 折成 `KeyModifier` |
+| `App/Input/SdlEventEngine.cs`（新） | `EventProcessing::EventEngine`（`localevent.cpp:1265-1313`） | `IEventEngine` 的 SDL 实现：`HandleEvents` 调宿主事件泵（带 `allowExit`），`Render` 上传整帧，`Sleep` 走 `Thread.Sleep` |
+| `App/GameHost.cs` | 同上 | 新增 `_le = LocalEvent.Current`；`Run()` 里装 `SdlEventEngine`；`Loop()` 首行改 `_le.HandleEvents( false, true )`；`PumpEvents( allowExit )` 每个事件先 `FeedLocalEvent`（鼠标/按键/滚轮），quit 在 `allowExit=false` 时问 `ProcessQuitEvent()`；`RunModal` 每帧 `BeginFrame()` |
+
+要点：
+
+* 键盘映射不再靠猜：SDL 的字母是小写 ASCII、数字是 `'0'..'9'`，而 `Key` 枚举的 A..Z / Digit0..9 / F1..F12 /
+  KeyPad0..9 都是连续块，一段区间加偏移就够；标点与特殊键逐条列，值按 `SDL_keycode.h`。
+* `FeedLocalEvent` 在任何场景分支之前执行，和参考「引擎先填状态、场景再读状态」一致；`GameArea.QueueEventProcessing`
+  等 UI 读取路径第一次拿到真实状态（App 目前还没调它们，所以无行为变化）。
+* quit 语义补上：`allowExit=false`（对话框）时改问 `QuitEventHook`，没有 hook 就不退出，和参考一致；主循环仍传
+  `true`，点 X 直接退出。
+
+构建 0 错误 0 警告，全量 **5 110 绿**；三路冒烟全部退出 0：`--enter-map` 30 帧 53.4 FPS、`--scene editor`
+20 帧 49.9 FPS、`--enter-town` 20 帧 36.9 FPS（20 帧样本里启动开销占比大）。
+
+**G6.2 状态**：引擎侧的 `Render` / `Sleep` 已就位，`HandleEvents( true )` 的呈现语义可用；验收里的
+「对话框内每帧可见」要等 G6.3 的首个 `MessageBox.Show` 才有真实用例。
+
+## 2026-11-22 G6.3：MessageBox.Show 的阻塞循环
+
+`MessageBox.Show(...)` 是端口第一个自己转事件循环的对话框函数，形状照参考
+`fheroes2::showMessage`（`ui_dialog.cpp:113-260`）。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/MessageBox.cs` | `ui_dialog.cpp:113-260` | 新增 `Show( target, header, body, headerFont, bodyFont, buttons, buttonArtwork, events )` 与私有 `Run`：每轮 `le.HandleEvents( false )` → `SetCursor` / `SetLeftButton` / `Enter`/`Space`/`Escape` 热键 → `Update` + `Draw` → `engine.Render( target.Bounds )` + `engine.Sleep( 1 )` |
+| `tests/FHeroes2.UI.Tests/MessageBoxTests.cs` | 同上 | 两条用例：未挂引擎抛 `InvalidOperationException`；引擎返回 `false` 时 `Show` 返回 `DialogButton.None` 且不画不睡 |
+
+细节：
+
+* `HandleEvents( sleepAfterEventProcessing: false )` 是关键：由 `Show` 自己在「画完之后」提交整帧（参考的
+  `display.render()`），否则 `HandleEvents` 只提交 `CursorRenderArea`，对话框画面不动。
+* `buttons` 默认 `DialogButton.None`：端口没有参考里那份进程级按钮素材，默认 `Ok` 会让 `Create` 直接抛
+  `ArgumentNullException`。要能返回的调用必须同时传 `buttons` 与 `buttonArtwork`。
+* 鼠标离开窗口暂不处理（端口没有 `SDL_EVENT_WINDOW_MOUSE_LEAVE` 的翻译），参考的 `setCursor( nullptr )` 缺失。
+
+构建 0 错误 0 警告，全量 **5 112 绿**（新增 2）；`--enter-map` 120 帧冒烟 **59.2 FPS**、退出 0，与改造前
+58.6 持平。
+
+**G6.3 剩余**：`AdventureOptionsDialog` 的提示接入——App 现在没有 `RunModal` / `MessageBoxModal` 的调用点
+（两者都是定义未用），首个真实用例要等 G6.4 的 `AdventureOptions` 对话框 `Show`。
+
+## 2026-11-22 G6.4（3/5）：AdventureOptions、Settings 与 FileOptions 的阻塞 Show
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/AdventureOptionsDialog.cs` | `dialog_adventure.cpp:55-110` | 新增 `Show( target, view, enableDig, events )`；`enableDig = false` 时 dig 的结果被丢弃，等于参考里禁用那个按钮 |
+| `UI/Dialogs/AdventureOptionsView.cs` | 同上 | 新增 `SetCursor( Point? )`，循环靠它驱动 hover |
+| `UI/Dialogs/SettingsDialog.cs` | `dialog_gamesettings.cpp:224-260` | 新增实例方法 `Show( target, events )`：Enter / Space → `ProcessHotKey( Okay )`，Escape → `Cancel()` |
+| `UI/Dialogs/FileOptionsView.cs`（新） | `dialog_file.cpp:42-152` | 6 个按钮的窗口：`ButtonGroup.CreateFromFrames` + `StandardWindow.CreateForSymmetricButtons` + `PlaceSymmetricButtons`，取消按钮放 `BOTTOM_CENTER`；`isRestartEnabled = false` 时 `buttons[2].Disable()` |
+| `UI/Dialogs/FileOptionsDialog.cs` | 同上 | 新增 `FromDialogButton( DialogButton )` 与 `Show( target, view, events )`；引擎退出返回 `Quit`（参考的 `result` 初值就是 `QUIT_GAME`） |
+| `UI/Dialogs/DialogButton.cs` | `dialog_file.cpp:55-60` | 新增 `NewGame` / `LoadGame` / `Restart` / `SaveGame` / `QuickSave` / `Quit` 六个位：参考用 GUI 层 `ButtonGroup` 的索引，端口的 `ButtonGroup` 要一个身份 |
+| `tests/.../AdventureOptionsViewTests.cs` | 同上 | 3 条：未挂引擎抛异常、两帧点击返回 `World`、禁用 dig 后 Escape 返回 `Cancel` |
+| `tests/.../SettingsDialogTests.cs` | 同上 | 2 条：未挂引擎抛异常、两帧点击 OK 返回 `Ok` |
+| `tests/.../FileOptionsViewTests.cs`（新） | 同上 | 16 条：3 列 2 行布局、按钮身份、restart 禁用、取消按钮居中、缺帧返回 null、点击/越界/禁用按钮、`Draw` 上色、`FromDialogButton` 映射表、`Show` 的三条（无引擎、点击返回 `QuickSave`、引擎退出返回 `Quit`）、真实素材下 `ButtonFactory` 生成的 12 帧能装进视图 |
+
+要点：
+
+* 三个 `Show` 与 `MessageBox.Show` 同形：引擎取事件 → 光标 / 左键 / 热键 → 画 → 提交 → 睡 1 ms。没有抽公共循环，
+  照参考让每个对话框自己写，代价是重复 20 行，好处是逐函数对照时能一一对上。
+* `AdventureOptionsView` 的按钮来自 `APANEL.ICN` 的 original-resource 分支（`game_assets.cpp:1585-1592`），
+  归档里现成可用；`FileOptions` 的按钮没有 original-resource 分支，走 `ButtonFactory.MakeSymmetricBackgroundSprites`
+  （`game_assets.cpp:1563-1578`），端口早有这个移植，视图只接 12 帧，生成与异常处理留给 App 层的 artwork 类。
+* 6 个按钮的布局按参考是 **3 列 2 行**（`ui_window.cpp:505-511` 的 `columns = buttonCount / 2`），不是 3 行 2 列；
+  测试第一版按「两列三行」写，跑出失败后才回参考确认。
+
+构建 0 错误 0 警告，全量 **5 133 绿**（新增 21：UI 1 290 → 1 306，AdventureOptions 3、Settings 2、FileOptions 16）；
+冒烟 `--enter-map` 30 帧 **62.2 FPS**、`--enter-map --adventure-options` 20 帧 **54.2 FPS**、`--open-settings` 20 帧
+76.9 FPS，均退出 0。
+
+**G6.4 剩余（2/5）与阻塞原因**：
+
+* `GameInfo`：参考直接读全局 `world`（`dialog_gameinfo.cpp`），端口没有全局世界，等 G6.6 的世界序列化。
+* `SelectFile`：需要存档目录列表与滚动条（`dialog_selectfile.cpp` 400+ 行），依赖存档路径服务。
+
+## 2026-11-22 G6.7：GameOver 判定与序列化
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/GameOverResult.cs`（新） | `game_over.cpp:464-682` | `GameOverResult`：`Colors`（`_colors`）、`Condition`（`result`）、`Reset()`、`CheckGameOver()`；配 `GameOverMode`（四个场景切换目标）与 `GameOverRequests`（淘汰通知列表、失败/胜利提示条件、LOSE/WIN 片子、胜利音乐） |
+| `Game/GameOverResult.Persistence.cs`（新） | `game_over.cpp:684-702` | `WriteTo` / `ReadFrom( stream, version )`：颜色 1 字节 + 条件 4 字节；1.1.09 之前颜色是 `int32_t`，按版本分流（与 `Army` 的颜色字段同一处收窄） |
+| `tests/.../GameOverResultTests.cs`（新） | 同上 | 12 条：`Reset` 取世界颜色、平静回合继续、最后一家获胜、攒金胜利、战役胜利不播片、单机全灭回主菜单、电脑出局被通报并摘色、多人淘汰局不结束、五字节往返、老格式四字节颜色、已失败流不读、截断流补零 |
+
+要点：
+
+* **判定顺序照参考**：先摘出局颜色（电脑一定要通报，人类只通报「不是当前玩家的那一家」），再分单机/多人判胜负，最后把
+  「该弹什么窗、该放什么片」放进 `Requests`。参考在这一步直接弹窗放片，游戏层做不到，这是端口唯一的结构性偏差。
+* **全灭不是终局**（多人）：只要还有人类玩家在局中，`CheckGameOver` 返回 `Cancel` 但 `Requests.LossNotice` 有值，
+  调用方必须两个一起看。淘汰通知用「调用时当前玩家是否还在颜色集合里」去重，对应参考的 `isCurrentPlayerWasActive`。
+* **单机全灭的例外**：王国无城且「丢城倒计时」为 0 时参考不弹失败框，因为 `HumanTurn()` 结尾已经提示过；
+  这条在端口里同样保留，测试里通过 `LostTownDays` 的初值（`GameOverLostDays + 1`）验证提示确实出现。
+* `TYPE_AUTO_PLAYTEST` 分支没有移植（端口无该单例），只影响战报记录不影响判定，已在派生的 XML 注释里写明。
+* `Reset()` 用 `Settings.Get().Players.GetColors()`——`Game::GetKingdomColors()` 就是它（`game.cpp:451`），
+  不是「地图上实际还在的颜色」，两者在开局与玩家中途出局后会不同。
+
+构建 0 错误 0 警告，全量 **5 161 绿**（Game 3 128 → 3 140，新增 12）；冒烟 `--enter-map` 30 帧 56.0~61.9 FPS（多次运行的
+波动）、`--adventure-options --enter-map` 20 帧 55.4 FPS、`--scene editor` 20 帧 75.4 FPS，均退出 0。
+
+### G6.7 收尾：条件文案与三个结果窗口
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/GameOverText.cs`（新） | `game_over.cpp:278-467` | `GameOver.GetString( condition )`（单条条件一句话）、`GameOver.GetDescription( conditions, info, world )`（场景信息里那句完整描述：占城/杀将/找神器/攒金/超时/同盟，外加「也可以全灭」） |
+| 同上 | `game_over.cpp:71-246` | `GameOver.GetVictoryMessage` / `GetLossMessage`：胜负窗口的正文表（含 `LossEnemyWins*` 三条「对手靠某条件赢下」） |
+| `UI/Dialogs/GameOverDialogs.cs`（新） | 同上 + `game_startgame.cpp:251-286` | `ShowVictory` / `ShowDefeat`（标题 `Victory!`/`Defeat!` + OK）、`ShowVanquished`（`%{color}` 替换 + 色徽）、`ComposeSign`（BRCREST 边框上按 `(4,4)` 盖色徽）、`IVanquishedSignArtworkSource` |
+| `UI/Dialogs/MessageBox.cs` | `fheroes2::showMessage` 的「先拼后跑」 | 新增 `Show( target, box, events )`：跑一个已经 `Create` 好的框（带 `DialogElement` 的那种） |
+| `tests/.../GameOverTextTests.cs`（新） | 同上 | 29 条：11 条 `GetString` 表 + 描述句（攒金/神器/终极神器/补「也可全灭」/超时拆月周日/占城缺对象回退/同盟两种句式）+ 胜负正文（全灭无窗、混位无窗、缺对象无窗、对手攒金照抄原文 “bow done”） |
+| `tests/.../GameOverDialogsTests.cs`（新） | 同上 | 7 条：无文案时连一帧都不画（`DialogButton.None`）、`ComposeSign` 的 `(4,4)` 落位与尺寸、非单一颜色抛 `ArgumentException`、引擎停止返回 `None`、`ShowVanquished` 能画出整个窗口 |
+
+要点：
+
+* 参考的 `GetActualDescription` 返回 `vector<LocalizedString>`，因为地图里写死的城名/英雄名要按地图语言单独本地化，
+  模板与名字各是一段；端口没有这一层，名字直接替换进句子、返回一个字符串。拼接结果一致，差的只是「每段能分别换语言」。
+* 对象缺失（编辑器写坏的图、城已被拆）时参考 `assert` 后留一句空白，端口不 assert，退回 `GetString` 的通用句式或返回空串（胜负窗口）。
+* 胜负正文表用 `switch` 精确匹配：判定每次只带一条条件，所以相等成立；混着别的位就没有句子——参考如此，端口照抄并写了测试。
+* 三个窗口都不碰音频（参考在函数里自己 `PlayMusic( MUS::VICTORY / MUS::LOSTGAME )`），调用方按
+  `GameOverRequests.VictoryMusic` 先播即可。
+* 战役「龙之城」的额外提示需要战役系统的当前关条件，端口还没有战役存档，已在 `GetVictoryMessage` 的注释里标为待补。
+
+构建 0 错误 0 警告，全量 **5 197 绿**（Game 3 140 → 3 169，UI 1 322 → 1 329，新增 36）；冒烟 `--enter-map` 30 帧 54.8 FPS、
+`--scene editor` 20 帧 73.9 FPS，均退出 0。`GameOverDialogs` 的两条「真开窗口」的测试要 AGG 美术，本机无游戏数据
+（`F:\game\fh2` 下没有 AGG），按既有约定直接返回、不构成假绿。
+
+## 2026-11-22 G6.5（4/7）：HeroDialog 与 KingdomOverview 的阻塞 Show
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/HeroDialog.cs` | `heroes_dialog.cpp:435-831` | 新增 `Show( target, events )`：每帧 `ProcessEvents` + `Draw` + 提交；`Result` 非 `None` 时返回它，`Requests` 非空时返回 `None` 让调用方先开那个窗口，引擎停止按参考的关闭路径返回 `Cancel` |
+| `UI/Dialogs/HeroDialogRequests`（同文件） | 同上 | 新增 `IsEmpty`，循环用它判断「这一帧有没有要交给调用方的东西」 |
+| `UI/Dialogs/KingdomOverviewWindow.cs` | `kingdom_overview.cpp:847-940` | 新增 `Show( target, events )`，返回 `bool`（`true` = 窗口关闭）：Escape 走 `CloseWindow` 快捷键，`Requests` 非空时先画一帧再返回 `false`，只有需要重画时才 `Draw` |
+| `tests/.../HeroDialogTests.cs` | 同上 | 4 条：未挂引擎、Escape 返回 `Cancel`、右键阵型请求让循环返回 `None` 且 `Requests.Popup` 有内容、引擎停止返回 `Cancel` |
+| `tests/.../KingdomOverviewWindowTests.cs`（新） | 同上 | 4 条：未挂引擎、引擎停止返回 `false` 且未关闭、Escape 关闭、右键收益行返回 `false` 且 `Requests.Income` 为真；窗口首次被实例化（`Kingdom` + `World` + 全 640x480 单色帧的测试美术） |
+
+要点：
+
+* 这两个对话框的循环与前面几个不同：参考在循环里**自己**打开英雄/城镇界面、快捷信息、收益与灯塔窗、解雇确认、部队交互。
+  端口把这些集中在 `Requests` 上，循环无法代替调用方开窗，于是采用「能自己答完就继续，需要别人就交还」的语义：
+  `HeroDialog.Show` 返回 `None`，`KingdomOverviewWindow.Show` 返回 `false`，两者都先把当前帧画出来，屏幕不会闪。
+* `KingdomOverviewWindow` 之前从未被实例化过（没有工厂，美术由场景拼），测试为此补了 `Kingdom`/`World` + 单色帧美术的构造，
+  顺带覆盖了 `Draw` 在真实石框上的整条路径。
+* `KingdomOverviewWindow` 的淡入淡出、难度音效与 `:949-958` 的冒险地图接口调用仍归调用方，与 `Close()` 上的说明一致。
+
+构建 0 错误 0 警告，全量 **5 149 绿**（UI 1 314 → 1 322，新增 8）；冒烟 `--enter-map` 30 帧 **66.4 FPS**、
+`--enter-map --adventure-options` 20 帧 51.4 FPS，均退出 0。
+
+**G6.5 剩余（3/7）与阻塞原因**：
+
+* `CastleDialog`：端口只有结果枚举与分支表，城堡画面在 `CastleScreenView` / `CastleScreenInput`（App 的 `CastleScene`），
+  阻塞循环属于场景而不是 `UI/Dialogs`。
+* `ViewWorld`：整窗尚未移植（`gui/view_world.cpp` 800+ 行）。
+* `QuickInfo`：`QuickInfoDialog` 只有模型，面板渲染（`dialog_quickinfo.cpp` 的框、行距与图标）还没移植，`Show` 无可画之物。
+
+## 2026-11-22 G6.5（2/7）：PuzzleMap 与 SpellBook 的阻塞 Show
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/PuzzleMapDialog.cs` | `puzzle.cpp:119-210` | 新增 `Show( events )`：第一段循环按 `RevealStepDelayMs = 10` 推进揭示动画（`Stopwatch` 计时，对应 `Game::PUZZLE_FADE_DELAY`），第二段是纯等待；两段共用一个 `ApplyFrame`（按钮按下态 → 点击/Escape → 重画 → 提交 → 睡） |
+| `UI/Dialogs/SpellBookWindow.cs` | `spell_book.cpp:269-397` | 新增 `Show( target, events )`：`ProcessEvents` 每帧读默认快捷键（Escape 关闭/取消、左右翻页），`IsClosed` 或 `ChooseSpellToAdd` 时退出，返回 `SelectedSpell` |
+| `tests/.../PuzzleMapDialogTests.cs` | 同上 | 4 条：未挂引擎、点击退出按钮（检查按下态已复位、按钮回到释放帧）、Escape、引擎停止 |
+| `tests/.../SpellBookWindowTests.cs` | 同上 | 4 条：未挂引擎、点击法术返回该法术且两帧都提交、Escape 返回 `None`、编辑模式在 `ChooseSpellToAdd` 停住且不关书 |
+
+要点：
+
+* 两个 `Show` 都没有重新实现输入：`ProcessEvents` / 现有命中判定已经完整，循环只负责「取事件 → 判定 → 重画 → 提交 → 睡眠」。
+* `PuzzleMapDialog` 的右键提示（`showStandardTextMessage( "Exit", "Exit this menu." )`）没接：端口 `MessageBox.Show` 要调用方传字体与按钮素材，
+  这个对话框不持有它们。右键当前无动作，注释里写明了。
+* `SpellBookWindow` 的 `ShowMessage` / `ShowSpell` 两个动作同样只画不弹，`ChooseSpellToAdd` 直接退出把选法术的活留给调用方
+  （参考在这里开 `Dialog::selectSpell`，端口是 `SpellSelectDialog`，属于 App 编排）。
+
+构建 0 错误 0 警告，全量 **5 141 绿**（UI 1 306 → 1 314，新增 8）；冒烟 `--enter-map` 30 帧 **66.2 FPS**、
+`--enter-map --adventure-options` 20 帧 48.0 FPS、`--open-settings` 20 帧 77.2 FPS，均退出 0。

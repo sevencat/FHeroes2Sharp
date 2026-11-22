@@ -17,6 +17,7 @@ namespace FHeroes2.UI.Tests;
 /// The hero quick info box, <c>showQuickInfo( const HeroBase &amp; )</c>
 /// (<c>src/fheroes2/dialog/dialog_quickinfo.cpp:693-911</c>).
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class HeroQuickInfoTests
 {
     private const byte GlyphColour = 8;

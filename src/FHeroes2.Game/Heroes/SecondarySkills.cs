@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 
 using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Heroes;
 
@@ -233,6 +234,83 @@ public static class SecondarySkills
         };
 
         return prefix + GetName(skill);
+    }
+
+    /// <summary>
+    /// What one level of a secondary skill does, <c>Skill::Secondary::GetDescription( hero )</c>
+    /// (<c>skill.cpp:481-619</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的签名带一个英雄，用来把亡灵技能的神龛与宝物加成算进百分比；战役奖励弹窗
+    /// （<c>ui_campaign.cpp:126-128</c>）传的是一个默认构造的 <c>Heroes fakeHero</c>，什么加成都拿不到，所以这里落的是
+    /// 「无英雄加成」的那一形态。带真实英雄的版本随 <c>skill.cpp</c> 的逐函数核对补齐。
+    /// </para>
+    /// <para>
+    /// 参考用 <c>%{skill}</c> / <c>%{count}</c> / <c>%{penalty}</c> / <c>%{percent}</c> 占位再替换，端口直接插值，
+    /// 文本一字不改；<c>_n()</c> 的单复数按 <c>count != 1</c> 判断。
+    /// </para>
+    /// </remarks>
+    /// <param name="skill">The skill.</param>
+    /// <param name="level">The hero's level in it.</param>
+    /// <returns>The sentence, <c>"unknown"</c> for an unsupported skill.</returns>
+    public static string GetDescription(SecondarySkill skill, SkillLevel level)
+    {
+        uint count = GetValue(skill, level);
+        string name = GetName(skill);
+
+        return skill switch
+        {
+            SecondarySkill.Pathfinding => level == SkillLevel.Expert
+                ? $"{name} eliminates the movement penalty for rough terrain."
+                : $"{name} reduces the movement penalty for rough terrain by {count} percent.",
+            SecondarySkill.Archery =>
+                $"{name} increases the damage done by the hero's range attacking creatures by {count} percent, and eliminates the {GameStatic.CastleWallRangedPenalty} percent penalty when shooting past obstacles (e.g. castle walls).",
+            SecondarySkill.Logistics => $"{name} increases the hero's movement points by {count} percent.",
+            SecondarySkill.Scouting => count != 1
+                ? $"{name} increases the hero's viewable area by {count} squares."
+                : $"{name} increases the hero's viewable area by one square.",
+            SecondarySkill.Diplomacy => string.Concat(
+                $"{name} allows the hero to negotiate with monsters who are weaker than their army, and reduces the cost of surrender.\n\n",
+                level == SkillLevel.Expert
+                    ? "All of the creatures may offer to join the hero."
+                    : $"Approximately {count} percent of the creatures may offer to join the hero.",
+                $"\n\nThe cost of surrender is reduced to {GetDiplomacySurrenderCostDiscount(level)} percent of the total cost of troops in the army."),
+            SecondarySkill.Navigation => $"{name} increases the hero's movement points over water by {count} percent.",
+            SecondarySkill.Leadership => $"{name} increases the hero's troops morale by {count}.",
+            SecondarySkill.Wisdom => level switch
+            {
+                SkillLevel.Basic => $"{name} allows the hero to learn third level spells.",
+                SkillLevel.Advanced => $"{name} allows the hero to learn fourth level spells.",
+                _ => $"{name} allows the hero to learn fifth level spells.",
+            },
+            SecondarySkill.Mysticism => count != 1
+                ? $"{name} regenerates {count} additional spell points per day to the hero."
+                : $"{name} regenerates one additional spell point per day to the hero.",
+            SecondarySkill.Luck => $"{name} increases the hero's luck by {count}.",
+            SecondarySkill.Ballistics => level switch
+            {
+                SkillLevel.Basic =>
+                    $"{name} gives the hero's catapult shots a greater chance to hit and do damage to castle walls.",
+                SkillLevel.Advanced =>
+                    $"{name} gives the hero's catapult an extra shot, and each shot has a greater chance to hit and do damage to castle walls.",
+                _ =>
+                    $"{name} gives the hero's catapult an extra shot, and each shot automatically destroys any wall, except a fortified wall in a Knight castle.",
+            },
+            SecondarySkill.EagleEye => level switch
+            {
+                SkillLevel.Basic =>
+                    $"{name} gives the hero a {count} percent chance to learn any given 1st or 2nd level spell that was cast by an enemy during combat.",
+                SkillLevel.Advanced =>
+                    $"{name} gives the hero a {count} percent chance to learn any given 3rd level spell (or below) that was cast by an enemy during combat.",
+                _ =>
+                    $"{name} gives the hero a {count} percent chance to learn any given 4th level spell (or below) that was cast by an enemy during combat.",
+            },
+            SecondarySkill.Necromancy =>
+                $"{name} allows {count} percent of the creatures killed in combat to be brought back from the dead as Skeletons.",
+            SecondarySkill.Estates => $"The hero produces {count} gold pieces per day as tax revenue from estates.",
+            _ => "unknown",
+        };
     }
 
     /// <summary>

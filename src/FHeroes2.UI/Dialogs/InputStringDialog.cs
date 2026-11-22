@@ -17,12 +17,13 @@ namespace FHeroes2.UI.Dialogs;
 /// </remarks>
 public sealed class InputStringDialog
 {
-    private InputStringDialog(string title, string body, int characterLimit, bool isMultiLine)
+    private InputStringDialog(string title, string body, int characterLimit, bool isMultiLine, string initialText)
     {
         Title = title;
         Body = body;
         CharacterLimit = characterLimit;
         IsMultiLine = isMultiLine;
+        InitialText = initialText;
     }
 
     /// <summary>
@@ -34,9 +35,13 @@ public sealed class InputStringDialog
     /// Maximum number of characters, <c>charLimit</c> of the reference; <c>0</c> means no limit, as it does there.
     /// </param>
     /// <param name="isMultiLine">Whether the input scrolls over several lines, <c>isMultiLine</c>.</param>
+    /// <param name="initialText">
+    /// The text the field starts with, the incoming value of the reference's <c>std::string &amp; res</c>.
+    /// </param>
     /// <returns>The model.</returns>
-    public static InputStringDialog Create(string title, string body, int characterLimit = 0, bool isMultiLine = false) =>
-        new(title, body, Math.Max(0, characterLimit), isMultiLine);
+    public static InputStringDialog Create(string title, string body, int characterLimit = 0,
+        bool isMultiLine = false, string initialText = "") =>
+        new(title, body, Math.Max(0, characterLimit), isMultiLine, initialText ?? string.Empty);
 
     /// <summary>Translated title above the input.</summary>
     public string Title { get; }
@@ -49,6 +54,9 @@ public sealed class InputStringDialog
 
     /// <summary>Whether the input is multi line.</summary>
     public bool IsMultiLine { get; }
+
+    /// <summary>The text the field starts with.</summary>
+    public string InitialText { get; }
 
     /// <summary>
     /// The result of the dialog: the text the player typed, or <see langword="null"/> when it was cancelled.

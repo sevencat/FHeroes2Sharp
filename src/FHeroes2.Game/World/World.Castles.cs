@@ -2,6 +2,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Castle;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
@@ -81,6 +82,31 @@ public sealed partial class World
     /// <returns>The town, or <see langword="null"/> when the tile is outside the map or not a castle entrance.</returns>
     public CastleTown? GetCastleEntrance(Point tile) =>
         IsInsideMap(tile.X, tile.Y) ? GetCastleEntrance(tile.Y * Width + tile.X) : null;
+
+    /// <summary>
+    /// The hero standing on a town, <c>World::GetHero( const Castle &amp; )</c> (<c>world.h:330</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference keeps a back pointer from the town to its guest; the port's <see cref="CastleTown"/> does not,
+    /// so the guest is found by the tile it stands on. A town's gate tile is where the visiting hero stands, which is
+    /// the same rule <c>Castle::BuyBuilding</c> applies.
+    /// </remarks>
+    /// <param name="castle">The town.</param>
+    /// <returns>The visiting hero, or <see langword="null"/> when nobody is home.</returns>
+    public Hero? GetHero(CastleTown castle)
+    {
+        ArgumentNullException.ThrowIfNull(castle);
+
+        foreach (Hero hero in Heroes)
+        {
+            if (hero.MapIndex == castle.TileIndex)
+            {
+                return hero;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Whether a tile carries the entrance of a town, <c>World::isValidCastleEntrance()</c>

@@ -39,7 +39,7 @@ namespace FHeroes2.UI.Interface;
 public sealed class Radar : BorderWindow
 {
     /// <summary>Edge of the panel in pixels, <c>fheroes2::radarWidthPx</c>.</summary>
-    public const int PanelSize = 144;
+    public const int PanelSize = UiConstants.RadarWidthPx;
 
     /// <summary>Palette index of the cursor frame, <c>RADARCOLOR</c>.</summary>
     public const byte RadarColor = 0xB5;

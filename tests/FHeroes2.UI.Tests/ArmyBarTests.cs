@@ -21,10 +21,10 @@ public sealed class ArmyBarTests
     {
         ArmyBar bar = CreateBar(ArmyWith((MonsterType.Peasant, 1)));
 
-        Assert.Equal(5, bar.Layout.Count);
-        Assert.Equal(new Rect(0, 0, 43, 43), bar.Layout.GetItemRect(0));
-        Assert.Equal(new Rect(86, 0, 43, 43), bar.Layout.GetItemRect(2));
-        Assert.Equal(new Rect(0, 0, 215, 43), bar.Layout.RenderingArea);
+        Assert.Equal(5, bar.Count);
+        Assert.Equal(new Rect(0, 0, 43, 43), bar.GetItemRect(0));
+        Assert.Equal(new Rect(86, 0, 43, 43), bar.GetItemRect(2));
+        Assert.Equal(new Rect(0, 0, 215, 43), bar.RenderingArea);
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public sealed class ArmyBarTests
         ArmyBar targetBar = CreateBar(target);
 
         // The two bars sit in different places on the screen, as they do in the reference.
-        sourceBar.Layout.SetRenderingOffset(new Point(0, 100));
+        sourceBar.SetRenderingOffset(new Point(0, 100));
 
         sourceBar.ProcessEvents(Click(5, 105, MouseButtonType.Left));
         Assert.Equal(0, sourceBar.SelectedIndex);
@@ -230,7 +230,7 @@ public sealed class ArmyBarTests
     public void ABarWithoutAnArmyHandlesNothing()
     {
         ArmyBar bar = new(null, miniSprites: true, readOnly: false);
-        bar.Layout.SetTableSize(new Size(5, 1));
+        bar.SetTableSize(new Size(5, 1));
 
         Assert.Equal(0, bar.ItemsCount);
         Assert.False(bar.ProcessEvents(Click(5, 5, MouseButtonType.Left)).Handled);
@@ -339,7 +339,7 @@ public sealed class ArmyBarTests
         bool saveLastTroop = true)
     {
         ArmyBar bar = new(army, miniSprites: true, readOnly, canChange, saveLastTroop);
-        bar.Layout.SetTableSize(new Size(5, 1));
+        bar.SetTableSize(new Size(5, 1));
 
         return bar;
     }

@@ -28,10 +28,10 @@ public sealed class StandardPopupWindow
     public const string AssetName = "QWIKINFO.ICN";
 
     /// <summary>Width of the frame the reference keeps around the interface, <c>borderWidthPx</c>.</summary>
-    public const int BorderWidth = 16;
+    public const int BorderWidth = UiConstants.BorderWidthPx;
 
     /// <summary>Side of a map tile in pixels, <c>tileWidthPx</c>.</summary>
-    public const int TileWidth = 32;
+    public const int TileWidth = UiConstants.TileWidthPx;
 
     /// <summary>Left inset of the text, <c>windowRoi.x + 22</c> of the reference.</summary>
     public const int TextInset = 22;

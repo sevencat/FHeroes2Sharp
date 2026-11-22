@@ -146,14 +146,20 @@ public sealed class UltimateArtifact
     /// <remarks>
     /// <para>
     /// 参考只转调 <c>Interface::GameArea::GenerateUltimateArtifactAreaSurface()</c>——那是把十二块拼图拼成
-    /// 一张小地图的绘制函数，隶属 <c>gui</c> 目录（planv4 的 S12）。端口按依赖先立接口的约定把方法留在原位。
+    /// 一张小地图的绘制函数，隶属 <c>gui</c> 目录，端口已经转好：<c>GameArea.GenerateUltimateArtifactAreaSurface()</c>
+    /// （<c>gui/interface_gamearea.cpp:908-937</c>）。
     /// </para>
     /// <para>
-    /// <b>当前状态：抛 <see cref="NotImplementedException"/>。</b>
+    /// <b>层级偏差。</b>端口的 <c>Game</c> 不能调 <c>UI</c>（依赖方向是 <c>UI → Game</c>），所以拼图窗口的整张图由界面侧
+    /// 拼装：调用 <c>adventureMap.GetGameArea().GenerateUltimateArtifactAreaSurface( Index, Offset )</c>，把结果连同
+    /// <see cref="Position"/>/<see cref="Offset"/> 交给 <c>UI.Dialogs.PuzzleMapDialog</c>。方法留在原位只是为了对齐参考
+    /// 的接口，<b>不要</b>在游戏逻辑里调用它。
     /// </para>
     /// </remarks>
     /// <returns>The picture of the area around the artifact.</returns>
-    /// <exception cref="NotImplementedException">The map-surface generator is not ported yet (S12).</exception>
+    /// <exception cref="NotImplementedException">
+    /// Always: the picture is composed by the interface, see the remarks.
+    /// </exception>
     public PixelBuffer GetPuzzleMapSurface()
     {
         throw new NotImplementedException("UltimateArtifact::GetPuzzleMapSurface() 依赖 gui 的 GameArea 生成器（planv4 S12）。");
