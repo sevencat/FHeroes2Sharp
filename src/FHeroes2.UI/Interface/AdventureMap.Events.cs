@@ -260,7 +260,7 @@ public sealed partial class AdventureMap
     /// </summary>
     public void EventKingdomInfo()
     {
-        _host.OpenKingdomOverview();
+        _dialogs.OpenKingdomOverview();
 
         _iconsPanel.SetRedraw();
     }
@@ -280,7 +280,7 @@ public sealed partial class AdventureMap
         GameArea.SetCenter(GetCenterOf(hero.MapIndex));
         SetRedraw(Redraw.GameArea | Redraw.RadarCursor);
 
-        if (!_host.OpenSpellBook(hero, out Game.Spells.Spell spell))
+        if (!_dialogs.OpenSpellBook(hero, out Game.Spells.Spell spell))
         {
             return;
         }
@@ -357,7 +357,7 @@ public sealed partial class AdventureMap
     /// Opens the file options dialog, <c>EventFileDialog()</c> (<c>interface_events.cpp:292-295</c>).
     /// </summary>
     /// <returns>What the file dialog decided.</returns>
-    public AdventureEventResult EventFileDialog() => _host.ShowFileOptions();
+    public AdventureEventResult EventFileDialog() => _dialogs.ShowFileOptions();
 
     /// <summary>
     /// Opens the system options dialog, <c>EventSystemDialog()</c> (<c>interface_events.cpp:297-300</c>).
@@ -421,29 +421,11 @@ public sealed partial class AdventureMap
     /// Asks for a file name and saves the game, <c>EventSaveGame()</c> (<c>interface_events.cpp:329-350</c>).
     /// </summary>
     /// <returns>Always <see cref="AdventureEventResult.Cancel"/>: saving does not leave the map.</returns>
-    public AdventureEventResult EventSaveGame()
-    {
-        while (true)
-        {
-            string? fileName = _dialogs.SelectSaveFile();
-
-            if (string.IsNullOrEmpty(fileName))
-            {
-                return AdventureEventResult.Cancel;
-            }
-
-            // System::IsFile() of the reference; the port's file access is System.IO.
-            if (File.Exists(fileName)
-                && !_dialogs.ShowYesNo("", "Are you sure you want to overwrite the save with this name?"))
-            {
-                continue;
-            }
-
-            _dialogs.ShowMessage("", _host.SaveGame(fileName) ? "Game saved successfully." : "There was an issue during saving.");
-
-            return AdventureEventResult.Cancel;
-        }
-    }
+    /// <remarks>
+    /// 选择窗口、覆盖确认、写盘和结果提示都已在 <see cref="AdventureMapDialogs.SaveGame"/> 里，和参考在
+    /// <c>Interface::AdventureMap</c> 内部完成同样的事；这里只把结果翻译成事件返回值。
+    /// </remarks>
+    public AdventureEventResult EventSaveGame() => _dialogs.SaveGame();
 
     /// <summary>
     /// Asks whether loading really is wanted, <c>EventLoadGame()</c> (<c>interface_events.cpp:352-359</c>).
@@ -459,7 +441,7 @@ public sealed partial class AdventureMap
     /// <summary>
     /// Opens the puzzle map, <c>EventPuzzleMaps()</c> (<c>interface_events.cpp:361-364</c>).
     /// </summary>
-    public void EventPuzzleMaps() => _host.OpenPuzzleMaps();
+    public void EventPuzzleMaps() => _dialogs.ShowPuzzleMap(GameArea, Radar.Area);
 
     /// <summary>
     /// Opens the scenario information, <c>EventScenarioInformation()</c> (<c>interface_events.cpp:366-396</c>).
@@ -584,7 +566,7 @@ public sealed partial class AdventureMap
         SetRedraw(Redraw.Heroes | Redraw.Buttons);
 
         // The dig can be the action that decides the scenario.
-        return _host.CheckGameOver();
+        return _dialogs.CheckGameOver();
     }
 
     /// <summary>
@@ -613,13 +595,13 @@ public sealed partial class AdventureMap
                 {
                     hero.ResetModes(HeroModes.Action);
 
-                    return _host.CheckGameOver();
+                    return _dialogs.CheckGameOver();
                 }
             }
         }
         else if (InterfaceFocus.GetFocusCastle() is { } castle)
         {
-            _host.OpenCastleDialog(castle);
+            _dialogs.OpenCastleDialog(castle);
         }
 
         return AdventureEventResult.Cancel;
@@ -632,11 +614,11 @@ public sealed partial class AdventureMap
     {
         if (InterfaceFocus.GetFocusHeroes() is { } hero)
         {
-            _host.OpenHeroesDialog(hero);
+            _dialogs.OpenHeroesDialog(hero);
         }
         else if (InterfaceFocus.GetFocusCastle() is { } castle)
         {
-            _host.OpenCastleDialog(castle);
+            _dialogs.OpenCastleDialog(castle);
         }
     }
 

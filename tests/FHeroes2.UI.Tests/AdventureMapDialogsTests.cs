@@ -1,10 +1,15 @@
 using FHeroes2.Assets;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
+using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Maps;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
 using FHeroes2.UI.Widgets;
+using CastleTown = FHeroes2.Game.Castle.Castle;
 using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
@@ -31,6 +36,14 @@ public sealed class AdventureMapDialogsTests
     public void ToAdventureOption_MapsTheFourDoorsAndNothingElse(DialogButton button, AdventureOption expected) =>
         Assert.Equal(expected, AdventureMapDialogs.ToAdventureOption(button));
 
+    [Theory]
+    [InlineData(GameOverMode.MainMenu, AdventureEventResult.Lose)]
+    [InlineData(GameOverMode.HighScoresStandard, AdventureEventResult.HighScore)]
+    [InlineData(GameOverMode.CompleteCampaignScenario, AdventureEventResult.Win)]
+    [InlineData(GameOverMode.Cancel, AdventureEventResult.Cancel)]
+    public void ToAdventureEventResult_MapsTheFourVerdicts(GameOverMode mode, AdventureEventResult expected) =>
+        Assert.Equal(expected, AdventureMapDialogs.ToAdventureEventResult(mode));
+
     [Fact]
     public void ShowYesNo_IsNoWhenTheEngineStops() => Assert.True(TryWithArchives(
         (dialogs, events) => dialogs.ShowYesNo(
@@ -48,6 +61,43 @@ public sealed class AdventureMapDialogsTests
             return 0;
         },
         _ => { }));
+
+    [Fact]
+    public void OpenCastleDialog_ClosesWhenTheEngineStops() => Assert.True(TryWithArchives(
+        (dialogs, events) =>
+        {
+            CastleTown castle = new(0, MapRace.Knight);
+            castle.ChangeColor(PlayerColor.Red);
+            dialogs.OpenCastleDialog(castle, events);
+
+            return true;
+        },
+        answer => Assert.True(answer)));
+
+    [Fact]
+    public void OpenKingdomOverview_ClosesWhenTheEngineStops() => Assert.True(TryWithArchives(
+        (dialogs, events) =>
+        {
+            dialogs.OpenKingdomOverview(events);
+
+            return true;
+        },
+        answer => Assert.True(answer)));
+
+    [Fact]
+    public void OpenHeroesDialog_ClosesWhenTheEngineStops() => Assert.True(TryWithArchives(
+        (dialogs, events) =>
+        {
+            dialogs.OpenHeroesDialog(new Hero(1, MapRace.Knight), events);
+
+            return true;
+        },
+        answer => Assert.True(answer)));
+
+    [Fact]
+    public void ShowFileOptions_IsQuitWhenTheEngineStops() => Assert.True(TryWithArchives(
+        (dialogs, events) => dialogs.ShowFileOptions(events),
+        answer => Assert.Equal(AdventureEventResult.QuitGame, answer)));
 
     [Fact]
     public void ShowAdventureOptions_IsCancelledWhenTheEngineStops() => Assert.True(TryWithArchives(

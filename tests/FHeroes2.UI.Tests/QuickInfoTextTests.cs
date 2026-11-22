@@ -1,13 +1,18 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Resources;
 using FHeroes2.UI.Dialogs;
 
 namespace FHeroes2.UI.Tests;
 
 /// <summary>
-/// The ported half of <c>getQuickInfoText()</c> (<c>src/fheroes2/dialog/dialog_quickinfo.cpp:455-595</c>):
-/// the ground branch, the resource pile branch and the object name the reference falls back to.
+/// <c>getQuickInfoText()</c> (<c>src/fheroes2/dialog/dialog_quickinfo.cpp:455-595</c>).
 /// </summary>
+/// <remarks>
+/// The branches that need no world are covered here: the ground, the resource pile, the object name the
+/// reference falls back to, and the mine income suffix. Garrisons, dwelling counts, shrines, tents and the
+/// digging advice read world state, so they are left to the adventure map smoke run.
+/// </remarks>
 public sealed class QuickInfoTextTests
 {
     [Fact]
@@ -57,11 +62,32 @@ public sealed class QuickInfoTextTests
         Assert.Equal(Mp2ObjectName.Of(Mp2ObjectType.Mine), QuickInfoText.ForTile(mine));
     }
 
+    [Theory]
+    [InlineData(Resource.Wood, " (+2)")]
+    [InlineData(Resource.Ore, " (+2)")]
+    [InlineData(Resource.Mercury, " (+1)")]
+    [InlineData(Resource.Gold, " (+1000)")]
+    [InlineData(Resource.Unknown, "")]
+    public void MineIncome_IsTheDailyProductionOfOneMine(int resource, string expected)
+    {
+        // profit.cpp:98-114 through getMineIncomeString(); a mine of unknown resource earns nothing.
+        Assert.Equal(expected, QuickInfoText.MineIncome(resource));
+    }
+
     [Fact]
     public void ForTile_RejectsAMissingTile()
     {
         Assert.Throws<ArgumentNullException>(() => QuickInfoText.ForTile(null!));
         Assert.Throws<ArgumentNullException>(() => QuickInfoText.DescribeGround(null!));
+    }
+
+    [Fact]
+    public void TheFullTable_RejectsAMissingTileOrWorld()
+    {
+        Tile tile = TileOf(Mp2ObjectType.None);
+
+        Assert.Throws<ArgumentNullException>(() => QuickInfoText.ForTile(null!, null!, PlayerColor.None));
+        Assert.Throws<ArgumentNullException>(() => QuickInfoText.ForTile(tile, null!, PlayerColor.None));
     }
 
     private static Tile TileOf(Mp2ObjectType objectType)

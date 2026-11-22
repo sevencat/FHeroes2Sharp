@@ -15,6 +15,7 @@ using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
+using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Interface;
 using Xunit;
 
@@ -256,7 +257,7 @@ public sealed class AdventureMapTests : IDisposable
         map.MouseCursorAreaClickLeft(0);
         map.MouseCursorAreaClickLeft(-1);
 
-        Assert.Empty(LastHost!.QuickInfoTiles);
+        Assert.Empty(LastQuickInfo);
     }
 
     [Fact]
@@ -272,7 +273,7 @@ public sealed class AdventureMapTests : IDisposable
         map.MouseCursorAreaPressRight(-1);
         map.MouseCursorAreaPressRight(int.MaxValue);
 
-        Assert.Empty(LastHost!.QuickInfoTiles);
+        Assert.Empty(LastQuickInfo);
     }
 
     [Fact]
@@ -284,15 +285,14 @@ public sealed class AdventureMapTests : IDisposable
         }
 
         AdventureMap map = CreateMap();
-        World world = World.Current;
 
         // The map is generated without objects, so every tile is "the default branch": fog or not, the reference
         // shows the tile window.
         map.MouseCursorAreaPressRight(0);
 
-        Tile tile = Assert.Single(LastHost!.QuickInfoTiles);
-        Assert.Equal(0, tile.Index);
-        Assert.Same(world.GetTile(0), tile);
+        // 空瓦片走 Dialog::QuickInfo( tile )：一个标准文字框，不是城堡/英雄的大面板。
+        StandardPopupWindow popup = Assert.IsType<StandardPopupWindow>(Assert.Single(LastQuickInfo));
+        Assert.True(popup.Area.Width > 0 && popup.Area.Height > 0);
     }
 
     [Fact]
@@ -393,6 +393,12 @@ public sealed class AdventureMapTests : IDisposable
     /// <summary>What the last <see cref="CreateMap"/> handed to the screen, to check the dialogs it asked for.</summary>
     private StubHost? LastHost { get; set; }
 
+    /// <summary>
+    /// The quick info boxes the screen asked for, taken instead of the blocking loop of
+    /// <see cref="QuickInfoPopup"/>: a test cannot wait for a right button to be released.
+    /// </summary>
+    private List<IQuickInfoPanel> LastQuickInfo { get; } = new();
+
     /// <summary>The frame the last <see cref="CreateMap"/> painted into.</summary>
     private PixelBuffer? LastDisplay { get; set; }
 
@@ -410,12 +416,21 @@ public sealed class AdventureMapTests : IDisposable
 
         StubHost host = new();
         LastHost = host;
+        LastQuickInfo.Clear();
 
         // The screen now builds its own panels, the way the reference constructor does.
         AdventureMap? map = AdventureMap.TryCreate(display, _assets,
             new AudioManager(new StubAudioDevice(), new StubAudioSource(), Settings.Get()), host);
 
-        return map ?? throw new InvalidOperationException("The game data does not hold the adventure screen artwork.");
+        if (map is null)
+        {
+            throw new InvalidOperationException("The game data does not hold the adventure screen artwork.");
+        }
+
+        // 速览的阻塞循环在测试里没有事件循环可泵，接管成只记录面板。
+        map.Dialogs.PresentQuickInfo = LastQuickInfo.Add;
+
+        return map;
     }
 
     /// <summary>
@@ -499,68 +514,12 @@ public sealed class AdventureMapTests : IDisposable
     /// <summary>The scene the adventure screen asks for dialogs; it records what was asked for.</summary>
     private sealed class StubHost : IAdventureHost
     {
-        /// <summary>The tiles whose quick info was requested, in order.</summary>
-        public List<Tile> QuickInfoTiles { get; } = new();
-
-        public void ShowMessage(string header, string body)
-        {
-        }
-
-        public bool ShowYesNoMessage(string header, string body) => false;
-
-        public void ShowQuickInfo(Tile tile) => QuickInfoTiles.Add(tile);
-
-        public void ShowQuickInfo(CastleTown castle)
-        {
-        }
-
-        public void ShowQuickInfo(Hero hero)
-        {
-        }
-
-        public void OpenHeroesDialog(Hero hero)
-        {
-        }
-
-        public void OpenCastleDialog(CastleTown castle)
-        {
-        }
-
-        public bool OpenSpellBook(Hero hero, out Spell spell)
-        {
-            spell = new Spell(0);
-
-            return false;
-        }
-
-        public void OpenKingdomOverview()
-        {
-        }
-
-        public void OpenPuzzleMaps()
-        {
-        }
-
         public void OpenViewWorld()
         {
         }
 
-        public void OpenScenarioInformation()
-        {
-        }
-
-        public AdventureOption ShowAdventureOptions(bool openFromHero) => AdventureOption.Cancel;
-
-        public AdventureEventResult ShowFileOptions() => AdventureEventResult.Cancel;
-
         public void ShowSystemOptions()
         {
         }
-
-        public string? SelectSaveFile() => null;
-
-        public bool SaveGame(string fileName) => false;
-
-        public AdventureEventResult CheckGameOver() => AdventureEventResult.Cancel;
     }
 }

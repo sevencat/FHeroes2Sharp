@@ -1,7 +1,6 @@
 using FHeroes2.Game;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
-using FHeroes2.Game.Spells;
 using CastleTown = FHeroes2.Game.Castle.Castle;
 
 namespace FHeroes2.UI.Interface;
@@ -73,9 +72,11 @@ public enum AdventureOption
 
 /// <summary>
 /// The dialogs and the rest of the game that the adventure map events call into, i.e. the global functions the
-/// reference reaches from <c>gui/interface_events.cpp</c>: <c>Dialog::*</c>, <c>Game::Open*Dialog()</c>,
-/// <c>Game::Save()</c>, <c>Kingdom::openOverviewDialog()</c>, <c>PuzzleMaps::ShowMapsDialog()</c>,
-/// <c>ViewWorld::ViewWorldWindow()</c> and <c>fheroes2::showStandardTextMessage()</c>.
+/// reference reaches from <c>gui/interface_events.cpp</c>: <c>ViewWorld::ViewWorldWindow()</c>, the system and
+/// file dialogs.
+/// The message boxes, the save file picker, the quick info panels, the puzzle map, the spell book, the file
+/// menu, the hero dialog, the town screen, the kingdom overview and <c>checkGameOver()</c> have already moved to
+/// <see cref="AdventureMapDialogs"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -91,60 +92,9 @@ public enum AdventureOption
 /// </remarks>
 public interface IAdventureHost
 {
-    /// <summary>Opens the hero dialog, <c>Game::OpenHeroesDialog( hero, true, true )</c>.</summary>
-    /// <param name="hero">The hero to show.</param>
-    void OpenHeroesDialog(Hero hero);
-
-    /// <summary>Opens the castle dialog, <c>Game::OpenCastleDialog( castle )</c>.</summary>
-    /// <param name="castle">The castle to show.</param>
-    void OpenCastleDialog(CastleTown castle);
-
-    /// <summary>
-    /// Shows what stands on a map tile without leaving the map, <c>Dialog::QuickInfo( tile )</c>
-    /// (<c>dialog_quickinfo.cpp</c>).
-    /// </summary>
-    /// <param name="tile">The tile the player right-clicked.</param>
-    void ShowQuickInfo(Tile tile);
-
-    /// <summary>Shows a town without leaving the map, <c>Dialog::QuickInfo( castle )</c>.</summary>
-    /// <param name="castle">The town the player right-clicked.</param>
-    void ShowQuickInfo(CastleTown castle);
-
-    /// <summary>Shows a hero without leaving the map, <c>Dialog::QuickInfo( heroes )</c>.</summary>
-    /// <param name="hero">The hero the player right-clicked.</param>
-    void ShowQuickInfo(Hero hero);
-
-    /// <summary>Opens the spell book and casts what the player picks, <c>Heroes::OpenSpellBook( ADVN, true, false, {} )</c>.</summary>
-    /// <param name="hero">The hero whose book is opened.</param>
-    /// <param name="spell">The spell the player picked, or the invalid spell when the book was closed.</param>
-    /// <returns>Whether a spell was picked.</returns>
-    bool OpenSpellBook(Hero hero, out Spell spell);
-
-    /// <summary>Opens the kingdom overview, <c>Kingdom::openOverviewDialog()</c>.</summary>
-    void OpenKingdomOverview();
-
-    /// <summary>Opens the puzzle map, <c>PuzzleMaps::ShowMapsDialog()</c>.</summary>
-    void OpenPuzzleMaps();
-
     /// <summary>Opens the world map, <c>ViewWorld::ViewWorldWindow( color, OnlyVisible, interface )</c>.</summary>
     void OpenViewWorld();
 
-    /// <summary>Opens the file options dialog, <c>Dialog::FileOptions()</c>.</summary>
-    /// <returns>What the player asked for.</returns>
-    AdventureEventResult ShowFileOptions();
-
     /// <summary>Opens the system options dialog, <c>fheroes2::showSystemOptionsDialog()</c>.</summary>
     void ShowSystemOptions();
-
-    /// <summary>Saves the game, <c>Game::Save( filename )</c>.</summary>
-    /// <param name="fileName">Where to write the save.</param>
-    /// <returns>Whether the save was written.</returns>
-    bool SaveGame(string fileName);
-
-    /// <summary>
-    /// Evaluates the end-of-game conditions after an action that can decide the scenario,
-    /// <c>GameOver::Result::Get().checkGameOver()</c>.
-    /// </summary>
-    /// <returns>The mode the game should switch to; <see cref="AdventureEventResult.Cancel"/> while the game goes on.</returns>
-    AdventureEventResult CheckGameOver();
 }

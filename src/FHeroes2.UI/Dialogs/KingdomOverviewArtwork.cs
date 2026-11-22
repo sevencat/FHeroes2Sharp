@@ -1,4 +1,5 @@
 using FHeroes2.Assets;
+using FHeroes2.Assets.Icn;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Army;
@@ -103,4 +104,94 @@ public sealed class KingdomOverviewArtwork
     /// for the town's race the row shows no portrait, and nothing else about the row changes.
     /// </remarks>
     public IReadOnlyDictionary<MapRace, Sprite>? CaptainPortraits { get; init; }
+
+    /// <summary>
+    /// Reads every frame of the window and builds the five sprite sets of the bars,
+    /// the <c>Assets::getImage()</c> calls of <c>kingdom_overview.cpp:763-800</c>.
+    /// </summary>
+    /// <param name="assets">The opened game data.</param>
+    /// <returns>The artwork, or <see langword="null"/> when the archives lack one of the frames.</returns>
+    /// <remarks>
+    /// 与 <see cref="HeroDialogArtwork.Load"/> 同样的分工:帧从传入的档案取,三个精灵源是控件层自己造
+    /// (<see cref="ArmyBarArtwork"/>、<see cref="ArtifactsBarArtwork"/>、<see cref="SkillBarSpriteSet"/>),
+    /// 小生物与「世界地图那一套图标」也从同一份档案装。缺帧时整体返回 <see langword="null"/>,
+    /// 由调用方决定怎么报告——总览窗口没有半套美术的版本。
+    /// </remarks>
+    public static KingdomOverviewArtwork? Load(AssetBundle? assets)
+    {
+        if (assets is null)
+        {
+            return null;
+        }
+
+        IcnViewWorldSpriteSource sprites = new(assets);
+
+        Sprite? background = sprites.GetSprite(IcnType.Overback, 0);
+        Sprite? heroHeader = sprites.GetSprite(IcnType.Overview, 6);
+        Sprite? castleHeader = sprites.GetSprite(IcnType.Overview, 7);
+        Sprite? itemsBackground = sprites.GetSprite(IcnType.Overview, 8);
+        Sprite? overback = sprites.GetSprite(IcnType.Overback, 0);
+        Sprite? heroRowBackground = sprites.GetSprite(IcnType.Overview, 10);
+        Sprite? castleRowBackground = sprites.GetSprite(IcnType.Overview, 11);
+        Sprite? scrollbarBackground = sprites.GetSprite(IcnType.Overview, 13);
+        Sprite? scrollSlider = sprites.GetSprite(IcnType.Scroll, 4);
+        Sprite? lighthouse = sprites.GetSprite(IcnType.Overview, 14);
+        Sprite? notBuiltMarker = sprites.GetSprite(IcnType.Cslmarker, 0);
+        Sprite? scrollUpReleased = sprites.GetSprite(IcnType.Scroll, 0);
+        Sprite? scrollUpPressed = sprites.GetSprite(IcnType.Scroll, 1);
+        Sprite? scrollDownReleased = sprites.GetSprite(IcnType.Scroll, 2);
+        Sprite? scrollDownPressed = sprites.GetSprite(IcnType.Scroll, 3);
+        Sprite? heroesButtonReleased = sprites.GetSprite(IcnType.ButtonKingdomHeroes, 0);
+        Sprite? heroesButtonPressed = sprites.GetSprite(IcnType.ButtonKingdomHeroes, 1);
+        Sprite? townsButtonReleased = sprites.GetSprite(IcnType.ButtonKingdomTowns, 0);
+        Sprite? townsButtonPressed = sprites.GetSprite(IcnType.ButtonKingdomTowns, 1);
+        Sprite? exitButtonReleased = sprites.GetSprite(IcnType.ButtonKingdomExit, 0);
+        Sprite? exitButtonPressed = sprites.GetSprite(IcnType.ButtonKingdomExit, 1);
+
+        if (background is null || heroHeader is null || castleHeader is null || itemsBackground is null ||
+            overback is null || heroRowBackground is null || castleRowBackground is null ||
+            scrollbarBackground is null || scrollSlider is null || lighthouse is null ||
+            notBuiltMarker is null || scrollUpReleased is null || scrollUpPressed is null ||
+            scrollDownReleased is null || scrollDownPressed is null || heroesButtonReleased is null ||
+            heroesButtonPressed is null || townsButtonReleased is null || townsButtonPressed is null ||
+            exitButtonReleased is null || exitButtonPressed is null)
+        {
+            return null;
+        }
+
+        if (Mons32Sprites.TryCreate(assets) is not { } monsters)
+        {
+            return null;
+        }
+
+        return new KingdomOverviewArtwork
+        {
+            Background = background,
+            HeroHeader = heroHeader,
+            CastleHeader = castleHeader,
+            ItemsBackground = itemsBackground,
+            Overback = overback,
+            HeroRowBackground = heroRowBackground,
+            CastleRowBackground = castleRowBackground,
+            ScrollbarBackground = scrollbarBackground,
+            ScrollSlider = scrollSlider,
+            Lighthouse = lighthouse,
+            NotBuiltMarker = notBuiltMarker,
+            ScrollUpReleased = scrollUpReleased,
+            ScrollUpPressed = scrollUpPressed,
+            ScrollDownReleased = scrollDownReleased,
+            ScrollDownPressed = scrollDownPressed,
+            HeroesButtonReleased = heroesButtonReleased,
+            HeroesButtonPressed = heroesButtonPressed,
+            TownsButtonReleased = townsButtonReleased,
+            TownsButtonPressed = townsButtonPressed,
+            ExitButtonReleased = exitButtonReleased,
+            ExitButtonPressed = exitButtonPressed,
+            Army = new ArmyBarArtwork(),
+            Artifacts = new ArtifactsBarArtwork(),
+            Skills = new SkillBarSpriteSet(),
+            Monsters = monsters,
+            Interface = sprites,
+        };
+    }
 }

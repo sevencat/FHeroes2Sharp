@@ -2430,6 +2430,233 @@ UI 1 365）；冒烟 `--enter-map --smoke-frames 30 --no-audio` 30 帧 **59.8 FP
 所以要先有 `Tile`、`Hero`、`Castle`、`Kingdom`、`MapObjects`、`MapObjectInfo`、`UltimateArtifact`、`EventDate` 各自的算子，
 再写 `World.Persistence.cs`，最后才是 `GameSave.Save`/`Load` 本体与 zlib 包层。
 
+## 2026-11-22 G6.8（第八步）：王国总览搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/KingdomOverviewArtwork.cs` | `kingdom_overview.cpp:763-800` | 新增 `Load( AssetBundle? )`：`OVERBACK` 第 0 帧、`OVERVIEW` 6/7/8/10/11/13/14、`SCROLL` 0-4、`CSLMARKER` 第 0 帧、`BUTTON_KINGDOM_HEROES`/`TOWNS`/`EXIT` 各 0/1 共 21 帧；五个精灵源自己装（`ArmyBarArtwork`、`ArtifactsBarArtwork`、`SkillBarSpriteSet`、`Mons32Sprites.TryCreate`、`IcnViewWorldSpriteSource`）；缺一帧整体返回 `null` |
+| `UI/Interface/AdventureMapDialogs.cs` | `kingdom_overview.cpp:763-959` | 新增 `OpenKingdomOverview( events )`：`World.Current.Kingdoms.GetKingdom( Settings.Get().Players.CurrentColor )` 造 `KingdomOverviewWindow`（正常/小黄字体），循环 `Show`，兑现弹窗提示、英雄与城堡快速信息、英雄窗口；新增 `GetSmallYellowFont()` |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventKingdomInfo()` 改走 `_dialogs.OpenKingdomOverview()` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `OpenKingdomOverview()`，接口 **4 → 3 项** |
+| `tests/.../AdventureMapDialogsTests.cs` | 同上 | 1 条：引擎立即停止时 `OpenKingdomOverview` 平静返回 |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 删 `OpenKingdomOverview` |
+
+要点与偏差：
+
+* 参考在点击里打开的五类窗口只兑现三类（弹窗、英雄/城堡快讯、英雄窗口）。城堡窗口要
+  `CastleScreenView` + `CastleScreenArtwork` 整套装配、军队条没有输入、收入与灯塔两个信息窗要
+  `RESOURCE.ICN` 与 `OBJNMUL2.ICN` 的自定义元素，都留给后续；`NeedFadeIn` 与淡入淡出属于场景绘制节奏。
+* 当前玩家来自 `Settings.Players.CurrentColor`，世界来自 `World.Current`——与 `AdventureMap.TryCreate`
+  同一个单例，不需要给 `AdventureMap` 注入 session。
+* 空世界（测试里的默认 `World.Current`）下 `GetKingdom( None )` 返回空王国，窗口照常构造并立即被
+  `StoppingEngine` 关掉。
+
+构建 0 错误 0 警告；全量 **5 396 绿**（Core 284，Assets 425，Game 3 266，UI 1 421）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **58.0 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 3 项——城堡对话框、世界地图、系统选项。城堡要从参考
+`castle_screen.cpp` 的 `Castle::Open` 里抽出 `CastleScreenArtwork` 装配（`CASTLE`/`CBKG`/`TWNBBTN`/`TEXTBTN`
+等十余帧）；世界地图建议直接在 `AdventureMapScene.OpenViewWorld` 落脚（它已经有 `_view` 与 `_friends`）；
+系统选项要先转 `dialog_system_options.cpp`（约 1 900 行，含音频/图形/热键三个子对话框与整套 `ui_option_item`）。
+
+## 2026-11-22 G6.8（第七步）：英雄窗口搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Widgets/ArtifactsBarArtwork.cs`（新） | `resource/artifact.cpp:1129-1170` | `IArtifactsBarSprites` 的档案实现：`ARTIFACT` 第 0 帧空槽、`ARTFX` 小图标（`ArtifactTypes.MiniSpriteIndex`）、`ARTIFACT` 大图标（`FullSpriteIndex`）、`HSICONS` 第 0 帧过 `SkillBarArtwork.CreateMiniPlate` 做的底板；图标按帧懒加载 |
+| `UI/Widgets/SkillBarSpriteSet.cs`（新） | `gui/skill_bar.cpp:65-360` | `ISkillBarSprites` 的档案实现：`PRIMSKIL` 的 `skill - 1`、`SECSKILL` 第 0 帧空板与 `SecondarySkills.GetIndexSprite1()`、`MINISS` 的 `GetIndexSprite2()`、`SWAPWIN` 第 0 帧小图标窗口 |
+| `UI/Interface/AdventureMapDialogs.cs` | `heroes_dialog.cpp:60-831`、`interface_events.cpp:253-266` | 新增 `OpenHeroesDialog( hero, events )`：`HeroDialogArtwork.Load( hero, hero.GetColor(), evil )` + `ArmyBarArtwork` + 两个新精灵源 + 正常/小号白字体；循环 `Show` 并在 `Requests` 非空时兑现弹窗提示与 `ShowQuickInfo( hero )` |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventHeroesDialog()` 改走 `_dialogs.OpenHeroesDialog( hero )` |
+| `UI/Interface/AdventureMap.Mouse.cs` | 同上 | 点同一格的第二个英雄时改走 `_dialogs.OpenHeroesDialog( otherHero )` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `OpenHeroesDialog()`，接口 **5 → 4 项** |
+| `tests/.../AdventureMapDialogsTests.cs` | 同上 | 1 条：引擎立即停止时 `OpenHeroesDialog` 平静返回 |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 删 `OpenHeroesDialog` |
+
+要点与偏差：
+
+* 参考循环里的五类请求，这里兑现两类（弹窗提示、快速信息）。解雇缺 `Kingdom.RemoveHero` 的接线、军队条没有输入
+  （`ArmyBar` 自己也没接）、切换英雄缺英雄到王国的反向引用，所以 `canSwitchHeroes` 与 `canDismiss` 都传 `false`，
+  三个按钮留在禁用状态。
+* 次技能条的招魂术加成（参考 `getNecromancyBonus()`）未移植，传 0。
+* `HeroDialogArtwork.Load` 与两个新精灵源走 `Assets.Current`，与 `AdventureMapDialogs` 的 `AssetBundle` 是同一实例；
+  美术缺失时静静地不打开窗口。
+
+构建 0 错误 0 警告；全量 **5 395 绿**（Core 284，Assets 425，Game 3 266，UI 1 420）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **63.0 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 4 项——城堡对话框、王国总览、世界地图、系统选项。城堡与总览各要一套装配
+（`CastleScreenArtwork`、`KingdomOverviewArtwork` 的 20 余帧加 `OVERBACK`/`OVERBACKL`），世界地图的装配在
+`AdventureMapScene.OpenViewWorld` 里（依赖场景自己的 `_view` 素材与 `_friends`），系统选项要参考
+`dialog_system_options.cpp` 的整套 `ui_option_item` 图标与音频/图形/热键子对话框。建议先做城堡，再做王国总览。
+
+## 2026-11-22 G6.8（第六步）：文件菜单搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.cs` | `dialog/dialog_file.cpp:42-159`、`game_assets.cpp:1563-1578` | 新增 `ShowFileOptions( events )`：取 `SYSTEM.ICN` 的 3/4 帧做取消键；六块大按钮每次现用 `ButtonFactory.MakeSymmetricBackgroundSprites( FileOptionsView.ButtonLabels, isEvil, 80 )` 生成十二帧（参考在装素材时生成，端口没有生成物缓存）；`FileOptionsView.TryCreate` 布局；`FileOptionsDialog.Show` 转循环 |
+| 同上 | `dialog_file.cpp:101-114` | 结果映射：`NewGame`/`LoadGame`/`Quit` 直接翻译成 `AdventureEventResult`；`SaveGame` 走已有的 `SaveGame( events )`，`QuickSave` 走新增的 `QuickSave( events )`（`GameSave.QuickSave()` 失败弹 "There was an issue during saving."），两者都回 `Cancel` |
+| `UI/Interface/AdventureMap.Events.cs` | `interface_events.cpp:292-295` | `EventFileDialog()` 改走 `_dialogs.ShowFileOptions()` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `ShowFileOptions()`，接口 **6 → 5 项** |
+| `tests/.../AdventureMapDialogsTests.cs` | 同上 | 1 条：引擎立即停止时 `ShowFileOptions` 回 `QuitGame`（参考把 `QUIT_GAME` 留在这个分支） |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 删 `ShowFileOptions` |
+
+要点与偏差：
+
+* 参考的右键提示（「Save Game」/「Quick Save」/「Quit」三条 `showStandardTextMessage`）没有搬：`FileOptionsDialog.Show`
+  的循环里没有提示回调，和 `SpellBookWindow.Show`、`PuzzleMapDialog.Show` 一样是这批窗口既有的 API 面。
+* 参考在存档键上先 `background.hideWindow()` 再进 `EventSaveGame()`；端口没有「先藏窗口」这一步，`SaveGame` 自己接管画面。
+* 重开键仍按参考禁用（`FileOptionsView.TryCreate` 的 `isRestartEnabled` 默认 `false`）。
+
+构建 0 错误 0 警告；全量 **5 394 绿**（Core 284，Assets 425，Game 3 266，UI 1 419）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **62.7 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 5 项——英雄对话框、城堡对话框、王国总览、世界地图、系统选项。这五项都缺装配器：
+英雄与城堡各要 `HeroDialogArtwork`/`CastleScreenArtwork` 的全套帧，王国总览要 `OVERBACK` 等 20 余帧加五个精灵源
+（`IArmyBarSprites`/`IArtifactsBarSprites`/`ISkillBarSprites`/`IMiniMonsterSprites`/`IViewWorldSpriteSource`），世界地图的
+装配已在 `AdventureMapScene.OpenViewWorld` 里（依赖场景自己的 `_view` 素材与 `_friends`，不适合搬进 UI 层），系统选项
+要参考 `dialog_system_options.cpp` 的整套 `ui_option_item` 图标与子对话框（音频/图形/热键）。建议按「王国总览 → 英雄 →
+城堡」的顺序做，世界地图与系统选项留到 G6.9 场景接管时一起收。
+
+## 2026-11-22 G6.8（第五步）：拼图地图与魔法书搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `Game/Gui/EmptyButtons.cs` | `game_assets.cpp:1178-1211`、`582-605` | 新增 `BUTTON_SMALL_EXIT_GOOD/EVIL` 生成器：取 `VIEWARMY`/`VIEWARME` 第 3、4 帧，裁掉左边两列与底边一行，再按 `setButtonCornersTransparent()` 清掉左上 4/3/2/1、右上 2/1、右下 1/2/3/4 的阶梯角 |
+| `UI/Interface/AdventureMapDialogs.cs` | `kingdom/puzzle.cpp:344-381`、`100-210` | 新增 `ShowPuzzleMap( gameArea, radarArea, events )`：神器已挖出就返回（参考的空图分支）；`GameArea.GenerateUltimateArtifactAreaSurface` 生成 448×448 整图；`PUZZLE.ICN` 48 块、`VIEWPUZL`/`EVIWPUZL` 雷达图、邪恶界面用 `BUTTON_SMALL_EXIT_EVIL`；`RestartReveal()` 后交给 `PuzzleMapDialog.Show` |
+| 同上 | `spell_book.cpp:132-397`、`interface_events.cpp:220-242` | 新增 `OpenSpellBook( hero, out spell, events )`：`BOOK.ICN` 帧 0/3/4/5/6/7 + `SPELLS.ICN` 全帧装配 `SpellBookArtwork`，小号白/灰字体，`SpellBookWindow.TryOpen(... canCastSpell: true, restorePreviousState: false ...)`；找不到窗口时按 `Hero.HasSpellBook` 弹参考的那句提示 |
+| 同上 | 同上 | 新增 `GetSmallGrayFont()`（`FONT.ICN` 小号灰）与 `TryCreateSpellBookArtwork()` |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventPuzzleMaps()` 改走 `_dialogs.ShowPuzzleMap(GameArea, Radar.Area)`；`EventCastSpell()` 改走 `_dialogs.OpenSpellBook(...)` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `OpenPuzzleMaps()` 与 `OpenSpellBook()`，接口 **8 → 6 项** |
+| `tests/.../EmptyButtonsTests.cs` | 同上 | 1 条：小退出按钮裁边、尺寸、双层变换与四角透明 |
+
+要点与偏差：
+
+* 拼图只有雷达形态。参考在隐藏界面模式下走 `ShowExtendedDialog()`（把同一张图放进中央 `StandardWindow`），
+  端口没有这个形态，隐藏界面时仍画在雷达区域；等扩展窗口有别的调用方再补。
+* 魔法书的翻页状态在参考里挂在英雄上，端口英雄没有这层状态，每次从第一页开始（`restorePreviousState: false`）。
+  `SpellBookWindow.Show()` 的事件循环会丢弃参考里「右键法术图标弹说明/施放」的两个分支（`ShowSpell`/`ShowMessage`），
+  这是该窗口既有的 API 面，本次没有改动。
+* 小退出按钮只走原资源分支（与 `BuildSystemButton` 一致）；参考的非原资源分支用 `EMPTY_*` + `STONEBAK` + "EXIT" 生成，
+  本项目不需要。DISMISS / UPGRADE 与 EXIT 只差帧下标（1 / 5），等有调用方时再加。
+
+构建 0 错误 0 警告；全量 **5 393 绿**（Core 284，Assets 425，Game 3 266，UI 1 418）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **59.5 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 6 项——英雄对话框、城堡对话框、王国总览、世界地图、系统选项、文件选项。
+系统选项与文件选项都卡在 `makeSymmetricBackgroundSprites()`；英雄/城堡/王国总览/世界地图要各自的装配器。
+
+## 2026-11-22 G6.8（第四步）：`CheckGameOver()` 搬进 `AdventureMapDialogs`
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.cs` | `game_over.cpp:481-682`、`game_startgame.cpp:251-286` | 新增 `CheckGameOver( events )`：先 `GameOverResult.Current.CheckGameOver()`，再把 `Requests` 逐个兑现——淘汰通知（`BRCREST.ICN` 边框第 6 帧 + 六色 crest，标题 `Major Event!`、正文 `%{color} player has been vanquished!`）、失败框、胜利框，最后返回映射后的 `AdventureEventResult` |
+| 同上 | 同上 | 新增 `ToAdventureEventResult( GameOverMode )`：`MainMenu → Lose`、`HighScoresStandard → HighScore`、`CompleteCampaignScenario → Win`、`Cancel → Cancel` |
+| 同上 | `game_over.cpp:489-501` | 美术懒加载：`GetSignArtwork()` 读 `BRCREST.ICN`，帧数不足 7 时返回 null 并跳过淘汰通知；嵌套类 `BrcrestSignArtwork` 用 `PlayerColors.IndexOf()` 取代参考的六分支 `switch` |
+| `UI/Interface/AdventureMap.Events.cs` | `interface_events.cpp` | 挖神器与默认动作两处 `_host.CheckGameOver()` 改 `_dialogs.CheckGameOver()` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `CheckGameOver()`，接口 **9 → 8 项** |
+| `tests/.../AdventureMapDialogsTests.cs` | 同上 | 4 条 `ToAdventureEventResult` 映射（四个 `GameOverMode`） |
+
+要点：
+
+* 参考在 `checkGameOver()` 末尾还做「重置音频 → 放 `LOSE.SMK`/`WIN.SMK` → 切场景」。端口这一层只画窗口：片名与胜利音乐
+  已经记在 `GameOverRequests.LoseVideo` / `WinVideo` / `VictoryMusic` 里，播放与场景切换留给调用方（App 的 `AdventureMapScene`）。
+* 顺序照参考：先判定、再逐个淘汰通知、最后才是自己的胜负框。美术缺失时 `GameLog.Warn` 并跳过窗口，但返回值不变——
+  画不出来不该改变「游戏是否结束」。
+* 胜负框的文件头沿用 `Settings.Get().CurrentMapFileInfo`（`GameInfoDialog` 用的同一份），没有它就不弹胜负框。
+* `AdventureEventResult` 没有「回主菜单」项，所以参考的 `MAIN_MENU` 映射成 `Lose`；`COMPLETE_CAMPAIGN_SCENARIO`（战役关通过）
+  映射成 `Win`，由 App 决定接下来进哪个场景。
+
+构建 0 错误 0 警告；全量 **5 392 绿**（Core 284，Assets 425，Game 3 265，UI 1 418）；冒烟
+`--enter-map --smoke-frames 30` 30 帧 **65.4 FPS**、退出 0。
+
+**下一段**：`IAdventureHost` 剩 8 项——英雄对话框、城堡对话框、王国总览、魔法书、谜题地图、世界地图、系统选项、文件选项。
+其中魔法书与谜题地图的 `Show` 已在 G6.5 落地，缺的只是 `Event*()` 里的装配；文件选项还卡在
+`makeSymmetricBackgroundSprites()` 这层生成器。
+
+## 2026-11-22 G6.8（第三步）：三个 `ShowQuickInfo()` 搬进 `AdventureMapDialogs`
+
+上一节把文字表补齐了，这一节把「面板怎么显示」补齐：参考的三个 `Dialog::QuickInfo()` 重载末尾都是同十几行
+（存被盖住的区域 → 贴面板 → 渲染一次 → 按住右键期间空转 → 松开后还原），端口把它收成一处，三个重载只负责造面板。
+
+| 端口位置 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/QuickInfoPopup.cs`（新） | `dialog_quickinfo.cpp:604-690 / 914-937` | `Show( display, panel )`：`ImageRestorer` 存区 → `panel.Draw` → `Render( area )` → `while ( HandleEvents() && IsMouseRightButtonPressed )` → 还原再渲染 |
+| `UI/Dialogs/IQuickInfoPanel.cs`（新） | 同上 | 面板只需要 `Area` + `Draw( PixelBuffer )`；`StandardPopupWindow`、`CastleQuickInfoView`、`HeroQuickInfoView` 都实现它 |
+| `UI/Dialogs/QuickInfoDialog.TryCreateHeroView()`（新） | `dialog_quickinfo.cpp:695-712` | 英雄面板的装配，`TryCreateCastleView` 的兄弟；`MINIPORT` 头像由调用方传（保持美术可缓存） |
+| `UI/Interface/AdventureMapDialogs.ShowQuickInfo( tile / castle / hero )`（新，三个重载） | `:914-937` / `:597-660` / `:663-690` | 瓦片：未侦察 → `"Uncharted Territory"`，否则 `getMainTile()` 的索引交给文字表；城堡：`isDetailedView = 友方 || 水晶球`、`thievesGuildCount = 盗贼公会等级`；英雄：`isFullInfo` 的四个来源 |
+| `UI/Interface/AdventureMap.Mouse.cs` | `interface_actions.cpp` 的 `MouseCursorAreaPressRight` | 五处 `_host.ShowQuickInfo(...)` 改 `_dialogs.ShowQuickInfo(...)` |
+| `UI/Interface/AdventureMapHost.cs` | — | 删三个 `ShowQuickInfo()`，接口 12 → 9 项 |
+| `UI/Interface/AdventureMap.cs` | — | 新 `Dialogs` 属性，让场景与测试能进去接管（参考没有这一层） |
+| `UI/Interface/AdventureMapDialogs.PresentQuickInfo` | — | 接管点：设了它，面板交出去由调用方画，不再走阻塞循环 |
+| `tests/.../AdventureMapTests.cs` | — | `CreateMap()` 设 `PresentQuickInfo = LastQuickInfo.Add`；三处断言从 `LastHost.QuickInfoTiles` 改成看面板（空瓦片必须是 `StandardPopupWindow`）；`StubHost` 删三个陈旧成员 |
+
+要点：
+
+* **阻塞还是非阻塞**：参考的速览就是按住右键期间阻塞的，端口照做；但冒险地图的场景自己管帧、测试里也没有事件循环，
+  所以留了 `PresentQuickInfo` 接管点——场景将来可以只在字段里存住面板，测试则只记录不画。
+* **"看得见"的三种来源各归各位**：城堡看 `Players.IsFriends( castle.Color, current )` 与水晶球；英雄还多两条——
+  中立英雄、本回合有人用过鉴定术（`KingdomModes.IdentifyHero`）；水晶球那一支要求 `Hero.MapIndex` 有效。
+* **矿井/城堡上的英雄**：`getMainTile()` 的交待照参考，站在可占领对象上的英雄由它背后那一格说话。
+* **场景暂时还没用上城堡/英雄面板**：`AdventureMapScene` 仍走自己的瓦片文字，等 G6.9 场景接管 `AdventureMap` 后，
+  右键自然走 `MouseCursorAreaPressRight` 的三分支，两个新面板立刻可见。
+
+构建 0 错误 0 警告；全量 **5 388 绿**（Core 284 + Assets 425 + Game 3 265 + UI 1 414），UI 测试数不变但三处断言换了观察点。
+
+**下一段**：`IAdventureHost` 还剩 9 项，都卡在装配器上——英雄/城堡对话框、王国总览、魔法书、谜题地图、世界地图、
+系统选项、文件选项（六块大按钮要 `makeSymmetricBackgroundSprites()`）、`CheckGameOver` 的兑现层。
+
+## 2026-11-22 G6.8（第二步）：右键提示的文字表 `getQuickInfoText()` 全表
+
+删 `IAdventureHost.ShowQuickInfo()` 之前，先得让那三支有文字可写。参考里 `Dialog::QuickInfo()` 的文字全在
+`dialog_quickinfo.cpp:455-595` 的 `getQuickInfoText()` 加十几个 `show*Info()` 里，端口原来只有地面/资源堆/
+对象名三支，其余都写着「要等 `Tile` 长出守军、访问状态、祭坛法术这些接口」——这一轮把它们补齐了。
+
+| 端口文件 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Dialogs/QuickInfoText.cs`（重写） | `dialog_quickinfo.cpp:135-595` | `ForTile( tile, world, viewer, focusHero )` 全表：守军优先 → 怪物 → 地面（含挖宝与地形惩罚）→ 访问类 → 资源堆 → 矿洞（含 ` (+1000)` 收益）→ 炼金实验室/锯木厂 → 住处（可招募数/空）→ 只能本人访问 → 只能任何人访问 → 祭坛（法术名 + 已学）→ 女巫小屋（技能名 + 已会/已满）→ 屏障/帐篷（颜色名 + 帐篷已访）→ 智慧树（价格/已领+未领）；另有 `ForTile( tile )` 无世界版本与 `MineIncome()` |
+| `Game/Maps/TileGuards.cs`（新） | `maps_tiles_helper.cpp:1836-1856` | `Tile.IsCaptureObjectProtected( world )`：城堡看守军是否为空，其余可占领对象看瓦片上的军队 |
+| `App/Scenes/AdventureMapScene.cs` | `dialog_quickinfo.cpp:597-660` | 右键取文字改传世界/当前颜色/聚焦英雄；没有会话时退回无世界版本 |
+| `tests/.../QuickInfoTextTests.cs` | 同上 | +6 条（矿收益五种、两个重载的空参数） |
+
+要点：
+
+* **颜色和聚焦英雄都变成参数**：参考读的是 `Settings::Get().CurrentColor()` 与 `Interface::GetFocusHeroes()` 两个全局，
+  端口把 `viewer` 与 `focusHero` 显式传进来，文字因此可以为一个「不是当前回合」的王国生成。
+* **`ForTile( tile )` 留着**：不需要世界的那几支（地面、资源堆、对象名）仍走单参数版本，App 在没有会话时用它，
+  测试也用它；两条路径的分叉写在方法的 remarks 里。
+* **守军判断的第二个实现**：`ai_planner_hero.cpp:851-900` 里有一份私有 `isCaptureObjectProtected()`，城堡分支问的是
+  「门口站着英雄吗」而不是「守军空了吗」。这一轮只把参考版本放到 `Tile` 上供提示使用，AI 那份不动，
+  等 AI 核对那一轮再合并。
+* **`showMonsterInfo()` 有副作用**：水晶球看得见时就 `addMonsterUnderVisionSpell()` 记一笔，之后法术失效也会继续显示精确
+  数字。参考把这个写操作藏在取文字的函数里，端口照抄并注明。
+* **资源堆换了来源**：完整版本按参考走 `getFundsFromTile()`（元数据），单参数版本仍按精灵序号认（老测试断言的就是这个）。
+* **矿收益的负号**：参考先写符号再拼 `to_string( value )`，负数会得到 `(--5)`；端口只写一次符号。
+
+构建 0 错误 0 警告；全量 **5 388 绿**（Core 284 + Assets 425 + Game 3 265 + UI 1 414）；冒烟 `--enter-map` 30 帧 58.9 FPS，
+退出 0。
+
+**下一段**：`ShowQuickInfo( tile / castle / hero )` 三支共用一个非模态面板（画在保存下来的背景上，等一次点击/按键就
+还原），装好之后 `IAdventureHost` 12 → 9 项。
+
+## 2026-11-22 G6.8（第一步续）：`EventSaveGame()` 整段进 `AdventureMapDialogs`
+
+存档是 G6.8 里唯一不需要新美术生成器的一项：选择窗口（`SelectSaveFile`）、覆盖确认、写盘（`GameSave.Save`）、
+结果提示四段都已经就位，缺的只是把它们按参考的顺序串起来。
+
+| 端口位置 | 参考 | 内容 |
+| --- | --- | --- |
+| `UI/Interface/AdventureMapDialogs.SaveGame()` | `interface_events.cpp:329-350` | `while(true)`：取文件名 → 同名问一句（答 No 回到取文件名）→ `GameSave.Save` → 成功/失败提示 → 返回 `Cancel` |
+| `UI/Interface/AdventureMap.Events.cs` | 同上 | `EventSaveGame()` 变成一行委托，循环与提示不再散在事件层 |
+| `UI/Interface/AdventureMapHost.cs` | — | 删 `SaveGame( string )`，接口 13 → 12 项 |
+| `tests/.../AdventureMapTests.cs` | — | `StubHost` 里删掉 G6.4 之前留下的六个陈旧成员（`ShowMessage` / `ShowYesNoMessage` / `OpenScenarioInformation` / `ShowAdventureOptions` / `SelectSaveFile` / `SaveGame`），它们早就不在接口上了 |
+
+**下一步卡在哪**：`ShowFileOptions()` 需要 `game_assets.cpp:1564-1578` 的 `makeSymmetricBackgroundSprites()`——六块
+「NEW\nGAME」大按钮是现生成的，`BUTTONS_FILE_DIALOG_GOOD` 在 `AGG` 里没有；`ShowQuickInfo()` 三兄弟要的是
+`Dialog::QuickInfo()` 的非模态循环（点一下就关），端口目前只有 `QuickInfoDialog` 的建模与视图工厂，还没有循环入口。
+这两块各自是一步，先挑一块做。
+
+构建 0 错误 0 警告；全量 **5 382 绿**（Core 284 + Assets 425 + Game 3 265 + UI 1 408）。
+
 ## 2026-11-22 G6.4（5/5）：场景信息窗口与存档选择窗口
 
 `Dialog::GameInfo()` 与 `Dialog::SelectFileSave()` / `SelectFileLoad()` 是 G6.4 最后两块。两者的共同点是**窗口里的

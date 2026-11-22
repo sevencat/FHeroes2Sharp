@@ -41,6 +41,12 @@ public static class EmptyButtons
     /// <summary>The name <c>EMPTY_MAP_SELECT_BUTTON</c> is cached under.</summary>
     public const string MapSelectFileName = "EMPTY_MAP_SELECT_BUTTON.ICN";
 
+    /// <summary>The name <c>BUTTON_SMALL_EXIT_GOOD</c> is cached under.</summary>
+    public const string SmallExitGoodFileName = "BUTTON_SMALL_EXIT_GOOD.ICN";
+
+    /// <summary>The name <c>BUTTON_SMALL_EXIT_EVIL</c> is cached under.</summary>
+    public const string SmallExitEvilFileName = "BUTTON_SMALL_EXIT_EVIL.ICN";
+
     /// <summary>Archive entry holding the raw game palette the button colours are resolved against.</summary>
     private const string GamePaletteName = "KB.PAL";
 
@@ -76,6 +82,12 @@ public static class EmptyButtons
 
     /// <summary>Pressed frame of <c>NGEXTRA</c>.</summary>
     private const int MapSelectLastFrame = 65;
+
+    /// <summary>Released frame of <c>VIEWARMY</c> / <c>VIEWARME</c> the small text buttons are built from.</summary>
+    private const int SmallExitReleasedFrame = 3;
+
+    /// <summary>Pressed frame of <c>VIEWARMY</c> / <c>VIEWARME</c>.</summary>
+    private const int SmallExitPressedFrame = 4;
 
     /// <summary>
     /// Builds the two frames of a synthetic button table.
@@ -119,6 +131,16 @@ public static class EmptyButtons
         if (string.Equals(fileName, MapSelectFileName, StringComparison.OrdinalIgnoreCase))
         {
             return BuildMapSelectButton();
+        }
+
+        if (string.Equals(fileName, SmallExitGoodFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: true);
+        }
+
+        if (string.Equals(fileName, SmallExitEvilFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: false);
         }
 
         return null;
@@ -564,6 +586,76 @@ public static class EmptyButtons
         }
 
         return frames;
+    }
+
+    /// <summary>
+    /// <c>ICN::BUTTON_SMALL_EXIT_GOOD</c> / <c>BUTTON_SMALL_EXIT_EVIL</c>: <c>VIEWARMY</c> (resp. <c>VIEWARME</c>)
+    /// frames 3 and 4, trimmed by two columns and one row, corners made transparent
+    /// (<c>game_assets.cpp:1178-1211</c>, the original-resources branch).
+    /// </summary>
+    /// <remarks>
+    /// 参考的非原资源分支会用 <c>EMPTY_*_BUTTON</c> 加 <c>STONEBAK</c> 和文字 "EXIT" 造出同样大小的按钮；
+    /// 本项目一贯取原资材（见 <see cref="BuildSystemButton"/>），这里也只走原资源分支。DISMISS / UPGRADE
+    /// 与 EXIT 共用这段代码，只差帧下标（1 / 5），等有调用方时再加常量。
+    /// </remarks>
+    private static Sprite?[]? BuildSmallTextButton(bool isGoodInterface)
+    {
+        string originalName = IcnCatalog.GetFileName(isGoodInterface ? IcnType.Viewarmy : IcnType.Viewarme);
+
+        if (Assets.GetImageCount(originalName) < SmallExitPressedFrame + 1)
+        {
+            return null;
+        }
+
+        if (Assets.GetImage(originalName, SmallExitReleasedFrame) is not { } originalReleased ||
+            Assets.GetImage(originalName, SmallExitPressedFrame) is not { } originalPressed)
+        {
+            return null;
+        }
+
+        // 参考的 setButtonCornersTransparent() 有 assert(width > 3 && height > 3)，这里把它变成资材检查。
+        if (originalReleased.Width <= 3 || originalReleased.Height <= 3 ||
+            originalPressed.Width <= 3 || originalPressed.Height <= 3)
+        {
+            return null;
+        }
+
+        Sprite released = new(originalReleased.Width - 2, originalReleased.Height - 1);
+        Sprite pressed = new(originalPressed.Width - 2, originalPressed.Height - 1);
+
+        ImageOps.Copy(originalReleased, new Rect(2, 0, released.Width, released.Height), released, Point.Zero);
+        ImageOps.Copy(originalPressed, new Rect(2, 0, pressed.Width, pressed.Height), pressed, Point.Zero);
+
+        MakeButtonCornersTransparent(released);
+        MakeButtonCornersTransparent(pressed);
+
+        return new Sprite?[] { released, pressed };
+    }
+
+    /// <summary>
+    /// The corners <c>setButtonCornersTransparent()</c> (<c>game_assets.cpp:582-605</c>) makes transparent.
+    /// </summary>
+    /// <remarks>
+    /// 参考直接按扁平下标 <c>transform[i]</c> 写九段连续区间，跨行是常态；这里把它们拆成行列明确的矩形，
+    /// 行列由「下标 / 宽度」推出来——左上 4/3/2/1、右上 2/1、右下 1/2/3/4 的阶梯。
+    /// </remarks>
+    private static void MakeButtonCornersTransparent(Sprite button)
+    {
+        int width = button.Width;
+        int height = button.Height;
+
+        ImageOps.FillTransform(button, new Rect(0, 0, 4, 1), 1);
+        ImageOps.FillTransform(button, new Rect(0, 1, 3, 1), 1);
+        ImageOps.FillTransform(button, new Rect(0, 2, 2, 1), 1);
+        ImageOps.FillTransform(button, new Rect(0, 3, 1, 1), 1);
+
+        ImageOps.FillTransform(button, new Rect(width - 2, 0, 2, 1), 1);
+        ImageOps.FillTransform(button, new Rect(width - 1, 1, 1, 1), 1);
+
+        ImageOps.FillTransform(button, new Rect(width - 1, height - 4, 1, 1), 1);
+        ImageOps.FillTransform(button, new Rect(width - 2, height - 3, 2, 1), 1);
+        ImageOps.FillTransform(button, new Rect(width - 3, height - 2, 3, 1), 1);
+        ImageOps.FillTransform(button, new Rect(width - 4, height - 1, 4, 1), 1);
     }
 
     /// <summary>

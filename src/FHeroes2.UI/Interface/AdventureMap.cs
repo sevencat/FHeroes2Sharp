@@ -47,6 +47,15 @@ public sealed partial class AdventureMap : BaseInterface
     private AdventureMapDialogs _dialogs = null!;
 
     /// <summary>
+    /// The dialog layer the events and the map itself open their windows through.
+    /// </summary>
+    /// <remarks>
+    /// 参考把这些成员留在 <c>Interface::AdventureMap</c> 内部，端口拆成单独一层；场景和测试要观察或接管某个窗口
+    /// （例如速览面板的阻塞循环），从这里进去。
+    /// </remarks>
+    public AdventureMapDialogs Dialogs => _dialogs;
+
+    /// <summary>
     /// Panels of the screen, built by <see cref="TryCreate"/> rather than by the constructor: C# cannot pass
     /// <see langword="this"/> to an argument of its own constructor, and the panels must be attached to this very
     /// screen — their repaint requests and their focus both go through it.

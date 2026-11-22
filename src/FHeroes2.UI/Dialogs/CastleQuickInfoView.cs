@@ -27,7 +27,7 @@ namespace FHeroes2.UI.Dialogs;
 /// 的事件循环——端口每帧整屏重画，弹出时机与停留时间由场景决定。
 /// </para>
 /// </remarks>
-public sealed class CastleQuickInfoView
+public sealed class CastleQuickInfoView : IQuickInfoPanel
 {
     /// <summary>Label above the garrison, <c>_( "Defenders:" )</c>.</summary>
     public const string DefendersLabel = "Defenders:";

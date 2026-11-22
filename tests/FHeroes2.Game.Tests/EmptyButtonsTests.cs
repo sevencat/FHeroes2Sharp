@@ -260,6 +260,58 @@ public sealed class EmptyButtonsTests
     }
 
     [Fact]
+    public void SmallExitButtonIsTrimmedOutOfTheViewArmyFrames()
+    {
+        using AssetBundle? assets = GameData.TryOpen();
+        if (assets is null)
+        {
+            return;
+        }
+
+        Assets.Current = assets;
+        try
+        {
+            Sprite? sourceReleased = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Viewarmy), 3);
+            Sprite? sourcePressed = Assets.GetImage(IcnCatalog.GetFileName(IcnType.Viewarmy), 4);
+            if (sourceReleased is null || sourcePressed is null)
+            {
+                return;
+            }
+
+            Sprite? released = Assets.GetImage(EmptyButtons.SmallExitGoodFileName, 0);
+            Sprite? pressed = Assets.GetImage(EmptyButtons.SmallExitGoodFileName, 1);
+
+            Assert.NotNull(released);
+            Assert.NotNull(pressed);
+
+            // Two columns and one row are cut off the left and the bottom, as the reference resizes them.
+            Assert.Equal(sourceReleased.Width - 2, released!.Width);
+            Assert.Equal(sourceReleased.Height - 1, released.Height);
+            Assert.Equal(sourcePressed.Width - 2, pressed!.Width);
+            Assert.Equal(sourcePressed.Height - 1, pressed.Height);
+
+            // Both states lose their four corner steps.
+            Assert.True(released.HasTransformLayer);
+            Assert.True(pressed.HasTransformLayer);
+
+            Assert.Equal(1, released.Transform![0]);
+            Assert.Equal(1, released.Transform[released.Width - 1]);
+            Assert.Equal(1, released.Transform[(released.Height * released.Width) - 1]);
+
+            Assert.Equal(1, pressed.Transform![0]);
+            Assert.Equal(1, pressed.Transform[(pressed.Height * pressed.Width) - 1]);
+
+            // The two columns the source had cut away are dropped: column six lands on column four.
+            // (The first four columns are deliberately avoided: MakeButtonCornersTransparent() clears them.)
+            Assert.Equal(sourceReleased.Image[6, 0], released.Image[4, 0]);
+        }
+        finally
+        {
+            Assets.Current = null;
+        }
+    }
+
+    [Fact]
     public void FramesAreCachedSoTheTableIsAssembledOnce()
     {
         using AssetBundle? assets = GameData.TryOpen();

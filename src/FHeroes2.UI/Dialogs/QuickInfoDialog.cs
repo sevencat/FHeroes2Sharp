@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
@@ -162,5 +163,51 @@ public sealed class QuickInfoDialog
                 cursor,
                 interfaceArea,
                 Position);
+    }
+
+    /// <summary>
+    /// Builds the drawable box of a hero panel, the <c>showQuickInfo( const HeroBase &amp; )</c> of the
+    /// reference.
+    /// </summary>
+    /// <param name="artwork">Frames of the box, its icons and flags.</param>
+    /// <param name="font">Font of every string, <c>FontType::smallWhite()</c> in the reference.</param>
+    /// <param name="sprites">Where the army line takes its portraits from.</param>
+    /// <param name="portrait">
+    /// The hero's <c>MINIPORT</c> frame, or <see langword="null"/> when the archive lacks it: the reference
+    /// reads it inside the panel, the port lets the caller pass it so the artwork stays cacheable.
+    /// </param>
+    /// <param name="fullInfo">
+    /// Whether the exact army, spell points and movement are shown, <c>isFullInfo</c> of the reference.
+    /// </param>
+    /// <param name="cursor">Cursor of the mouse, which the box is placed next to when <see cref="Position"/> is unset.</param>
+    /// <param name="interfaceArea">Area the box has to stay inside.</param>
+    /// <returns>The box, or <see langword="null"/> for another target kind or when the frame cannot fit.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public HeroQuickInfoView? TryCreateHeroView(
+        HeroQuickInfoArtwork artwork,
+        IGlyphSource font,
+        IMiniMonsterSprites sprites,
+        Sprite? portrait,
+        bool fullInfo,
+        Point cursor,
+        Rect interfaceArea)
+    {
+        ArgumentNullException.ThrowIfNull(artwork);
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(sprites);
+
+        if (Hero is not { } hero)
+        {
+            return null;
+        }
+
+        return HeroQuickInfoView.TryCreate(
+            HeroQuickInfoSubject.FromHero(hero, portrait),
+            fullInfo,
+            artwork,
+            font,
+            sprites,
+            cursor,
+            interfaceArea);
     }
 }

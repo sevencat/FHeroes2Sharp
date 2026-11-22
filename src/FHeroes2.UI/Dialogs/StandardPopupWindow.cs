@@ -22,7 +22,7 @@ namespace FHeroes2.UI.Dialogs;
 /// reference's blitting — the port redraws the whole scene every frame and has nothing to restore.
 /// </para>
 /// </remarks>
-public sealed class StandardPopupWindow
+public sealed class StandardPopupWindow : IQuickInfoPanel
 {
     /// <summary>Name of the frame in the archive.</summary>
     public const string AssetName = "QWIKINFO.ICN";

@@ -28,7 +28,7 @@ namespace FHeroes2.UI.Dialogs;
 /// 参考的重绘优化，端口每帧整屏重画，不需要。
 /// </para>
 /// </remarks>
-public sealed class HeroQuickInfoView
+public sealed class HeroQuickInfoView : IQuickInfoPanel
 {
     /// <summary>Label of the attack row, <c>_( "Attack:" )</c>.</summary>
     public const string AttackLabel = "Attack:";

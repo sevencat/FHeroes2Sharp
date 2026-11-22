@@ -10,6 +10,7 @@ using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Maps;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Interface;
 
@@ -669,10 +670,17 @@ public sealed class AdventureMapScene : IScene
             return;
         }
 
+        Tile mapTile = _world.GetTile(tile.X, tile.Y);
+
+        // 没有会话就没有「轮到谁」，也就没有王国可问；此时只给不需要世界状态的那几支文字。
+        string text = _session is null
+            ? QuickInfoText.ForTile(mapTile)
+            : QuickInfoText.ForTile(mapTile, _world, _session.CurrentColor, FocusHero);
+
         _quickInfo = StandardPopupWindow.TryCreate(
             _quickInfoFrame,
             _fonts.Small,
-            QuickInfoText.ForTile(_world.GetTile(tile.X, tile.Y)),
+            text,
             cursor,
             new Rect(new Point(0, 0), _frame.Size));
     }

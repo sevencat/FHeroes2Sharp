@@ -67,7 +67,7 @@ public sealed partial class AdventureMap
             }
             else
             {
-                _host.OpenHeroesDialog(otherHero);
+                _dialogs.OpenHeroesDialog(otherHero);
             }
 
             break;
@@ -98,7 +98,7 @@ public sealed partial class AdventureMap
             }
             else
             {
-                _host.OpenCastleDialog(otherCastle);
+                _dialogs.OpenCastleDialog(otherCastle);
             }
 
             break;
@@ -147,7 +147,7 @@ public sealed partial class AdventureMap
 
         if (tile.IsFog(Settings.Get().Players.CurrentColor))
         {
-            _host.ShowQuickInfo(tile);
+            _dialogs.ShowQuickInfo(tile);
 
             return;
         }
@@ -158,12 +158,12 @@ public sealed partial class AdventureMap
         case Mp2ObjectType.ActionCastle:
             if (GetCastleOf(tile) is { } castle)
             {
-                _host.ShowQuickInfo(castle);
+                _dialogs.ShowQuickInfo(castle);
             }
             else
             {
                 // The footprint of a town whose gate is somewhere else: no town covers this tile exactly.
-                _host.ShowQuickInfo(tile);
+                _dialogs.ShowQuickInfo(tile);
             }
 
             break;
@@ -172,13 +172,13 @@ public sealed partial class AdventureMap
         case Mp2ObjectType.ActionHero:
             if (tile.GetHero(world) is { } hero)
             {
-                _host.ShowQuickInfo(hero);
+                _dialogs.ShowQuickInfo(hero);
             }
 
             break;
 
         default:
-            _host.ShowQuickInfo(tile);
+            _dialogs.ShowQuickInfo(tile);
             break;
         }
     }
