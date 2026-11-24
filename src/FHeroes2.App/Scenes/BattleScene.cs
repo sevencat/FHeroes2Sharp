@@ -27,7 +27,7 @@ namespace FHeroes2.App.Scenes;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>范围</b>：这一屏只做「看得见」的第一层——建一场真打（界面在 <c>docs/PROGRESS.md</c> §7.6 记的
+/// <b>范围</b>：这一屏只做「看得见」的第一层——建一场真打（界面在 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6 记的
 /// 缺口中排第一的那块），逐帧把战斗推进一格回合、把战场画出来。人类的手动出招、动画、状态栏文字、
 /// 顺序条与法术特效都还没有，所以两边都由 AI 打；它等价于参考在没有界面时的自动战斗，
 /// 只是这一次有画面。
@@ -87,6 +87,7 @@ public sealed class BattleScene : IScene
     /// <param name="siege">Whether to attack the first town of another colour instead of a wandering monster.</param>
     /// <param name="autoPlay">Whether both sides are handed to the computer.</param>
     /// <param name="counterFont">The font of the troop counters, or <see langword="null"/> when the fonts are missing.</param>
+    /// <param name="statusFont">The font of the two status lines, or <see langword="null"/> without fonts.</param>
     /// <param name="error">Why the screen cannot be built, when it cannot.</param>
     /// <returns>The screen, or <see langword="null"/> with an <paramref name="error"/>.</returns>
     public static BattleScene? TryCreate(
@@ -98,6 +99,7 @@ public sealed class BattleScene : IScene
         bool siege,
         bool autoPlay,
         IGlyphSource? counterFont,
+        IGlyphSource? statusFont,
         out string? error)
     {
         ArgumentNullException.ThrowIfNull(frame);
@@ -193,7 +195,8 @@ public sealed class BattleScene : IScene
                 new MonsterAnimInfoCache(assets),
                 style,
                 counterFont,
-                frame.Palette);
+                frame.Palette,
+                statusFont);
         }
         else
         {
@@ -327,7 +330,7 @@ public sealed class BattleScene : IScene
     /// <returns><see langword="true"/> when a turn was played.</returns>
     /// <remarks>
     /// 这一批只接两种输入：左键点格子（空格子走、敌人格打）与空格跳过。等待/防御、施法、撤退/投降、
-    /// 自动战斗与设置按钮都还没有，见 <c>docs/PROGRESS.md</c> §7.6。
+    /// 自动战斗与设置按钮都还没有，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6。
     /// </remarks>
     private bool TryPlayHumanCommand(BattleUnit unit, LocalEvent events)
     {
@@ -361,9 +364,15 @@ public sealed class BattleScene : IScene
             return false;
         }
 
-        GameLog.Info($"The player's {unit.Monster} acts: {Describe(commands[0])}.");
+        // The arena consumes a command's parameters as it applies them, so the text is taken first.
+        string status = StatusOf(commands[0]);
+
+        GameLog.Info($"The player's {unit.Monster} acts: {status}.");
 
         _arena.PlayCurrentUnitTurn(commands);
+
+        // The upper status line reports the action and pushes it to the battle log.
+        _painter?.SetStatus(status, top: true);
 
         // The next unit may have other reachable cells: recompute the cursor theme on the next hover.
         _lastHoverCell = null;
@@ -377,16 +386,16 @@ public sealed class BattleScene : IScene
     }
 
     /// <summary>
-    /// A short human readable form of the command a player gave, for the smoke log.
+    /// A short human readable form of the command a player gave, for the status line and the smoke log.
     /// </summary>
     /// <param name="command">The command.</param>
-    /// <returns>A description such as <c>move to 24</c>.</returns>
-    private static string Describe(BattleCommand command) => command.Type switch
+    /// <returns>A description such as <c>Move to 24</c>.</returns>
+    private static string StatusOf(BattleCommand command) => command.Type switch
     {
         // Parameters are stored in reverse: Move( unitUid, cellIndex ) keeps the cell first.
-        BattleCommandType.Move => $"move to {command[0]}",
-        BattleCommandType.Attack => "attack",
-        BattleCommandType.Skip => "skip",
+        BattleCommandType.Move => $"Move to {command[0]}",
+        BattleCommandType.Attack => "Attack",
+        BattleCommandType.Skip => "Skip",
         _ => command.Type.ToString(),
     };
 
@@ -433,6 +442,7 @@ public sealed class BattleScene : IScene
     private void UpdateCursorTheme(int? cell)
     {
         CursorTheme theme = CursorTheme.CombatPointer;
+        string hint = string.Empty;
 
         if (_arena.CurrentUnit is { } unit && cell is { } index && IsHumanUnit(unit))
         {
@@ -441,17 +451,23 @@ public sealed class BattleScene : IScene
 
             if (isEnemy)
             {
-                theme = _arena.CreateAttackCommand(unit, index) is not null
-                    ? CursorTheme.CombatArrow
-                    : CursorTheme.CombatPointer;
+                if (_arena.CreateAttackCommand(unit, index) is not null)
+                {
+                    theme = CursorTheme.CombatArrow;
+                    hint = "Attack";
+                }
             }
             else if (_arena.CreateMoveCommand(unit, index) is not null)
             {
                 theme = unit.IsFlying ? CursorTheme.CombatFly : CursorTheme.CombatMove;
+                hint = unit.IsFlying ? "Flying" : "Move";
             }
         }
 
         CursorState.Current?.SetThemes(theme);
+
+        // The lower status line carries the cursor hint, the reference's setStatus( msg, false ).
+        _painter?.SetStatus(hint, top: false);
     }
 
     /// <summary>Logs the settled result once and hands the screen back to the map.</summary>

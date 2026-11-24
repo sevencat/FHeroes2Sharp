@@ -24,7 +24,7 @@ C# / .NET 10 / SDL3 版的《魔法门之英雄无敌 II》引擎重制，移植
 * 范围：**游戏本体 + 地图编辑器**——参考实现 fheroes2 1.1.18 有完整编辑器（`src/fheroes2/editor/`，
   主菜单 EDITOR 按钮进入），因此编辑器有可对拍的 C++ 代码。E1 打开、E2 改地形 + 放对象 + 撤销、E3 存回
   MP2 与新建地图均已完成；剩下的编辑器工作（对象属性、多格建筑、`ADVBORD` 外壳与面板）见
-  `docs/PROGRESS.md`（ADR-039 更正了「参考没有编辑器」的说法，范围与理由见 ADR-040）。
+  `bd list`（ADR-039 更正了「参考没有编辑器」的说法，范围与理由见 ADR-040）。
 * NativeAOT：**暂不作为支持目标**，但已开启 AOT / 裁剪分析器（`IsAotCompatible`，`IL2xxx`/`IL3xxx`
   为错误），代码保持「反射自由」以便将来切换（见 ADR-011）。
 
@@ -63,7 +63,7 @@ CI（`.github/workflows/ci.yml`）跑编译 + 全部测试，并调这些脚本�
 点左下角的门会打开设置对话框：`StandardWindow` 边框 + 黄色标题 + 「标签 / 值」行（两侧自绘箭头，
 点左半行取上一个值、右半行取下一个，循环）+ 底部 `SYSTEM.ICN` 的 OK，Enter/OK 应用、Escape 取消。
 行文字超出内容区时按 `RowPadding` 裁掉，值的左端也不会越过左内边距，所以长译文不会跑到边框上。
-待办：语言选择对话框（剩余清单见 `docs/PROGRESS.md`）。
+待办：语言选择对话框（见 `bd list`）。
 
 **M3：地图清单与场景选择**：`Assets.Maps.Mp2FileInfo` 读 MP2 文件最前面的 428 字节信息块
 （名字、描述、尺寸、难度、六种颜色的王国/人类/电脑归属、初始种族、胜负条件与参数），
@@ -93,7 +93,7 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 方向键按 tile 滚动、`Home` 回左上、`Esc` 回主菜单（ADR-035、ADR-036）。`--map <file>` 直接开一张图、
 `--enter-map` 让脚本从菜单一路点进去，`adventure-map.png` 是它的像素基线
 （`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、地图怪物与船、
-雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `docs/PROGRESS.md`。
+雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `bd list`。
 
 **战斗屏幕（P3 进行中）**：战斗第一次有画面、也能点。规则层（`BattleArena`）本来就在，缺的是参考
 `battle_interface.cpp` 的绘制与输入；目前已搬来：地形底图与边框杂物（`CBKG*`/`FRNG*`，草/土/雪按身边有没有树
@@ -101,13 +101,14 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 （`CASTBKG*`/`MOATWHOL`/`CASTLE*`/`CATAPULT`）、60 格六角网格（`CMBTMISC`）、鼠标悬停阴影、
 双方单位的待机首帧（防守方镜像）与每队的兵力计数条（`TEXTBAR` 10–14 号 + `smallWhite` 缩写数字）、
 待机动画（`BATTLE_IDLE_DELAY`，`.BIN` 里 9 000 毫秒一次），以及**人类输入**：点空格子走、点敌人格打、
-空格跳过，光标在可走/可打/其余三种主题间切换。底部 37 行是状态栏与 Auto/设置/Skip 三个按钮的**底图**
-（状态文字要战斗日志，随下一步）。`--battle` 让焦点英雄打地图上第一只游荡怪（人类那一栈会停下来等你点），
+空格跳过，光标在可走/可打/其余三种主题间切换。底部 37 行是状态栏（`TEXTBAR` 8/9 底图 + 两行 `normalWhite`
+文字：悬停提示 `Move`/`Flying`/`Attack`，动作结果 `Move to 24`/`Attack`/`Skip`，并按参考规则记进战斗日志缓冲）
+与 Auto/设置/Skip 三个按钮的底图。`--battle` 让焦点英雄打地图上第一只游荡怪（人类那一栈会停下来等你点），
 `--battle-auto` 把两边都交给电脑（冒烟与脚本用），`--battle-siege` 改为攻打第一座别的颜色的城；场景
 **一帧推进一个单位**（引擎的 `BeginRound`/`SelectNextUnit`/`PlayCastleActions`/`PlayCurrentUnitTurn`/`EndRound`
 五步，ADR-214），`--freeze-animation` 时停在部署那一刻（战斗与待机动画都不推进）。仍未做：施法、等待/防御、
-撤退/投降、Auto/设置/Skip 按钮、路径预览、状态栏文字与战斗日志、顺序条、英雄立绘与所有动画特效
-（`docs/PROGRESS.md` §7.6、ADR-212–215）。
+撤退/投降、Auto/设置/Skip 按钮、路径预览、战斗日志窗口、顺序条、英雄立绘与所有动画特效
+（`bd list`、ADR-212–216）。
 两张像素基线是 `tests/baselines/battle.png` 与 `battle-siege.png`（`VerifyBattleBaseline.ps1`）。
 
 **世界视图（View World）**：冒险地图上按 `V` 打开参考的全图窗口（`view_world.cpp`）——整张图按 18×18 格
@@ -343,7 +344,7 @@ tools/scripts            调色板表生成、程序图标生成、参考导出�
 tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + scenario*.png + adventure-map*.png + battle*.png + 说明）
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 assets/                  logo.png / logo.ico（图标源图与生成物）、banner.jpg、author.jpg、可再分发字体
-docs/                    计划、进度、决策与参考笔记
+docs/                    决策与参考笔记（计划与进度已迁入 bd）
 ```
 
 依赖方向单向：`Core ← Assets ← Rendering`；`Game` 依赖 Core/Assets/Rendering，`UI` 依赖 Core/Rendering/Game；
@@ -351,8 +352,9 @@ docs/                    计划、进度、决策与参考笔记
 
 ## 文档
 
-* [docs/PLAN.md](docs/PLAN.md) — 里程碑计划
-* [docs/PROGRESS.md](docs/PROGRESS.md) — 逐里程碑完成情况与验证记录
+* 任务、进度与剩余工作：**bd (beads)** —— `bd ready`（可开工）、`bd list`（未关闭）、`bd stats`（总览）；
+  历史 `PLAN.md`/`PROGRESS.md` 已退役，全文归档为 closed issue `FHeroes2Sharp-3so` / `FHeroes2Sharp-jwk`
+  （`bd show <id>`），旧文里的 `§x` 编号可据此对照。长期经验用 `bd memories` 检索。
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 分层、数据流、线程与资源模型
 * [docs/DECISIONS.md](docs/DECISIONS.md) — 关键技术决策（ADR 风格）
 * [docs/REFERENCE.md](docs/REFERENCE.md) — C++ 源码对照表（文件/类 → C# 类型）

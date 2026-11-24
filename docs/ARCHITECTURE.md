@@ -1,5 +1,9 @@
 # 架构（ARCHITECTURE）
 
+> **2026-11-24 起**：`PLAN.md` 与 `PROGRESS.md` 已退役并从仓库删除，任务、进度与剩余工作以 **bd (beads)**
+> 为准（`bd ready` / `bd list` / `bd stats`）。两份文档删除前的全文归档为 closed issue
+> `FHeroes2Sharp-3so`（PLAN）与 `FHeroes2Sharp-jwk`（PROGRESS）；本文中出现的 `PROGRESS.md`/`§x` 引用都指那份归档。
+
 ## 分层
 
 | 程序集 | 职责 | 允许依赖 |

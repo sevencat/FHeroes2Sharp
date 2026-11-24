@@ -22,7 +22,7 @@ namespace FHeroes2.App.Scenes;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The composition follows <c>Game::MainMenu()</c> (M2 of docs/PLAN.md): <c>HEROES.ICN</c> is one
+/// The composition follows <c>Game::MainMenu()</c> (M2 of bd 归档（PLAN.md，FHeroes2Sharp-3so）): <c>HEROES.ICN</c> is one
 /// 640x480 opaque sprite and every sign is a sprite whose anchor in the ICN header <i>is</i> its
 /// position, so the layout needs no coordinates of its own. Each sign owns three frames: the
 /// released look (<c>BTNSHNGL</c> 1, 5, 9, 13, 17), the highlighted look (+1) and the pressed look

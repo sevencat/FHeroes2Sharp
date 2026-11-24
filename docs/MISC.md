@@ -1,5 +1,8 @@
 # 杂项（MISC）
 
+> **2026-11-24 起**：`PLAN.md` 与 `PROGRESS.md` 已退役并从仓库删除，任务与进度以 **bd (beads)** 为准；
+> 全文归档为 closed issue `FHeroes2Sharp-3so`（PLAN）与 `FHeroes2Sharp-jwk`（PROGRESS）。
+
 ## 构建环境
 
 | 项 | 值 |

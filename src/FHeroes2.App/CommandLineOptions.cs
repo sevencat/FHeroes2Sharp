@@ -143,7 +143,7 @@ public sealed class CommandLineOptions
     /// </summary>
     /// <remarks>
     /// 像素基线与冒烟需要它：<c>--map</c> 打开地图时英雄的初始部队数量是抽出来的，不固定种子，
-    /// 同一张地图两次渲染的状态栏就不一样（见 <c>docs/PROGRESS.md</c> §7.5）。
+    /// 同一张地图两次渲染的状态栏就不一样（见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.5）。
     /// </remarks>
     public ulong? Seed { get; private set; }
 
@@ -203,7 +203,7 @@ public sealed class CommandLineOptions
     /// </summary>
     /// <remarks>
     /// 电脑的回合本来要玩家按沙漏才走；冒烟跑靠这一手把 AI 回合也覆盖到（AI 走子、拾取、进城都在
-    /// <c>AI::Planner::KingdomTurn()</c> 里，见 <c>docs/PROGRESS.md</c> §6.1k）。跳过之后由场景的帧循环
+    /// <c>AI::Planner::KingdomTurn()</c> 里，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §6.1k）。跳过之后由场景的帧循环
     /// 把电脑的回合跑完，因此要与 <c>--smoke-frames</c> 一起用才有意义。
     /// </remarks>
     public int? SkipTurns { get; private set; }

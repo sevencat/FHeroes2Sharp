@@ -2,6 +2,12 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
+> **Single source of truth (2026-11-24):** `docs/PLAN.md` and `docs/PROGRESS.md` were retired and deleted.
+> All plans, progress, remaining work and lessons live in **bd** only — `bd ready`, `bd list`, `bd stats`,
+> `bd remember` / `bd memories`. Their full text before deletion is archived as closed issues
+> `FHeroes2Sharp-3so` (PLAN) and `FHeroes2Sharp-jwk` (PROGRESS); any `§x` citation in code or docs refers to
+> those issues. Do not recreate plan/progress markdown files.
+
 > **Architecture in one line:** Issues live in a local Dolt database
 > (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
 > git-compatible protocol), stored under `refs/dolt/data` on your git

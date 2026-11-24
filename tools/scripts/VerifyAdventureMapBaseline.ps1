@@ -197,7 +197,7 @@ $appArguments = @(
     '--no-audio',
     '--no-config',
     # Map loading draws hero army sizes and random objects from the thread generator; without a
-    # seed the status bar shows a different army in every run (docs/PROGRESS.md §7.5).
+    # seed the status bar shows a different army in every run (bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.5).
     '--seed', '1',
     '--screenshot-frame', '30',
     '--smoke-frames', $Frames,

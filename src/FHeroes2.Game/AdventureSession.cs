@@ -37,7 +37,7 @@ namespace FHeroes2.Game;
 /// <b>偏差</b>：参考的电脑回合里英雄走子是<b>逐格动画</b>（<c>AI::HeroesMove()</c> 自己带着事件循环与重绘，
 /// <c>ai_hero_action.cpp:2245-2402</c>）；端口的 <c>AiHeroAction.HeroesMove()</c> 是纯规则、一口气走完，
 /// 所以电脑英雄在画面上是瞬移的。要动画就得让 AI 的动作链可暂停（协作式调度），那是画面层的后续工作，
-/// 记在 <c>docs/PROGRESS.md</c> §7.3。
+/// 记在 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.3。
 /// </para>
 /// <para>
 /// <b>回合开始的两件事</b>（<c>humanTurn()</c> <c>:1039-1043</c>）：先
@@ -131,7 +131,7 @@ public sealed class AdventureSession
 
         // 参考在 world_loadmap.cpp 里给每位英雄装上侦察回调（开图），而「走到对象上之后做什么」的分岔在
         // Heroes::Action() 里按 GetKingdom().isControlAI() 做（heroes_action.cpp:3778-3785）。端口把这道分岔
-        // 放到安装时：人类英雄只要开图（另外三件事都要问界面层，见 docs/PROGRESS.md §7.4），电脑英雄装 AI 版，
+        // 放到安装时：人类英雄只要开图（另外三件事都要问界面层，见 bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.4），电脑英雄装 AI 版，
         // 走一步就把脚下的对象处理掉。
         foreach (Hero hero in world.Heroes)
         {

@@ -23,6 +23,12 @@ public static class GlyphText
     public const char LineSeparator = '\n';
 
     /// <summary>
+    /// What <see cref="FitToOneRow"/> appends when a text has to be cut, <c>truncationSymbol</c> of
+    /// <c>ui_text.cpp</c>.
+    /// </summary>
+    public const string TruncationSymbol = "...";
+
+    /// <summary>
     /// Width of a single line, the equivalent of <c>getLineWidth()</c>. Trailing spaces are
     /// ignored unless <paramref name="keepTrailingSpaces"/> is set, which is how multi line text
     /// joins lines without losing the separating space.
@@ -60,6 +66,84 @@ public static class GlyphText
         }
 
         return width;
+    }
+
+    /// <summary>
+    /// Cuts <paramref name="text"/> so that it fits into <paramref name="maxWidth"/> and appends
+    /// <see cref="TruncationSymbol"/>, the equivalent of <c>Text::fitToOneRow()</c>
+    /// (<c>ui_text.cpp:495-522</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考先量一遍整行：放得下就原样返回；放不下就按「maxWidth 减去省略号宽度」能放下的最大字符数截断，
+    /// 再补 <c>"..."</c>。截断点是字符（UTF-16 码元）边界，代理对整对保留，行分隔符不计宽度。
+    /// </para>
+    /// <para>
+    /// 战斗状态栏的上、下两行与战斗日志的每一行都用它——参考在这三处都是同一个调用。
+    /// </para>
+    /// </remarks>
+    /// <param name="source">The font that measures the text.</param>
+    /// <param name="text">The text to fit; it is not modified.</param>
+    /// <param name="maxWidth">The widest the result may be, in logical pixels.</param>
+    /// <returns>The text itself, or a cut version ending in <see cref="TruncationSymbol"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="source"/> or <paramref name="text"/> is null.</exception>
+    public static string FitToOneRow(IGlyphSource source, string text, int maxWidth)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(text);
+
+        if (maxWidth <= 0 || text.Length == 0)
+        {
+            return text;
+        }
+
+        if (Measure(source, text) <= maxWidth)
+        {
+            return text;
+        }
+
+        int budget = maxWidth - Measure(source, TruncationSymbol);
+        if (budget <= 0)
+        {
+            return TruncationSymbol;
+        }
+
+        int width = 0;
+        int count = 0;
+
+        while (count < text.Length)
+        {
+            char character = text[count];
+
+            if (character == LineSeparator)
+            {
+                ++count;
+                continue;
+            }
+
+            int step = 1;
+            int advance;
+
+            if (char.IsHighSurrogate(character) && count + 1 < text.Length && char.IsLowSurrogate(text[count + 1]))
+            {
+                step = 2;
+                advance = source.GetAdvance(character) + source.GetAdvance(text[count + 1]);
+            }
+            else
+            {
+                advance = source.GetAdvance(character);
+            }
+
+            if (width + advance > budget)
+            {
+                break;
+            }
+
+            width += advance;
+            count += step;
+        }
+
+        return string.Concat(text.AsSpan(0, count), TruncationSymbol);
     }
 
     /// <summary>

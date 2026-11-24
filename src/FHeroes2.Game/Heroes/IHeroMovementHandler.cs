@@ -12,7 +12,7 @@ namespace FHeroes2.Game.Heroes;
 /// <c>ActionNewPosition()</c> (monster guards, artifact pickup, AI planner). Which of them does real work depends
 /// on who drives the hero: <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/> does all four for a computer
 /// player, <see cref="FogHeroMovementHandler"/> only uncovers fog for a human one (the other three need the
-/// interface, see <c>docs/PROGRESS.md</c> §7.4).
+/// interface, see <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4).
 /// </para>
 /// <para>
 /// The default handler does nothing, which keeps the movement state machine honest and testable: a test can walk
@@ -91,7 +91,7 @@ public sealed class NullHeroMovementHandler : IHeroMovementHandler
 /// <remarks>
 /// <para>
 /// 这是<b>人类英雄</b>装的那一个：它只开图。<see cref="Action"/> 这一支在参考里要找界面层问「要不要开战、
-/// 拿钱还是拿经验」，端口的 <c>IHeroActionHost</c> 还没有界面实现（<c>docs/PROGRESS.md</c> §7.4），
+/// 拿钱还是拿经验」，端口的 <c>IHeroActionHost</c> 还没有界面实现（<c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4），
 /// 装上去只会得到一串「否」，所以人类的对象动作目前仍靠玩家按默认动作键显式触发；
 /// 电脑英雄装的是 <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/>，四件事齐备。
 /// </para>

@@ -50,7 +50,7 @@ public enum AiTurnOutcome
 /// (<c>ai_planner_region.cpp</c>), the castle side (<c>ai_planner_castle.cpp</c>), the hero side
 /// (<c>ai_planner_hero.cpp</c>) and the two loops that drive a turn - <see cref="KingdomTurn"/> and the
 /// per-hero <c>HeroesTurn</c>. The one thing outside this class is the caller: the adventure map still has no
-/// computer-turn phase, see <c>docs/PROGRESS.md</c> §7.3.
+/// computer-turn phase, see <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.3.
 /// </para>
 /// </remarks>
 public sealed partial class AiPlanner

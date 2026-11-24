@@ -2043,7 +2043,7 @@ public sealed class GameHost : IDisposable
         }
 
         // The battle normally starts by walking a hero onto a monster tile, which the human action chain
-        // cannot do yet (PROGRESS §7.4); --battle starts it here so the battle screen's frame can be
+        // cannot do yet (bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.4); --battle starts it here so the battle screen's frame can be
         // captured and smoke tested without a mouse.
         if (_options.Battle && _adventure is { } battleMap
             && battleMap.TryStartBattle(_options.FreezeAnimation, _options.BattleSiege, _options.BattleAuto) is { } battleScene)

@@ -167,7 +167,7 @@ public sealed class RandTests
     public void SeedThread_MakesTheThreadGeneratorReproducible()
     {
         // --seed relies on this: map loading draws hero army sizes and random objects from the thread
-        // generator, so the same seed has to give the same sequence (docs/PROGRESS.md §7.5).
+        // generator, so the same seed has to give the same sequence (bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.5).
         Rand.SeedThread(2026);
         uint[] first = [Rand.Get(1000u), Rand.Get(1000u), Rand.Get(1000u)];
 

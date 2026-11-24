@@ -39,7 +39,7 @@ namespace FHeroes2.App.Scenes;
 /// (View World and the adventure options).
 /// </para>
 /// <para>
-/// 第 4 步之前的自建件（雷达、按钮面板、状态石、视口卷屏）已经全部让给屏幕，见 <c>PROGRESS.md</c> §6.1b。
+/// 第 4 步之前的自建件（雷达、按钮面板、状态石、视口卷屏）已经全部让给屏幕，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §6.1b。
 /// 地图的绘制与卷屏都归 <see cref="GameArea"/>，瓦片换算走 <c>GetValidTileIdFromPoint()</c>，场景不再自己
 /// 记偏移；<see cref="AdventureMapView"/> 只剩给 View World 与编辑器用的几何。
 /// </para>
@@ -486,7 +486,7 @@ public sealed class AdventureMapScene : IScene
     /// <para>
     /// <b>偏差</b>：参考的电脑走子是逐格动画（动画在 <c>AI::HeroesMove()</c> 自己的事件循环里），端口的
     /// <c>AiHeroAction.HeroesMove()</c> 是纯规则、一口气走完，所以电脑英雄在画面上是瞬移的，状态栏的进度条
-    /// 也只有沙漏在转。见 <c>docs/PROGRESS.md</c> §7.3。
+    /// 也只有沙漏在转。见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.3。
     /// </para>
     /// </remarks>
     /// <param name="session">The session whose current color is the computer.</param>
@@ -550,7 +550,7 @@ public sealed class AdventureMapScene : IScene
     /// (<c>game_startgame.cpp:970-976</c>).
     /// </summary>
     /// <remarks>
-    /// 结局画面还没有（<c>docs/PROGRESS.md</c> §7.4），所以只记一笔再请宿主离开这张图，且只做一次：
+    /// 结局画面还没有（<c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4），所以只记一笔再请宿主离开这张图，且只做一次：
     /// 宿主不换场景时，这个分支每帧都会被走到。
     /// </remarks>
     /// <param name="session">The session that is over.</param>
@@ -897,7 +897,7 @@ public sealed class AdventureMapScene : IScene
     /// <returns>The battle screen, or <see langword="null"/> when the map has no hero or no monster.</returns>
     /// <remarks>
     /// 参考的仗是「英雄走到怪物格上」触发的（<c>heroes_action.cpp</c> 的 <c>ActionToMonster</c> 里调
-    /// <c>Battle::Loader</c>）；端口的人类的动作链还没接上界面宿主（<c>docs/PROGRESS.md</c> §7.4），
+    /// <c>Battle::Loader</c>）；端口的人类的动作链还没接上界面宿主（<c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4），
     /// 所以这一步先让命令行挑一场真打，把战斗画面本身做出来。
     /// </remarks>
     public BattleScene? TryStartBattle(bool freezeAnimation, bool siege, bool autoPlay)
@@ -910,7 +910,7 @@ public sealed class AdventureMapScene : IScene
         }
 
         BattleScene? scene = BattleScene.TryCreate(
-            _frame, _assets, _world, hero, freezeAnimation, siege, autoPlay, _fonts?.SmallWhite, out string? error);
+            _frame, _assets, _world, hero, freezeAnimation, siege, autoPlay, _fonts?.SmallWhite, _fonts?.White, out string? error);
 
         if (scene is null)
         {

@@ -12,7 +12,7 @@ namespace FHeroes2.Assets.Maps;
 /// players and both conditions — but no tile data, so it can be read without the map loader.
 ///
 /// <para>
-/// Deviations from the reference implementation, both recorded in <c>docs/PROGRESS.md</c>:
+/// Deviations from the reference implementation, both recorded in <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c>:
 /// <list type="bullet">
 ///   <item><description>
 ///   map strings are decoded as Latin-1 instead of the DOS code page the original editor used; the

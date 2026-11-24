@@ -6,7 +6,7 @@
     The onboarding of a first run is click-only: the language picker of fheroes2::selectLanguage(), the
     greeting of Game::MainMenu(), then the resolution chooser. Until --left-click-at there was no way to
     replay more than one click in a run, so the only smoke of this path needed a temporary patch that
-    jumped straight past the first two windows (PROGRESS §6.9). This script is that smoke without the
+    jumped straight past the first two windows (bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §6.9). This script is that smoke without the
     patch:
 
         1. writes a throwaway fheroes2.cfg that still has 'first time game run' on,

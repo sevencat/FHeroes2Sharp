@@ -1,5 +1,10 @@
 # 技术决策（DECISIONS）
 
+> **2026-11-24 起**：`PLAN.md` 与 `PROGRESS.md` 已退役并从仓库删除，任务、进度与剩余工作以 **bd (beads)**
+> 为准（`bd ready` / `bd list` / `bd stats`）。两份文档删除前的全文归档为 closed issue
+> `FHeroes2Sharp-3so`（PLAN）与 `FHeroes2Sharp-jwk`（PROGRESS）；下面 ADR 里引用的 `PROGRESS.md §x`/`PLAN.md §x`
+> 均指那份归档。
+
 ## ADR-001：现代化重构，而非逐行翻译
 
 **决策**：C++ 的**资源解析**逐字节对齐；**工程结构**用现代 C# 重写（分层、不可变几何类型、
@@ -7958,3 +7963,30 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 
 **验证**：构建 0 错误 0 警告；`BattleArenaCommandTests` 4 条；全量 5 566 绿；七张基线全部 `identical`
 （两张战斗重建后各连跑两次）；脚本点击日志 `The player's Sprite acts: move to 24.`；无点击时 60 帧不结束。
+
+## ADR-216：状态栏文字走 `normalWhite` 字体注入，截断规则落进 `GlyphText`；命令文字必须在执行前取好
+
+**背景**：参考的状态栏是 `Battle::Status` 两行文字（`battle_interface.cpp:1138-1185`），每行用
+`fheroes2::Text::fitToOneRow()` 截断（`ui_text.cpp:495-522`），点击状态栏还能展开 6 行战斗日志
+（`StatusListBox`）。端口此前只画了状态栏的底图（`TEXTBAR` 8/9 与三个按钮），既没有文字也没有日志。
+
+**决定**：
+1. **截断规则放进 Assets 层**：`GlyphText.FitToOneRow(source, text, maxWidth)` 逐条照参考（放得下原样返回、
+   否则切到「maxWidth − 省略号」并补 `"..."`，代理对不拆、行分隔符不计宽）。战斗状态行的两处与以后所有
+   「一行放不下就省略」的窗口都能复用它，而不是在 `BattleFieldPainter` 里写一份私有逻辑。
+2. **字体由场景注入**：状态两行用 `FontType::normalWhite()`，端口即 `GameFonts.White`；与计数条的
+   `SmallWhite` 分开传（ADR-213 的同类做法）。字体缺失时只画底图、不画字。
+3. **上一行是动作、下一行是提示**：`SetStatus(message, top)` 与参考同构——上行写入并压进日志、同时清掉下行；
+   下行内容不变时不重算（`_lastStatusLower`）。提示文案先用参考的英文串（`Move` / `Flying` / `Attack`），
+   本地化随 `.mo` 一起做。
+4. **日志只有缓冲，没有窗口**：`AddLogMessage` 按参考的「最后一个放得下的空格」断行、长词用
+   `FitToOneRow` 截断，存进 `LogMessages`；6 行窗口、滚动条与「点状态栏展开」还没做（PROGRESS §7.6）。
+5. **命令文字必须在执行前取好**：`BattleArena` 应用命令时会消耗命令的参数（参考的 `Command` 继承
+   `std::vector` 并从尾部弹出），所以一旦 `PlayCurrentUnitTurn(commands)` 跑过，`commands[0]` 的
+   `[0]` 就可能越界。冒烟里确实踩到过一次 `ArgumentOutOfRangeException`；现在先把文字算成局部变量再执行。
+
+**后果**：状态栏第一次有内容；顺带得到一个可复用的单行截断工具与 6 条测试。代价是战斗日志窗口仍是
+「有数据没界面」，且状态文案暂为英文硬编码。
+
+**验证**：构建 0 错误 0 警告；`GlyphTextFitTests` 6 条；全量 5 572 绿（Assets 428 → 434）；四张相关基线
+`identical`；截图里上行 `Move to 24`、下行 `Flying`；临时日志确认日志缓冲收进同一句（补丁已撤）。

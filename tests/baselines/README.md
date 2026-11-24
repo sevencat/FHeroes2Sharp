@@ -1,5 +1,8 @@
 # 像素基线（tests/baselines）
 
+> **2026-11-24 起**：`PLAN.md` 与 `PROGRESS.md` 已退役并从仓库删除，任务与进度以 **bd (beads)** 为准；
+> 全文归档为 closed issue `FHeroes2Sharp-3so`（PLAN）与 `FHeroes2Sharp-jwk`（PROGRESS），本文里的 `§x` 指后者。
+
 这里存放**必须入库**的回归基线 PNG。`tools-output/` 是临时产物目录（`.gitignore` 排除），
 游戏数据（`Heroes2.agg`）同样不入库（ADR-010），所以真正用来兜底的基线只有这里的几张图。
 

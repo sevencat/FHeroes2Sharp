@@ -9,7 +9,7 @@
     baseline scripts through PixelBaseline.ps1; the same skip / -RequireData policy applies (ADR-010).
 
     The frame is made reproducible with
-      --seed 1             the hero's starting army is rolled on load (docs/PROGRESS.md §7.5)
+      --seed 1             the hero's starting army is rolled on load (bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.5)
       --freeze-animation   the scene does not step the fight, so the frame is the deployment
       --cursor 620,100     no pointer anywhere
     Without --freeze-animation the scene plays one round per frame and the frame would depend on how
