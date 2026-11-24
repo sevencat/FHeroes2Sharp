@@ -8,6 +8,8 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Ai;
+using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
@@ -73,6 +75,19 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>The quick info box while the right button is held, <c>Dialog::QuickInfo()</c>.</summary>
     private IQuickInfoPanel? _quickInfo;
+
+    /// <summary>
+    /// Whether the hourglass of a computer turn has been put up, so the next frame runs the turn itself.
+    /// </summary>
+    /// <remarks>
+    /// 参考在 <c>CONTROL_AI</c> 分支里先重绘一帧再调 <c>KingdomTurn()</c>（<c>game_startgame.cpp:916-938</c>），
+    /// 那块画面就留在屏幕上等 AI 跑完。端口的 <see cref="Update"/> 不画，画在
+    /// <see cref="DrawFrame"/>，所以亮招牌与跑回合必须分成两帧。
+    /// </remarks>
+    private bool _aiTurnAnnounced;
+
+    /// <summary>Whether the end of the game has already been reported to the host.</summary>
+    private bool _gameOverReported;
 
     private AdventureMapScene(
         ScreenBuffer frame,
@@ -167,8 +182,10 @@ public sealed class AdventureMapScene : IScene
             // The world owns the map state, the fog of war included (ADR-131): the scene loads the map into
             // World.Current the way a started scenario does, and every rule that opens the fog writes into
             // the same table the renderer walks.
+            // 起始资源按玩家挑的难度发（参考 Kingdom::Init 取 Game::getDifficulty()），地图头的那一档只用来
+            // 显示与评分；--difficulty 就是没法开窗时替玩家做这个选择的口子（ADR-203）。
             World world = World.Current;
-            world.LoadMap(map);
+            world.LoadMap(map, Settings.Get().GameDifficulty);
 
             // The fog is drawn for the colors the map declares as human, like Players::FriendColors() in the
             // reference: a tile is fogged only when every one of them has not discovered it yet. A scenario
@@ -415,6 +432,24 @@ public sealed class AdventureMapScene : IScene
             return;
         }
 
+        // 轮到电脑：参考在 StartGame() 的循环里把这一回合整个跑完（game_startgame.cpp:893-974），且期间
+        // 光标是沙漏、玩家动不了地图。端口同样在这一帧把人类那一套让开，见 RunComputerTurn()。
+        if (_session is { IsAiTurn: true } computerTurn)
+        {
+            if (computerTurn.IsGameOver)
+            {
+                // 人类的回合结束处有胜负检查（FinishHumanTurn 的 !isPlay 分支），电脑这一侧没有；
+                // 人类全灭之后 EndTurn() 不再换人，若不在这里收手，电脑回合会一帧一帧地跑下去。
+                ReportGameOver(computerTurn);
+
+                return;
+            }
+
+            RunComputerTurn(computerTurn);
+
+            return;
+        }
+
         LocalEvent events = LocalEvent.Current;
 
         AdventurePanelResult panel = _interface.ProcessTurnFrame(events, RequestExit);
@@ -432,6 +467,101 @@ public sealed class AdventureMapScene : IScene
         {
             HandleResult(result);
         }
+    }
+
+    /// <summary>
+    /// Plays one computer player's turn, the <c>CONTROL_AI</c> branch of <c>StartGame()</c>
+    /// (<c>game_startgame.cpp:893-974</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的顺序是：换沙漏光标（<c>:897</c>）、把状态栏切成「电脑回合」（<c>:914</c>）、重绘一帧
+    /// （<c>:916-918</c>）、跑 <c>AI::Planner::KingdomTurn()</c>（<c>:938</c>）。重绘那一帧在端口是
+    /// <see cref="DrawFrame"/> 的事，而 <see cref="Update"/> 不画，所以这里分两帧：第一帧只把招牌挂上（画出去
+    /// 就是沙漏在转），第二帧跑回合并交给下一位 —— 又轮到电脑就下一帧继续，轮到人类就还给他。
+    /// </para>
+    /// <para>
+    /// <b>偏差</b>：参考的电脑走子是逐格动画（动画在 <c>AI::HeroesMove()</c> 自己的事件循环里），端口的
+    /// <c>AiHeroAction.HeroesMove()</c> 是纯规则、一口气走完，所以电脑英雄在画面上是瞬移的，状态栏的进度条
+    /// 也只有沙漏在转。见 <c>docs/PROGRESS.md</c> §7.3。
+    /// </para>
+    /// </remarks>
+    /// <param name="session">The session whose current color is the computer.</param>
+    private void RunComputerTurn(AdventureSession session)
+    {
+        if (!_aiTurnAnnounced)
+        {
+            CursorState.Current?.SetThemes(CursorTheme.Wait);
+
+            StatusPanel status = _interface.GetStatusPanel();
+
+            status.Reset();
+            status.SetState(StatusType.AiTurn);
+            status.ResetAiTurnProgress();
+
+            _aiTurnAnnounced = true;
+
+            return;
+        }
+
+        _aiTurnAnnounced = false;
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        AiTurnOutcome outcome = session.RunAiTurn();
+        watch.Stop();
+
+        var report = new System.Text.StringBuilder();
+
+        foreach (Hero aiHero in session.Kingdom.Heroes)
+        {
+            report.Append($"[{aiHero.MapIndex} role={aiHero.AiRole} mp={aiHero.MovePoints} path={aiHero.Path.Count} army={aiHero.Army.GetCount()}] ");
+        }
+
+        // 电脑回合没有画面可看，日志是唯一能判断它真的走过棋的地方：每个英雄的编号、角色、剩余移动力、
+        // 走完留下的路径长度和兵力。冒烟（--skip-turns）就靠这一行验收。
+        GameLog.Info(
+            $"Computer turn {session.CurrentColor}: {watch.ElapsedMilliseconds} ms, {session.Kingdom.Heroes.Count} heroes, " +
+            $"{session.Kingdom.Castles.Count} castles, {report}");
+
+        if (outcome != AiTurnOutcome.EndTurn)
+        {
+            // 参考把非 END_TURN 的结果交回 StartGame() 的调用方，由它离开这张图（game_startgame.cpp:990-1005）。
+            GameLog.Info($"The computer player {session.CurrentColor} returned '{outcome}', so the map is left.");
+            RequestExit();
+
+            return;
+        }
+
+        EndTurn();
+
+        if (!session.IsAiTurn)
+        {
+            // 交回人类：撤掉沙漏。参考在 CONTROL_HUMAN 分支里换回指针、状态栏 Reset（:851-884）。
+            CursorState.Current?.SetThemes(CursorTheme.Pointer);
+            _interface.GetStatusPanel().Reset();
+        }
+    }
+
+    /// <summary>
+    /// Tells the host that every human kingdom is out, the <c>checkGameOver()</c> of <c>StartGame()</c>
+    /// (<c>game_startgame.cpp:970-976</c>).
+    /// </summary>
+    /// <remarks>
+    /// 结局画面还没有（<c>docs/PROGRESS.md</c> §7.4），所以只记一笔再请宿主离开这张图，且只做一次：
+    /// 宿主不换场景时，这个分支每帧都会被走到。
+    /// </remarks>
+    /// <param name="session">The session that is over.</param>
+    private void ReportGameOver(AdventureSession session)
+    {
+        if (_gameOverReported)
+        {
+            return;
+        }
+
+        _gameOverReported = true;
+        _aiTurnAnnounced = false;
+        GameLog.Info($"The game is over on day {session.DayCount}: every human kingdom is out.");
+        RequestExit();
     }
 
     /// <summary>

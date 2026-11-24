@@ -4968,6 +4968,13 @@ PLAN 里 `rand.cpp` 那句「只差 `combineSeedWithValueHash`」同时更正。
 `setInitialObjectInfo`/`updateObjectInfoTile`/`updateRandomXxx`/`placeObjectOnTile`（要 `Artifact::Rand` 与
 编辑器 `ObjectInfo`）；`Tile` 的迷雾位与存档运算符仍未搬；`maps` 目录里 `map_random_generator*` 三支未开。
 
+**后续**：上段除 `placeObjectOnTile` 外都已落——`setInitialObjectInfo`/`updateRandomXxx` 在
+`Tile.InitialObjectInfo.cs`，`updateObjectInfoTile` 在 `TileWeekLife.cs`，军队三支在 `TileTroops.cs`，
+`ClearFog`/`updateFogDirectionsInArea` 在 `World`/`TileFog.cs`；瓦片读取器统一按 `getMainObjectType(false)`
+看穿英雄。`placeObjectOnTile` 之外还差的 1.1.08 旧存档矿井修复也已补上（`World.RepairHackedMines()`，
+因端口 `setInitialObjectInfo` 要 `World`，从 `Tile.ReadFrom` 挪到瓦片循环之后）。`map_random_generator*`
+仍按 P7 挂着。
+
 ## ADR-137：三个目录同步推进的第一刀——`speed`/`experience` 的文案、`GetRNDSize` 的特例表、以及军队三支为什么拆成 `Tile` 的方法 ✅
 
 **背景**：`maps`/`heroes`/`kingdom` 三个目录一起收尾。`maps` 的尾巴只剩军队三支与编辑器的四项；
@@ -7445,3 +7452,131 @@ B5 只剩对象价值表（X2）。
 
 **后果**：G3 可以整段按参考写调用并能编译（运行时抛「未移植」，不会把过渡渲染器当结果）；`TileRendering` 的十个
 匿名命名空间助手属实现细节，骨架里不出现死代码。构建 0 错误 0 警告，测试基线不变（4 945 绿）。
+
+## ADR-198：联盟表按参考落地（MP2 头算、存档读、名册用） ✅
+
+**背景**：参考把「谁是朋友」放在玩家名册上：`FileInfo::unions` 是一张按颜色索引的集合表，地图载入后
+`player->SetFriends( fi.unions[index] | color )`（`players.cpp:325`）；MP2 头在「击败另一方」的地图上按胜利条件的
+第 0 个参数把王国颜色切成两侧（`maps_fileinfo.cpp:341-371`），存档文件则整表存（`maps_fileinfo.cpp:664-675`）。
+端口的 `Mp2FileInfo.PlayerUnions` 有字段但没有计算，`Players.Init` 只写「自己」，`Hero.IsFriends` 退回同色比较，
+`CampaignData.UpdateScenarioGameplayConditions` 抛 `NotImplementedException`——同盟玩家互相视为敌人。
+
+**决定**：
+
+1. `Mp2FileInfo.PlayerUnions` 就是参考的 `unions`：`PlayerColor` 是位标志，每项是一个颜色集合；默认
+   `PlayerColors.Ordered`（每人自己）。`Read` 的 `DefeatOtherSide` 分支按参数 0 切边，参数非 0 且小于王国色数才
+   合法，否则整张图读不出来（参考 `return false`，端口抛 `BinaryFormatException`）。
+2. `Players.Init` 写 `unions[i] | color`（自己也并进去，参考如此），`Hero.IsFriends` 改为问名册；名册没建好时
+   保持参考的 false。
+3. `CampaignData.UpdateScenarioGameplayConditions` 把「含 AI 颜色、又不是人类那一方」的项改成全部 AI 颜色，
+   人类项不动。战役开局流程（`game_campaign.cpp`）还没接，等 P4 接线，不做临时调用。
+
+**后果**：同盟地图上通行、战斗与 AI 敌友都走同一张表；「击败另一方」的地图以前被当成人人互相为敌，现在按地图
+参数分边。`AiHeroMovementHandlerTests` / `AIWorldPathfinderTests` 改挂 `SettingsSingletonCollection`：AI 动作后要按
+进程级的 `World.Current` 刷缓存，此前与换世界的测试并行跑会偶发「世界 0 格」。构建 0 错误 0 警告；测试 5 490 绿
+（新增 3 条 MP2 头联盟测试、2 条战役并方测试）。
+
+## ADR-199：漂流瓶走自己的动作分支，不混进取物 ✅
+
+**背景**：参考里 `ActionToPickupResource()`（`heroes_action.cpp:752-793`）一处处理四种对象：散落资源、营火、木桶、
+漂流瓶。前三者算钱进国库，漂流瓶只做 `showSignMessage( dst_index )`；四者在函数末尾一起播拾取音效、跑淡出动画、
+`resetObjectMetadata()`。取物那条 ADR 曾把漂流瓶挡在 `IsPickupResource()` 之外，理由是「留言文本系统还没落地」，
+于是英雄走到瓶子上返回 `HeroActionKind.None`——什么也不发生。
+
+**决定**：
+
+1. **数据层早就在**：`World.MapObjects` 里的 `MapSign` 同时承载 `OBJ_SIGN` 与 `OBJ_BOTTLE` 的信息块
+   （`world_loadmap.cpp:624-629`），`MapTextCodec` 的中文/法文修复也早把漂流瓶串算进去了。缺的只是动作分支。
+2. **单独一支 `HeroActionKind.Bottle`**，不借用 `Sign`：牌子可以反复读、瓶子读一次就没了，调用方（将来的界面）
+   要据此决定「要不要播淡出、要不要重绘瓦片」，混成一个 kind 就分不出来了。
+3. **`ActionToBottle` 自己清元数据**：`Tile.ResetObjectMetadata()`。参考把它写在函数末尾（所有分支共用），端口
+   在每个分支自己的函数里收口，行为一致；淡出与移除主物件仍归界面（`ObjectFadingOutInfo`），与资源、骷髅一致。
+4. **不 `SetVisited`、不动国库**：参考没有访问名册这一步，瓶子靠「元数据清空 + 物件移除」消失。
+5. **AI 侧不改**：`AiToPickupResource()` 早已把 `Bottle` 当资源抹掉（不读留言，参考也不读）。
+
+**后果**：英雄读到漂流瓶会拿到留言文本（`Payload` 是 `string?`）并清掉瓦片元数据；`HeroSignTests` 加两条
+（直接调用 `ActionToBottle` 与走分发器），全量测试 5 492。界面消费 `HeroActionKind.Bottle`（弹留言框 + 淡出）仍待
+App 的消息层，与 `Sign` 同一个缺口。
+
+## ADR-200：配置文件读写照参考落进 `Settings`，键集合按端口已移植的设置项 ✅
+
+**背景**：参考用 `fheroes2.cfg` 记住这台机器的偏好——音量、速度、全部开关、隐藏界面时四个窗口的位置、语言、
+「第一次运行」标志（`Settings::Read()`/`Save()`，`settings.cpp:145-583`），格式由 `engine/tinyconfig.cpp` 的
+`TinyConfig( '=', '#' )` 解析。端口 `Settings` 只有内存态，类注释里明写 `Read`/`Save`/`getOptionsString` 未移植，
+连带 `IsFirstGameRun` 恒为 true（没人清、也没有文件可清），首运提示与语言选择窗都没法接。
+
+**决定**：
+
+1. **`TinyConfig` 单独成类**（`Game/System/TinyConfig.cs`），读文件与解析分开：`LoadFile` 碰磁盘，`Parse` 只吃文本。
+   解析规则照参考：键小写 + 去首尾空白 + 连续空白压一个、重复键留第一个（`emplace` 语义）、无分隔符的行跳过；
+   `IntParams` 整串必须是数字否则 0（`from_chars` 不接受尾随垃圾），`PointParams` 只认 `[ x, y ]`，
+   `ResolutionParams` 先认 `宽x高:宽x高`，再认旧格式 `宽x高x倍数`，倍数为 0 或乘出溢出时回退。
+2. **配置读写放 `Settings.Configuration.cs`**（partial，与 `Settings.Persistence.cs` 并列）。`Persistence` 那份是
+   跟着一局游戏走的五个字段，配置文件是这台机器的偏好，读档不覆盖，两者不混。
+3. **路径归宿主**：参考的 `Save()` 自己拼 `GetConfigDirectory( "fheroes2" )`，端口没有 `dir.cpp`，所以 `Save(string)`
+   收完整路径；热键文件已是这个分工（`GameHotKeys` 收路径），保持一致。
+4. **三个键按「有状态才写、有状态才读」处理**：`videomode` 与 `game window position` 属于 UI 层的分辨率与窗口，
+   通过 `Save`/`GetOptionsString` 的可选参数写出去，`Read` 读到也跳过；`debug` 属于未移植的日志层，不写不读。
+   其余键全部照参考的键名、默认值与注释写，两份文件可以并排 diff。
+5. **`first time game run` 只认 `off`**：缺键、`on`、其它值都不动标志——参考只在读到 `off` 时 `resetFirstGameRun()`。
+
+**后果**：`Settings` 能把自己完整写出去再读回来（`SettingsTests` 的往返用例逐字段断言）；`TinyConfig` 的边界
+（缺文件、注释、重复键、非数字、溢出的旧分辨率）各有测试，全量 5 506 绿。**启动时读、退出时写尚未接线**：
+分辨率/全屏/隐藏界面位置的真正生效要等 UI 层消费这些设置，与语言选择窗、`BaseInterface` 的淡入一起做（P6）。
+
+## ADR-201：配置文件接进启动流程，加 `--config`/`--no-config`，语言以 `--lang` 为先 ✅
+
+**背景**：ADR-200 落了 `Settings.Read/Save`，但没人调；参考在 `Game::Init()` 的 `initConfig()`
+（`game_init.cpp:217-230`）里读它，读不到就立刻写一份默认的，之后由设置窗、热键、雷达拖动各处
+`conf.Save()` 逐步落盘。端口要接这条链，同时不能让它干扰像素基线。
+
+**决定**：
+
+1. **路径是纯函数**（`Game/System/ConfigurationFile.cs`）：`DefaultPath( appData )` 拼
+   `<appData>\fheroes2\fheroes2.cfg`（对应 `GetConfigDirectory( "fheroes2" )` + `Settings::configFileName`），
+   `Resolve( appData, explicit )` 让显式路径优先，`EnsureDirectory` 对应 `MakeDirectory( configDir )`。
+   「`%APPDATA%` 在哪」留给宿主（`Environment.GetFolderPath`），Game 层不读环境变量，测试直接喂临时目录。
+2. **两个新开关**：`--config <file>` 与 `--no-config`。参考没有它们（只在固定目录里找），端口加是因为同一个 exe
+   既跑游戏又跑像素基线：开发机上的 `hide interface = on`、`system info = off` 会把基线搅乱。五个
+   `Verify*Baseline.ps1` 一律带 `--no-config`，基线从此与「这台机器有没有配置文件」无关。
+3. **读不到就写默认**：`GameHost.LoadSettings()` 在 `Read` 失败或缺文件时 `EnsureDirectory` + `Save`，与
+   `initConfig` 的 else 分支一致；写不出去（只读目录）只降级成「偏好不保存」，客户端照常跑。
+4. **保存在退出与语言变更两处**：参考在各修改点各自保存，端口没有那么多修改点（设置窗只有语言行），统一在
+   `Loop()` 结束与 `MainMenuScene.LanguageChanged` 各写一次，是参考所有保存点的超集；`videomode` 写
+   `<640x480>:<当前窗口>`。
+5. **语言优先级 `--lang` > 配置文件 > 英文**，且 `StartLanguage` 要把 `--lang` 单独再取一次——`--no-config` 时
+   `LoadSettings` 提前返回，配置文件里的语言根本没被读进来，而基线正是「`--no-config` + `--lang zh_CN`」。
+
+**后果**：语言一旦在设置窗里改过就会被记住，`first time game run` 留在文件里等首运 UI 消费（§7 的 P6 剩余项）。
+顺带发现五张像素基线从 2026-11-14 起就落后（主菜单右下角的 Editor 招牌没进基线，恒差 9 867 像素），已重建并
+复验 `identical`，记在 `tests/baselines/README.md` 的「2026-11-24 的重建」。
+**没做**：首运的语言选择窗与欢迎消息、`videomode`/`fullscreen`/隐藏界面位置的生效、`IsFirstGameRun` 的清除。
+
+## ADR-202：首运的窗口做成场景级模态，触发条件是「真的读到了配置文件」 ✅
+
+**背景**：参考 `game_mainmenu.cpp:265-300` 在进事件循环之前阻塞地跑 `selectLanguage`、问候消息、分辨率选择，
+最后清旗标并保存。端口的主菜单是帧驱动的场景，`GameHost.RunModal` 那套阻塞循环只适合 `showStandardTextMessage`
+这类一条命的消息；把整个首运塞进去，`--screenshot` 和 `--smoke-frames` 就没法再拍照和退出（窗口在等输入）。
+
+**决定**：
+
+1. **场景级模态**：`MainMenuScene.BeginFirstRun()` 把 `LanguageSelectionDialog` 放在菜单上，输入路由、绘制、
+   `HasModalDialog` 都沿用设置窗那一套；问候用 `MessageBox` 加一个 OK 按钮，同样由场景收键。帧循环照跑，
+   所以自动化开关仍然可用。参考里「窗口下方是菜单」的视觉顺序也因此保留。
+2. **触发条件是 `_configFile is not null && Settings.IsFirstGameRun`**，而不是只看旗标：`--no-config` 时
+   `LoadSettings` 连文件都没碰，`IsFirstGameRun` 停在默认 `true` 上；只看旗标的话，五个像素基线和所有脚本
+   都会停在语言选择窗上。旗标是配置文件的产物，就跟着配置文件走（与 ADR-201 的 `--no-config` 同一条线）。
+   `--open-settings`/`--open-scenario` 先占了窗口时 `BeginFirstRun()` 让路，旗标留到下一次启动。
+3. **问候只写欢迎段**：参考的三段里，「请选择游戏分辨率」后面紧跟 `Dialog::SelectResolution()`，「触摸输入」
+   跟着触摸检测；端口两样都没有（`videomode` 只写不读，也没有触摸输入），照抄就是空承诺。少写两段而不是
+   写一段假的，差异记在 PROGRESS §6.6。
+4. **CANCEL 帧进 `SettingsArtwork`**：`SYSTEM.ICN` 的第 3、4 帧是 CANCEL 按钮，语言窗是第一个真正需要它的窗口；
+   档案里缺帧时 `HasCancel` 为假，语言窗退回只画 OK，不崩。
+5. **语言落地**：菜单在既无 `--lang`、配置里也没有 `lang` 时会自己落到系统语言上，宿主在 `CreateScenes` 里把这个
+   结果记进 `Settings`，否则文件里的 `lang` 空着、界面却是中文，下一次启动又得重新猜。
+
+**后果**：首运的语言窗与问候能出能关，`--config` 脚本要先写 `first time game run = off` 才不会被窗口拦住（文档已写）。
+**验证边界**：合成点击一轮只有一次（`--left-click` 定在第十帧、`--cursor` 只有一个），语言窗 → 问候的截图与日志
+都抓到了，但「点问候的 OK 之后清旗标」没有端到端截图；那一步由 `Settings.ResetFirstGameRun()` + `Save` 的持久化测试
+（`SystemSettingsTests.ASavedResetFirstGameRunStaysClearedInTheFile`）加四行接线守住，要端到端就得让脚本能连点两个位置。
+**没做**：分辨率选择窗与 `videomode` 的生效、触摸输入、`MainMenu` 退出时的窗口位置保存。

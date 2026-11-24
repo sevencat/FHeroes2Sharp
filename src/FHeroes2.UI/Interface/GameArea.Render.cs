@@ -708,7 +708,7 @@ public sealed partial class GameArea
                 // These are parts of original action objects which must be rendered under heroes.
                 if (!isPuzzleDraw
                     && (objectType == Mp2ObjectType.AbandonedMine
-                        || (objectType == Mp2ObjectType.Mine && tile.GetMineSpellId() == SpellType.Haunt)))
+                        || (objectType == Mp2ObjectType.Mine && tile.GetMineSpellId(World.Current) == SpellType.Haunt)))
                 {
                     // To render the ghosts of an abandoned mine correctly the tile above has to be checked for fog.
                     bool areGhostsUnderFog = renderFog && isTileUnderFog && World.Current.GetTile(tileIndex - worldWidth).FogDirection == Directions.All;
@@ -722,7 +722,7 @@ public sealed partial class GameArea
                 }
                 else if (objectType == Mp2ObjectType.Mine && !isTileUnderFog)
                 {
-                    IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetMineGuardianSpritesPerTile(tile);
+                    IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetMineGuardianSpritesPerTile(World.Current, tile);
                     if (spriteInfo.Count > 0)
                     {
                         byte alphaValue = GetObjectAlphaValue(tile.MainObjectPart.Uid);

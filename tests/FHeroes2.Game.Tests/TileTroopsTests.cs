@@ -17,9 +17,9 @@ public sealed class TileTroopsTests
     [Fact]
     public void AWanderingStackIsItsMonsterAndItsCount()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 12);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 12, out World world);
 
-        Troop troop = tile.GetTroop(MakeWorld(tile));
+        Troop troop = tile.GetTroop(world);
 
         Assert.Equal(MonsterType.Goblin, troop.Monster);
         Assert.Equal(12u, troop.Count);
@@ -42,21 +42,21 @@ public sealed class TileTroopsTests
     [Fact]
     public void AStackOfSevenGrowsByExactlyOne()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 7);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 7, out World world);
 
-        tile.UpdateMonsters(1000);
+        tile.UpdateMonsters(world, 1000);
 
-        Assert.Equal(8u, tile.GetMonsterCount());
+        Assert.Equal(8u, tile.GetMonsterCount(world));
     }
 
     [Fact]
     public void AStackOfSixGrowsByAtMostOne()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 6);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 6, out World world);
 
-        tile.UpdateMonsters(1000);
+        tile.UpdateMonsters(world, 1000);
 
-        uint grown = tile.GetMonsterCount();
+        uint grown = tile.GetMonsterCount(world);
 
         Assert.True(grown is 6 or 7, $"A stack of six grew to {grown}.");
     }
@@ -64,31 +64,31 @@ public sealed class TileTroopsTests
     [Fact]
     public void GrowthStopsAtTheLimit()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 21);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 21, out World world);
 
-        tile.UpdateMonsters(22);
+        tile.UpdateMonsters(world, 22);
 
-        Assert.Equal(22u, tile.GetMonsterCount());
+        Assert.Equal(22u, tile.GetMonsterCount(world));
     }
 
     [Fact]
     public void AStackThatReachedTheLimitIsLeftAlone()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 40);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 40, out World world);
 
-        tile.UpdateMonsters(40);
+        tile.UpdateMonsters(world, 40);
 
-        Assert.Equal(40u, tile.GetMonsterCount());
+        Assert.Equal(40u, tile.GetMonsterCount(world));
     }
 
     [Fact]
     public void AnEmptyStackDoesNotGrow()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Goblin, 0);
+        Tile tile = MakeMonsterTile(MonsterType.Goblin, 0, out World world);
 
-        tile.UpdateMonsters(1000);
+        tile.UpdateMonsters(world, 1000);
 
-        Assert.Equal(0u, tile.GetMonsterCount());
+        Assert.Equal(0u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -98,10 +98,10 @@ public sealed class TileTroopsTests
         // `updateMonstersOnTile` is what this checks.
         Tile tile = MakeTile(Mp2ObjectType.GoblinHut, out World world);
 
-        tile.SetMonsterCount(6);
-        tile.UpdateMonsters(1000);
+        tile.SetMonsterCount(world, 6);
+        tile.UpdateMonsters(world, 1000);
 
-        Assert.Equal(6u, tile.GetMonsterCount());
+        Assert.Equal(6u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public sealed class TileTroopsTests
         Assert.Equal(Mp2ObjectType.ActionMonster, tile.MainObjectType);
         Assert.Equal(Mp2ObjectIcnType.Mons32, tile.MainObjectPart.IcnType);
         Assert.Equal((byte)(MonsterType.Goblin - 1), tile.MainObjectPart.IcnIndex);
-        Assert.Equal(5u, tile.GetMonsterCount());
+        Assert.Equal(5u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -132,9 +132,9 @@ public sealed class TileTroopsTests
     [Fact]
     public void PlacingAStackOverAMonsterKeepsTheUid()
     {
-        Tile tile = MakeMonsterTile(MonsterType.Skeleton, 3);
+        Tile tile = MakeMonsterTile(MonsterType.Skeleton, 3, out World world);
 
-        tile.SetMonster(MakeWorld(tile), MonsterType.Goblin, 5);
+        tile.SetMonster(world, MonsterType.Goblin, 5);
 
         Assert.Equal(ObjectUid, tile.MainObjectPart.Uid);
         Assert.Equal((byte)(MonsterType.Goblin - 1), tile.MainObjectPart.IcnIndex);
@@ -163,7 +163,7 @@ public sealed class TileTroopsTests
         tile.SetMonster(world, MonsterType.Goblin, 0);
 
         // Goblins are a level one monster: half of fifty to fifty.
-        Assert.InRange(tile.GetMonsterCount(), 25u, 50u);
+        Assert.InRange(tile.GetMonsterCount(world), 25u, 50u);
     }
 
     [Fact]
@@ -234,8 +234,6 @@ public sealed class TileTroopsTests
 
     private const uint ObjectUid = 77;
 
-    private static World MakeWorld(Tile tile) => new();
-
     private static Tile MakeTile(Mp2ObjectType type, out World world)
     {
         world = new World();
@@ -250,15 +248,15 @@ public sealed class TileTroopsTests
         return tile;
     }
 
-    private static Tile MakeMonsterTile(MonsterType monster, uint count)
+    private static Tile MakeMonsterTile(MonsterType monster, uint count, out World world)
     {
-        Tile tile = MakeTile(Mp2ObjectType.Monster, out World _);
+        Tile tile = MakeTile(Mp2ObjectType.Monster, out world);
 
         ObjectPart part = tile.MainObjectPart;
         part.IcnType = Mp2ObjectIcnType.Mons32;
         part.IcnIndex = (byte)(monster - 1);
         tile.SetMainObjectPart(part);
-        tile.SetMonsterCount(count);
+        tile.SetMonsterCount(world, count);
 
         return tile;
     }

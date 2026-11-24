@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Ai;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.System;
 using KingdomRealm = FHeroes2.Game.Kingdom.Kingdom;
@@ -21,14 +22,22 @@ namespace FHeroes2.Game;
 /// 之后</b>，而 <see cref="EndTurn"/> 只负责把人换掉。
 /// </para>
 /// <para>
-/// <b>玩家顺序</b>：参考的 <c>SortPlayers()</c> 把人类排在电脑前面，这样开局是玩家先动。端口的顺序直接取
-/// 王国表里的颜色顺序（<c>blue</c>、<c>green</c>…），人类色仍然排前面 —— 与参考的可见结果一致，因为参考的
-/// 排序在人类之间也保持颜色序。
+/// <b>玩家顺序</b>：参考的 <c>SortPlayers()</c> 把人类排在电脑前面，这样开局是玩家先动。端口按同样的两段
+/// 拼表（先人类、后电脑），段内取王国表的颜色序（<c>blue</c>、<c>green</c>…）—— 与参考的可见结果一致。
 /// </para>
 /// <para>
-/// <b>电脑玩家被跳过</b>：<c>AI::Planner</c> 在端口只有契约（<c>Game/Ai</c>），所以 <see cref="EndTurn"/>
-/// 找下一个玩家时会跳过非人类的色。这不是偷懒：参考里电脑回合的全部内容都在 <c>AI::Planner::KingdomTurn()</c>
-/// 里，没有它就没有可执行的动作；跳过至少让日期与资源继续走，人类玩家的城也能被自己访问。
+/// <b>电脑玩家也在轮转里</b>：参考的 <c>StartGame()</c> 对每个 <c>kingdom.isPlay()</c> 的色分派人类或电脑
+/// （<c>game_startgame.cpp:844-974</c>）。端口照抄这张表，但电脑的回合内容要靠调用方驱动：
+/// <see cref="EndTurn"/> 只把当前色换成电脑，<see cref="RunAiTurn"/> 才是那一回合的
+/// <c>AI::Planner::KingdomTurn()</c>（<c>:938</c>）。分工的原因是参考的电脑回合自带画面循环
+/// （光标、状态栏沙漏、走子动画），而端口的画面在 <c>FHeroes2.App</c> 的场景里 —— 场景每帧看一眼
+/// <see cref="IsAiTurn"/>，是电脑就把这一回合跑掉。
+/// </para>
+/// <para>
+/// <b>偏差</b>：参考的电脑回合里英雄走子是<b>逐格动画</b>（<c>AI::HeroesMove()</c> 自己带着事件循环与重绘，
+/// <c>ai_hero_action.cpp:2245-2402</c>）；端口的 <c>AiHeroAction.HeroesMove()</c> 是纯规则、一口气走完，
+/// 所以电脑英雄在画面上是瞬移的。要动画就得让 AI 的动作链可暂停（协作式调度），那是画面层的后续工作，
+/// 记在 <c>docs/PROGRESS.md</c> §7.3。
 /// </para>
 /// <para>
 /// <b>回合开始的两件事</b>（<c>humanTurn()</c> <c>:1039-1043</c>）：先
@@ -41,14 +50,16 @@ public sealed class AdventureSession
 {
     private readonly World _world;
     private readonly List<PlayerColor> _players;
+    private readonly List<PlayerColor> _humans;
     private readonly bool[] _acted;
     private int _current;
     private Hero? _focusHero;
 
-    private AdventureSession(World world, List<PlayerColor> players)
+    private AdventureSession(World world, List<PlayerColor> players, List<PlayerColor> humans)
     {
         _world = world;
         _players = players;
+        _humans = humans;
         _acted = new bool[players.Count];
     }
 
@@ -64,6 +75,9 @@ public sealed class AdventureSession
     /// <para>
     /// 没有人类玩家的地图（全是电脑，或者一个色都没有）返回 <see langword="null"/>：这时没有什么可
     /// 交互的，调用方据此退回主菜单。
+    /// </para>
+    /// <para>
+    /// 在局中的电脑色同样进轮转表，排在人类之后（参考的 <c>SortPlayers()</c>）。
     /// </para>
     /// </remarks>
     /// <param name="world">已经载入地图、建好王国与英雄的世界。</param>
@@ -83,30 +97,45 @@ public sealed class AdventureSession
         Settings.Get().Players.Init(info);
         Settings.Get().Players.SetStartGame();
 
-        var players = new List<PlayerColor>();
+        var humans = new List<PlayerColor>();
+        var computers = new List<PlayerColor>();
 
         foreach (PlayerColor color in PlayerColors.ToList(world.Kingdoms.GetColors()))
         {
             KingdomRealm kingdom = world.Kingdoms.GetKingdom(color);
 
-            if (kingdom.IsPlay && kingdom.IsControlHuman)
+            if (!kingdom.IsPlay)
             {
-                players.Add(color);
+                continue;
             }
+
+            (kingdom.IsControlHuman ? humans : computers).Add(color);
         }
 
-        if (players.Count == 0)
+        if (humans.Count == 0)
         {
             return null;
         }
 
-        var session = new AdventureSession(world, players);
+        // 人类在前、电脑在后（参考的 SortPlayers()），两段内部保持颜色序。
+        var session = new AdventureSession(world, [.. humans, .. computers], humans);
 
-        // 参考在 world_loadmap.cpp 里给每位英雄装上侦察回调（开图）。端口把这条回调拆成
-        // IHeroMovementHandler，迷雾版只需要世界；没有它，英雄走进雾里不会开图，地图会越走越灰。
+        // 开局清一遍迷雾，而且对<b>每个</b>玩家都清（game_startgame.cpp:769-781）。
+        // 这不只是给人类看的：AI 的 Planner::ScanMap() 用 tile.isFog( color ) 过滤瓦片
+        // （ai_planner_kingdom.cpp:430），只清人类的话电脑英雄在满屏大雾里找不到任何目标，
+        // 回合空转、原地不动。参考在这里清的是英雄、城堡与矿场的周围（World::ClearFog）。
+        foreach (PlayerColor color in session._players)
+        {
+            world.ClearFog(color);
+        }
+
+        // 参考在 world_loadmap.cpp 里给每位英雄装上侦察回调（开图），而「走到对象上之后做什么」的分岔在
+        // Heroes::Action() 里按 GetKingdom().isControlAI() 做（heroes_action.cpp:3778-3785）。端口把这道分岔
+        // 放到安装时：人类英雄只要开图（另外三件事都要问界面层，见 docs/PROGRESS.md §7.4），电脑英雄装 AI 版，
+        // 走一步就把脚下的对象处理掉。
         foreach (Hero hero in world.Heroes)
         {
-            hero.MovementHandler = new FogHeroMovementHandler(world);
+            AttachMovementHandler(world, hero);
         }
 
         world.NewDay();
@@ -116,10 +145,39 @@ public sealed class AdventureSession
         return session;
     }
 
+    /// <summary>
+    /// Installs the movement handler a hero walks with, <c>IHeroMovementHandler</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考没有这个接缝：<c>Heroes::Action()</c> 自己按 <c>GetKingdom().isControlAI()</c> 分岔
+    /// （<c>heroes_action.cpp:3778-3785</c>）。端口把分岔挪到安装时，于是<b>每一位</b>英雄入局时都得装一次——
+    /// 开局装载是一次，之后每雇到一位英雄再一次。
+    /// </para>
+    /// <para>
+    /// 漏装的后果不是崩溃，而是<b>卡死</b>：英雄保持默认的 <see cref="NullHeroMovementHandler"/>，走到不能
+    /// 踏入的对象前会照付每一步的移动力、却什么也不做，于是一回合里反复撞同一格直到移动力耗尽，对象永远
+    /// 不会消失（冒烟里就是「停在未占领的矿前不动」）。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The world the hero lives in.</param>
+    /// <param name="hero">The hero that just joined a kingdom.</param>
+    internal static void AttachMovementHandler(World world, Hero hero)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(hero);
+
+        hero.MovementHandler = world.Kingdoms.GetKingdom(hero.Color).IsControlHuman
+            ? new FogHeroMovementHandler(world)
+            : new AiHeroMovementHandler(world);
+    }
+
     /// <summary>Map the session plays on.</summary>
     public World World => _world;
 
-    /// <summary>The colors the human plays; the reference's <c>players</c> with the human ones first.</summary>
+    /// <summary>
+    /// Every color in the rotation, the reference's <c>SortedPlayers()</c>: the human ones first, then the computer.
+    /// </summary>
     public IReadOnlyList<PlayerColor> Players => _players;
 
     /// <summary>The color whose turn it is, <c>Interface::AdventureMap::_statusPanel</c>'s player.</summary>
@@ -135,6 +193,16 @@ public sealed class AdventureSession
     public KingdomRealm Kingdom => _world.Kingdoms.GetKingdom(CurrentColor);
 
     /// <summary>
+    /// Whether the computer plays <see cref="CurrentColor"/>, <c>kingdom.GetControl() == CONTROL_AI</c>
+    /// (<c>game_startgame.cpp:893</c>).
+    /// </summary>
+    /// <remarks>
+    /// 调用方据此决定这一回合由谁跑：人类的是界面的一帧一帧（<c>HumanTurn()</c>），电脑的是
+    /// <see cref="RunAiTurn"/>（<c>AI::Planner::KingdomTurn()</c>）。
+    /// </remarks>
+    public bool IsAiTurn => !Kingdom.IsControlHuman;
+
+    /// <summary>
     /// The hero the cursor and the status bar show, <c>Interface::AdventureMap::GetFocus()</c>.
     /// </summary>
     /// <remarks>
@@ -147,11 +215,14 @@ public sealed class AdventureSession
     public uint DayCount => _world.DayCount;
 
     /// <summary>Whether every human kingdom is out of the game, <c>Game::CheckGameOver()</c>.</summary>
+    /// <remarks>
+    /// 只看人类：电脑全部出局不等于这局结束，那正是玩家赢了。
+    /// </remarks>
     public bool IsGameOver
     {
         get
         {
-            foreach (PlayerColor color in _players)
+            foreach (PlayerColor color in _humans)
             {
                 if (!_world.Kingdoms.GetKingdom(color).IsLoss)
                 {
@@ -170,11 +241,14 @@ public sealed class AdventureSession
     /// <remarks>
     /// <para>
     /// 参考里 <c>humanTurn()</c> 返回 <c>END_TURN</c> 之后，<c>StartGame()</c> 的循环接着找下一个
-    /// <c>kingdom.isPlay()</c> 的色；一圈走完才回到循环顶部 <c>world.NewDay()</c>。这里逐字照抄，只是
-    /// 电脑的回合没有内容可跑（见类文档），于是被跳过。
+    /// <c>kingdom.isPlay()</c> 的色；一圈走完才回到循环顶部 <c>world.NewDay()</c>。这里逐字照抄。
     /// </para>
     /// <para>
-    /// 出局的人类玩家同样跳过（<c>kingdom.isPlay()</c> 为假）：他的颜色还在列表里，但已经没有英雄和城。
+    /// 换到的下一位可能是电脑：本方法只负责把他的回合开始（收入、当天事件、路线）安排上，
+    /// 回合本身由调用方看着 <see cref="IsAiTurn"/> 用 <see cref="RunAiTurn"/> 跑掉。
+    /// </para>
+    /// <para>
+    /// 出局的玩家同样跳过（<c>kingdom.isPlay()</c> 为假）：他的颜色还在列表里，但已经没有英雄和城。
     /// </para>
     /// </remarks>
     public void EndTurn()
@@ -215,6 +289,41 @@ public sealed class AdventureSession
         {
             EndTurn();
         }
+    }
+
+    /// <summary>
+    /// Plays the turn of a computer player, the <c>AI::Planner::Get().KingdomTurn( kingdom )</c> of
+    /// <c>game_startgame.cpp:938</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这个分支里先换光标、把状态栏切成「电脑回合」、重绘一帧（<c>:897-918</c>），然后才调 AI；
+    /// 那三件都是画面的事，归场景，这里只做规则那一半。回合开始的两件事（收入与当天事件、重算路线）在
+    /// <see cref="EndTurn"/> 换到这一位时已经由 <see cref="BeginTurn"/> 做过，与参考的
+    /// <c>ActionNewDayResourceUpdate( nullptr )</c> 加 <c>ActionBeforeTurn()</c>（<c>:926-930</c>）同序。
+    /// </para>
+    /// <para>
+    /// 参考的 <c>AIWorldPathfinder::Get()</c> 是全局单例，端口按世界构造、第一次取用时交给
+    /// <see cref="AiPlanner"/>（<c>World.AiPathfinder</c>），所以这里先取一次，免得回合里的距离查询撞上
+    /// 「尚未附加」。
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// What the AI wants next: <see cref="AiTurnOutcome.EndTurn"/> when it is done, or
+    /// <see cref="AiTurnOutcome.QuitGame"/> when it gave up - the reference's <c>QUIT_GAME</c> leaves the game.
+    /// </returns>
+    /// <exception cref="InvalidOperationException"><see cref="IsAiTurn"/> is <see langword="false"/>.</exception>
+    public AiTurnOutcome RunAiTurn()
+    {
+        if (!IsAiTurn)
+        {
+            throw new InvalidOperationException(
+                $"AdventureSession.RunAiTurn — {CurrentColor} 不是电脑玩家，这一回合该由界面跑");
+        }
+
+        _ = _world.AiPathfinder;
+
+        return AiPlanner.Instance.KingdomTurn(Kingdom);
     }
 
     /// <summary>

@@ -168,6 +168,7 @@ $appArguments = @(
     '--map', $MapFile,
     '--freeze-animation',
     '--no-audio',
+    '--no-config',
     '--screenshot-frame', '30',
     '--smoke-frames', $Frames,
     '--screenshot', $screenshot

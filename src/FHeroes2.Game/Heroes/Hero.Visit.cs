@@ -148,7 +148,8 @@ public sealed partial class Hero
     /// </summary>
     /// <remarks>
     /// 参考只在「还没记过」时插到表头；<see cref="SetVisited"/> 已经做了这个去重。
-    /// <c>unmarkHeroMeeting()</c>（两位英雄分开时清记录）属于 <c>AIHeroMeetingUpdater</c>，等那片落地时再加。
+    /// 反向的 <c>unmarkHeroMeeting()</c> 要遍历整个王国的英雄，而英雄不该认识王国，所以那一圈留在
+    /// <see cref="Ai.AiHeroMeetingUpdater"/> 里，这里只提供单条记录的删除。
     /// </remarks>
     /// <param name="heroId">The id of the other hero.</param>
     public void MarkHeroMeeting(int heroId)
@@ -158,6 +159,19 @@ public sealed partial class Hero
             SetVisited(heroId, Mp2ObjectType.Hero);
         }
     }
+
+    /// <summary>
+    /// Forgets one visit, <c>visit_object.remove( IndexObject( index, type ) )</c> (<c>heroes.cpp:1386-1388</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考只在两处用到：<c>unmarkHeroMeeting()</c> 清「见过谁」的记录，以及英雄被解雇时清自己的记录。
+    /// 端口把前者交给 <see cref="Ai.AiHeroMeetingUpdater"/>，后者还没落地。
+    /// </remarks>
+    /// <param name="index">Tile index on the map, or a hero id when <paramref name="objectType"/> is
+    /// <see cref="Mp2ObjectType.Hero"/>.</param>
+    /// <param name="objectType">The object visited.</param>
+    public void RemoveVisited(int index, Mp2ObjectType objectType) =>
+        _visitedObjects.RemoveAll(entry => entry.Index == index && entry.Object == objectType);
 
     /// <summary>
     /// Forgets every visit, <c>visit_object.clear()</c>.

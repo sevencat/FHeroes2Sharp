@@ -1,5 +1,6 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Ai;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.System;
 
@@ -142,7 +143,10 @@ public sealed class AdventureSessionTests
         Assert.NotNull(session);
         Assert.Equal(1u, session.DayCount);
         Assert.Equal(PlayerColor.Blue, session.CurrentColor);
-        Assert.Equal([PlayerColor.Blue], session.Players);
+
+        // 人类在前、电脑在后（参考的 SortPlayers()），三个色都在轮转里。
+        Assert.Equal([PlayerColor.Blue, PlayerColor.Green, PlayerColor.Red], session.Players);
+        Assert.False(session.IsAiTurn);
 
         // BeginTurn picks the first hero of the acting kingdom and gives him the movement points of the day.
         Hero hero = Assert.IsType<Hero>(session.FocusHero);
@@ -157,7 +161,7 @@ public sealed class AdventureSessionTests
     }
 
     [Fact]
-    public void EndTurnOfTheOnlyHumanStartsTheNextDay()
+    public void TheDayStartsAfterEveryKingdomHasPlayed()
     {
         (World world, Mp2FileInfo info) = Load(PlayerColor.Blue, PlayerColor.Green | PlayerColor.Red);
         AdventureSession session = AdventureSession.Start(world, info)!;
@@ -165,16 +169,27 @@ public sealed class AdventureSessionTests
 
         // The hero spends most of his points, so the new day has something to restore.
         hero.SetMovePoints(1);
+
+        // 参考的 StartGame() 让每个 isPlay() 的色依次行动，电脑也不例外（game_startgame.cpp:844-974）。
+        session.EndTurn();
+
+        Assert.Equal(PlayerColor.Green, session.CurrentColor);
+        Assert.True(session.IsAiTurn);
+        Assert.Equal(1u, session.DayCount);
+
+        session.EndTurn();
+        Assert.Equal(PlayerColor.Red, session.CurrentColor);
         session.EndTurn();
 
         Assert.Equal(2u, session.DayCount);
         Assert.Equal(PlayerColor.Blue, session.CurrentColor);
+        Assert.False(session.IsAiTurn);
         Assert.Equal(hero, session.FocusHero);
         Assert.Equal(hero.GetMaxMovePoints(), hero.MovePoints);
     }
 
     [Fact]
-    public void EndTurnHandsTheMapToTheNextHumanAndSkipsTheComputer()
+    public void EndTurnGoesThroughTheHumansAndThenTheComputer()
     {
         // Two people at one keyboard: only a hot-seat game keeps both human-only colours.
         (World world, Mp2FileInfo info) = Load(
@@ -186,14 +201,23 @@ public sealed class AdventureSessionTests
 
         Assert.Equal(PlayerColor.Blue, session.CurrentColor);
 
-        // Green is the computer: it is never the current player, the turn goes from blue to red.
+        // 人类排在电脑前：蓝交棒给红，还没轮到绿。
         session.EndTurn();
 
         Assert.Equal(PlayerColor.Red, session.CurrentColor);
+        Assert.False(session.IsAiTurn);
         Assert.Equal(1u, session.DayCount);
         Assert.Equal(RedHeroTile, session.FocusHero!.MapIndex);
 
-        // Red ends the last turn of the day, so the date moves on and the map is back at blue.
+        // 红之后是电脑绿：这一回合归场景驱动（RunComputerTurn），会话只把当前色换过去。
+        session.EndTurn();
+
+        Assert.Equal(PlayerColor.Green, session.CurrentColor);
+        Assert.True(session.IsAiTurn);
+        Assert.Equal(1u, session.DayCount);
+        Assert.Equal(GreenHeroTile, session.FocusHero!.MapIndex);
+
+        // 绿是一天里最后一位，他结束之后日期翻页、回到蓝。
         session.EndTurn();
 
         Assert.Equal(2u, session.DayCount);
@@ -238,14 +262,49 @@ public sealed class AdventureSessionTests
 
         Assert.True(session.SetPath(hero, TargetTile));
 
-        // Blue to red, then red to blue: the second transition starts a new day, and Kingdom::ActionBeforeTurn
-        // walks the hero list again, which is where Heroes::calculatePath() keeps the destination.
+        // 蓝→红→绿（电脑）→新的一天回蓝：最后那一次 Kingdom::ActionBeforeTurn 又把英雄表走了一遍，
+        // Heroes::calculatePath() 就在那里把目的地续上。
+        session.EndTurn();
         session.EndTurn();
         session.EndTurn();
 
         Assert.Equal(2u, session.DayCount);
         Assert.Same(hero, session.FocusHero);
         Assert.Equal(TargetTile, hero.Path.DestinationIndex);
+    }
+
+    [Fact]
+    public void RunAiTurnPlaysTheWholeComputerTurn()
+    {
+        (World world, Mp2FileInfo info) = Load(PlayerColor.Blue, PlayerColor.Green | PlayerColor.Red);
+        AdventureSession session = AdventureSession.Start(world, info)!;
+
+        // 人类先手，交棒之后当前色是电脑绿。
+        session.EndTurn();
+
+        Assert.True(session.IsAiTurn);
+
+        // 参考的 AI 读全局世界（<c>World::Get()</c>），端口也只有一个 World.Current；测试里的世界是新建的，
+        // 所以跑回合期间把它换成这一局，跑完还原，免得串到同一集合里的其他测试。
+        World previous = World.Current;
+        World.Current = world;
+
+        AiTurnOutcome outcome;
+
+        try
+        {
+            outcome = session.RunAiTurn();
+        }
+        finally
+        {
+            World.Current = previous;
+        }
+
+        // 参考的 KingdomTurn() 跑完一整个回合，交回 END_TURN（game_startgame.cpp:938）；
+        // 会话在这一步<b>不</b>换人：换人是场景在回合跑完之后做的 EndTurn()。
+        Assert.Equal(AiTurnOutcome.EndTurn, outcome);
+        Assert.Equal(PlayerColor.Green, session.CurrentColor);
+        Assert.Equal(1u, session.DayCount);
     }
 
     [Fact]

@@ -113,13 +113,25 @@ public sealed partial class World
     /// (<c>world.cpp:405-408</c>).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Only the object type is checked, not the town table: the reference asks the tile what it is. A castle tile
     /// with no town behind it is a broken map, and the loaders warn about it where they meet it.
+    /// </para>
+    /// <para>
+    /// <c>MP2::OBJ_CASTLE</c> 带动作位（<c>mp2.h:307</c>，35 + 128），城门那一格存的也是带位的那一个，
+    /// 而城的其余格子（塔、背后山体）存的是不带位的 35。所以这里比的是「动作位去掉之后是城堡」，
+    /// 拿裸的 <see cref="Mp2ObjectType.Castle"/> 比对会让每一座城的入口都判成「这里没有城」。
+    /// </para>
+    /// <para>
+    /// The type is read with <c>ignoreObjectUnderHero: false</c> like the reference: a hero standing on the
+    /// gate has hidden it behind <see cref="Mp2ObjectType.ActionHero"/>, and the entrance must still be found.
+    /// </para>
     /// </remarks>
     /// <param name="tileIndex">Tile index.</param>
     /// <returns><see langword="true"/> when the tile is the entrance of a town.</returns>
     public bool IsValidCastleEntrance(int tileIndex) =>
-        (uint)tileIndex < (uint)_tiles.Count && GetTile(tileIndex).MainObjectType == Mp2ObjectType.Castle;
+        (uint)tileIndex < (uint)_tiles.Count &&
+        Mp2ObjectTypes.NonActionType(GetTile(tileIndex).GetMainObjectType(this, false)) == Mp2ObjectType.Castle;
 
     /// <summary>
     /// Whether the map has water next to a town, <c>Castle::HasSeaAccess()</c> (<c>castle.cpp:1836-1875</c>).

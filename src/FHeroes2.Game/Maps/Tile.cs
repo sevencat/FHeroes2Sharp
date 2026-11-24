@@ -90,68 +90,6 @@ public sealed partial class Tile
                 PushTopObjectPart(new ObjectPart(ObjectLayerType.Object, tile.Level2ObjectUid, tile.TopIcnType, tile.TopIcnImageIndex));
             }
         }
-
-        InitIncomeObjectMetadata(tile);
-    }
-
-    /// <summary>
-    /// Fills the two income lanes of the metadata of the objects that pay a daily income, the step the
-    /// reference takes from the object information while loading a map
-    /// (<c>map_object_info.cpp:4256</c> for the mines, <c>:4402</c> for the sawmill, <c>:4422</c> for the
-    /// alchemist lab).
-    /// </summary>
-    /// <param name="tile">The tile as it was read from the map file.</param>
-    /// <remarks>
-    /// 这一步不能省：参考的矿场、锯木厂、炼金实验室都把「产什么、每天多少」写进 `metadata[0]/[1]`，而 MP2
-    /// 文件没有元数据块——`metadata[0]` 只是 `quantity >> 3`，直接当成资源 id 读会得到越界的值（看全图的
-    /// 图标层就是这么被绊到的）。产出写在精灵里：矿场是 `EXTRAOVR` 的车，锯木厂是木场，炼金实验室是水银。
-    /// </remarks>
-    private void InitIncomeObjectMetadata(Mp2TileInfo tile)
-    {
-        switch (tile.ObjectType)
-        {
-            case Mp2ObjectType.Sawmill:
-                SetIncomeMetadata(Resource.Wood, 2);
-                break;
-
-            case Mp2ObjectType.AlchemistLab:
-                SetIncomeMetadata(Resource.Mercury, 1);
-                break;
-
-            case Mp2ObjectType.Mine:
-                switch (Mp2ObjectData.MineOf(tile))
-                {
-                    case Mp2ResourceType.Ore:
-                        SetIncomeMetadata(Resource.Ore, 2);
-                        break;
-
-                    case Mp2ResourceType.Sulfur:
-                        SetIncomeMetadata(Resource.Sulfur, 1);
-                        break;
-
-                    case Mp2ResourceType.Crystal:
-                        SetIncomeMetadata(Resource.Crystal, 1);
-                        break;
-
-                    case Mp2ResourceType.Gems:
-                        SetIncomeMetadata(Resource.Gems, 1);
-                        break;
-
-                    case Mp2ResourceType.Gold:
-                        SetIncomeMetadata(Resource.Gold, 1000);
-                        break;
-
-                    default:
-                        // No overlay: the tile is not a mine of a known resource, so the lanes keep
-                        // whatever the file had.
-                        break;
-                }
-
-                break;
-
-            default:
-                break;
-        }
     }
 
     /// <summary>Writes one income pair into the metadata, resource type first.</summary>

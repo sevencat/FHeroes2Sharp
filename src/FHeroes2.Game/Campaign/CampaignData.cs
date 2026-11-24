@@ -193,12 +193,10 @@ public sealed class CampaignData
     /// <param name="scenarioInfoId">The scenario.</param>
     /// <param name="mapInfo">The map header read from the scenario file.</param>
     /// <returns>The map header with the alliances of the computer players merged into one.</returns>
-    /// <exception cref="NotImplementedException">
-    /// Thrown until <see cref="Mp2FileInfo"/> models the union table of the map header.
-    /// </exception>
     /// <remarks>
-    /// 参考在这里把地图头里的 <c>unions</c> 逐条改成「所有 AI 颜色算一个联盟」。端口的 <see cref="Mp2FileInfo"/> 还没解析
-    /// 联盟表（S8 只读了胜利条件与玩家颜色），所以先留接口：等的就是那一列字段，不给临时替代。
+    /// 参考把地图头里所有「含 AI 颜色、又不是人类自己那一方」的 <c>unions</c> 项改成全部 AI 颜色
+    /// （<c>campaign_data.cpp:741-745</c>）；人类保持原样，于是这张图上的人类要同时打掉所有电脑才算赢。
+    /// 这两关的人工联盟是原版编在战役数据里的：地图本身没写联盟，但敌人必须铁板一块。
     /// </remarks>
     public static Mp2FileInfo UpdateScenarioGameplayConditions(ScenarioInfoId scenarioInfoId, Mp2FileInfo mapInfo)
     {
@@ -209,8 +207,36 @@ public sealed class CampaignData
             return mapInfo;
         }
 
-        throw new NotImplementedException(
-            "Mp2FileInfo does not model the union table of the map header yet; the campaign alliance cannot be applied.");
+        // 参考要求这张图上恰好一个人类颜色与至少一个 AI 颜色，否则断言后放弃（campaign_data.cpp:724-737）。
+        // 端口的 Mp2FileInfo 已经保证 HumanPlayers 非空；多于一个只能是地图被改过，照参考的「不动」处理。
+        if (PlayerColors.Count(mapInfo.HumanPlayers) != 1)
+        {
+            Debug.Assert(false, "A campaign alliance scenario has exactly one human color.");
+
+            return mapInfo;
+        }
+
+        PlayerColor human = mapInfo.HumanPlayers;
+        PlayerColor aiColors = mapInfo.KingdomColors & ~human;
+
+        if (aiColors == PlayerColor.None)
+        {
+            Debug.Assert(false, "A campaign alliance scenario has at least one computer color.");
+
+            return mapInfo;
+        }
+
+        PlayerColor[] unions = [.. mapInfo.PlayerUnions];
+
+        for (int index = 0; index < unions.Length; ++index)
+        {
+            if (unions[index] != human && (unions[index] & aiColors) != 0)
+            {
+                unions[index] = aiColors;
+            }
+        }
+
+        return mapInfo with { PlayerUnions = unions };
     }
 
     /// <summary>Creates the campaign and freezes its scenario list.</summary>

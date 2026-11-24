@@ -18,23 +18,23 @@ public sealed class TileMetadataMutatorsTests
     [Fact]
     public void AMineKeepsItsGuardingSpellInTheFirstLane()
     {
-        Tile tile = MakeTile(Mp2ObjectType.Mine, out _);
+        Tile tile = MakeTile(Mp2ObjectType.Mine, out World world);
 
-        tile.SetMineSpell(SpellType.Fireball);
+        tile.SetMineSpell(world, SpellType.Fireball);
 
         Assert.Equal((uint)SpellType.Fireball, tile.Metadata[0]);
-        Assert.Equal(SpellType.Fireball, tile.GetMineSpellId());
+        Assert.Equal(SpellType.Fireball, tile.GetMineSpellId(world));
     }
 
     [Fact]
     public void RemovingTheMineSpellLeavesTheLaneEmptyButKeepsTheRest()
     {
-        Tile tile = MakeTile(Mp2ObjectType.Mine, out _);
+        Tile tile = MakeTile(Mp2ObjectType.Mine, out World world);
         tile.Metadata[0] = (uint)SpellType.Fireball;
         tile.Metadata[1] = 3;
         tile.Metadata[2] = 7;
 
-        tile.RemoveMineSpell();
+        tile.RemoveMineSpell(world);
 
         Assert.Equal(0u, tile.Metadata[0]);
         Assert.Equal(3u, tile.Metadata[1]);
@@ -186,32 +186,32 @@ public sealed class TileMetadataMutatorsTests
     [Fact]
     public void ADaemonCaveKeepsItsBonusInTheThirdLaneAndItsPriceInTheSecond()
     {
-        Tile tile = MakeTile(Mp2ObjectType.DaemonCave, out _);
+        Tile tile = MakeTile(Mp2ObjectType.DaemonCave, out World world);
         tile.Metadata[2] = (uint)DaemonCaveCaptureBonus.Pay2500Gold;
         tile.Metadata[1] = 2500;
 
-        Assert.Equal(DaemonCaveCaptureBonus.Pay2500Gold, tile.GetDaemonCaveBonusType());
-        Assert.Equal(2500, tile.GetDaemonPaymentCondition().Gold);
+        Assert.Equal(DaemonCaveCaptureBonus.Pay2500Gold, tile.GetDaemonCaveBonusType(world));
+        Assert.Equal(2500, tile.GetDaemonPaymentCondition(world).Gold);
     }
 
     [Fact]
     public void AnExperienceDaemonCaveAsksForNoGold()
     {
-        Tile tile = MakeTile(Mp2ObjectType.DaemonCave, out _);
+        Tile tile = MakeTile(Mp2ObjectType.DaemonCave, out World world);
         tile.Metadata[2] = (uint)DaemonCaveCaptureBonus.Get1000Experience;
         tile.Metadata[1] = 2500;
 
-        Assert.Equal(DaemonCaveCaptureBonus.Get1000Experience, tile.GetDaemonCaveBonusType());
-        Assert.Equal(0, tile.GetDaemonPaymentCondition().Gold);
+        Assert.Equal(DaemonCaveCaptureBonus.Get1000Experience, tile.GetDaemonCaveBonusType(world));
+        Assert.Equal(0, tile.GetDaemonPaymentCondition(world).Gold);
     }
 
     [Fact]
     public void AShipwreckKeepsItsConditionInTheThirdLane()
     {
-        Tile tile = MakeTile(Mp2ObjectType.Shipwreck, out _);
+        Tile tile = MakeTile(Mp2ObjectType.Shipwreck, out World world);
         tile.Metadata[2] = (uint)ShipwreckCaptureCondition.Fight25GhostsAndGet5000Gold;
 
-        Assert.Equal(ShipwreckCaptureCondition.Fight25GhostsAndGet5000Gold, tile.GetShipwreckCaptureCondition());
+        Assert.Equal(ShipwreckCaptureCondition.Fight25GhostsAndGet5000Gold, tile.GetShipwreckCaptureCondition(world));
     }
 
     [Theory]
@@ -221,11 +221,11 @@ public sealed class TileMetadataMutatorsTests
     [InlineData(Mp2ObjectType.PeasantHut)]
     public void AMonsterHolderRoundTripsItsCount(Mp2ObjectType objectType)
     {
-        Tile tile = MakeTile(objectType, out _);
+        Tile tile = MakeTile(objectType, out World world);
 
-        tile.SetMonsterCount(250);
+        tile.SetMonsterCount(world, 250);
 
-        Assert.Equal(250u, tile.GetMonsterCount());
+        Assert.Equal(250u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public sealed class TileMetadataMutatorsTests
 
         tile.UpdateDwellingPopulation(world, isFirstLoad: true);
 
-        Assert.Equal(2u, tile.GetMonsterCount());
+        Assert.Equal(2u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -293,7 +293,7 @@ public sealed class TileMetadataMutatorsTests
 
         tile.UpdateDwellingPopulation(world, isFirstLoad: false);
 
-        Assert.Equal(3u, tile.GetMonsterCount());
+        Assert.Equal(3u, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -301,11 +301,11 @@ public sealed class TileMetadataMutatorsTests
     {
         Tile tile = MakeTile(Mp2ObjectType.TrollBridge, out World world);
         tile.UpdateDwellingPopulation(world, isFirstLoad: true);
-        uint before = tile.GetMonsterCount();
+        uint before = tile.GetMonsterCount(world);
 
         tile.UpdateDwellingPopulation(world, isFirstLoad: false);
 
-        Assert.Equal(before, tile.GetMonsterCount());
+        Assert.Equal(before, tile.GetMonsterCount(world));
     }
 
     [Fact]
@@ -315,7 +315,7 @@ public sealed class TileMetadataMutatorsTests
 
         tile.UpdateDwellingPopulation(world, isFirstLoad: true);
 
-        Assert.InRange(tile.GetMonsterCount(), 20u, 50u);
+        Assert.InRange(tile.GetMonsterCount(world), 20u, 50u);
     }
 
     [Theory]

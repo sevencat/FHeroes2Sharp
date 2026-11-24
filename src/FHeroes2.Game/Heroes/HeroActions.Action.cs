@@ -31,10 +31,10 @@ namespace FHeroes2.Game.Heroes;
 /// <see cref="HeroActionResult.TryGetPayload{T}"/> 取。等消息层落地，它就是这一格的消费者。
 /// </para>
 /// <para>
-/// <b>还没搬的对象</b>：只剩漂流瓶（<c>OBJ_BOTTLE</c>，它不付钱、只弹瓦片上的留言），以及地形装饰那几类
-/// 编辑器硬塞动作位的瓦片。参考在这里要读瓦片的 <c>objectInfo</c> 留言，端口还没搬这块数据，于是它们落到
-/// <see cref="HeroActionKind.Unsupported"/>：明说「参考在这里会做事，端口还不会」，调用方可以据此提示玩家或者
-/// 干脆不放他走过去。踩在空地上、或者那一格根本没有对象时才是 <see cref="HeroActionKind.None"/>。
+/// <b>还没搬的对象</b>：只剩地形装饰那几类被编辑器硬塞动作位的瓦片。参考在这些分支里做的事要读瓦片的
+/// <c>objectInfo</c> 或弹固定文案，端口还没搬这些数据，于是它们落到 <see cref="HeroActionKind.Unsupported"/>：
+/// 明说「参考在这里会做事，端口还不会」，调用方可以据此提示玩家或者干脆不放他走过去。踩在空地上、或者那一格
+/// 根本没有对象时才是 <see cref="HeroActionKind.None"/>。
 /// </para>
 /// <para>
 /// <b>两步走的对象</b>：竞技场要先问玩家加哪一项主技能（参考在函数里弹 <c>Dialog::SelectSkillFromArena</c>），
@@ -292,6 +292,13 @@ public sealed partial class HeroActions
 
             case Mp2ObjectType.Sign:
                 return Report(HeroActionKind.Sign, false, ActionToSign(tileIndex, world));
+
+            case Mp2ObjectType.Bottle:
+            {
+                string? message = ActionToBottle(tileIndex, world);
+
+                return Report(HeroActionKind.Bottle, message != null, message);
+            }
 
             case Mp2ObjectType.ObservationTower:
             {
@@ -605,6 +612,9 @@ public enum HeroActionKind
 
     /// <summary><see cref="HeroActions.ActionToSign"/> ran.</summary>
     Sign,
+
+    /// <summary><see cref="HeroActions.ActionToBottle"/> ran; the payload is the message, or null.</summary>
+    Bottle,
 
     /// <summary><see cref="HeroActions.ActionToObservationTower"/> ran.</summary>
     ObservationTower,

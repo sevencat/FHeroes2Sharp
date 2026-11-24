@@ -23,36 +23,36 @@ namespace FHeroes2.Game.Maps;
 /// <b>Object type and the action bit.</b> The reference compares against <c>MP2::OBJ_MINE</c>, which already
 /// carries <c>OBJ_ACTION_OBJECT_TYPE</c>; the port has both values in the enum (<c>Mine</c> and
 /// <c>ActionMine</c>) and the tile may hold either while a map is being edited. Every comparison here
-/// therefore goes through <see cref="NonActionMainObjectType"/>, which strips the bit when it is there and
+/// therefore goes through <see cref="GetNonActionObjectType"/>, which strips the bit when it is there and
 /// leaves the type alone otherwise (ADR-133).
+/// </para>
+/// <para>
+/// <b>These readers look through the hero.</b> 参考里它们比的都是 <c>tile.getMainObjectType( false )</c>
+/// （<c>ignoreObjectUnderHero: false</c>）：读到的是英雄<b>脚下</b>那个物件。调用场合正是英雄刚踏上这一格、
+/// 正要处理它，拿带英雄的类型去比只会读到 <c>OBJ_HERO</c>，判定全部落空。所以这些成员都收 <see cref="World"/>。
 /// </para>
 /// <para>
 /// <b>The removal and the mine half is in <see cref="TileRemoval"/></b> (<c>restoreAbandonedMine</c>,
 /// <c>removeMainObjectFromTile</c>, <c>removeObjectFromTileByType</c>, <c>removeObjectFromMapByUID</c>).
 /// </para>
 /// <para>
-/// <b>Not here yet:</b> <c>getTroopFromTile</c>, <c>updateMonstersOnTile</c> and <c>setMonsterOnTile</c>
-/// (their army half needs the monster stack rules) and <c>setInitialObjectInfo</c> /
-/// <c>updateObjectInfoTile</c> / <c>updateRandomXxx</c> / <c>placeObjectOnTile</c> (they need
-/// <c>Artifact::Rand</c> and the editor's <c>ObjectInfo</c>).
+/// <b>Not here yet:</b> <c>placeObjectOnTile</c>, which needs the editor's <c>ObjectInfo</c> and the object
+/// placement rules. The rest of the file's writers are elsewhere: <c>setInitialObjectInfo</c>,
+/// <c>updateObjectInfoTile</c> and the three random placeholders in <c>Tile.InitialObjectInfo.cs</c> /
+/// <c>TileWeekLife.cs</c>, the army half in <see cref="TileTroops"/> (<c>getTroopFromTile</c>,
+/// <c>updateMonstersOnTile</c>, <c>setMonsterOnTile</c>).
 /// </para>
 /// </remarks>
 public sealed partial class Tile
 {
-    /// <summary>
-    /// The object type with the action bit stripped, so that <c>switch</c> can use the plain enum members
-    /// the rest of the port uses (<c>Mine</c> rather than <c>ActionMine</c>).
-    /// </summary>
-    private Mp2ObjectType NonActionMainObjectType => Mp2ObjectTypes.NonActionType(MainObjectType);
-
     // ---------------------------------------------------------------- mines
 
     /// <summary>
     /// The spell that guards a mine, <c>getMineSpellIdFromTile()</c> (<c>maps_tiles_helper.cpp:339</c>).
     /// </summary>
-    public SpellType GetMineSpellId()
+    public SpellType GetMineSpellId(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Mine)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Mine)
         {
             Debug.Assert(false, $"A mine spell was asked from a tile that holds {MainObjectType}.");
 
@@ -65,9 +65,9 @@ public sealed partial class Tile
     /// <summary>
     /// Sets the guarding spell of a mine, <c>setMineSpellOnTile()</c> (<c>maps_tiles_helper.cpp:350</c>).
     /// </summary>
-    public void SetMineSpell(SpellType spellId)
+    public void SetMineSpell(World world, SpellType spellId)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Mine)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Mine)
         {
             Debug.Assert(false, $"A mine spell was set on a tile that holds {MainObjectType}.");
 
@@ -89,9 +89,9 @@ public sealed partial class Tile
     /// (<c>maps_tiles_helper.cpp:367</c>). The reference resets nothing else, so a mine that was already
     /// captured keeps its flag here as well.
     /// </summary>
-    public void RemoveMineSpell()
+    public void RemoveMineSpell(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Mine)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Mine)
         {
             Debug.Assert(false, $"A mine spell was removed from a tile that holds {MainObjectType}.");
 
@@ -109,7 +109,7 @@ public sealed partial class Tile
     /// </summary>
     public void SetSpellOnTile(World world, SpellType spellId)
     {
-        switch (NonActionMainObjectType)
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.ShrineFirstCircle:
             case Mp2ObjectType.ShrineSecondCircle:
@@ -221,7 +221,7 @@ public sealed partial class Tile
     /// </summary>
     public SecondarySkillLevel? GetArtifactSecondarySkillRequirement(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Artifact)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Artifact)
         {
             Debug.Assert(false, $"A skill requirement was asked from a tile that holds {MainObjectType}.");
 
@@ -242,7 +242,7 @@ public sealed partial class Tile
     /// </summary>
     public Funds GetArtifactResourceRequirement(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Artifact)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Artifact)
         {
             Debug.Assert(false, $"A resource requirement was asked from a tile that holds {MainObjectType}.");
 
@@ -297,9 +297,9 @@ public sealed partial class Tile
     /// What a visited Daemon Cave hands out, <c>getDaemonCaveBonusType()</c>
     /// (<c>maps_tiles_helper.cpp:658</c>).
     /// </summary>
-    public DaemonCaveCaptureBonus GetDaemonCaveBonusType()
+    public DaemonCaveCaptureBonus GetDaemonCaveBonusType(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.DaemonCave)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.DaemonCave)
         {
             Debug.Assert(false, $"A daemon cave bonus was asked from a tile that holds {MainObjectType}.");
 
@@ -314,9 +314,9 @@ public sealed partial class Tile
     /// (<c>maps_tiles_helper.cpp:669</c>). Only the <see cref="DaemonCaveCaptureBonus.Pay2500Gold"/> bonus
     /// has a price; every other bonus returns an empty purse.
     /// </summary>
-    public Funds GetDaemonPaymentCondition()
+    public Funds GetDaemonPaymentCondition(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.DaemonCave)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.DaemonCave)
         {
             Debug.Assert(false, $"A daemon cave payment was asked from a tile that holds {MainObjectType}.");
 
@@ -335,9 +335,9 @@ public sealed partial class Tile
     /// What a visited Shipwreck hands out, <c>getShipwreckCaptureCondition()</c>
     /// (<c>maps_tiles_helper.cpp:686</c>).
     /// </summary>
-    public ShipwreckCaptureCondition GetShipwreckCaptureCondition()
+    public ShipwreckCaptureCondition GetShipwreckCaptureCondition(World world)
     {
-        if (NonActionMainObjectType != Mp2ObjectType.Shipwreck)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Shipwreck)
         {
             Debug.Assert(false, $"A shipwreck condition was asked from a tile that holds {MainObjectType}.");
 
@@ -353,9 +353,9 @@ public sealed partial class Tile
     /// The number of creatures a dwelling, a wandering stack or an abandoned mine holds,
     /// <c>getMonsterCountFromTile()</c> (<c>maps_tiles_helper.cpp:856</c>).
     /// </summary>
-    public uint GetMonsterCount()
+    public uint GetMonsterCount(World world)
     {
-        if (!IsMonsterCountHolder(NonActionMainObjectType))
+        if (!IsMonsterCountHolder(GetNonActionObjectType(world)))
         {
             Debug.Assert(false, $"A monster count was asked from a tile that holds {MainObjectType}.");
 
@@ -368,9 +368,9 @@ public sealed partial class Tile
     /// <summary>
     /// Writes the number of creatures, <c>setMonsterCountOnTile()</c> (<c>maps_tiles_helper.cpp:893</c>).
     /// </summary>
-    public void SetMonsterCount(uint count)
+    public void SetMonsterCount(World world, uint count)
     {
-        if (!IsMonsterCountHolder(NonActionMainObjectType))
+        if (!IsMonsterCountHolder(GetNonActionObjectType(world)))
         {
             Debug.Assert(false, $"A monster count was set on a tile that holds {MainObjectType}.");
 
@@ -414,7 +414,7 @@ public sealed partial class Tile
     /// </summary>
     public MonsterType GetMonster(World world)
     {
-        switch (NonActionMainObjectType)
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.WatchTower:
                 return MonsterType.Orc;
@@ -493,9 +493,9 @@ public sealed partial class Tile
     /// </summary>
     public void UpdateDwellingPopulation(World world, bool isFirstLoad)
     {
-        uint count = isFirstLoad ? 0u : GetMonsterCount();
+        uint count = isFirstLoad ? 0u : GetMonsterCount(world);
 
-        switch (NonActionMainObjectType)
+        switch (GetNonActionObjectType(world))
         {
             case Mp2ObjectType.HalflingHole:
                 count += (uint)(isFirstLoad ? Rand.Get(20, 40) : Rand.Get(5, 10));
@@ -574,7 +574,7 @@ public sealed partial class Tile
         }
 
         Debug.Assert(count > 0);
-        SetMonsterCount(count);
+        SetMonsterCount(world, count);
     }
 
     // ------------------------------------------------------------ empty ground

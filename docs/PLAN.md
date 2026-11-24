@@ -35,7 +35,7 @@
 城堡屏（M6）；存档序列化全链路（M8）；编辑器只读可视化、可改、保存 MP2（E1–E3b）。
 
 **未完成**：M7 只剩 `battle_interface.cpp`（6 144 行）等战斗界面（§5.6）；M9 的战役界面与 SMK 视频未做
-（§5.7、§5.9）；M2 语言选择窗口、M3 难度与标准局-战役分叉（§5.9）。
+（§5.7、§5.9）；M3 难度与标准局-战役分叉（§5.9）。M2 的语言选择窗口与首运问候已接（§5.9、PROGRESS §6.6）。
 
 ## 3. 已完成的第一阶段：S0–S16 按目录整块转换
 
@@ -49,17 +49,25 @@
 `game` → `App/` + `UI/Interface/`（这三处第一遍，第二阶段按 1:1 重做，§5）；
 `editor` → `Game/Editor/` + `App/Scenes/Editor*`（模型层按参考，窗口未按参考，§5.11）。
 
-## 4. AI：只剩两个入口
+## 4. AI：代码全落，余冒烟与数值核对
 
-契约先行（ADR-161、ADR-180、`AiContractTests`）与实现都已落：**B0–B6、B8、X1–X3 全部完成**——
+契约先行（ADR-161、ADR-180、`AiContractTests`）与实现都已落：**B0–B8、X1–X4 全部完成**——
 `ai_common`/`ai_planner`/`ai_planner_castle`/`ai_planner_hero` 的函数、`ai_battle` 的 25 个决策与 15 个法术估值、
 `KingdomTurn` 的整条回合循环（含 `ScanMap`）、战斗的回合循环/近战/施法/塔/投石车/`BattleLoader`、
-`AIWorldPathfinder` 六方法、`ObjectValueStorage`、`battle_arena` 的十个法术查询。
+`AIWorldPathfinder` 六方法、`ObjectValueStorage`、`battle_arena` 的十个法术查询，
+以及 `ai_hero_action.cpp` 的 `HeroesAction` / `HeroesMove`。`Ai/` 目录已无 `NotImplementedException`。
 
-**剩余**：`ai_hero_action.cpp` 的 `HeroesAction` / `HeroesMove`（B7 的 2/4；次元门与召船已落），
-它卡在 `heroes_action` 的对象交互分派与 `Interface::AdventureMap::Get()` 的解耦上（§5.4 的 P1）。
-`KingdomTurn` 已经在调 `HeroesTurn`，而 `HeroesTurn` 调 `HeroesMove` 就会抛——这是 AI 唯一的阻塞点，
-也是仓库里 AI 仅剩的两处 `NotImplementedException`。原则：一个占位是一个原子任务，禁止静默兜底。
+2026-11-24 用 `--skip-turns 20 --smoke-frames 200`（Alteris.mp2，7 天 AI 连跑）收口了一批真实缺陷，
+过程记在 `PROGRESS.md` §6.3：资源堆按图标反推资源类型、雇到的英雄补装移动处理器与控制权、
+`isActing` 用带动作位的原值判定、物件删除走 UID（`Tile.RemoveMainObject`）、`GetRecruits` 取刷新版。
+AI 之间真打起来之后又顺带补了战斗侧的五处：`GetUnitMovementTarget` 的两段式、`FindNearestCellNextToUnit`
+的合法性/可达性过滤、士气额外行动被兜底吃掉、`UpdatePriorityTargets` 的折位比较、`IsArchers` 改判剩余箭数。
+同一轮还把「载入期的随机占位符」补齐了（`updateRandomResource/Artifact/Monster`，抽定后本体与左格影子
+一起换帧），瓦片读取器统一按参考的 `getMainObjectType(false)` 看穿英雄，1.1.08 以前旧存档的「hacked mine」
+修复挪到了 `World.RepairHackedMines()`；冒烟口径延长到 `--skip-turns 60`（day 21）。
+
+**剩余**：①场景驱动的 AI 回合阶段（走子动画 + 进度条，§5.5 与 `PROGRESS.md` §7.3）；
+② 估值数值核对（`DIAG` 已删，目前只验证「不崩、能连续行动」，距离/时间缩放与参考的实际数字未对拍）。
 
 ## 5. 剩余工作总计划
 
@@ -80,11 +88,11 @@
 | --- | --- | --- | --- | --- |
 | **P0** ✅ | 收桩：G6.9b 第 5–6 步 + J（§5.3） | — | 小 | 冒烟/git 里没有自建绘制，全量测试绿 |
 | **P1** | 冒险层闭环：对象交互 + 冒险施法 + Interface 解耦（§5.4） | P0 | 中 | 拾取/访问/施法都能走参考路径 |
-| **P2** | AI 收口：`B7` 的 `HeroesAction`/`HeroesMove`（§4） | P1 | 中 | AI 回合能整局跑完 |
+| **P2** | AI 收口：`B7` 的 `HeroesAction`/`HeroesMove`（§4、§5.5） | P1 | 中 | AI 回合能整局跑完（代码已落，冒烟 7 天无断言；余场景驱动 + 数值核对） |
 | **P3** | 战斗界面四篇（§5.6） | P0、P2 | **最大**（约 6 800 行） | 手动打完整场战斗 |
 | **P4** | 战役：联盟表、存档、主流程、界面（§5.7） | P2、P3 | 中 | 战役能开局到结局 |
 | **P5** | 高分屏与结局屏（§5.8） | P4 | 小 | 胜负后能进榜 |
-| **P6** | 启动缺口：语言选择、难度分叉、SMK、淡入（§5.9） | P0 | 小 | 启动流程与参考一致 |
+| **P6** | 启动缺口：配置接线、首运语言窗、难度分叉、SMK、淡入（§5.9） | P0 | 小 | 启动流程与参考一致（配置与首运已落） |
 | **P7** | 随机地图生成器（§5.10） | P6 | 大 | 能生成并开局随机图 |
 | **P8** | 编辑器窗口（§5.11） | 其余 | 大 | 编辑器窗口与参考同构 |
 
@@ -147,17 +155,25 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 | 设施类：精灵灯、贸易站、属性四座、炼金术士塔、法师小屋、法师之眼、神谕 | `Heroes/HeroActions.Facility.cs` | ✅ |
 | 狮身人面像、事件瓦片（含 `MapEvent`/`MapSphinx` 两个模型补全） | `Heroes/HeroActions.Landmark.cs` | ✅ |
 | 上下船与海岸、军队升级对象（山丘堡垒/铸造厂/马厩） | `Heroes/HeroActions.Boat.cs`、`Heroes/HeroActions.ArmyUpgrade.cs` | ✅ |
+| 拾取类：散落资源/营火/木桶、漂流瓶、骷髅/货车/浮木/沉船幸存者 | `Heroes/HeroActions.cs`（`ActionToPickupResource`/`ActionToBottle`/`ActionToSkeleton` 等）、`Heroes/HeroActions.Action.cs` 分派 | ✅ |
 
-**P1 残留**：漂流瓶（`OBJ_BOTTLE`，要瓦片的 `objectInfo` 留言，数据层还没搬）；次元门目的地框与城镇门户城列表两个
+**P1 残留**：次元门目的地框与城镇门户城列表两个
 交互模式（`SpellCastHost` 现答「取消」，不扣法力）；招募窗的地图版（`AskRecruitCount`）、谜语输入框
 （`AskRiddle`）、市场与盗贼公会两份窗口（`OpenMarketplace`/`OpenThievesGuild`）都没有实现方，见 `PROGRESS.md`
 §7.4；`Visions` 的怪物画像元素、`HeroModes.Visions`（参考里没有读者，端口不建）。
 
 ### 5.5 P2：AI 收口
 
-只做 `AiHeroAction.HeroesAction` / `HeroesMove` 两个入口（§4），按 `ai_hero_action.cpp` 的 2 504 行分两半：
-`HeroesAction` 的对象分支（拾取/访问/招降/守卫，走 P1 的 `ActionToHeroes`）与 `HeroesMove` 的移动循环
-（路径 → 逐步走 → 到达后动作 → 目标失效则重规划）。完成后 `KingdomTurn` → `HeroesTurn` 这条链第一次能跑通。
+**代码已全落**（§4）：`HeroesAction` 的对象分支（拾取/访问/招降/守卫，走 P1 的 `ActionToHeroes`）与
+`HeroesMove` 的移动循环（路径 → 逐步走 → 到达后动作 → 目标失效则重规划）都在，
+`KingdomTurn → HeroesTurn → HeroesMove → HeroesAction` 这条链已能连续跑多天。
+
+剩下的两件：
+
+* **场景驱动**：`AdventureSession`/`AdventureMap` 还没有「电脑同盟回合」这一态（参考是
+  `AI::Planner::KingdomTurn()` 外加一轮走子动画与进度条，`game_startgame.cpp:800-1000`），
+  见 `PROGRESS.md` §7.3。`--skip-turns` 现在能让 AI 真跑回合，但那是不带画面的捷径。
+* **数值核对**：估值只验证了「不崩、能连续行动」，`ScaleWithDistanceAndTime` 的实际量级还没和参考对拍。
 
 ### 5.6 P3：战斗界面（最重的一块）
 
@@ -180,7 +196,9 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 
 模型层已在（`Game/Campaign/` 七个文件），缺的是接线与两处正文：
 
-* `CampaignData.ApplyScenarioAlliances` 现在抛——`Mp2FileInfo.PlayerUnions` 已经存在，直接合并即可（小）；
+* ~~`CampaignData.ApplyScenarioAlliances` 现在抛~~——联盟表已落地：`Mp2FileInfo.PlayerUnions` + `FillUnions()` +
+  `CampaignData.UpdateScenarioGameplayConditions`（AI 并一方），`Players.Init` 写进 `Friends`、`Hero.IsFriends`
+  改为查名册；只剩战役开局时调一次 `UpdateScenarioGameplayConditions`；
 * 战役存档字段（`CampaignData` 的序列化缺口 + `campaign_savedata.cpp` 的对应段）；
 * `game_campaign.cpp` 的主流程：开局选择战役 → 选关 → 奖励/场景奖励 → 进入地图 → 回战役层；
   `CampaignPopupWindows`（`ui_campaign.cpp`）已转完，可直接用；
@@ -194,8 +212,12 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 
 ### 5.9 P6：启动缺口
 
-* **语言选择窗口**（M2）：`LanguageSelectionDialog` 已存在但无人调用，接进 `GameHost` 的启动流程
-  （参考 `dialog_language_selection.cpp` / `game_init.cpp` 的语言选择），并让 `--lang` 与它共用同一份校验；
+* ~~配置文件读写与接线~~：`TinyConfig` + `Settings.Read`/`Save`/`GetOptionsString`（§6.4）与 `GameHost` 的
+  启动读、首运写默认、退出写、`--config`/`--no-config`、语言记忆（§6.5）都已完成；**剩**
+  `videomode`/`fullscreen`/隐藏界面位置的**生效**；
+* ~~首运的语言选择与问候~~：`MainMenuScene.BeginFirstRun()` + `FirstRunFinished`，触发条件
+  `_configFile is not null && Settings.IsFirstGameRun`，收尾清旗标并保存（PROGRESS §6.6、DECISIONS ADR-202）；
+  **剩**问候里的分辨率段与分辨率选择窗——它们和 `videomode` 的生效绑在一起；
 * **难度与标准局-战役分叉**（M3）：`game_scenarioinfo.cpp` 的难度行与「标准游戏 / 战役」两个入口，
   难度模型 `Difficulty.cs` 已在；
 * **SMK 视频**（M9）：解码器 + 播放（`game_video.cpp` 的对应段），现在只在 `GameOverResult` 里提了一句；

@@ -40,24 +40,17 @@ public enum AiTurnOutcome
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Mostly a contract.</b> Every member below exists so that the rest of the port can be written against the same
-/// names the reference uses; the bodies throw <see cref="NotImplementedException"/> until the corresponding
-/// <c>ai_planner*.cpp</c> file is ported (see <c>docs/DECISIONS.md</c>, ADR-161).
-/// </para>
-/// <para>
 /// The reference is a Meyers singleton (<c>Planner::Get()</c>) whose state - the priority targets, the enemy armies,
 /// the cached army strengths, the budget and the AI pathfinder - lives between the calls of one turn and is dropped
 /// when the next turn starts. The port keeps the same shape: <see cref="Instance"/> is the singleton, the members
 /// are instance methods exactly as in the header, and nothing here is saved.
 /// </para>
 /// <para>
-/// <b>What already runs</b>, in the order <c>docs/planv3.md</c> ports it: the two inline helpers of the header, the
-/// per-turn caches, the clean-up at the start of a turn, the guardian strength cache
-/// (<see cref="GetTileArmyStrength"/>), the two resource weights (<see cref="GetResourcePriorityModifier"/> and
-/// <see cref="GetFundsValueBasedOnPriority"/>), and the whole castle side of <c>ai_planner_castle.cpp</c>: what a
-/// castle does before a battle, on a defensive turn, when it is reinforced, and what its turn puts on the kingdom's
-/// budget. The kingdom and hero turns that call these, and the region evaluation the peaceful castle turn reads,
-/// still throw.
+/// <b>Everything below runs</b>: the per-turn caches and their clean-up, the region evaluation
+/// (<c>ai_planner_region.cpp</c>), the castle side (<c>ai_planner_castle.cpp</c>), the hero side
+/// (<c>ai_planner_hero.cpp</c>) and the two loops that drive a turn - <see cref="KingdomTurn"/> and the
+/// per-hero <c>HeroesTurn</c>. The one thing outside this class is the caller: the adventure map still has no
+/// computer-turn phase, see <c>docs/PROGRESS.md</c> §7.3.
 /// </para>
 /// </remarks>
 public sealed partial class AiPlanner

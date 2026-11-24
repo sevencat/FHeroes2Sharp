@@ -215,7 +215,7 @@ public sealed class TileMetadataTests
     [InlineData(4, Resource.Gold, 1000u)]
     public void AMineTakesItsIncomeFromTheExtraOverlayFrame(int frame, int resource, uint perDay)
     {
-        Tile tile = LoadedTile(Mp2ObjectType.Mine, Mp2ObjectIcnType.ExtraOvr, frame);
+        Tile tile = LoadedGroundTile(Mp2ObjectType.Mine, Mp2ObjectIcnType.ExtraOvr, frame);
 
         Assert.Equal((uint)resource, tile.Metadata[0]);
         Assert.Equal(perDay, tile.Metadata[1]);
@@ -229,6 +229,37 @@ public sealed class TileMetadataTests
     /// <param name="topIcn">ICN of the top part, <see cref="Mp2ObjectIcnType.Unknown"/> for none.</param>
     /// <param name="topIndex">Sprite index of the top part.</param>
     /// <returns>The tile of the loaded world.</returns>
+    /// <summary>
+    /// Loads a 36 x 36 map with one object whose sprite sits in the ground lane, the way real map tiles
+    /// store a mine cart: the cart <em>is</em> the main part, the mountain is a separate add-on.
+    /// </summary>
+    /// <remarks>
+    /// 参考只在地面层找矿车（<c>findAddonLevel1</c>，<c>maps_tiles_helper.cpp</c> 的 <c>OBJ_MINE</c> 分支），
+    /// 顶层的车不算数——Alteris.mp2 上真实的矿就是「ExtraOvr 当主部件 + 山体当地面/顶层附件」。
+    /// </remarks>
+    /// <param name="type">Object type on the tile.</param>
+    /// <param name="icnType">ICN of the ground part.</param>
+    /// <param name="icnIndex">Sprite index of the ground part.</param>
+    /// <returns>The tile of the loaded world.</returns>
+    private static Tile LoadedGroundTile(Mp2ObjectType type, Mp2ObjectIcnType icnType, int icnIndex)
+    {
+        const int x = 3;
+        const int y = 3;
+
+        Mp2Map map = Mp2Map.CreateBlank(36, MapGrounds.GrassStartImageIndex);
+        map.SetTileAt(map.TileIndex(x, y), map.Tile(x, y) with
+        {
+            ObjectName1 = (byte)((int)icnType << 2),
+            BottomIcnImageIndex = (byte)icnIndex,
+            ObjectType = type,
+        });
+
+        var world = new World();
+        world.LoadMap(map);
+
+        return world.GetTile(x, y);
+    }
+
     private static Tile LoadedTile(Mp2ObjectType type, Mp2ObjectIcnType topIcn, int topIndex)
     {
         const int x = 3;

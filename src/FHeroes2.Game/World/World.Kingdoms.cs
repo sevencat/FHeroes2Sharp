@@ -58,11 +58,18 @@ public sealed partial class World
     /// 没有任何一方能行动。<c>Players::Init( fi )</c> 加 <c>SetStartGame()</c> 按参考的规则只留一个人类（第一个可被
     /// 人类玩的颜色），其余全部交给电脑——这正是剧本选择里「一名人类玩家」的默认答案。
     /// </para>
-    /// <para>起始资源按难度分玩家/电脑两张表（<see cref="Kingdom.GetStartingResources"/>）。</para>
+    /// <para>
+    /// 起始资源按难度分玩家/电脑两张表（<see cref="Kingdom.GetStartingResources"/>）。难度是**玩家挑的那一档**：
+    /// 参考 <c>Kingdom::Init( color )</c> 取 <c>Game::getDifficulty()</c>（<c>kingdom.cpp:103</c>），也就是
+    /// <see cref="Settings.GameDifficulty"/>；地图头里的 <see cref="Mp2FileInfo.Difficulty"/> 只是制作者给这张图
+    /// 定的说法，参与评分（<see cref="GameRating.GetRating"/>）、不参与发多少资源。调用方拿不到玩家的选择时
+    /// （测试与工具）传地图头那一档，见 <see cref="LoadMap"/>。
+    /// </para>
     /// </remarks>
-    /// <param name="info">The map header, which carries the colors in play and the difficulty.</param>
-    private void CreateMapKingdoms(Mp2FileInfo info) =>
-        _kingdoms.Init(info.KingdomColors, info.Difficulty, ComputerColorsOf(info));
+    /// <param name="info">The map header, which carries the colors in play.</param>
+    /// <param name="difficulty">The difficulty the starting resources are drawn from.</param>
+    private void CreateMapKingdoms(Mp2FileInfo info, GameDifficulty difficulty) =>
+        _kingdoms.Init(info.KingdomColors, difficulty, ComputerColorsOf(info));
 
     /// <summary>
     /// Which colors of the map the computer plays, the answer of <c>Players::Init( fi )</c> and

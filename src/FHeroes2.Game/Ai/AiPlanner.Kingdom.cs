@@ -102,7 +102,10 @@ public sealed partial class AiPlanner
     {
         World world = World.Current;
         GameKingdom kingdom = world.GetKingdom(castle.Color);
-        Recruits recruits = kingdom.GetRecruits();
+
+        // 参考的 `kingdom.GetRecruits()` 是**刷新版**：槽位里的英雄一旦被雇走（不再可雇），当场就换人。
+        // 端口不带 world 的那个重载只回已结算的一对，用它会在同一天把刚雇到的英雄再雇一次。
+        Recruits recruits = kingdom.GetRecruits(world);
 
         Hero? heroesCondWins = world.GetHeroesCondWins();
         Hero? heroesCondLoss = world.GetHeroesCondLoss();

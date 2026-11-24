@@ -131,6 +131,10 @@ public sealed partial class Castle
 
         kingdom.OddFundsResource(PaymentConditions.RecruitHero());
 
+        // 新英雄也要装移动处理器：人类雇到的是开图那一个，电脑雇到的是 AI 那一个。参考没有这个接缝
+        // （分岔写在 Heroes::Action() 里），端口挪到了安装时，所以雇到人就补装（AdventureSession.AttachMovementHandler）。
+        AdventureSession.AttachMovementHandler(world, hero);
+
         return hero;
     }
 

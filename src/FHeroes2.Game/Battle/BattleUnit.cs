@@ -599,8 +599,14 @@ public sealed class BattleUnit : BitModes
     /// <summary>Whether the unit still stands, <c>Unit::isValid()</c>.</summary>
     public bool IsValid => _troop.IsValid;
 
-    /// <summary>Whether the unit shoots, <c>Unit::isArchers()</c>.</summary>
-    public bool IsArchers => _troop.IsArchers;
+    /// <summary>Whether the unit still has arrows to shoot, <c>Battle::Unit::isArchers()</c>.</summary>
+    /// <remarks>
+    /// 参考的 <c>isArchers()</c> 写在 <c>Monster</c> 里（<c>monster.h:252-255</c>：<c>GetShots() &gt; 0</c>），
+    /// 而 <c>GetShots()</c> 是虚函数，<c>Battle::Unit</c> 把它重写成「剩余箭数」（<c>battle_troop.h:229-232</c>）。
+    /// 于是这个判定在战场上问的是<b>箭还有没有</b>，不是「这个兵种会不会射」：打光箭的弓箭手照着兵种表
+    /// 仍然算射手，参考的 <c>PostAttackAction()</c>（<c>battle_troop.cpp:945-951</c>）却会因此扣一支不存在的箭。
+    /// </remarks>
+    public bool IsArchers => _shotsLeft > 0;
 
     /// <summary>
     /// Which colour the unit currently fights for, <c>Unit::GetCurrentColor()</c>.

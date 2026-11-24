@@ -197,15 +197,14 @@ public sealed partial class Hero
     /// (<c>heroes.h:437</c>).
     /// </summary>
     /// <remarks>
-    /// The reference asks the kingdom of the hero and the one of the color, and answers true for an
-    /// alliance as well as for the same kingdom. The port has neither kingdoms nor alliances yet, so the
-    /// answer is "the same color". Every caller of the reference form is a passability or combat decision
-    /// where a wrong alliance would be a real bug, so the gap is here — one place — rather than spread
-    /// over <see cref="Tile.IsPassableFrom"/>.
+    /// 参考问的是玩家名册上的联盟表（<c>Players::isFriends()</c>），不是英雄自己的颜色：同一方的人与同色的人
+    /// 都算朋友。名册没建好（<see cref="Players.Get(PlayerColor)"/> 为 null）时参考答 false，端口由
+    /// <see cref="Players.IsFriends(PlayerColor, PlayerColor)"/> 原样保留这个行为；调用方全是通行或战斗判定，
+    /// 联盟写错是真 bug，所以判定只在这一处。
     /// </remarks>
     /// <param name="color">Color to test.</param>
-    /// <returns><see langword="true"/> when the hero serves that color.</returns>
-    public bool IsFriends(PlayerColor color) => Color == color;
+    /// <returns><see langword="true"/> when the hero serves that color or its side.</returns>
+    public bool IsFriends(PlayerColor color) => Players.IsFriends(Color, color);
 
     /// <summary>
     /// Whether this is a hero, <c>HeroBase::isHeroes()</c> (<c>heroes_base.cpp:91</c>).

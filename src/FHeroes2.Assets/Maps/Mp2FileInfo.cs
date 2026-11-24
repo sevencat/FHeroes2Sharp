@@ -110,12 +110,28 @@ public sealed partial record Mp2FileInfo
     public MapVersion Version { get; init; }
 
     /// <summary>
-    /// The side each player belongs to, per player index; <see cref="PlayerColor.None"/> for a player outside
-    /// any alliance.
+    /// The colors that fight on the same side as each player, per player index, <c>FileInfo::unions</c>
+    /// (<c>maps_fileinfo.h:220</c>).
     /// </summary>
-    /// <remarks>Only a save file carries the alliances; the MP2 header computes them from the map's own bytes.</remarks>
+    /// <remarks>
+    /// <para>
+    /// 每一项都是一个颜色集合（<see cref="PlayerColor"/> 是位标志），不是「联盟领袖色」：同一方的所有人都拿到
+    /// 同一份集合。默认每人自成一方，即 <see cref="PlayerColors.Ordered"/> 本身（<c>maps_fileinfo.cpp:157-160</c>）。
+    /// </para>
+    /// <para>
+    /// MP2 头在「击败另一方」的地图上按胜利条件的第 0 个参数把王国颜色切成两侧（<c>maps_fileinfo.cpp:341-371</c>）；
+    /// 存档文件直接存这张表（<c>maps_fileinfo.cpp:664-675</c>）。
+    /// </para>
+    /// </remarks>
     public IReadOnlyList<PlayerColor> PlayerUnions { get; init; } =
-        [PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None, PlayerColor.None];
+    [
+        PlayerColor.Blue,
+        PlayerColor.Green,
+        PlayerColor.Red,
+        PlayerColor.Yellow,
+        PlayerColor.Orange,
+        PlayerColor.Purple,
+    ];
 
     /// <summary>
     /// When the save was written, in seconds since the Unix epoch, <c>FileInfo::timestamp</c>.
@@ -316,6 +332,40 @@ public sealed partial record Mp2FileInfo
 
         int victoryType = span[VictoryBlockOffset];
         int lossType = span[VictoryBlockOffset + 5];
+        PlayerColor kingdomColors = ReadColors(span, KingdomColorsOffset);
+
+        // 阵营表（maps_fileinfo.cpp:341-371）：默认每人自成一方；「击败另一方」的地图按胜利条件参数 0
+        // 把王国颜色切成两侧，同一侧的人共享视野、胜负与外交。参数非法时参考整张图读不出来，这里抛出。
+        PlayerColor[] unions = [.. PlayerColors.Ordered];
+
+        if (victoryType == (int)MapVictoryCondition.DefeatOtherSide)
+        {
+            IReadOnlyList<PlayerColor> available = PlayerColors.ToList(kingdomColors);
+            int side1Count = BinaryPrimitives.ReadUInt16LittleEndian(span[(VictoryBlockOffset + 3)..]);
+
+            if (available.Count == 0 || side1Count <= 0 || side1Count >= available.Count)
+            {
+                throw new BinaryFormatException(
+                    $"'{filePath}' has an invalid victory condition parameter for an alliance map.");
+            }
+
+            PlayerColor side1 = PlayerColor.None;
+            PlayerColor side2 = PlayerColor.None;
+
+            for (int index = 0; index < available.Count; ++index)
+            {
+                if (index < side1Count)
+                {
+                    side1 |= available[index];
+                }
+                else
+                {
+                    side2 |= available[index];
+                }
+            }
+
+            unions = FillUnions(side1, side2);
+        }
 
         List<MapRace> races = [];
         PlayerColor randomRacePlayers = PlayerColor.None;
@@ -338,11 +388,12 @@ public sealed partial record Mp2FileInfo
             Width = span[DimensionOffset],
             Height = span[DimensionOffset + 1],
             Difficulty = (GameDifficulty)rawDifficulty,
-            KingdomColors = ReadColors(span, KingdomColorsOffset),
+            KingdomColors = kingdomColors,
             HumanPlayers = humanPlayers,
             ComputerPlayers = ReadColors(span, ComputerColorsOffset),
             RandomRacePlayers = randomRacePlayers,
             PlayerRaces = races,
+            PlayerUnions = unions,
             VictoryCondition = (MapVictoryCondition)victoryType,
             ComputerAlsoWins = span[VictoryBlockOffset + 1] != 0,
             AllowNormalVictory = span[VictoryBlockOffset + 2] != 0,
@@ -380,6 +431,26 @@ public sealed partial record Mp2FileInfo
             info = null;
             return false;
         }
+    }
+
+    /// <summary>
+    /// Builds the alliance table for two sides, <c>FileInfo::FillUnions()</c> (<c>maps_fileinfo.cpp:542-559</c>).
+    /// </summary>
+    /// <param name="side1">The colors of the first side.</param>
+    /// <param name="side2">The colors of the second side.</param>
+    /// <returns>One color set per player index; a color outside both sides stands alone.</returns>
+    private static PlayerColor[] FillUnions(PlayerColor side1, PlayerColor side2)
+    {
+        PlayerColor[] unions = new PlayerColor[PlayerColors.Ordered.Count];
+
+        for (int index = 0; index < unions.Length; ++index)
+        {
+            PlayerColor color = PlayerColors.Ordered[index];
+
+            unions[index] = (side1 & color) != 0 ? side1 : (side2 & color) != 0 ? side2 : color;
+        }
+
+        return unions;
     }
 
     private static byte[] ReadHeader(string filePath)

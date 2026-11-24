@@ -1,6 +1,9 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
 
 namespace FHeroes2.Game.Tests;
 
@@ -201,7 +204,62 @@ public sealed class WorldLoadMapTests
         var world = new World();
         world.LoadMap(map);
 
-        Assert.Equal(Mp2ObjectType.ActionRandomMonsterWeak, world.GetTile(10, 10).MainObjectType);
+        // 认出占位符只是第一步：载入时当场抽成一只真的（updateRandomMonster()），所以帧号换掉了、
+        // 类型变成怪物、数量按等级抽出来（占位符本身不写数量，元数据是空的）。
+        Tile tile = world.GetTile(10, 10);
+
+        Assert.Equal(Mp2ObjectType.ActionMonster, tile.MainObjectType);
+        Assert.NotEqual(67, tile.MainObjectPart.IcnIndex);
+        Assert.Equal((MonsterType)(tile.MainObjectPart.IcnIndex + 1), tile.GetMonster(world));
+        Assert.True(tile.GetMonsterCount(world) > 0);
+    }
+
+    [Fact]
+    public void LoadMapRollsARandomResourceIntoARealPile()
+    {
+        Mp2Map map = BlankMap();
+
+        // 随机资源堆：帧号 0 是占位符，载入时抽成某一种资源，本体和左边那格的影子一起换帧。
+        map.SetTileAt(At(10, 10), GroundObjectTile(Mp2ObjectIcnType.ObjnRsrc, 0, Mp2ObjectType.ActionRandomResource));
+
+        var world = new World();
+        world.LoadMap(map);
+
+        Tile tile = world.GetTile(10, 10);
+
+        Assert.Equal(Mp2ObjectType.ActionResource, tile.MainObjectType);
+
+        uint resource = tile.Metadata[0];
+
+        Assert.Contains(resource, new[]
+        {
+            (uint)Resource.Wood, (uint)Resource.Mercury, (uint)Resource.Ore, (uint)Resource.Sulfur,
+            (uint)Resource.Crystal, (uint)Resource.Gems, (uint)Resource.Gold,
+        });
+
+        // 帧号 = 资源种类对应的那一帧，本体和影子是同一件物件（参考 updateRandomResource()）。
+        Assert.Equal(ResourceIconIndex.ObjectFrameOf((int)resource), tile.MainObjectPart.IcnIndex);
+    }
+
+    [Fact]
+    public void LoadMapRollsARandomArtifactIntoARealOne()
+    {
+        Mp2Map map = BlankMap();
+
+        // 随机神器：帧 163 是占位符，载入时抽成一件普通神器，本体和左边那格的影子一起换帧。
+        map.SetTileAt(At(10, 10), GroundObjectTile(Mp2ObjectIcnType.ObjnArti, 163, Mp2ObjectType.ActionRandomArtifact));
+
+        var world = new World();
+        world.LoadMap(map);
+
+        Tile tile = world.GetTile(10, 10);
+        ArtifactType artifact = (ArtifactType)tile.Metadata[0];
+
+        Assert.Equal(Mp2ObjectType.ActionArtifact, tile.MainObjectType);
+        Assert.NotEqual(ArtifactType.Unknown, artifact);
+
+        // OBJNARTI 每件神器占两帧：本体是奇数帧，影子小一（参考 updateRandomArtifact()）。
+        Assert.Equal(((int)artifact - 1) * 2 + 1, tile.MainObjectPart.IcnIndex);
     }
 
     [Fact]

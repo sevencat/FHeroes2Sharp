@@ -143,6 +143,22 @@ public sealed class MainMenuScene : IScene
     /// <summary>Width of the settings dialog content, close to the 288 pixel window of the reference.</summary>
     public const int SettingsContentWidth = 300;
 
+    /// <summary>
+    /// Title of the language picker, <c>isGameLanguage ? _( "Select Game Language:" ) : ...</c> of
+    /// <c>fheroes2::selectLanguage()</c>.
+    /// </summary>
+    public const string LanguagePickerTitleId = "Select Game Language:";
+
+    /// <summary>Title of the greeting of the first run, <c>_( "Greetings!" )</c> of <c>Game::MainMenu()</c>.</summary>
+    public const string WelcomeTitleId = "Greetings!";
+
+    /// <summary>
+    /// Body of the greeting of the first run, <c>_( "Welcome to Heroes of Might and Magic II powered by
+    /// fheroes2 engine!" )</c>. The reference appends two paragraphs - one about the resolution selection
+    /// and one about touch input; the port has neither (see the remarks of <see cref="BeginFirstRun"/>).
+    /// </summary>
+    public const string WelcomeBodyId = "Welcome to Heroes of Might and Magic II powered by fheroes2 engine!";
+
     /// <summary><c>SDL_Keycode.ESCAPE</c>, which arrives as a character through the hot key path.</summary>
     private const char EscapeCharacter = '\u001b';
 
@@ -195,6 +211,8 @@ public sealed class MainMenuScene : IScene
     private string? _status;
     private MessageBox? _tip;
     private SettingsDialog? _settings;
+    private LanguageSelectionDialog? _languagePicker;
+    private MessageBox? _welcome;
     private IReadOnlyList<Mp2FileInfo>? _maps;
     private ScenarioSelectionDialog? _scenario;
     private Mp2FileInfo? _confirmedScenario;
@@ -238,6 +256,27 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>Languages the menu can switch between; the first one is English.</summary>
     public IReadOnlyList<GameText> Languages => _languages;
+
+    /// <summary>
+    /// Raised when the settings dialog applied a different interface language, so the host can remember it in
+    /// the configuration file (<c>Settings::setGameLanguage()</c> 加 <c>conf.Save()</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>dialog_game_settings.cpp:264</c> 在应用后直接 <c>conf.Save()</c>；端口里场景不知道配置文件在哪
+    /// （那是宿主的事），所以只把新语言交回去。
+    /// </remarks>
+    public Action<GameText>? LanguageChanged { get; set; }
+
+    /// <summary>
+    /// Raised when the onboarding of the first run is over, so the host can clear the flag and write the
+    /// configuration: <c>conf.resetFirstGameRun(); conf.Save( ... )</c> at the end of the
+    /// <c>isFirstGameRun</c> branch of <c>Game::MainMenu()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在这一支里也把分辨率选择当成了首运的一部分（<c>showGameResolutionSelection()</c>）；端口没有分辨率选择
+    /// 窗口（<c>videomode</c> 只写不读），所以首运只剩语言选择加问候消息，旗标照样在这里清掉。
+    /// </remarks>
+    public Action? FirstRunFinished { get; set; }
 
     /// <summary>The status bar rectangle at the bottom of the logical frame.</summary>
     public Rect StatusBarArea => _statusBar;
@@ -466,10 +505,12 @@ public sealed class MainMenuScene : IScene
         _tip?.Draw(pixels);
 
         // The modal windows close the menu, so they are painted last: the settings dialog, then the
-        // scenario list. The two can never be open at the same time, the order only keeps the code
-        // in the order the host opens them.
+        // scenario list, then the two windows of the first run. They can never be open at the same
+        // time, the order only keeps the code in the order the host opens them.
         _settings?.Draw(pixels);
         _scenario?.Draw(pixels);
+        _languagePicker?.Draw(pixels);
+        _welcome?.Draw(pixels);
 
         _frame.InvalidateAll();
     }
@@ -490,6 +531,18 @@ public sealed class MainMenuScene : IScene
         if (_scenario is not null)
         {
             _scenario.SetCursor(cursor);
+            return;
+        }
+
+        if (_languagePicker is not null)
+        {
+            _languagePicker.SetCursor(cursor);
+            return;
+        }
+
+        if (_welcome is not null)
+        {
+            _welcome.SetCursor(cursor);
             return;
         }
 
@@ -536,6 +589,38 @@ public sealed class MainMenuScene : IScene
             if (_scenario.SetLeftButton(down) == DialogButton.Ok)
             {
                 ConfirmScenario();
+            }
+
+            return null;
+        }
+
+        // The language picker of the first run owns the mouse while it is open: OK applies the
+        // language, CANCEL keeps the current one, both lead to the greeting.
+        if (_languagePicker is not null)
+        {
+            switch (_languagePicker.SetLeftButton(down))
+            {
+                case DialogButton.Ok:
+                    ConfirmLanguagePicker();
+                    break;
+
+                case DialogButton.Cancel:
+                    CancelLanguagePicker();
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
+        // The greeting has a single OK button; ESC is the same key through the hot key path.
+        if (_welcome is not null)
+        {
+            if (_welcome.SetLeftButton(down) == DialogButton.Ok)
+            {
+                CloseWelcome();
             }
 
             return null;
@@ -611,7 +696,7 @@ public sealed class MainMenuScene : IScene
     /// the button is down.
     /// </summary>
     /// <param name="down">Whether the right mouse button is currently held.</param>
-    public void SetRightButton(bool down) => _tip = down && _settings is null ? CreateTip() : null;
+    public void SetRightButton(bool down) => _tip = down && !HasModalDialog ? CreateTip() : null;
 
     /// <summary>
     /// Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>), or the
@@ -619,6 +704,48 @@ public sealed class MainMenuScene : IScene
     /// </summary>
     public MainMenuAction? Select(char hotKey)
     {
+        // The language picker of the first run owns the keyboard: Escape is CANCEL, Enter goes through
+        // the button row as OK. The arrow keys are not characters, the host routes them through
+        // MoveLanguageSelection.
+        if (_languagePicker is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter:
+                    CancelLanguagePicker();
+                    break;
+
+                case EnterCharacter or LineFeedCharacter:
+                    if (_languagePicker.ProcessHotKey(ButtonHotKey.Okay) == DialogButton.Ok)
+                    {
+                        ConfirmLanguagePicker();
+                    }
+
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
+        // The greeting is an OK box: <c>HotKeyCloseWindow()</c> closes it with Escape as well.
+        if (_welcome is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter or EnterCharacter or LineFeedCharacter:
+                    CloseWelcome();
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
         // While the settings dialog is open the keyboard belongs to it: Escape closes it without
         // applying, Enter is the OK hot key.
         if (_settings is not null)
@@ -740,11 +867,74 @@ public sealed class MainMenuScene : IScene
         return true;
     }
 
+    /// <summary>The open language picker of the first run, or <see langword="null"/>.</summary>
+    public LanguageSelectionDialog? LanguagePicker => _languagePicker;
+
+    /// <summary>The greeting of the first run, or <see langword="null"/> when it is not on screen.</summary>
+    public MessageBox? Welcome => _welcome;
+
+    /// <summary>
+    /// Starts the onboarding of a first run: the language picker of <c>fheroes2::selectLanguage()</c>,
+    /// followed by the greeting of <c>Game::MainMenu()</c> once the picker is answered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的首运分支（<c>game_mainmenu.cpp:265-300</c>）依次是 <c>selectLanguage( true )</c>、
+    /// <c>showStandardTextMessage( _( "Greetings!" ), ... )</c>，最后 <c>conf.resetFirstGameRun()</c> 加
+    /// <c>conf.Save()</c>——清旗标与保存是宿主的事，场景只在收尾时抛 <see cref="FirstRunFinished"/>。
+    /// </para>
+    /// <para>
+    /// 问候消息比参考短：参考那段还写着「请选择游戏分辨率」并随后打开分辨率选择窗，端口没有这个窗口
+    /// （<c>videomode</c> 只写不读），也还没有触摸输入，所以那两段不写，免得承诺一件不会发生的事。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="true"/> when the picker is now open.</returns>
+    public bool BeginFirstRun()
+    {
+        if (HasModalDialog)
+        {
+            GameLog.Info("First run: another window is open, the onboarding waits for the next start.");
+            return false;
+        }
+
+        if (_settingsArtwork is null)
+        {
+            GameLog.Warn("First run: no button artwork, the onboarding is skipped.");
+            return false;
+        }
+
+        int contentHeight = LanguageSelectionDialog.GetRequiredHeight(_fonts.Normal.LineHeight, _languages.Count);
+
+        StandardWindow window = StandardWindow.CreateCentered(
+            new Size(LanguageSelectionDialog.ContentWidth, contentHeight), true, _frame.Size);
+
+        DialogButton row = _settingsArtwork.HasCancel ? DialogButton.Ok | DialogButton.Cancel : DialogButton.Ok;
+        ButtonGroup buttons = ButtonGroup.CreateStandard(window.ActiveArea, row, _settingsArtwork);
+
+        _languagePicker = new LanguageSelectionDialog(
+            window, buttons, _fonts.Yellow, _fonts.Normal, _fonts.Yellow, Text.Get(LanguagePickerTitleId),
+            [.. _languages.Select(language => language.NativeName)], _languageIndex);
+
+        GameLog.Info(
+            $"First run: language picker opened, '{Text.Culture}' selected of {_languages.Count} installed, " +
+            $"content {LanguageSelectionDialog.ContentWidth}x{contentHeight}.");
+
+        return true;
+    }
+
+    /// <summary>Moves the selection of the open language picker by <paramref name="delta"/> languages.</summary>
+    /// <param name="delta">Negative moves up, positive down; the selection wraps like the reference list box.</param>
+    public void MoveLanguageSelection(int delta) => _languagePicker?.MoveSelection(delta);
+
     /// <summary>The open scenario list, or <see langword="null"/> when New Game has not been used.</summary>
     public ScenarioSelectionDialog? Scenario => _scenario;
 
-    /// <summary>Whether a modal window (the settings dialog or the scenario list) owns the input.</summary>
-    public bool HasModalDialog => _settings is not null || _scenario is not null;
+    /// <summary>
+    /// Whether a modal window owns the input: the settings dialog, the scenario list, or the language
+    /// picker and greeting of the first run.
+    /// </summary>
+    public bool HasModalDialog =>
+        _settings is not null || _scenario is not null || _languagePicker is not null || _welcome is not null;
 
     /// <summary>
     /// Opens the scenario selection window of the main menu, the <c>Dialog::SelectScenario()</c> the
@@ -892,6 +1082,8 @@ public sealed class MainMenuScene : IScene
     /// <summary>Applies the open dialog and closes it, the OK button and Enter.</summary>
     private void ApplySettings()
     {
+        string previous = Text.Culture;
+
         if (_settings is { OptionCount: 1 } dialog)
         {
             SetLanguage(dialog.Option(0).SelectedIndex);
@@ -899,6 +1091,12 @@ public sealed class MainMenuScene : IScene
 
         _settings = null;
         GameLog.Info($"Settings applied: interface language '{Text.Culture}'.");
+
+        // 只有真换了语言才通知：参考的保存点也在“有改动就写”的那一支上。
+        if (!string.Equals(previous, Text.Culture, StringComparison.Ordinal))
+        {
+            LanguageChanged?.Invoke(Text);
+        }
     }
 
     /// <summary>Closes the open dialog without applying, the Escape key and CANCEL of the reference.</summary>
@@ -920,6 +1118,70 @@ public sealed class MainMenuScene : IScene
         }
 
         return null;
+    }
+
+    /// <summary>Applies the language of the open picker and moves on to the greeting, the OK button.</summary>
+    private void ConfirmLanguagePicker()
+    {
+        string previous = Text.Culture;
+
+        if (_languagePicker is { } picker)
+        {
+            SetLanguage(picker.SelectedIndex);
+        }
+
+        _languagePicker = null;
+        GameLog.Info($"First run: language '{previous}' -> '{Text.Culture}'.");
+
+        ShowWelcome();
+    }
+
+    /// <summary>Keeps the current language and moves on to the greeting, the CANCEL button and Escape.</summary>
+    private void CancelLanguagePicker()
+    {
+        _languagePicker?.Cancel();
+        _languagePicker = null;
+        GameLog.Info($"First run: language selection cancelled, staying with '{Text.Culture}'.");
+
+        ShowWelcome();
+    }
+
+    /// <summary>
+    /// Shows the greeting of the first run, the <c>showStandardTextMessage( _( "Greetings!" ), ... )</c>
+    /// that follows the language selection whether it was confirmed or cancelled.
+    /// </summary>
+    private void ShowWelcome()
+    {
+        if (!_hasMessageFrame || _settingsArtwork is null)
+        {
+            GameLog.Warn("First run: the greeting needs the message frame and the OK button; skipped.");
+            FinishFirstRun();
+            return;
+        }
+
+        _welcome = MessageBox.Create(
+            Text.Get(WelcomeTitleId),
+            Text.Get(WelcomeBodyId),
+            _fonts.Yellow,
+            _fonts.Normal,
+            buttons: DialogButton.Ok,
+            buttonArtwork: _settingsArtwork);
+
+        GameLog.Info("First run: greeting shown.");
+    }
+
+    /// <summary>Closes the greeting and ends the onboarding, the OK button and the Escape key.</summary>
+    private void CloseWelcome()
+    {
+        _welcome = null;
+        FinishFirstRun();
+    }
+
+    /// <summary>Hands the end of the onboarding to the host, which clears the flag and saves the file.</summary>
+    private void FinishFirstRun()
+    {
+        GameLog.Info($"First run finished, interface language '{Text.Culture}'.");
+        FirstRunFinished?.Invoke();
     }
 
     /// <summary>Switches to the next available language and returns it.</summary>

@@ -115,7 +115,7 @@ public sealed partial class HeroActions
             return new DwellingRecruitResult(DwellingRecruitOutcome.Declined, troop.Monster, troop.Count, default);
         }
 
-        return RecruitMonsterFromTile(tile, troop, remove: true);
+        return RecruitMonsterFromTile(world, tile, troop, remove: true);
     }
 
     /// <summary>

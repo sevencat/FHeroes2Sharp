@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Tests;
@@ -403,5 +404,194 @@ public sealed class SettingsTests
         Players.Get(PlayerColor.Blue)!.SetAiAutoControlMode(true);
 
         Assert.False(settings.IsEvilInterfaceEnabled);
+    }
+
+    [Fact]
+    public void AConfigurationFileRoundTripsThroughSaveAndRead()
+    {
+        Settings settings = Fresh();
+
+        settings.SetGameLanguage("ru");
+        settings.SetMusicType(MusicSource.MidiOriginal);
+        settings.SetSoundVolume(3);
+        settings.SetMusicVolume(9);
+        settings.SetHeroesMoveSpeed(4);
+        settings.SetAiMoveSpeed(1);
+        settings.SetBattleSpeed(7);
+        settings.SetScrollSpeed(3);
+        settings.SetMapSmoothScrolling(false);
+        settings.SetBattleGrid(false);
+        settings.SetBattleMovementShaded(false);
+        settings.SetBattleMouseShaded(false);
+        settings.SetBattleMovementAreaHighlight(false);
+        settings.SetBattleShowDamage(true);
+        settings.SetBattleShowHitPointsBar(false);
+        settings.SetBattleAutoResolve(false);
+        settings.SetBattleAutoSpellcast(true);
+        settings.SetInterfaceType(InterfaceType.Evil);
+        settings.SetHideInterface(true);
+        settings.SetFullScreen(true);
+        settings.SetVSync(false);
+        settings.SetTextSupportMode(true);
+        settings.SetMonochromeCursor(true);
+        settings.Set3DAudio(true);
+        settings.SetSystemInfo(true);
+        settings.SetAutoSaveAtBeginningOfTurn(true);
+        settings.SetCursorSoftwareEmulation(true);
+        settings.SetScreenScalingTypeNearest(false);
+        settings.SetNumericArmyEstimationView(true);
+        settings.SetEditorAnimation(false);
+        settings.SetEditorPassability(true);
+        settings.SetPosRadar(new Point(5, 6));
+        settings.SetPosButtons(new Point(7, 8));
+        settings.SetPosIcons(new Point(9, 10));
+        settings.SetPosStatus(new Point(11, 12));
+
+        settings.SwitchToNextBattleTurnOrderState();
+        settings.SwitchToNextBattleTurnOrderState();
+
+        string path = Path.Combine(Path.GetTempPath(), $"fh2-cfg-{Guid.NewGuid():N}.cfg");
+
+        try
+        {
+            Assert.True(settings.Save(path));
+
+            Settings restored = Fresh();
+
+            Assert.True(restored.Read(path));
+
+            Assert.Equal("ru", restored.GameLanguage);
+            Assert.Equal(MusicSource.MidiOriginal, restored.MusicType);
+            Assert.Equal(3, restored.SoundVolume);
+            Assert.Equal(9, restored.MusicVolume);
+            Assert.Equal(4, restored.HeroesMoveSpeed);
+            Assert.Equal(1, restored.AiMoveSpeed);
+            Assert.Equal(7, restored.BattleSpeed);
+            Assert.Equal(AdventureMapScrollSpeed.Fast, restored.ScrollSpeed);
+            Assert.False(restored.IsMapSmoothScrollingEnabled);
+            Assert.False(restored.IsBattleShowGrid);
+            Assert.False(restored.IsBattleShowMoveShadow);
+            Assert.False(restored.IsBattleShowMouseShadow);
+            Assert.False(restored.IsBattleMovementAreaHighlight);
+            Assert.True(restored.IsBattleShowDamage);
+            Assert.False(restored.IsBattleShowHitPointsBar);
+            Assert.False(restored.IsBattleAutoResolve);
+            Assert.True(restored.IsBattleAutoSpellcast);
+            Assert.Equal(BattleTurnOrderState.Bottom, restored.BattleTurnOrder);
+            Assert.Equal(InterfaceType.Evil, restored.InterfaceType);
+            Assert.True(restored.IsHideInterface);
+            Assert.True(restored.IsFullScreen);
+            Assert.False(restored.IsVSyncEnabled);
+            Assert.True(restored.IsTextSupportMode);
+            Assert.True(restored.IsMonochromeCursor);
+            Assert.True(restored.Is3DAudioEnabled);
+            Assert.True(restored.IsSystemInfo);
+            Assert.True(restored.IsAutoSaveAtBeginningOfTurnEnabled);
+            Assert.True(restored.IsCursorSoftwareEmulation);
+            Assert.False(restored.IsScreenScalingTypeNearest);
+            Assert.True(restored.IsNumericArmyEstimationView);
+            Assert.False(restored.IsEditorAnimationEnabled);
+            Assert.True(restored.IsEditorPassabilityEnabled);
+
+            // 参考的 _controllerPointerSpeed 只有 getter，读配置文件是它唯一的写入点（settings.h:383-385），
+            // 所以往返之后应回到文件里的值，这里是默认的 10。
+            Assert.Equal(10, restored.ControllerPointerSpeed);
+            Assert.Equal(new Point(5, 6), restored.PosRadar);
+            Assert.Equal(new Point(7, 8), restored.PosButtons);
+            Assert.Equal(new Point(9, 10), restored.PosIcons);
+            Assert.Equal(new Point(11, 12), restored.PosStatus);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void OnlyAnExplicitOffClearsTheFirstRunFlag()
+    {
+        Settings settings = Fresh();
+
+        Assert.True(settings.IsFirstGameRun);
+
+        string path = Path.Combine(Path.GetTempPath(), $"fh2-cfg-{Guid.NewGuid():N}.cfg");
+
+        try
+        {
+            // 缺键时标志不动：参考只在读到 off 时才清（settings.cpp:307-310）。
+            File.WriteAllText(path, "music = external\n");
+            Assert.True(settings.Read(path));
+            Assert.True(settings.IsFirstGameRun);
+
+            File.WriteAllText(path, "first time game run = on\n");
+            Assert.True(settings.Read(path));
+            Assert.True(settings.IsFirstGameRun);
+
+            File.WriteAllText(path, "first time game run = off\n");
+            Assert.True(settings.Read(path));
+            Assert.False(settings.IsFirstGameRun);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ASavedResetFirstGameRunStaysClearedInTheFile()
+    {
+        Settings settings = Fresh();
+        string path = Path.Combine(Path.GetTempPath(), $"fh2-cfg-{Guid.NewGuid():N}.cfg");
+
+        try
+        {
+            // 首运的收尾是 conf.resetFirstGameRun() 加 conf.Save()（game_mainmenu.cpp:300），
+            // 这条路要能真正把旗标从文件里抹掉，否则每次启动都会再走一遍语言选择。
+            Assert.True(settings.Save(path));
+            Assert.Contains("first time game run = on", File.ReadAllText(path), StringComparison.Ordinal);
+
+            settings.ResetFirstGameRun();
+
+            Assert.True(settings.Save(path));
+            Assert.Contains("first time game run = off", File.ReadAllText(path), StringComparison.Ordinal);
+
+            Settings reloaded = Fresh();
+
+            Assert.True(reloaded.Read(path));
+            Assert.False(reloaded.IsFirstGameRun);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void AnUnreadableConfigurationFileLeavesTheSettingsAlone()
+    {
+        Settings settings = Fresh();
+
+        settings.SetSoundVolume(3);
+
+        Assert.False(settings.Read(Path.Combine(Path.GetTempPath(), $"fh2-cfg-{Guid.NewGuid():N}.cfg")));
+        Assert.Equal(3, settings.SoundVolume);
+    }
+
+    [Fact]
+    public void TheOptionsStringQuotesTheEngineVersionAndEveryKey()
+    {
+        Settings settings = Fresh();
+
+        string text = settings.GetOptionsString();
+
+        Assert.Contains(EngineVersion.Version, text, StringComparison.Ordinal);
+        Assert.Contains("music = external", text, StringComparison.Ordinal);
+        Assert.Contains("sound volume = 6", text, StringComparison.Ordinal);
+        Assert.Contains("first time game run = on", text, StringComparison.Ordinal);
+        Assert.Contains("radar window position = [ -1, -1 ]", text, StringComparison.Ordinal);
+
+        // 分辨率和窗口位置属于 UI 层，不给参数就不写。
+        Assert.DoesNotContain("videomode", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("game window position", text, StringComparison.Ordinal);
     }
 }

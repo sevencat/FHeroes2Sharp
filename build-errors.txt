@@ -1,0 +1,178 @@
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiPlanner.Hero.cs(2803,31): error CS0029: 无法将类型“bool”隐式转换为“int”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiPlanner.Hero.cs(2981,31): error CS0029: 无法将类型“bool”隐式转换为“int”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroMeetingUpdater.cs(54,40): error CS1061: “Kingdom”未包含“GetHeroes”的定义，并且找不到可接受第一个“Kingdom”类型参数的可访问扩展方法“GetHeroes”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(74,17): error CS7036: 未提供与“AiHeroAction.AiToBoat(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(78,17): error CS0103: 当前上下文中不存在名称“AiToMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(82,17): error CS7036: 未提供与“AiHeroAction.AiToHeroes(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(86,17): error CS7036: 未提供与“AiHeroAction.AiToCastle(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(98,17): error CS0103: 当前上下文中不存在名称“AiToTreasureChest”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(102,17): error CS0103: 当前上下文中不存在名称“AiToArtifact”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(128,17): error CS0103: 当前上下文中不存在名称“AiToCaptureObject”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(132,17): error CS0103: 当前上下文中不存在名称“AiToAbandonedMine”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(140,17): error CS0103: 当前上下文中不存在名称“AiToEvent”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(152,17): error CS0103: 当前上下文中不存在名称“AiToMagellanMaps”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(160,17): error CS0103: 当前上下文中不存在名称“AiToWhirlpools”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(168,17): error CS7036: 未提供与“AiHeroAction.AiToPrimarySkillObject(Hero, Mp2ObjectType, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(176,17): error CS7036: 未提供与“AiHeroAction.AiToWitchsHut(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(182,17): error CS7036: 未提供与“AiHeroAction.AiToShrine(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(189,25): error CS1501: “ActionToGoodLuckObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(196,25): error CS1501: “ActionToGoodMoraleObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(204,25): error CS1501: “ActionToArtesianSpring”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(208,17): error CS7036: 未提供与“AiHeroAction.AiToMagicWell(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(212,25): error CS1501: “ActionToXanadu”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(223,17): error CS0103: 当前上下文中不存在名称“AiToPoorMoraleObject”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(227,17): error CS0103: 当前上下文中不存在名称“AiToPyramid”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(231,17): error CS0103: 当前上下文中不存在名称“AiToDaemonCave”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(247,17): error CS0103: 当前上下文中不存在名称“AiToDwellingJoinMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(259,17): error CS0103: 当前上下文中不存在名称“AiToDwellingRecruitMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(265,17): error CS0103: 当前上下文中不存在名称“AiToDwellingBattleMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(269,17): error CS0103: 当前上下文中不存在名称“AiToGenieLamp”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(301,25): error CS1501: “ActionToBlackCat”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(314,21): error CS7036: 未提供与“AiHeroAction.AiToCoast(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(530,16): error CS0103: 当前上下文中不存在名称“Rand”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(592,27): error CS0117: “SpellType”未包含“SetEarthGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(593,27): error CS0117: “SpellType”未包含“SetFireGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(594,27): error CS0117: “SpellType”未包含“SetWaterGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(597,9): error CS0103: 当前上下文中不存在名称“Rand”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(603,27): error CS0117: “HeroRole”未包含“Scour”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(641,9): error CS0246: 未能找到类型或命名空间名“CastleTown”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(644,54): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(650,54): error CS1061: “Castle”未包含“GetIndex”的定义，并且找不到可接受第一个“Castle”类型参数的可访问扩展方法“GetIndex”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(650,76): error CS1061: “CastleTown?”未包含“GetIndex”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“GetIndex”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(676,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(680,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(686,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(690,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(694,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(699,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(49,23): error CS1061: “Hero”未包含“IsInCastle”的定义，并且找不到可接受第一个“Hero”类型参数的可访问扩展方法“IsInCastle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(57,9): error CS0246: 未能找到类型或命名空间名“BattleResult”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(73,17): error CS0103: 当前上下文中不存在名称“Difficulty”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(73,58): error CS0103: 当前上下文中不存在名称“Settings”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(101,9): error CS0246: 未能找到类型或命名空间名“CastleTown”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(108,34): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(108,65): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(115,37): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(115,57): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(116,52): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(118,20): error CS1061: “CastleTown?”未包含“Scout”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Scout”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,9): error CS0246: 未能找到类型或命名空间名“GameArmy”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,66): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,38): error CS1061: “CastleTown?”未包含“GetActualArmy”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“GetActualArmy”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(122,40): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(123,33): error CS0234: 命名空间“FHeroes2.Game.Castle”中不存在类型或命名空间名“IsControlAi”(是否缺少程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(123,76): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,46): error CS0234: 命名空间“FHeroes2.Game.Castle”中不存在类型或命名空间名“IsControlAi”(是否缺少程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,89): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,20): error CS1061: “CastleTown?”未包含“ActionPreBattle”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“ActionPreBattle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(130,13): error CS0246: 未能找到类型或命名空间名“BattleResult”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(132,20): error CS1061: “CastleTown?”未包含“ActionAfterBattle”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“ActionAfterBattle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(150,21): error CS0103: 当前上下文中不存在名称“Difficulty”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(150,62): error CS0103: 当前上下文中不存在名称“Settings”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(252,17): error CS1501: “ActionToGoodLuckObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(258,17): error CS1501: “ActionToGoodMoraleObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(270,17): error CS1501: “ActionToXanadu”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(276,17): error CS1501: “ActionToArtesianSpring”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(299,17): error CS1501: “ActionToPrimarySkillObject”方法没有采用 4 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(318,41): error CS1061: “Tile”未包含“GetObject”的定义，并且找不到可接受第一个“Tile”类型参数的可访问扩展方法“GetObject”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,10): error CS0246: 未能找到类型或命名空间名“Resource”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,43): error CS1061: “Funds”未包含“Deconstruct”的定义，并且找不到可接受第一个“Funds”类型参数的可访问扩展方法“Deconstruct”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,43): error CS8129: 找不到类型“Funds”适用的 Deconstruct 实例或扩展方法，输出参数为 2，返回类型为 void。
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(343,25): error CS0103: 当前上下文中不存在名称“Resource”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(343,89): error CS0246: 未能找到类型或命名空间名“Funds”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(359,42): error CS1061: “Kingdom”未包含“GetHeroes”的定义，并且找不到可接受第一个“Kingdom”类型参数的可访问扩展方法“GetHeroes”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(359,72): error CS0117: “AiPlanner”未包含“MaxHeroes”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,60): error CS0246: 未能找到类型或命名空间名“Funds”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,66): error CS0103: 当前上下文中不存在名称“Resource”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,81): error CS0103: 当前上下文中不存在名称“PaymentConditions”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(378,17): error CS1501: “ActionToAlchemistTower”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(403,17): error CS1501: “ActionToBlackCat”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiPlanner.Hero.cs(2803,31): error CS0029: 无法将类型“bool”隐式转换为“int”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiPlanner.Hero.cs(2981,31): error CS0029: 无法将类型“bool”隐式转换为“int”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroMeetingUpdater.cs(54,40): error CS1061: “Kingdom”未包含“GetHeroes”的定义，并且找不到可接受第一个“Kingdom”类型参数的可访问扩展方法“GetHeroes”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(74,17): error CS7036: 未提供与“AiHeroAction.AiToBoat(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(78,17): error CS0103: 当前上下文中不存在名称“AiToMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(82,17): error CS7036: 未提供与“AiHeroAction.AiToHeroes(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(86,17): error CS7036: 未提供与“AiHeroAction.AiToCastle(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(98,17): error CS0103: 当前上下文中不存在名称“AiToTreasureChest”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(102,17): error CS0103: 当前上下文中不存在名称“AiToArtifact”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(128,17): error CS0103: 当前上下文中不存在名称“AiToCaptureObject”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(132,17): error CS0103: 当前上下文中不存在名称“AiToAbandonedMine”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(140,17): error CS0103: 当前上下文中不存在名称“AiToEvent”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(152,17): error CS0103: 当前上下文中不存在名称“AiToMagellanMaps”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(160,17): error CS0103: 当前上下文中不存在名称“AiToWhirlpools”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(168,17): error CS7036: 未提供与“AiHeroAction.AiToPrimarySkillObject(Hero, Mp2ObjectType, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(176,17): error CS7036: 未提供与“AiHeroAction.AiToWitchsHut(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(182,17): error CS7036: 未提供与“AiHeroAction.AiToShrine(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(189,25): error CS1501: “ActionToGoodLuckObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(196,25): error CS1501: “ActionToGoodMoraleObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(204,25): error CS1501: “ActionToArtesianSpring”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(208,17): error CS7036: 未提供与“AiHeroAction.AiToMagicWell(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(212,25): error CS1501: “ActionToXanadu”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(223,17): error CS0103: 当前上下文中不存在名称“AiToPoorMoraleObject”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(227,17): error CS0103: 当前上下文中不存在名称“AiToPyramid”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(231,17): error CS0103: 当前上下文中不存在名称“AiToDaemonCave”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(247,17): error CS0103: 当前上下文中不存在名称“AiToDwellingJoinMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(259,17): error CS0103: 当前上下文中不存在名称“AiToDwellingRecruitMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(265,17): error CS0103: 当前上下文中不存在名称“AiToDwellingBattleMonster”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(269,17): error CS0103: 当前上下文中不存在名称“AiToGenieLamp”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(301,25): error CS1501: “ActionToBlackCat”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(314,21): error CS7036: 未提供与“AiHeroAction.AiToCoast(Hero, int, World, HeroActions)”的所需参数“actions”对应的参数
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(530,16): error CS0103: 当前上下文中不存在名称“Rand”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(592,27): error CS0117: “SpellType”未包含“SetEarthGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(593,27): error CS0117: “SpellType”未包含“SetFireGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(594,27): error CS0117: “SpellType”未包含“SetWaterGuardian”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(597,9): error CS0103: 当前上下文中不存在名称“Rand”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(603,27): error CS0117: “HeroRole”未包含“Scour”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(641,9): error CS0246: 未能找到类型或命名空间名“CastleTown”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(644,54): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(650,54): error CS1061: “Castle”未包含“GetIndex”的定义，并且找不到可接受第一个“Castle”类型参数的可访问扩展方法“GetIndex”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(650,76): error CS1061: “CastleTown?”未包含“GetIndex”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“GetIndex”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(676,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(680,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(686,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(690,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(694,22): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.cs(699,18): error CS0117: “Hero”未包含“AIExchangeArtifacts”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(49,23): error CS1061: “Hero”未包含“IsInCastle”的定义，并且找不到可接受第一个“Hero”类型参数的可访问扩展方法“IsInCastle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(57,9): error CS0246: 未能找到类型或命名空间名“BattleResult”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(73,17): error CS0103: 当前上下文中不存在名称“Difficulty”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(73,58): error CS0103: 当前上下文中不存在名称“Settings”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(101,9): error CS0246: 未能找到类型或命名空间名“CastleTown”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(108,34): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(108,65): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(115,37): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(115,57): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(116,52): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(118,20): error CS1061: “CastleTown?”未包含“Scout”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Scout”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,9): error CS0246: 未能找到类型或命名空间名“GameArmy”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,66): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(121,38): error CS1061: “CastleTown?”未包含“GetActualArmy”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“GetActualArmy”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(122,40): error CS1503: 参数 1: 无法从“CastleTown?”转换为“FHeroes2.Game.Castle.Castle”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(123,33): error CS0234: 命名空间“FHeroes2.Game.Castle”中不存在类型或命名空间名“IsControlAi”(是否缺少程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(123,76): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,46): error CS0234: 命名空间“FHeroes2.Game.Castle”中不存在类型或命名空间名“IsControlAi”(是否缺少程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,89): error CS1061: “CastleTown?”未包含“Color”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“Color”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(128,20): error CS1061: “CastleTown?”未包含“ActionPreBattle”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“ActionPreBattle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(130,13): error CS0246: 未能找到类型或命名空间名“BattleResult”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(132,20): error CS1061: “CastleTown?”未包含“ActionAfterBattle”的定义，并且找不到可接受第一个“CastleTown?”类型参数的可访问扩展方法“ActionAfterBattle”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(150,21): error CS0103: 当前上下文中不存在名称“Difficulty”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(150,62): error CS0103: 当前上下文中不存在名称“Settings”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(252,17): error CS1501: “ActionToGoodLuckObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(258,17): error CS1501: “ActionToGoodMoraleObject”方法没有采用 3 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(270,17): error CS1501: “ActionToXanadu”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(276,17): error CS1501: “ActionToArtesianSpring”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(299,17): error CS1501: “ActionToPrimarySkillObject”方法没有采用 4 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(318,41): error CS1061: “Tile”未包含“GetObject”的定义，并且找不到可接受第一个“Tile”类型参数的可访问扩展方法“GetObject”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,10): error CS0246: 未能找到类型或命名空间名“Resource”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,43): error CS1061: “Funds”未包含“Deconstruct”的定义，并且找不到可接受第一个“Funds”类型参数的可访问扩展方法“Deconstruct”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(341,43): error CS8129: 找不到类型“Funds”适用的 Deconstruct 实例或扩展方法，输出参数为 2，返回类型为 void。
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(343,25): error CS0103: 当前上下文中不存在名称“Resource”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(343,89): error CS0246: 未能找到类型或命名空间名“Funds”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(359,42): error CS1061: “Kingdom”未包含“GetHeroes”的定义，并且找不到可接受第一个“Kingdom”类型参数的可访问扩展方法“GetHeroes”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(359,72): error CS0117: “AiPlanner”未包含“MaxHeroes”的定义
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,60): error CS0246: 未能找到类型或命名空间名“Funds”(是否缺少 using 指令或程序集引用?)
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,66): error CS0103: 当前上下文中不存在名称“Resource”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(373,81): error CS0103: 当前上下文中不存在名称“PaymentConditions”
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(378,17): error CS1501: “ActionToAlchemistTower”方法没有采用 2 个参数的重载
+F:\code\FHeroes2Sharp\src\FHeroes2.Game\Ai\AiHeroAction.Object.cs(403,17): error CS1501: “ActionToBlackCat”方法没有采用 2 个参数的重载

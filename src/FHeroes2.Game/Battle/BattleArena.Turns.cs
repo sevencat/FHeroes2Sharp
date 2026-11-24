@@ -251,19 +251,10 @@ public sealed partial class BattleArena
                 }
             }
 
-            if (endOfTurn)
-            {
-                break;
-            }
-
-            // 一个回合必须以「动过」或「跳过」收尾，否则外层会拿着同一个单位无限重问。参考靠 AI 与界面保证这一点，
-            // 端口在这里兜底：宁可记成跳过，也不要空转。
-            if (!unit.HasModes(BattleMonsterState.Moved) && !unit.HasModes(BattleMonsterState.Skip))
-            {
-                Debug.Assert(false, "A unit's turn must end with a move, an attack or a skip.");
-
-                unit.SetModes(BattleMonsterState.Moved);
-            }
+            // 循环的退出靠开头那条 `GetSpeed() == Speed.Standing`：动过的单位速度归零，下一圈就把 `endOfTurn` 置上。
+            // 这里<b>不能</b>再补一条「没动过就判它动过」的兜底——好士气会清掉 `Moved` 换来一次额外行动
+            // （`ApplyActionMorale(1)` 干的正是这件事），那条兜底会把额外行动当场吃掉，
+            // 于是「士气高涨、却又什么都没做」的单位把回合空转掉（参考 battle_arena.cpp:474-544 没有这一步）。
         }
     }
 

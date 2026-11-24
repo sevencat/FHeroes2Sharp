@@ -20,9 +20,10 @@ namespace FHeroes2.Game.System;
 /// instead of throwing. The port short-circuits the neutral colour explicitly and sizes the array six.
 /// </para>
 /// <para>
-/// Two colours of a map can be friends, and the friendship is stored on the player. For an MP2 map the header has
-/// no field for it, so a slot is only its own friend; the editor's <c>FileInfo::unions</c> that the reference
-/// copies here is part of the editor's own format.
+/// Two colours of a map can be friends, and the friendship is stored on the player. The table comes from
+/// <see cref="Mp2FileInfo.PlayerUnions"/> — the reference's <c>FileInfo::unions</c> — which the MP2 header derives
+/// from the victory condition and a save file stores outright; each slot also includes its own colour, exactly as
+/// <c>player-&gt;SetFriends( fi.unions[index] | color )</c> does (<c>players.cpp:325</c>).
 /// </para>
 /// </remarks>
 public sealed partial class Players
@@ -82,8 +83,9 @@ public sealed partial class Players
     /// keyboard.
     /// </para>
     /// <para>
-    /// Unlike the reference, <paramref name="fileInfo"/> here is the MP2 header: it has no alliance field, so a slot
-    /// is only its own friend. The reference's <c>fi.unions</c> belongs to the editor's format.
+    /// 联盟取自 <see cref="Mp2FileInfo.PlayerUnions"/>（参考的 <c>fi.unions</c>）：MP2 头在「击败另一方」的
+    /// 地图上算出两侧，存档则直接读表。「自己」总要并进去，参考的
+    /// <c>player-&gt;SetFriends( fi.unions[index] | color )</c>（<c>players.cpp:325</c>）也是这么写的。
     /// </para>
     /// </remarks>
     /// <param name="fileInfo">The map header.</param>
@@ -102,11 +104,13 @@ public sealed partial class Players
         {
             int index = PlayerColors.IndexOf(color);
 
+            PlayerColor union = index < fileInfo.PlayerUnions.Count ? fileInfo.PlayerUnions[index] : color;
+
             var player = new Player(color)
             {
                 Race = fileInfo.PlayerRaces[index],
                 Control = PlayerControl.Ai,
-                Friends = color
+                Friends = union | color
             };
 
             if ((fileInfo.HumanOnlyColors & color) != 0 && Settings.Get().IsGameType(GameTypes.Multi))

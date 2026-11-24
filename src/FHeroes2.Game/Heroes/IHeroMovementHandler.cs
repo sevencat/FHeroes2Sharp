@@ -1,23 +1,22 @@
 namespace FHeroes2.Game.Heroes;
 
 /// <summary>
-/// The four things <c>heroes_move.cpp</c> calls that the port does not have yet, handed to the hero instead of
-/// being linked in.
+/// The four things <c>heroes_move.cpp</c> calls after the hero arrives on a tile, handed to the hero's handler
+/// instead of being linked in.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>_moveStep()</c> interleaves three jobs: advance the sprite, move the hero between tiles, and tell the
-/// rest of the game that he arrived. The first two are pure bookkeeping and are ported; the third is
-/// <c>Scout()</c> (fog), <c>ScoutRadar()</c> (minimap), <c>Action()</c> (the object under the hero) and
-/// <c>ActionNewPosition()</c> (monster guards, artifact pickup, AI planner), and every one of them needs a
-/// subsystem that is still missing — <c>MapFog</c>, the minimap renderer, the object action table, the AI.
+/// <c>_moveStep()</c> interleaves three jobs: advance the sprite, move the hero between tiles, and tell the rest
+/// of the game that he arrived. The first two are pure bookkeeping and are ported; the third is <c>Scout()</c>
+/// (fog), <c>ScoutRadar()</c> (minimap), <c>Action()</c> (the object under the hero) and
+/// <c>ActionNewPosition()</c> (monster guards, artifact pickup, AI planner). Which of them does real work depends
+/// on who drives the hero: <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/> does all four for a computer
+/// player, <see cref="FogHeroMovementHandler"/> only uncovers fog for a human one (the other three need the
+/// interface, see <c>docs/PROGRESS.md</c> §7.4).
 /// </para>
 /// <para>
-/// Rather than leave the calls out and have a hero who walks through the fog as if it were already clear, the
-/// hero asks its handler. The default handler does nothing, which keeps the movement state machine honest and
-/// testable: a test can walk a hero across the map and assert the tile, the path and the movement points
-/// without a fog layer, and when the fog lands it is implemented in a handler rather than in the middle of
-/// the animation code.
+/// The default handler does nothing, which keeps the movement state machine honest and testable: a test can walk
+/// a hero across the map and assert the tile, the path and the movement points without a fog layer or an opponent.
 /// </para>
 /// </remarks>
 public interface IHeroMovementHandler
@@ -41,7 +40,12 @@ public interface IHeroMovementHandler
     /// view on him, <c>Heroes::ActionNewPosition( bool )</c> (<c>heroes.cpp:2019</c>).
     /// </summary>
     /// <param name="hero">The hero who moved.</param>
-    void ActionNewPosition(Hero hero);
+    /// <param name="allowMonsterAttack">
+    /// Whether the guards of the tile may pull the hero into a fight. The reference passes
+    /// <see langword="false"/> for the three teleports (dimension door, both teleporters), because a hero who
+    /// materialises next to a wandering monster did not walk into it (<c>heroes.cpp:2021</c>).
+    /// </param>
+    void ActionNewPosition(Hero hero, bool allowMonsterAttack);
 
     /// <summary>
     /// Redraws the minimap around the hero, <c>Heroes::ScoutRadar()</c>.
@@ -70,7 +74,7 @@ public sealed class NullHeroMovementHandler : IHeroMovementHandler
     }
 
     /// <inheritdoc />
-    public void ActionNewPosition(Hero hero)
+    public void ActionNewPosition(Hero hero, bool allowMonsterAttack)
     {
     }
 
@@ -86,13 +90,14 @@ public sealed class NullHeroMovementHandler : IHeroMovementHandler
 /// </summary>
 /// <remarks>
 /// <para>
-/// 这是 <see cref="IHeroMovementHandler"/> 存在的<b>第一个真实实现</b>：迷雾落地之前，四个回调全是空的
-/// （<see cref="NullHeroMovementHandler"/>）。现在 <see cref="Scout"/> 有东西可做了，它只做这一件事——
-/// 另外三个仍然没有实现，各自的理由见接口注释（雷达渲染器、对象动作表、AI）。
+/// 这是<b>人类英雄</b>装的那一个：它只开图。<see cref="Action"/> 这一支在参考里要找界面层问「要不要开战、
+/// 拿钱还是拿经验」，端口的 <c>IHeroActionHost</c> 还没有界面实现（<c>docs/PROGRESS.md</c> §7.4），
+/// 装上去只会得到一串「否」，所以人类的对象动作目前仍靠玩家按默认动作键显式触发；
+/// 电脑英雄装的是 <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/>，四件事齐备。
 /// </para>
 /// <para>
 /// 与 <see cref="NullHeroMovementHandler"/> 不同，它<b>持有世界</b>：迷雾是世界的状态，
-/// <see cref="Hero.Scout"/> 需要它才能改。游戏循环造出世界之后为每位英雄装上这一个，走路就会开图了。
+/// <see cref="Hero.Scout"/> 需要它才能改。
 /// </para>
 /// </remarks>
 /// <param name="world">The world whose fog the hero uncovers.</param>
@@ -111,7 +116,7 @@ public sealed class FogHeroMovementHandler(World world) : IHeroMovementHandler
     }
 
     /// <inheritdoc />
-    public void ActionNewPosition(Hero hero)
+    public void ActionNewPosition(Hero hero, bool allowMonsterAttack)
     {
     }
 

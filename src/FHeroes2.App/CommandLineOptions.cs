@@ -10,12 +10,13 @@ namespace FHeroes2.App;
 /// Command line of the desktop client.
 ///
 /// <code>
-///   FHeroes2Sharp [--data &lt;dir&gt;] [--scene menu|diagnostics|editor] [--lang &lt;culture&gt;]
+///   FHeroes2Sharp [--data &lt;dir&gt;] [--config &lt;file&gt;|--no-config] [--scene menu|diagnostics|editor]
+///                 [--lang &lt;culture&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
 ///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--skip-turns &lt;n&gt;] [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
@@ -37,6 +38,26 @@ public sealed class CommandLineOptions
 
     /// <summary>Explicit game data directory passed with <c>--data</c>.</summary>
     public string? DataDirectory { get; private set; }
+
+    /// <summary>
+    /// The configuration file passed with <c>--config &lt;file&gt;</c>, overriding the reference's default
+    /// <c>%APPDATA%\fheroes2\fheroes2.cfg</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考没有这个开关：它只在 <c>%APPDATA%\fheroes2</c>（以及若干候选目录）里找 <c>fheroes2.cfg</c>
+    /// （<c>system.cpp:105-118</c>、<c>settings.cpp:754-758</c>）。端口加它是因为基线截图与冒烟必须与开发机上
+    /// 已有的偏好无关——同一个 exe 跑基线时用的是真实用户的配置文件。
+    /// </remarks>
+    public string? ConfigFile { get; private set; }
+
+    /// <summary>
+    /// Leaves the configuration file alone (<c>--no-config</c>): nothing is read at start up and nothing is
+    /// written afterwards.
+    /// </summary>
+    /// <remarks>
+    /// 同 <see cref="ConfigFile"/> 的理由，只是更彻底：连默认路径都不碰，基线因此连「写一份默认配置」都不会发生。
+    /// </remarks>
+    public bool NoConfig { get; private set; }
 
     /// <summary>Screen the client starts with.</summary>
     public SceneKind Scene { get; private set; } = SceneKind.Menu;
@@ -126,6 +147,16 @@ public sealed class CommandLineOptions
     /// installed map collection: the frame only depends on the file that is passed in.
     /// </summary>
     public string? MapFile { get; private set; }
+
+    /// <summary>
+    /// Ends the human turn this many times right after the map opens (<c>--skip-turns &lt;n&gt;</c>).
+    /// </summary>
+    /// <remarks>
+    /// 电脑的回合本来要玩家按沙漏才走；冒烟跑靠这一手把 AI 回合也覆盖到（AI 走子、拾取、进城都在
+    /// <c>AI::Planner::KingdomTurn()</c> 里，见 <c>docs/PROGRESS.md</c> §6.1k）。跳过之后由场景的帧循环
+    /// 把电脑的回合跑完，因此要与 <c>--smoke-frames</c> 一起用才有意义。
+    /// </remarks>
+    public int? SkipTurns { get; private set; }
 
     /// <summary>
     /// Opens the View World window as soon as the adventure map is up (<c>--view-world</c>). The window
@@ -303,6 +334,14 @@ public sealed class CommandLineOptions
                     options.DataDirectory = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--config":
+                    options.ConfigFile = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--no-config":
+                    options.NoConfig = true;
+                    break;
+
                 case "--scene":
                     string scene = RequireValue(arguments, ref i, argument);
                     options.Scene = scene switch
@@ -405,6 +444,16 @@ public sealed class CommandLineOptions
 
                 case "--map":
                     options.MapFile = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--skip-turns":
+                    string rawTurns = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawTurns, out int turns) || turns <= 0)
+                    {
+                        throw new ArgumentException($"'{argument}' expects a positive turn count, got '{rawTurns}'.");
+                    }
+
+                    options.SkipTurns = turns;
                     break;
 
                 case "--view-world":
@@ -523,6 +572,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --data <dir>        Folder that contains 'Data/Heroes2.agg'.");
         Console.WriteLine("                      Defaults to the FHEROES2_DATA environment variable,");
         Console.WriteLine("                      the executable folder or a known local install.");
+        Console.WriteLine("  --config <file>     Configuration file to read and write; the default is");
+        Console.WriteLine("                      %APPDATA%\\fheroes2\\fheroes2.cfg (created on the first run).");
+        Console.WriteLine("  --no-config         Leaves the configuration file alone (nothing read, nothing written);");
+        Console.WriteLine("                      used by the pixel baselines so a developer's own settings cannot leak in.");
         Console.WriteLine("  --scene <name>      'menu' (default), 'diagnostics' (the M0 engine screen) or");
         Console.WriteLine("                      'editor' (the map editor; pass --map to choose the map).");
         Console.WriteLine("  --lang <culture>    Interface language, e.g. 'zh_CN' or 'en'. A catalog must");
@@ -545,6 +598,7 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");
         Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
+        Console.WriteLine("  --skip-turns <n>    Ends the human turn n times at start up, so the computer plays.");
         Console.WriteLine("  --view-world        Opens the View World window as soon as the map is up.");
         Console.WriteLine("  --enter-town        Opens the town screen of the first town as soon as the map is up.");
         Console.WriteLine("  --town-window <name>  Opens one of its windows, e.g. 'mageguild' or 'market', after --enter-town.");

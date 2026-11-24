@@ -207,7 +207,7 @@ public sealed partial class HeroActions
             ArmyStack defenders = new();
             defenders.SetFromTile(world, tile);
 
-            BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+            BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
             if (result.IsAttackerWin)
             {
@@ -224,7 +224,7 @@ public sealed partial class HeroActions
 
                 if (monstersLeft > 0)
                 {
-                    tile.SetMonsterCount(monstersLeft);
+                    tile.SetMonsterCount(world, monstersLeft);
 
                     if (tile.IsMonsterJoinConditionFree(world))
                     {
@@ -329,7 +329,7 @@ public sealed partial class HeroActions
 
             castle.ActionPreBattle(defender, _hero.GetControl() == PlayerControl.Ai);
 
-            BattleResult result = Fight(world, garrison, tileIndex, castle);
+            BattleResult result = Fight(world, _hero, garrison, tileIndex, castle);
 
             castle.ActionAfterBattle(result.IsAttackerWin);
 
@@ -410,7 +410,7 @@ public sealed partial class HeroActions
                 : HeroMeetingOutcome.Won;
         }
 
-        BattleResult result = Fight(world, otherHero.Army, tileIndex, castle: null);
+        BattleResult result = Fight(world, _hero, otherHero.Army, tileIndex, castle: null);
 
         if (!result.IsDefenderWin)
         {
@@ -433,20 +433,31 @@ public sealed partial class HeroActions
     /// Runs one battle through <see cref="BattleLoader"/>, <c>Battle::Loader()</c>.
     /// </summary>
     /// <param name="world">The world.</param>
+    /// <param name="attacker">The hero whose army attacks.</param>
     /// <param name="defenders">The defending army; the loader writes the casualties back into it.</param>
     /// <param name="tileIndex">The tile the battle happens on.</param>
     /// <param name="castle">The castle the defenders hold, or <see langword="null"/> for a field battle.</param>
+    /// <param name="presenter">
+    /// The battle screen, or <see langword="null"/> to let both sides be played by the AI (reference <c>Battle::Loader()</c>
+    /// with no interface) — which is what <see cref="Ai.AiHeroAction"/> passes.
+    /// </param>
     /// <returns>The result.</returns>
-    private BattleResult Fight(World world, ArmyStack defenders, int tileIndex, CastleTown? castle)
+    internal static BattleResult Fight(
+        World world,
+        Hero attacker,
+        ArmyStack defenders,
+        int tileIndex,
+        CastleTown? castle,
+        IBattlePresenter? presenter = null)
     {
         BattleLoadRequest request = new()
         {
             World = world,
-            AttackingArmy = _hero.Army,
+            AttackingArmy = attacker.Army,
             DefendingArmy = defenders,
             TileIndex = tileIndex,
             Castle = castle,
-            Presenter = _host.BattlePresenter,
+            Presenter = presenter,
         };
 
         return BattleLoader.Load(request);
@@ -463,7 +474,7 @@ public sealed partial class HeroActions
     /// <param name="hero">The beaten hero.</param>
     /// <param name="result">The battle he lost.</param>
     /// <param name="attacker">Whether he was the attacker, which picks the half of the result to read.</param>
-    private static void BattleLose(World world, Hero hero, in BattleResult result, bool attacker)
+    internal static void BattleLose(World world, Hero hero, in BattleResult result, bool attacker)
     {
         BattleOutcome reason = attacker ? result.Attacker : result.Defender;
 

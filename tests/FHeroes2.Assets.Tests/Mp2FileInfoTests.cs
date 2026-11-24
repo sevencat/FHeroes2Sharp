@@ -67,6 +67,57 @@ public sealed class Mp2FileInfoTests
     }
 
     [Fact]
+    public void Read_GivesEveryPlayerItsOwnSideByDefault()
+    {
+        using TemporaryMap map = TemporaryMap.Create(".mp2");
+
+        Mp2FileInfo info = Mp2FileInfo.Read(map.FilePath);
+
+        // 「击败所有人」的地图没有联盟，参考的 unions 退化成每色自己（maps_fileinfo.cpp:157-160）。
+        Assert.Equal(PlayerColors.Ordered.Count, info.PlayerUnions.Count);
+
+        for (int index = 0; index < PlayerColors.Ordered.Count; ++index)
+        {
+            Assert.Equal(PlayerColors.Ordered[index], info.PlayerUnions[index]);
+        }
+    }
+
+    [Fact]
+    public void Read_SplitsTheKingdomColorsOfAnAllianceMapIntoTwoSides()
+    {
+        using TemporaryMap map = TemporaryMap.Create(
+            ".mp2",
+            header =>
+            {
+                header[9] = 1; // kingdom: green
+                header[21] = 1; // computer: green
+                header[29] = (byte)MapVictoryCondition.DefeatOtherSide;
+                BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(32), 1); // one player on the first side
+            });
+
+        Mp2FileInfo info = Mp2FileInfo.Read(map.FilePath);
+        PlayerColor side2 = PlayerColor.Red | PlayerColor.Green;
+
+        Assert.Equal(PlayerColor.Blue, info.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Blue)]);
+        Assert.Equal(side2, info.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Red)]);
+        Assert.Equal(side2, info.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Green)]);
+    }
+
+    [Fact]
+    public void Read_RejectsAnAllianceParameterThatLeavesOneSideEmpty()
+    {
+        using TemporaryMap map = TemporaryMap.Create(
+            ".mp2",
+            header =>
+            {
+                header[29] = (byte)MapVictoryCondition.DefeatOtherSide;
+                BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(32), 2); // both kingdoms on one side
+            });
+
+        Assert.Throws<BinaryFormatException>(() => Mp2FileInfo.Read(map.FilePath));
+    }
+
+    [Fact]
     public void Read_ReportsAnEmptyDescription()
     {
         using TemporaryMap map = TemporaryMap.Create(".mp2", header => header.AsSpan(Mp2FileInfo.DescriptionFieldOffset, Mp2FileInfo.DescriptionFieldLength).Clear());

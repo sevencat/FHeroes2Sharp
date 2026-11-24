@@ -84,7 +84,11 @@ public sealed partial class Army
 
         Color = isCaptureObject ? tile.GetColor(world) : PlayerColor.None;
 
-        switch (tile.MainObjectType)
+        // The reference compares against the action-typed constants (OBJ_PYRAMID and friends), and its
+        // MP2::OBJ_* names are those action values; the port names the non-action twins, so the switch
+        // reads the type with the action bit taken off (ADR-133). A raw `MainObjectType` never matched
+        // here, which left every guarded tile with an empty army.
+        switch (Mp2ObjectTypes.NonActionType(tile.MainObjectType))
         {
         case Mp2ObjectType.Pyramid:
             _slots[0].Set(MonsterType.VampireLord, 10);
@@ -104,7 +108,7 @@ public sealed partial class Army
 
         case Mp2ObjectType.Shipwreck:
         {
-            ShipwreckCaptureCondition condition = tile.GetShipwreckCaptureCondition();
+            ShipwreckCaptureCondition condition = tile.GetShipwreckCaptureCondition(world);
 
             uint ghostCount = condition switch
             {

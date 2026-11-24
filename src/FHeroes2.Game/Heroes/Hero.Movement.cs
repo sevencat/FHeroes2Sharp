@@ -200,7 +200,8 @@ public sealed partial class Hero
     /// Whether a human drives this hero, <c>isControlHuman()</c>.
     /// </summary>
     /// <remarks>
-    /// The reference asks the kingdom; there are no AI heroes yet, so the port stores the answer. It decides
+    /// The reference asks the kingdom every time; the port copies the answer in when the rosters are attached
+    /// (<c>World.AttachMapRosters</c>), because the control of a colour is fixed when the map is loaded. It decides
     /// whether walking sounds and the minimap are updated, i.e. exactly the things an AI hero skips.
     /// </remarks>
     public bool IsControlHuman { get; set; } = true;
@@ -325,7 +326,7 @@ public sealed partial class Hero
                 MovementHandler.ScoutRadar(this);
             }
 
-            MovementHandler.ActionNewPosition(this);
+            MovementHandler.ActionNewPosition(this, true);
 
             _path.PopFront();
 

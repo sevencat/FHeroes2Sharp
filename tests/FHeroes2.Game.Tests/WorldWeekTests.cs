@@ -133,7 +133,10 @@ public sealed class WorldWeekTests
     private static Mp2TileInfo MineTile() => new()
     {
         TerrainImageIndex = MapGrounds.GrassStartImageIndex,
-        ObjectName1 = (byte)((int)Mp2ObjectIcnType.ObjnGra2 << 2),
+
+        // 矿车（ExtraOvr）在地面层，第 0 帧是铁矿：加载期靠它认出「这是个矿、每天 2 铁」
+        // （maps_tiles_helper.cpp 的 OBJ_MINE 分支只找地面层的 ExtraOvr）。
+        ObjectName1 = (byte)((int)Mp2ObjectIcnType.ExtraOvr << 2),
         BottomIcnImageIndex = 0,
         Quantity1 = 0,
         Quantity2 = 0,
@@ -310,6 +313,6 @@ public sealed class WorldWeekTests
     {
         Tile tile = world.GetTile(index);
 
-        return tile.GetMainObjectType(world) == Mp2ObjectType.ActionMonster ? tile.GetMonsterCount() : 0u;
+        return tile.GetMainObjectType(world) == Mp2ObjectType.ActionMonster ? tile.GetMonsterCount(world) : 0u;
     }
 }

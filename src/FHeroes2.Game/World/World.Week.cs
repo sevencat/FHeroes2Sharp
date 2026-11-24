@@ -95,7 +95,7 @@ public sealed partial class World
                 }
                 else if (tile.GetMainObjectType(this) == Mp2ObjectType.ActionMonster)
                 {
-                    tile.UpdateMonsters(monsterLimit);
+                    tile.UpdateMonsters(this, monsterLimit);
                 }
             }
         }

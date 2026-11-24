@@ -278,7 +278,7 @@ public sealed partial class Tile
         default:
             if (IsMonsterCountHolder(Mp2ObjectTypes.NonActionType(_mainObjectType)))
             {
-                extra.AppendLine($"monster count   : {GetMonsterCount()}");
+                extra.AppendLine($"monster count   : {GetMonsterCount(world)}");
             }
 
             List<int> protectors = world.GetMonstersProtectingTile(Index);

@@ -33,13 +33,19 @@ public sealed partial class Tile
     /// or a dragon city's dragons are, while <see cref="GetMonster"/> and <see cref="GetMonsterCount"/> would
     /// answer the neutral monster of a wandering stack only. Everything else builds a stack from the two
     /// metadata lanes.
+    /// </para>
+    /// <para>
+    /// The type is read with <c>ignoreObjectUnderHero: false</c>, which is what the reference does
+    /// (<c>maps_tiles_helper.cpp:765</c>): a hero standing on a captured mine has hidden it, and the guards
+    /// still belong to the mine.
+    /// </para>
     /// </remarks>
     /// <param name="world">World that holds the captured objects.</param>
     /// <returns>The stack of the tile; an empty one when the tile holds no guards.</returns>
     public Troop GetTroop(World world) =>
-        Mp2ObjectTypes.IsCaptureObject(MainObjectType)
+        Mp2ObjectTypes.IsCaptureObject(GetMainObjectType(world, false))
             ? world.GetCapturedObject(Index).Guardians
-            : new Troop(GetMonster(world), GetMonsterCount());
+            : new Troop(GetMonster(world), GetMonsterCount(world));
 
     /// <summary>
     /// Grows a wandering stack, <c>Maps::updateMonstersOnTile()</c> (<c>maps_tiles_helper.cpp:1697</c>).
@@ -56,15 +62,16 @@ public sealed partial class Tile
     /// the limit — all three are early returns in the reference as well, not assertions.
     /// </para>
     /// </remarks>
+    /// <param name="world">The world the tile belongs to; needed to read the count through the hero.</param>
     /// <param name="monsterLimit">The largest stack the map allows a wandering monster to grow to.</param>
-    public void UpdateMonsters(uint monsterLimit)
+    public void UpdateMonsters(World world, uint monsterLimit)
     {
-        if (Mp2ObjectTypes.NonActionType(MainObjectType) != Mp2ObjectType.Monster)
+        if (GetNonActionObjectType(world) != Mp2ObjectType.Monster)
         {
             return;
         }
 
-        uint beforeTroopCount = GetMonsterCount();
+        uint beforeTroopCount = GetMonsterCount(world);
 
         if (beforeTroopCount == 0 || beforeTroopCount >= monsterLimit)
         {
@@ -74,7 +81,7 @@ public sealed partial class Tile
         uint bonusUnit = Rand.Get(1, 7) <= (beforeTroopCount % 7) ? 1u : 0u;
         uint troopGrowth = Math.Min((beforeTroopCount / 7) + bonusUnit, monsterLimit - beforeTroopCount);
 
-        SetMonsterCount(beforeTroopCount + troopGrowth);
+        SetMonsterCount(world, beforeTroopCount + troopGrowth);
     }
 
     /// <summary>
@@ -136,7 +143,7 @@ public sealed partial class Tile
 
         bool setDefinedCount = count > 0;
 
-        SetMonsterCount(setDefinedCount ? count : MonsterStatistics.GetRandomCount(monster));
+        SetMonsterCount(world, setDefinedCount ? count : MonsterStatistics.GetRandomCount(monster));
 
         if (monster == MonsterType.Ghost || MonsterAbilities.IsElemental(monster))
         {

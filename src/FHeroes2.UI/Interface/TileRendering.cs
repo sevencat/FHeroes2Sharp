@@ -767,15 +767,16 @@ public static class TileRendering
     /// </summary>
     /// <param name="tile">Tile to inspect.</param>
     /// <returns>One entry per sprite piece, empty when the mine has no guardian.</returns>
-    public static IReadOnlyList<ObjectRenderingInfo> GetMineGuardianSpritesPerTile(Tile tile)
+    public static IReadOnlyList<ObjectRenderingInfo> GetMineGuardianSpritesPerTile(World world, Tile tile)
     {
+        ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(tile);
 
         Debug.Assert(tile.MainObjectType == Mp2ObjectType.Mine);
 
         var output = new List<ObjectRenderingInfo>();
 
-        SpellType spellId = tile.GetMineSpellId();
+        SpellType spellId = tile.GetMineSpellId(world);
 
         switch (spellId)
         {

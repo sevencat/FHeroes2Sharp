@@ -6,6 +6,7 @@ using FHeroes2.App.Audio;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
 using FHeroes2.App.Input;
+using FHeroes2.App.Localization;
 using FHeroes2.App.Scenes;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
@@ -13,11 +14,16 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Ai;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
+
+// 两个 ZoomLevel 各有各的用处：这里是王国的视野缩放档位，Settings 的那个是界面缩放倍率。
+using ZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
 using FHeroes2.UI.Widgets;
@@ -76,6 +82,13 @@ public sealed class GameHost : IDisposable
     private bool _sdlInitialised;
     private bool _ttfInitialised;
     private bool _running;
+
+    /// <summary>
+    /// The configuration file of <c>fheroes2.cfg</c>, or <see langword="null"/> when there is none to use
+    /// (<c>--no-config</c>, or no application data folder to put it in).
+    /// </summary>
+    private string? _configFile;
+
     private int _screenshotFrame = -1;
     private bool _screenshotRequested;
     private bool _disposed;
@@ -123,6 +136,7 @@ public sealed class GameHost : IDisposable
         GameLog.Info($"{BuildInfo.DisplayName} starting (SDL {SDL.GetVersion()}, SDL_ttf {TTF.Version()})");
 
         LoadGameData();
+        LoadSettings();
         _fonts = GameFonts.TryLoad(_assets);
 
         try
@@ -157,6 +171,9 @@ public sealed class GameHost : IDisposable
 
             _running = true;
             Loop();
+
+            // 参考在各修改点各自保存（设置窗、热键、雷达位置……），端口在退出时统一落一次，是所有修改点的超集。
+            SaveSettings();
         }
         catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
@@ -646,6 +663,14 @@ public sealed class GameHost : IDisposable
                 }
 
                 return true;
+
+            case SDL.Keycode.Up when _menu?.LanguagePicker is not null:
+                _menu.MoveLanguageSelection(-1);
+                return false;
+
+            case SDL.Keycode.Down when _menu?.LanguagePicker is not null:
+                _menu.MoveLanguageSelection(1);
+                return false;
 
             case SDL.Keycode.Up when _menu?.Scenario is not null:
                 _menu.MoveScenarioSelection(-1);
@@ -1648,11 +1673,20 @@ public sealed class GameHost : IDisposable
 
         if (_options.Scene == SceneKind.Menu)
         {
-            _menu = MainMenuScene.TryCreate(_frame, _assets, _fonts, _options.Language);
+            _menu = MainMenuScene.TryCreate(_frame, _assets, _fonts, StartLanguage);
 
             if (_menu is not null)
             {
                 _menu.AnimationEnabled = !_options.FreezeAnimation;
+                _menu.LanguageChanged = OnLanguageChanged;
+                _menu.FirstRunFinished = OnFirstRunFinished;
+
+                // 菜单在既没有 --lang、配置里也没有 lang 时会自己落到系统语言上（MainMenuScene.TryCreate）；
+                // 把结果记回 Settings，文件里的 lang 才和界面一致，下一次启动也不必再猜一遍。
+                if (Settings.Get().GameLanguage.Length == 0)
+                {
+                    Settings.Get().SetGameLanguage(_menu.Text.Culture);
+                }
 
                 if (_options.OpenSettings)
                 {
@@ -1665,6 +1699,15 @@ public sealed class GameHost : IDisposable
                     {
                         _menu.Scenario?.Select(selection);
                     }
+                }
+
+                // 首运的语言选择与问候消息：参考的 isFirstGameRun 分支（game_mainmenu.cpp:265-300）。
+                // 只有在真的读到了配置文件时才走——--no-config 时 Settings 连文件都没碰，旗标停在默认值上，
+                // 让它出窗口会把像素基线和脚本一起卡住（见 ADR-202）。--open-settings / --open-scenario
+                // 先占了窗口，BeginFirstRun 自己会让路，旗标留到下一次启动。
+                if (ShouldStartFirstRun())
+                {
+                    _menu.BeginFirstRun();
                 }
 
                 if (_options.Cursor is { } cursor)
@@ -1698,6 +1741,32 @@ public sealed class GameHost : IDisposable
         if (!string.IsNullOrWhiteSpace(_options.MapFile))
         {
             OpenMapFile(_options.MapFile);
+        }
+
+        // --skip-turns 在开机时就把回合推着往前走：轮到电脑时直接跑一整个电脑回合，轮到人类时直接结束，
+        // 这样冒烟不点鼠标也能覆盖 AI::Planner::KingdomTurn()，而且能看到连着几天的决策。
+        if (_options.SkipTurns is int skipTurns && _adventure is { } skipMap)
+        {
+            int ended = 0;
+
+            while (ended < skipTurns && skipMap.Session is { IsGameOver: false } skippable)
+            {
+                if (skippable.IsAiTurn)
+                {
+                    AiTurnOutcome outcome = skippable.RunAiTurn();
+
+                    if (outcome != AiTurnOutcome.EndTurn)
+                    {
+                        GameLog.Warn($"--skip-turns: the computer ended the game with {outcome}.");
+                        break;
+                    }
+                }
+
+                skipMap.EndTurn();
+                ++ended;
+            }
+
+            GameLog.Info($"--skip-turns: ended {ended} turn(s); day {skipMap.Session?.DayCount.ToString() ?? "?"}.");
         }
 
         // The town screen normally opens by clicking one of the player's towns on the map; --enter-town
@@ -1882,6 +1951,124 @@ public sealed class GameHost : IDisposable
             _running = false;
         }
     }
+
+    /// <summary>
+    /// Reads <c>fheroes2.cfg</c>, the <c>initConfig()</c> of <c>Game::Init()</c> (<c>game_init.cpp:217-230</c>):
+    /// a missing or unreadable file is replaced by a freshly written default one, so the first run leaves a file
+    /// to edit and later runs have something to remember the language in.
+    /// </summary>
+    private void LoadSettings()
+    {
+        if (_options.NoConfig)
+        {
+            GameLog.Info("Configuration file disabled (--no-config); preferences are not kept.");
+            return;
+        }
+
+        string? path = ConfigurationFile.Resolve(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), _options.ConfigFile);
+
+        if (path is null)
+        {
+            GameLog.Warn("No application data folder; preferences are not kept.");
+            return;
+        }
+
+        Settings settings = Settings.Get();
+
+        if (File.Exists(path) && settings.Read(path))
+        {
+            GameLog.Info($"Configuration read from '{path}' (interface language '{settings.GameLanguage}').");
+        }
+        else
+        {
+            if (!ConfigurationFile.EnsureDirectory(path) || !settings.Save(path))
+            {
+                GameLog.Warn($"The configuration file '{path}' cannot be written; preferences are not kept.");
+                return;
+            }
+
+            GameLog.Info($"Configuration written to '{path}'.");
+        }
+
+        _configFile = path;
+
+        // --lang 压过文件：它是端口给脚本选语言的入口，和菜单里依次翻语言等价。
+        if (_options.Language is { } language)
+        {
+            settings.SetGameLanguage(language);
+        }
+    }
+
+    /// <summary>
+    /// Writes the preferences, <c>conf.Save( Settings::configFileName )</c>; does nothing with <c>--no-config</c>.
+    /// </summary>
+    private void SaveSettings()
+    {
+        if (_configFile is not { } path || _presenter is not { } presenter)
+        {
+            return;
+        }
+
+        ResolutionInfo resolution = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height,
+            presenter.OutputSize.Width, presenter.OutputSize.Height);
+
+        if (Settings.Get().Save(path, resolution))
+        {
+            GameLog.Info($"Preferences saved to '{path}'.");
+        }
+        else
+        {
+            GameLog.Warn($"Preferences could not be saved to '{path}'.");
+        }
+    }
+
+    /// <summary>Records the language the settings dialog applied and writes the preferences out.</summary>
+    /// <param name="text">The language that was applied.</param>
+    private void OnLanguageChanged(GameText text)
+    {
+        Settings.Get().SetGameLanguage(text.Culture);
+        SaveSettings();
+    }
+
+    /// <summary>
+    /// Whether the menu has to walk the player through the onboarding: a configuration file was read and it
+    /// still asks for it (<c>conf.isFirstGameRun()</c>, <c>game_mainmenu.cpp:265</c>).
+    /// </summary>
+    /// <remarks>
+    /// <c>--no-config</c> 时 <see cref="LoadSettings"/> 提前返回，<see cref="Settings.IsFirstGameRun"/> 停在默认的
+    /// <see langword="true"/> 上；若照它开窗，五个像素基线和所有脚本都会停在语言选择上，所以旗标只有在真的
+    /// 读到了配置文件时才算数。
+    /// </remarks>
+    private bool ShouldStartFirstRun() => _configFile is not null && Settings.Get().IsFirstGameRun;
+
+    /// <summary>
+    /// Ends the first run: remembers the language the player settled on, clears the flag and writes the
+    /// file, the <c>conf.resetFirstGameRun(); conf.Save( ... )</c> of <c>game_mainmenu.cpp:300</c>.
+    /// </summary>
+    private void OnFirstRunFinished()
+    {
+        Settings settings = Settings.Get();
+
+        if (_menu is { } menu)
+        {
+            settings.SetGameLanguage(menu.Text.Culture);
+        }
+
+        settings.ResetFirstGameRun();
+        SaveSettings();
+        GameLog.Info("First run completed; the flag is cleared and the preferences are saved.");
+    }
+
+    /// <summary>
+    /// The culture the main menu starts with: <c>--lang</c> first, then the configuration file, then English.
+    /// </summary>
+    /// <remarks>
+    /// <c>--lang</c> 必须在这里再取一次：<c>--no-config</c> 时 <see cref="LoadSettings"/> 提前返回，配置文件里
+    /// 的语言根本没有被读进来，而基线脚本正是「<c>--no-config</c> + <c>--lang zh_CN</c>」的组合。
+    /// </remarks>
+    private string? StartLanguage =>
+        _options.Language ?? (Settings.Get().GameLanguage is { Length: > 0 } culture ? culture : null);
 
     private void LoadGameData()
     {

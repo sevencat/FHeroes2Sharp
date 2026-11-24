@@ -459,7 +459,7 @@ public sealed partial class Hero : ISpellBookOwner
     /// <c>Settings::getCurrentMapFileInfo()</c>.
     /// </summary>
     /// <returns>The version, <see cref="MapVersion.SuccessionWars"/> when no map is chosen yet.</returns>
-    private static MapVersion GetCurrentMapVersion() =>
+    internal static MapVersion GetCurrentMapVersion() =>
         Settings.Get().CurrentMapFileInfo?.Version ?? MapVersion.SuccessionWars;
 
     /// <summary>
@@ -568,7 +568,7 @@ public sealed partial class Hero : ISpellBookOwner
         MoveToDest(destination, world);
         SpellCasted(new Spell(SpellType.DimensionDoor));
         Path.Reset();
-        MovementHandler.ActionNewPosition(this);
+        MovementHandler.ActionNewPosition(this, false);
 
         return false;
     }
@@ -687,7 +687,7 @@ public sealed partial class Hero : ISpellBookOwner
             return false;
         }
 
-        tile.SetMineSpell(spell.Type);
+        tile.SetMineSpell(world, spell.Type);
 
         if (spell.Type == SpellType.Haunt && IsControlHuman)
         {
@@ -732,7 +732,7 @@ public sealed partial class Hero : ISpellBookOwner
     /// </remarks>
     /// <param name="world">The world the hero stands in.</param>
     /// <returns>The nearest town, or null when the kingdom has none.</returns>
-    private CastleTown? FindNearestCastleTownGate(World world)
+    internal CastleTown? FindNearestCastleTownGate(World world)
     {
         MapGeometry geometry = world.Geometry!.Value;
 

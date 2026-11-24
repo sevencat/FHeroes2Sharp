@@ -1469,11 +1469,15 @@ public sealed partial class World
     /// </para>
     /// </remarks>
     /// <param name="map">A map that was read from a file or created blank.</param>
+    /// <param name="difficulty">
+    /// 关卡难度，也就是玩家挑的那一档（<c>Game::getDifficulty()</c>，<c>kingdom.cpp:103</c> 拿它算起始资源）。
+    /// 不传就退回地图头里的难度，那是测试与工具的老口径（见 <see cref="CreateMapKingdoms"/>）。
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="map"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">
     /// The dimensions of <paramref name="map"/> do not match its tile count.
     /// </exception>
-    public void LoadMap(Mp2Map map)
+    public void LoadMap(Mp2Map map, GameDifficulty? difficulty = null)
     {
         ArgumentNullException.ThrowIfNull(map);
 
@@ -1498,7 +1502,7 @@ public sealed partial class World
 
         // World::Defaults() -> vec_kingdoms.Init() (world.cpp:287): the kingdoms come first, because a kingdom's
         // starting resources depend on the difficulty and on whether the computer plays it (see World.Kingdoms.cs).
-        CreateMapKingdoms(map.Info);
+        CreateMapKingdoms(map.Info, difficulty ?? map.Info.Difficulty);
 
         // World::Defaults() -> vec_heroes.Init(): the hero table depends on the map version, because The
         // Price of Loyalty heroes only exist for maps of the expansions. The reference builds the table
@@ -1563,6 +1567,11 @@ public sealed partial class World
         foreach (Tile tile in _tiles)
         {
             tile.FixMP2MapTileObjectType(this);
+
+            // The metadata of the object: the income of a mine, the spell of a shrine, the artifact in a
+            // skeleton, everything the file does not carry (world_loadmap.cpp:1415 ->
+            // Maps::setInitialObjectInfo, maps_tiles_helper.cpp:1015). See Tile.InitialObjectInfo.cs.
+            tile.UpdateTileMetadata(this);
 
             // The reference processes the objects of a new map tile by tile: the type is fixed first, then
             // the object data of the tile is applied (world_loadmap.cpp:1405), and for a hero that means

@@ -82,6 +82,12 @@ public sealed partial class Hero
         ResetModes(HeroModes.Jail);
 
         SetColor(kingdom.Color);
+
+        // 参考的 isControlHuman() 每次去问王国；端口把答案抄在英雄上（World.AttachMapRosters 对开局名册做的就是
+        // 这件事），新雇到的英雄不在那份名册里，得在这里补抄，否则他会一直带着 IsControlHuman 的默认值 true——
+        // 电脑的英雄被当成人类的，装上开图处理器、AI 动作一个都不做。
+        IsControlHuman = kingdom.IsControlHuman;
+
         SetMapIndex(mapIndex);
         Direction = Maps.Direction.Right;
 

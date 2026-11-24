@@ -38,7 +38,7 @@ public sealed class AiPlannerTests : IDisposable
         Assert.True(oneChampion > 0.0);
 
         // The answer is cached: growing the same stack does not change what the planner already knows ...
-        small.SetMonsterCount(100);
+        small.SetMonsterCount(world, 100);
 
         Assert.Equal(oneChampion, AiPlanner.Instance.GetTileArmyStrength(small));
 

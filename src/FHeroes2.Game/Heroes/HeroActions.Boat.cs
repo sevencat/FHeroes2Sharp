@@ -156,7 +156,7 @@ public sealed partial class HeroActions
         _hero.SetShipMaster(false);
 
         _hero.ShowPath(true);
-        _hero.MovementHandler.ActionNewPosition(_hero);
+        _hero.MovementHandler.ActionNewPosition(_hero, true);
 
         return new CoastResult(CoastOutcome.Disembarked, fromIndex, boatFacing);
     }

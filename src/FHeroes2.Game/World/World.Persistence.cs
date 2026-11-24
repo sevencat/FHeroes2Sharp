@@ -140,6 +140,11 @@ public sealed partial class World
             _tiles.Add(Tile.ReadFrom(stream, version));
         }
 
+        if (version < SaveFileFormat.Release1_1_08)
+        {
+            RepairHackedMines();
+        }
+
         _heroes.ReadFrom(stream, version, geometry);
 
         // 城堡表的占地表要知道宽度，所以先换一张按当前宽度建的（castle.cpp:2481 清空的也是同一张）。
@@ -233,6 +238,28 @@ public sealed partial class World
         for (int index = 0; index < _tiles.Count; ++index)
         {
             fog.SetFog(index % geometry.Width, index / geometry.Width, _tiles[index].FogColors);
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the "hacked" mines of a save older than 1.1.08, <c>maps_tiles.cpp:1956-1961</c>.
+    /// </summary>
+    /// <remarks>
+    /// 旧编辑器允许矿井不带资源覆盖层（<c>EXTRAOVR</c>）；参考在每块瓦片读出来之后立刻调
+    /// <c>setInitialObjectInfo()</c>，让它要么把覆盖层换进主部件、要么把这块认不出的矿清掉。端口的同名方法
+    /// 要 <see cref="World"/>（随机物件分支需要几何），所以放在瓦片循环之后、世界几何已就位时做一次。
+    /// 比较用折位后的 <see cref="Mp2ObjectType.Mine"/>：参考存的是带动作位的 <c>OBJ_MINE</c>，端口的
+    /// <see cref="Tile.MainObjectType"/> 在内部是多数字段折位后的裸值。
+    /// </remarks>
+    private void RepairHackedMines()
+    {
+        foreach (Tile tile in _tiles)
+        {
+            if (Mp2ObjectTypes.NonActionType(tile.MainObjectType) == Mp2ObjectType.Mine &&
+                tile.MainObjectPart.IcnType != Mp2ObjectIcnType.ExtraOvr)
+            {
+                tile.SetInitialObjectInfo(this);
+            }
         }
     }
 

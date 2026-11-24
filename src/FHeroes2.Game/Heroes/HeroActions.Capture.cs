@@ -103,7 +103,13 @@ public sealed partial class HeroActions
 
         Tile tile = world.GetTile(tileIndex);
 
-        if (!Mp2ObjectTypes.IsCaptureObject(tile.MainObjectType))
+        // 站上已经拿下的矿之后瓦片上放的是英雄本身（ActionHero），真正的东西记在英雄身上
+        // （heroes_action.cpp:2214 把 OBJ_MINE 记进 hero），所以这里两种都要看。
+        Mp2ObjectType tileType = tile.MainObjectType == Mp2ObjectType.ActionHero
+            ? tile.GetMainObjectType(world, false)
+            : tile.MainObjectType;
+
+        if (!Mp2ObjectTypes.IsCaptureObject(tileType))
         {
             Debug.Assert(false, $"A capture action was dispatched to {objectType} on a tile that cannot be captured.");
 
@@ -120,7 +126,7 @@ public sealed partial class HeroActions
             ArmyStack defenders = new();
             defenders.SetFromTile(world, tile);
 
-            BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+            BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
             if (result.IsAttackerWin)
             {
@@ -145,7 +151,7 @@ public sealed partial class HeroActions
             else
             {
                 // 守军全灭但英雄还是输了：保护没了，矿照旧留在那儿等下一拨人来抢（2170-2174）。
-                RemoveObjectProtection(tile);
+                RemoveObjectProtection(world, tile);
             }
 
             BattleLose(world, _hero, result, attacker: true);
@@ -188,7 +194,7 @@ public sealed partial class HeroActions
         ArmyStack defenders = new();
         defenders.SetFromTile(world, tile);
 
-        BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+        BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
         if (!result.IsAttackerWin)
         {
@@ -248,7 +254,7 @@ public sealed partial class HeroActions
             ArmyStack defenders = new();
             defenders.SetFromTile(world, tile);
 
-            BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+            BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
             if (!result.IsAttackerWin)
             {
@@ -310,7 +316,7 @@ public sealed partial class HeroActions
     /// <param name="world">The world.</param>
     private void CaptureObject(int tileIndex, World world)
     {
-        RemoveObjectProtection(world.GetTile(tileIndex));
+        RemoveObjectProtection(world, world.GetTile(tileIndex));
 
         world.CaptureObject(tileIndex, _hero.Color);
     }
@@ -323,12 +329,13 @@ public sealed partial class HeroActions
     /// 参考这里只有一件事：矿上的守卫法术（<c>SetElementalGuardian</c> 那一批）要在换主人时消失，否则新主人会
     /// 被自己的矿拦住。其余可捕获对象的守护就是 <see cref="CapturedObject.Guardians"/> 本身，由调用方清零。
     /// </remarks>
+    /// <param name="world">The world the tile belongs to.</param>
     /// <param name="tile">The captured object.</param>
-    private static void RemoveObjectProtection(Tile tile)
+    private static void RemoveObjectProtection(World world, Tile tile)
     {
-        if (Mp2ObjectTypes.NonActionType(tile.MainObjectType) == Mp2ObjectType.Mine)
+        if (Mp2ObjectTypes.NonActionType(tile.GetMainObjectType(world, false)) == Mp2ObjectType.Mine)
         {
-            tile.RemoveMineSpell();
+            tile.RemoveMineSpell(world);
         }
     }
 }

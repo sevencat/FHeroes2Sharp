@@ -16,6 +16,11 @@ namespace FHeroes2.Game.Tests;
 /// (<c>world_pathfinding.cpp:543-1434</c>): the guard strength it compares against, the cost function without
 /// a movement-point budget, the teleports it walks through, and the cut of <c>buildPath()</c>.
 /// </summary>
+/// <remarks>
+/// One test swaps <see cref="World.Current"/> to read the objects on the way, so the class shares the singleton
+/// collection instead of racing the tests that own the world.
+/// </remarks>
+[Collection(SettingsSingletonCollection.Name)]
 public sealed class AIWorldPathfinderTests
 {
     [Fact]

@@ -706,13 +706,23 @@ public sealed class HeroMovementTests
 
         public int ActionNewPositionCount { get; private set; }
 
+        public int MonsterAttackAllowedCount { get; private set; }
+
         public int ScoutRadarCount { get; private set; }
 
         public void Scout(Hero hero, int tileIndex) => Scouted.Add(tileIndex);
 
         public void Action(Hero hero, int tileIndex) => Acted.Add(tileIndex);
 
-        public void ActionNewPosition(Hero hero) => ++ActionNewPositionCount;
+        public void ActionNewPosition(Hero hero, bool allowMonsterAttack)
+        {
+            ++ActionNewPositionCount;
+
+            if (allowMonsterAttack)
+            {
+                ++MonsterAttackAllowedCount;
+            }
+        }
 
         public void ScoutRadar(Hero hero) => ++ScoutRadarCount;
     }

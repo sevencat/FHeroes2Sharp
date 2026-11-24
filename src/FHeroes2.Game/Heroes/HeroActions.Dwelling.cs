@@ -171,7 +171,7 @@ public sealed partial class HeroActions
         else
         {
             // 参考把数量清成 0 而不是清元数据：种类还在瓦片上，回来的英雄仍能看出这儿住过什么。
-            tile.SetMonsterCount(0);
+            tile.SetMonsterCount(world, 0);
             _hero.Army.JoinTroop(troop.Monster, troop.Count, false);
 
             result = new DwellingJoinResult(DwellingJoinOutcome.Joined, troop.Monster, troop.Count);
@@ -220,7 +220,7 @@ public sealed partial class HeroActions
         }
         else if (_host.Ask(HeroActionQuestion.RecruitDwellingMonsters, troop))
         {
-            result = RecruitMonsterFromTile(tile, troop, remove: false);
+            result = RecruitMonsterFromTile(world, tile, troop, remove: false);
         }
         else
         {
@@ -292,7 +292,7 @@ public sealed partial class HeroActions
                     default);
             }
 
-            DwellingRecruitResult purchase = RecruitMonsterFromTile(tile, subdued, remove: false);
+            DwellingRecruitResult purchase = RecruitMonsterFromTile(world, tile, subdued, remove: false);
 
             Kingdom.SetVisited(tileIndex, objectType);
 
@@ -314,7 +314,7 @@ public sealed partial class HeroActions
         ArmyStack defenders = new();
         defenders.SetFromTile(world, tile);
 
-        BattleResult battle = Fight(world, defenders, tileIndex, castle: null);
+        BattleResult battle = Fight(world, _hero, defenders, tileIndex, castle: null);
 
         if (!battle.IsAttackerWin)
         {
@@ -349,7 +349,7 @@ public sealed partial class HeroActions
                 default);
         }
 
-        DwellingRecruitResult afterBattle = RecruitMonsterFromTile(tile, survivors, remove: false);
+        DwellingRecruitResult afterBattle = RecruitMonsterFromTile(world, tile, survivors, remove: false);
 
         Kingdom.SetVisited(tileIndex, objectType);
 
@@ -380,11 +380,12 @@ public sealed partial class HeroActions
     /// 数量窗是界面给的，理论上不该超过存货；端口在断言之后仍夹一次，免得宿主违约把瓦片数量写成负数回绕。
     /// </para>
     /// </remarks>
+    /// <param name="world">The world the dwelling belongs to.</param>
     /// <param name="tile">The dwelling.</param>
     /// <param name="troop">What it holds.</param>
     /// <param name="remove">Whether buying everything empties the object completely.</param>
     /// <returns>How the purchase ended.</returns>
-    private DwellingRecruitResult RecruitMonsterFromTile(Tile tile, Troop troop, bool remove)
+    private DwellingRecruitResult RecruitMonsterFromTile(World world, Tile tile, Troop troop, bool remove)
     {
         if (!_hero.Army.CanJoinTroop(troop.Monster))
         {
@@ -409,7 +410,7 @@ public sealed partial class HeroActions
         }
         else
         {
-            tile.SetMonsterCount(troop.Count - recruit);
+            tile.SetMonsterCount(world, troop.Count - recruit);
         }
 
         Funds payment = troop.GetCost() * recruit;

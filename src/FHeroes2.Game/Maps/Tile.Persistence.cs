@@ -28,10 +28,10 @@ namespace FHeroes2.Game.Maps;
 /// reader that finds a count other than three must fail the stream rather than resize anything.
 /// </para>
 /// <para>
-/// <b>One gate is a repair we do not have yet.</b> Before 1.1.08 a mine whose ICN type is not <c>EXTRAOVR</c> is
-/// passed through <c>setInitialObjectInfo()</c>, which invents the resource of a "hacked" mine. That function is still
-/// unported (<see cref="TileMetadata"/> names it under "not here yet"), so the gate is kept with an explicit comment
-/// instead of a substitute — old saves keep whatever the mine held.
+/// <b>The 1.1.08 mine repair lives in <see cref="World"/>.</b> Before 1.1.08 a mine whose ICN type is not
+/// <c>EXTRAOVR</c> is passed through <c>setInitialObjectInfo()</c>, which invents the resource of a "hacked" mine
+/// (<c>maps_tiles.cpp:1956-1961</c>). The port's method needs the world (its random branches do), so the gate is
+/// applied right after the tile loop of <see cref="World.ReadFrom(StreamBase, SaveFileFormat)"/> instead of here.
 /// </para>
 /// </remarks>
 public sealed partial class Tile
@@ -153,12 +153,6 @@ public sealed partial class Tile
         {
             mainLayerType = stream.ReadUInt8();
             tile._mainObjectPart = new ObjectPart((ObjectLayerType)mainLayerType, mainUid, (Mp2ObjectIcnType)mainIcnType, mainIcnIndex);
-        }
-
-        if (version < SaveFileFormat.Release1_1_08 && tile._mainObjectType == Mp2ObjectType.Mine
-            && tile._mainObjectPart.IcnType != Mp2ObjectIcnType.ExtraOvr)
-        {
-            // setInitialObjectInfo( tile ) of maps_tiles_helper.cpp:1015 — unported, see the remarks of this class.
         }
 
         tile._boatOwnerColor = (PlayerColor)stream.ReadUInt8();

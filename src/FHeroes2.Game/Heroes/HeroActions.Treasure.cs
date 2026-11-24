@@ -145,7 +145,7 @@ public sealed partial class HeroActions
         ArmyStack defenders = new();
         defenders.SetFromTile(world, tile);
 
-        BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+        BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
         if (!result.IsAttackerWin)
         {
@@ -229,7 +229,7 @@ public sealed partial class HeroActions
         }
         else
         {
-            DaemonCaveCaptureBonus bonus = tile.GetDaemonCaveBonusType();
+            DaemonCaveCaptureBonus bonus = tile.GetDaemonCaveBonusType(world);
 
             if (bonus == DaemonCaveCaptureBonus.Get1000ExperienceAndArtifact && _hero.BagArtifacts.IsFull)
             {
@@ -275,7 +275,7 @@ public sealed partial class HeroActions
 
                 case DaemonCaveCaptureBonus.Pay2500Gold:
                 {
-                    Funds payment = tile.GetDaemonPaymentCondition();
+                    Funds payment = tile.GetDaemonPaymentCondition(world);
 
                     // 钱不够就没什么好问的：恶魔直接动手（3152），与「不肯给」同一个下场。
                     if (!Kingdom.AllowPayment(payment) || !_host.Ask(HeroActionQuestion.PayDaemonRansom, (uint)payment.Gold))
@@ -312,7 +312,7 @@ public sealed partial class HeroActions
                 ArmyStack defenders = new();
                 defenders.SetFromTile(world, tile);
 
-                BattleResult result = Fight(world, defenders, tileIndex, castle: null);
+                BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
 
                 if (!result.IsAttackerWin)
                 {
@@ -366,7 +366,7 @@ public sealed partial class HeroActions
             }
 
             case DaemonCaveOutcome.PaidOff:
-                Kingdom.OddFundsResource(tile.GetDaemonPaymentCondition());
+                Kingdom.OddFundsResource(tile.GetDaemonPaymentCondition(world));
                 break;
 
             case DaemonCaveOutcome.Death:

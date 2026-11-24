@@ -165,15 +165,20 @@ public static partial class Mp2ObjectTypes
     /// <c>MP2::isCaptureObject</c> (<c>mp2.cpp:700</c>): the objects a player can take ownership of, i.e.
     /// the ones <c>World.CaptureObject</c> knows about.
     /// </summary>
-    /// <param name="type">Object type to test.</param>
+    /// <param name="type">Object type to test, with or without the action bit.</param>
     /// <returns><see langword="true"/> when the object can be captured.</returns>
-    public static bool IsCaptureObject(Mp2ObjectType type) => type switch
+    /// <remarks>
+    /// The reference only ever passes the action value. The port also asks this of the type a hero parked
+    /// under itself (<c>Tile.getMainObjectType( false )</c>), which is the non-action twin, so the bit is
+    /// taken off before the test (ADR-133).
+    /// </remarks>
+    public static bool IsCaptureObject(Mp2ObjectType type) => NonActionType(type) switch
     {
-        Mp2ObjectType.ActionAlchemistLab => true,
-        Mp2ObjectType.ActionCastle => true,
-        Mp2ObjectType.ActionLighthouse => true,
-        Mp2ObjectType.ActionMine => true,
-        Mp2ObjectType.ActionSawmill => true,
+        Mp2ObjectType.AlchemistLab => true,
+        Mp2ObjectType.Castle => true,
+        Mp2ObjectType.Lighthouse => true,
+        Mp2ObjectType.Mine => true,
+        Mp2ObjectType.Sawmill => true,
         _ => false,
     };
 

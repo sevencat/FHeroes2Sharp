@@ -1222,7 +1222,7 @@ public sealed class BattlePlanner
 
                 foreach (BattleUnit enemy in enemies)
                 {
-                    CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(currentUnit, enemy);
+                    CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(arena, currentUnit, enemy);
 
                     if (nearestCellInfo.Index == -1)
                     {
@@ -1441,7 +1441,7 @@ public sealed class BattlePlanner
 
                 foreach (BattleUnit enemy in adjacentEnemies)
                 {
-                    CellDistanceInfo nearestToEnemyCellInfo = BattleTactics.FindNearestCellNextToUnit(currentUnit, enemy);
+                    CellDistanceInfo nearestToEnemyCellInfo = BattleTactics.FindNearestCellNextToUnit(arena, currentUnit, enemy);
 
                     if (nearestToEnemyCellInfo.Index == -1)
                     {
@@ -3041,7 +3041,7 @@ public static class AiBattle
         // 先找本回合就能打到的。
         foreach (BattleUnit nearbyUnit in nearestUnits)
         {
-            CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(unit, nearbyUnit);
+            CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(arena, unit, nearbyUnit);
 
             if (nearestCellInfo.Index == -1)
             {
@@ -3059,7 +3059,7 @@ public static class AiBattle
         // 本回合打不到：挑最近的，下回合再说。
         foreach (BattleUnit nearbyUnit in nearestUnits)
         {
-            CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(unit, nearbyUnit);
+            CellDistanceInfo nearestCellInfo = BattleTactics.FindNearestCellNextToUnit(arena, unit, nearbyUnit);
 
             if (nearestCellInfo.Index == -1)
             {

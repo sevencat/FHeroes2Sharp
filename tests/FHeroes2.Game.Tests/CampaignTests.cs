@@ -1,3 +1,4 @@
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.Campaign;
 using FHeroes2.Game.Heroes;
@@ -175,6 +176,58 @@ public sealed class CampaignTests
     public void AlliedComputerPlayersComeFromTheCampaignData(int campaignId, int scenarioId, bool allied)
     {
         Assert.Equal(allied, CampaignData.AreAllAiPlayersAllied(new ScenarioInfoId(campaignId, scenarioId)));
+    }
+
+    [Fact]
+    public void CampaignAllianceMergesEveryComputerColor()
+    {
+        // Archibald 第五关：三色同图，人类是蓝色，两个电脑必须并成一方（campaign_data.cpp:741-745）。
+        var mapInfo = new Mp2FileInfo
+        {
+            FilePath = "test.mp2",
+            Name = "Test",
+            Description = string.Empty,
+            Width = 72,
+            Height = 72,
+            Difficulty = GameDifficulty.Normal,
+            KingdomColors = PlayerColor.Blue | PlayerColor.Green | PlayerColor.Red,
+            HumanPlayers = PlayerColor.Blue,
+            ComputerPlayers = PlayerColor.Green | PlayerColor.Red,
+        };
+
+        Mp2FileInfo merged =
+            CampaignData.UpdateScenarioGameplayConditions(new ScenarioInfoId(CampaignId.Archibald, 5), mapInfo);
+
+        PlayerColor computerSide = PlayerColor.Green | PlayerColor.Red;
+
+        Assert.Equal(PlayerColor.Blue, merged.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Blue)]);
+        Assert.Equal(computerSide, merged.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Green)]);
+        Assert.Equal(computerSide, merged.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Red)]);
+
+        // 原表不动，参考也是在副本上改。
+        Assert.Equal(PlayerColor.Green, mapInfo.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Green)]);
+    }
+
+    [Fact]
+    public void CampaignAllianceLeavesTheOtherScenariosUntouched()
+    {
+        var mapInfo = new Mp2FileInfo
+        {
+            FilePath = "test.mp2",
+            Name = "Test",
+            Description = string.Empty,
+            Width = 72,
+            Height = 72,
+            Difficulty = GameDifficulty.Normal,
+            KingdomColors = PlayerColor.Blue | PlayerColor.Red,
+            HumanPlayers = PlayerColor.Blue,
+            ComputerPlayers = PlayerColor.Red,
+        };
+
+        Mp2FileInfo result =
+            CampaignData.UpdateScenarioGameplayConditions(new ScenarioInfoId(CampaignId.Archibald, 0), mapInfo);
+
+        Assert.Same(mapInfo, result);
     }
 
     [Fact]

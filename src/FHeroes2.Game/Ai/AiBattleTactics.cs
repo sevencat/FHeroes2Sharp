@@ -660,13 +660,29 @@ internal static class BattleTactics
 
     /// <summary>
     /// The closest cell from which a unit could strike another, <c>findNearestCellNextToUnit()</c>
-    /// (<c>ai_battle.cpp:553-589</c>).
+    /// (<c>ai_battle.cpp:477-507</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only a cell that yields a <b>valid position</b> for the moving unit counts: the head has to be free and, for
+    /// a wide unit, its tail too. The reference asks <c>Position::GetPosition()</c> first and skips the cell when it
+    /// comes back empty, which is also why the caller may trust the answer to build a position out of it.
+    /// </para>
+    /// <para>
+    /// Distance is measured between <b>positions</b>, not between the unit's head and the cell: a wide unit whose
+    /// head lands on the cell stands one tile away from the target only if the whole body does. Cells that are not
+    /// adjacent are discarded, cells that cannot be walked to at all are discarded, and among the rest the one with
+    /// the cheapest move wins — the reported <see cref="CellDistanceInfo.Distance"/> is that move cost, not the
+    /// number of tiles, exactly like the reference.
+    /// </para>
+    /// </remarks>
+    /// <param name="arena">The arena, asked whether a position can be walked to at all.</param>
     /// <param name="currentUnit">The unit that would strike.</param>
     /// <param name="target">The unit it would hit.</param>
     /// <returns>The closest such cell, or «no cell at all».</returns>
-    public static CellDistanceInfo FindNearestCellNextToUnit(BattleUnit currentUnit, BattleUnit target)
+    public static CellDistanceInfo FindNearestCellNextToUnit(BattleArena arena, BattleUnit currentUnit, BattleUnit target)
     {
+        ArgumentNullException.ThrowIfNull(arena);
         ArgumentNullException.ThrowIfNull(currentUnit);
         ArgumentNullException.ThrowIfNull(target);
 
@@ -676,11 +692,33 @@ internal static class BattleTactics
 
         foreach (int index in BattleBoard.GetDistanceIndexes(target.Position, radius))
         {
-            uint distance = BattleBoard.GetDistance(currentUnit.HeadIndex, index);
+            BattlePosition pos = BattlePosition.GetPosition(currentUnit, index);
 
-            if (distance < found.Distance)
+            if (pos.Head == null)
             {
-                found = new CellDistanceInfo(index, distance);
+                continue;
+            }
+
+            Debug.Assert(pos.IsValidForUnit(currentUnit), "A position built from a free cell fits the unit.");
+
+            uint distance = BattleBoard.GetDistance(pos, target.Position);
+            Debug.Assert(distance > 0, "A neighbouring cell never overlaps the target.");
+
+            if (distance != 1)
+            {
+                continue;
+            }
+
+            if (!arena.IsPositionReachable(currentUnit, pos, false))
+            {
+                continue;
+            }
+
+            uint moveDistance = arena.CalculateMoveDistance(currentUnit, pos);
+
+            if (found.Index == -1 || moveDistance < found.Distance)
+            {
+                found = new CellDistanceInfo(index, moveDistance);
             }
         }
 
@@ -689,8 +727,14 @@ internal static class BattleTactics
 
     /// <summary>
     /// The cell a unit should move to when heading for a destination, <c>getUnitMovementTarget()</c>
-    /// (<c>ai_battle.cpp:591-611</c>).
+    /// (<c>ai_battle.cpp:509-529</c>).
     /// </summary>
+    /// <remarks>
+    /// Two questions, in this order: 「这一回合走不走得到？」先问，走得到就直接把那一格当目标；
+    /// 走不到才退一步问「通往那一格的路上，这一回合最远能站到哪儿」。
+    /// 顺序不能反：后一个问题拿的是<b>目的地位置</b>（<see cref="BattlePosition.GetPosition"/>），
+    /// 拿一个「本回合不可达的空位置」去问它，答案必然还是空，最后一个格子都走不出去。
+    /// </remarks>
     /// <param name="arena">The arena.</param>
     /// <param name="currentUnit">The unit that would move.</param>
     /// <param name="index">The destination.</param>
@@ -700,20 +744,22 @@ internal static class BattleTactics
         ArgumentNullException.ThrowIfNull(arena);
         ArgumentNullException.ThrowIfNull(currentUnit);
 
-        BattlePosition dstPos = BattlePosition.GetReachable(arena, currentUnit, index);
+        // First try to find the position that is reachable on the current turn.
+        BattlePosition reachablePos = BattlePosition.GetReachable(arena, currentUnit, index);
 
-        Debug.Assert(dstPos.Head != null, "The destination belongs to the battlefield.");
-
-        BattlePosition currentPos = currentUnit.Position;
-
-        if (currentPos.Contains(index) || !dstPos.IsEmpty)
+        if (reachablePos.Head != null)
         {
-            Debug.Assert(arena.IsPositionReachable(currentUnit, dstPos, true),
-                "The movement target must be reachable in one turn.");
+            Debug.Assert(reachablePos.IsValidForUnit(currentUnit), "The reachable position fits the unit.");
+
+            return reachablePos.HeadIndex;
         }
 
+        // If there is no such position, then use the last position on the path to the cell with the specified index.
+        BattlePosition dstPos = BattlePosition.GetPosition(currentUnit, index);
+        Debug.Assert(dstPos.IsValidForUnit(currentUnit), "The destination position fits the unit.");
+
         BattlePosition endPos = arena.GetClosestReachablePosition(currentUnit, dstPos);
-        Debug.Assert(endPos.Head != null, "The unit always has somewhere to stand.");
+        Debug.Assert(endPos.IsValidForUnit(currentUnit), "The unit always has somewhere to stand.");
 
         return endPos.HeadIndex;
     }

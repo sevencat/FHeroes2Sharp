@@ -412,8 +412,9 @@ public sealed partial class HeroActions
     /// 答案永远在瓦片上，不在名册里。
     /// </para>
     /// <para>
-    /// 参考的第四个分支是<b>漂流瓶</b>（<c>OBJ_BOTTLE</c>）：它不付钱，只弹一段留言。端口没有留言文本系统，
-    /// 所以 <see cref="IsPickupResource"/> 不收它，调用方该走「读留言」那条路（尚未实现）。
+    /// 参考的第四个分支是<b>漂流瓶</b>（<c>OBJ_BOTTLE</c>）：它不付钱，只弹一段留言，所以不在
+    /// <see cref="IsPickupResource"/> 里，单独走 <see cref="ActionToBottle"/>；AI 侧两条分支合在一个函数里
+    /// （<c>AiHeroAction.Object.cs</c>），它不读留言，只把物件抹掉。
     /// </para>
     /// </remarks>
     /// <param name="tileIndex">The tile holding the resource.</param>
@@ -445,6 +446,10 @@ public sealed partial class HeroActions
     }
 
     /// <summary>Whether <paramref name="objectType"/> goes through <see cref="ActionToPickupResource"/>.</summary>
+    /// <remarks>
+    /// 参考把它们和漂流瓶写在同一个函数里，端口按「付不付钱」拆开：这三种付钱，漂流瓶只读留言
+    /// （<see cref="ActionToBottle"/>）。
+    /// </remarks>
     /// <param name="objectType">The object type.</param>
     /// <returns><see langword="true"/> for a loose resource, a campfire and a barrel.</returns>
     public static bool IsPickupResource(Mp2ObjectType objectType) =>
@@ -1255,6 +1260,50 @@ public sealed partial class HeroActions
         ArgumentNullException.ThrowIfNull(world);
 
         return world.GetMapSign(tileIndex)?.Message.Text;
+    }
+
+    /// <summary>
+    /// Reading the message of a bottle, the <c>OBJ_BOTTLE</c> branch of <c>ActionToPickupResource()</c>
+    /// (<c>heroes_action.cpp:752-793</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考里漂流瓶和散落资源共用 <c>ActionToPickupResource()</c>，但它走的是<b>不付钱</b>的那一支：
+    /// <c>showSignMessage( dst_index )</c> 把留言显示出来，然后与另外三支一样走「播拾取音效、淡出物件、
+    /// 清元数据」。留言本身存在 <see cref="World.GetMapSign"/> 里（<c>World::LoadMapMP2()</c> 把
+    /// <c>OBJ_SIGN</c> 与 <c>OBJ_BOTTLE</c> 的信息块都读成 <c>MapSign</c>，<c>world_loadmap.cpp:624-629</c>），
+    /// 所以这里只取文本、清元数据。
+    /// </para>
+    /// <para>
+    /// <b>与牌子不同</b>：瓶子被捡走，<see cref="Tile.ResetObjectMetadata"/> 必须清——这一点参考做得不明显，
+    /// 因为它在函数末尾统一清，而不是在分支里。淡出动画与移除主物件是界面的事（<c>ObjectFadingOutInfo</c>），
+    /// 与资源、营火、木桶一致。
+    /// </para>
+    /// <para>
+    /// <b>不进访问名册</b>：参考没有 <c>SetVisited</c>，瓶子一清就没了；AI 侧本来就不读留言，只把物件抹掉。
+    /// </para>
+    /// </remarks>
+    /// <param name="tileIndex">The tile the bottle floats on.</param>
+    /// <param name="world">The world holding the bottle.</param>
+    /// <returns>The text of the bottle, or <see langword="null"/> when the tile carries no bottle.</returns>
+    public string? ActionToBottle(int tileIndex, World world)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+
+        Tile tile = world.GetTile(tileIndex);
+
+        if (tile.GetNonActionObjectType(world) != Mp2ObjectType.Bottle)
+        {
+            Debug.Assert(false, "The tile does not hold a bottle.");
+
+            return null;
+        }
+
+        string? text = world.GetMapSign(tileIndex)?.Message.Text;
+
+        tile.ResetObjectMetadata();
+
+        return text;
     }
 
     /// <summary>

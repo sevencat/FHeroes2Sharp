@@ -918,7 +918,9 @@ public sealed partial class AiPlanner
     /// <returns>The multiplier applied to the distance.</returns>
     private static double GetDistanceModifier(Mp2ObjectType objectType)
     {
-        if (!Mp2ObjectTypes.IsInGameActionObject(objectType))
+        // 参考手上的是瓦片原值（带动作位）；端口的调用点已经折过位，所以这里不能再用 IsInGameActionObject
+        // （它要求带位，折过的类型一律 false），改用它拆开后的等价判定。
+        if (!Mp2ObjectTypes.CanBeActionObject(objectType) || objectType == Mp2ObjectType.Event)
         {
             return 1.0;
         }
@@ -1499,7 +1501,13 @@ public sealed partial class AiPlanner
                     (resourceType, resourceAmount) = tile.GetDailyIncomeObjectResources(world).GetFirstValidResource();
                 }
 
-                Debug.Assert(resourceType != Resource.Unknown && resourceAmount != 0);
+                if (resourceType == Resource.Unknown || resourceAmount == 0)
+                {
+                    // 参考在这里 assert：真正的矿场一定带着产出元数据。但地图里确实存在「矿场」类型却只剩
+                    // 山体精灵、元数据被清空的瓦片（多格矿场旁边的山体就长这样，见 Tile.InitIncomeObjectMetadata），
+                    // 参考的 Debug 版同样会炸。这里退化成「不值得去」，免得一个坏瓦片卡死整局 AI。
+                    return 0;
+                }
 
                 // 矿场天天进账，所以按产量计价。
                 return resourceAmount * GetResourcePriorityModifier(resourceType, true);
@@ -2609,7 +2617,12 @@ public sealed partial class AiPlanner
     {
         ArgumentNullException.ThrowIfNull(hero);
 
-        if (objectType is not (Mp2ObjectType.Castle or Mp2ObjectType.ActionHero))
+        // 调用点给的是折过动作位的类型（ADR-133），参考那边比的是瓦片原值 OBJ_CASTLE / OBJ_HERO。
+        // 这里再折一次是幂等的：直接拿 Castle / Hero 来比，不然英雄刚打完一仗那条分支永远进不去，
+        // 输了的一方会以 MapIndex == -1 的残影留在 _enemyArmies 里，下一个英雄估威胁时拿它去问寻路器就炸。
+        Mp2ObjectType nonActionType = Mp2ObjectTypes.NonActionType(objectType);
+
+        if (nonActionType is not (Mp2ObjectType.Castle or Mp2ObjectType.Hero))
         {
             // 目前只有城堡和英雄会带任务。
             return;
@@ -2643,21 +2656,21 @@ public sealed partial class AiPlanner
 
         void UpdateTile()
         {
-            if (objectType == Mp2ObjectType.Castle)
+            if (nonActionType == Mp2ObjectType.Castle)
             {
                 UpdateCastle();
             }
             else
             {
-                Debug.Assert(objectType == Mp2ObjectType.ActionHero);
+                Debug.Assert(nonActionType == Mp2ObjectType.Hero);
 
                 Tile tile = world.GetTile(tileIndex);
                 Hero? anotherHero = tile.GetHero(world);
 
                 if (anotherHero is null)
                 {
-                    // 另一个英雄打输了，但他守的城堡可能还在。
-                    if (tile.MainObjectType == Mp2ObjectType.Castle)
+                    // 另一个英雄打输了，但他守的城堡可能还在（城门格存的是带动作位的城堡，要折一次再比）。
+                    if (Mp2ObjectTypes.NonActionType(tile.MainObjectType) == Mp2ObjectType.Castle)
                     {
                         UpdateCastle();
                     }
@@ -3644,11 +3657,14 @@ public sealed partial class AiPlanner
                         continue;
                     }
 
+                    // 路径记的是瓦片上的原值，估价按不带位的那套算，和 GetPriorityTarget 里折的理由一样。
+                    Mp2ObjectType onTheWayType = Mp2ObjectTypes.NonActionType(onTheWay.ObjectType);
+
                     double extraValue = 0;
 
                     if (isValidObject)
                     {
-                        extraValue = valueStorage.Value(onTheWayIndex, onTheWay.ObjectType, 0);
+                        extraValue = valueStorage.Value(onTheWayIndex, onTheWayType, 0);
                     }
                     else
                     {
@@ -3661,7 +3677,7 @@ public sealed partial class AiPlanner
                         int daysToReachObject = CompletedDaysToTarget(path, hero);
                         if (daysToReachObject < dayToBecomeValid)
                         {
-                            extraValue = valueStorage.FutureValue(onTheWayIndex, onTheWay.ObjectType, 0);
+                            extraValue = valueStorage.FutureValue(onTheWayIndex, onTheWayType, 0);
                         }
                     }
 
@@ -3725,8 +3741,12 @@ public sealed partial class AiPlanner
             }
         }
 
-        foreach ((int index, Mp2ObjectType objectType) in _mapActionObjects)
+        foreach ((int index, Mp2ObjectType storedType) in _mapActionObjects)
         {
+            // 缓存里存的是瓦片上的原值（带动作位），后面的估价、折算和「这是不是自己的城堡」全按不带位的那套
+            // 比（ADR-133），所以在这里折一次。
+            Mp2ObjectType objectType = Mp2ObjectTypes.NonActionType(storedType);
+
             bool isCurrentlyValid = objectValidator.IsCurrentlyValid(index);
             int daysToBeAvailable = isFutureObjectPredictionAllowed ? objectValidator.WhenGoingToBeValidInDays(index) : 0;
 
