@@ -888,6 +888,39 @@ public sealed class AdventureMapScene : IScene
     }
 
     /// <summary>
+    /// Starts the battle of the focus hero against the first wandering monster of the map, the
+    /// <c>--battle</c> of the command line.
+    /// </summary>
+    /// <param name="freezeAnimation">Whether the fight stands still, for a screenshot.</param>
+    /// <param name="siege">Whether to attack a town instead of a wandering monster.</param>
+    /// <param name="autoPlay">Whether both sides are handed to the computer, <c>--battle-auto</c>.</param>
+    /// <returns>The battle screen, or <see langword="null"/> when the map has no hero or no monster.</returns>
+    /// <remarks>
+    /// 参考的仗是「英雄走到怪物格上」触发的（<c>heroes_action.cpp</c> 的 <c>ActionToMonster</c> 里调
+    /// <c>Battle::Loader</c>）；端口的人类的动作链还没接上界面宿主（<c>docs/PROGRESS.md</c> §7.4），
+    /// 所以这一步先让命令行挑一场真打，把战斗画面本身做出来。
+    /// </remarks>
+    public BattleScene? TryStartBattle(bool freezeAnimation, bool siege, bool autoPlay)
+    {
+        if (_session?.FocusHero is not { } hero)
+        {
+            GameLog.Warn("--battle: the map has no acting hero to fight with.");
+
+            return null;
+        }
+
+        BattleScene? scene = BattleScene.TryCreate(
+            _frame, _assets, _world, hero, freezeAnimation, siege, autoPlay, _fonts?.SmallWhite, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"--battle: the battle cannot be started: {error}.");
+        }
+
+        return scene;
+    }
+
+    /// <summary>
     /// Builds the town screen of a town of the acting kingdom, the <c>--enter-town</c> of the command line.
     /// </summary>
     /// <param name="index">Which town of the kingdom to show, in the order of <c>Kingdom.Castles</c>.</param>

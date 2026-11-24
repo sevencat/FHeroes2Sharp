@@ -34,7 +34,7 @@
 冒险地图渲染（M4，已被第二阶段的 `Interface::AdventureMap` 接管重写）；回合与英雄规则（M5）；城镇规则与
 城堡屏（M6）；存档序列化全链路（M8）；编辑器只读可视化、可改、保存 MP2（E1–E3b）。
 
-**未完成**：M7 只剩 `battle_interface.cpp`（6 144 行）等战斗界面（§5.6）；M9 的战役界面与 SMK 视频未做
+**未完成**：M7 的战斗界面只剩静态层（`UI/Battle/`，P3 起步，PLAN §5.6）；M9 的战役界面与 SMK 视频未做
 （§5.7、§5.9）；M3 难度与标准局-战役分叉（§5.9），其中难度选择已用 `--difficulty` 过渡到规则层
 （PROGRESS §6.7、DECISIONS ADR-203），界面未做。M2 的语言选择窗口与首运问候已接（§5.9、PROGRESS §6.6）。
 
@@ -90,7 +90,7 @@ AI 之间真打起来之后又顺带补了战斗侧的五处：`GetUnitMovementT
 | **P0** ✅ | 收桩：G6.9b 第 5–6 步 + J（§5.3） | — | 小 | 冒烟/git 里没有自建绘制，全量测试绿 |
 | **P1** | 冒险层闭环：对象交互 + 冒险施法 + Interface 解耦（§5.4） | P0 | 中 | 拾取/访问/施法都能走参考路径 |
 | **P2** | AI 收口：`B7` 的 `HeroesAction`/`HeroesMove`（§4、§5.5） | P1 | 中 | AI 回合能整局跑完（代码已落，冒烟 7 天无断言；余场景驱动 + 数值核对） |
-| **P3** | 战斗界面四篇（§5.6） | P0、P2 | **最大**（约 6 800 行） | 手动打完整场战斗 |
+| **P3** | 战斗界面四篇（§5.6） | P0、P2 | **最大**（约 6 800 行） | 已起步：静态战场与攻城两套画面由 `battle.png`/`battle-siege.png` 守住；收口标志仍是「手动打完整场战斗」 |
 | **P4** | 战役：联盟表、存档、主流程、界面（§5.7） | P2、P3 | 中 | 战役能开局到结局 |
 | **P5** | 高分屏与结局屏（§5.8） | P4 | 小 | 胜负后能进榜 |
 | **P6** | 启动缺口：配置接线、首运语言窗、难度分叉、SMK、淡入（§5.9） | P0 | 小 | 启动流程与参考一致（P6 已结案，§6.5–§6.12） |
@@ -178,20 +178,22 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 
 ### 5.6 P3：战斗界面（最重的一块）
 
-参考 `battle/` 目录里界面四篇，端口目前一个文件都没有：
+参考 `battle/` 目录里界面四篇，端口目前只有第一层的绘制：
 
-| 参考 | 行数量级 | 端口落点 | 内容 |
-| --- | --- | --- | --- |
-| `battle_interface.cpp` | 6 144 | `Battle/BattleInterface*.cs`（新建） | 战场绘制、单位动画、行动交互、布阵、自动战斗、胜负结算 |
-| `battle_interface_settings.cpp` | 小 | `Battle/BattleInterfaceSettings.cs` | 战斗设置窗（速度、网格、咒语提示） |
-| `battle_dialogs.cpp` | 中 | `Battle/BattleDialogs*.cs` | 单位信息、军队顺序、投降/撤退确认 |
-| `battle_only.cpp` | 小 | `Battle/BattleOnly*.cs` | 快速战斗的无人值守循环 |
+| 参考 | 行数量级 | 端口落点 | 内容 | 状态 |
+| --- | --- | --- | --- | --- |
+| `battle_interface.cpp` | 6 144 | `UI/Battle/BattleFieldPainter.cs`（新建）、`UI/Battle/BattleFieldStyle.cs`、`Game/Battle/BattleArena.Commands.cs`（新建） | 战场绘制（底图/边框/装饰/障碍/城堡/单位/待机动画/计数条/网格/悬停阴影/状态栏底图）与人类输入（命中、光标、走/打/跳过） | **静态层 + 待机动画 + 计数条 + 逐单位接缝 + 行动交互首批已落**（PROGRESS §6.14–§6.17、ADR-212–215）；施法、等待防御、按钮、路径预览、状态栏文字、英雄立绘、法术特效、血量条全未做（PROGRESS §7.6） |
+| `battle_interface_settings.cpp` | 小 | `Battle/BattleInterfaceSettings.cs` | 战斗设置窗（速度、网格、咒语提示） | 未开始 |
+| `battle_dialogs.cpp` | 中 | `Battle/BattleDialogs*.cs` | 单位信息、军队顺序、投降/撤退确认 | 未开始 |
+| `battle_only.cpp` | 小 | `Battle/BattleOnly*.cs` | 快速战斗的无人值守循环 | 未开始 |
+
+场景与入口：`App/Scenes/BattleScene.cs` + `--battle`（人类可玩：点格子走打、空格跳过）、`--battle-auto`
+（两边交给电脑，冒烟用）、`--battle-siege`（攻城）；一帧推进一个单位，`--freeze-animation` 时连待机动画也停。
+引擎侧的逐单位接缝（`BeginRound`/`SelectNextUnit`/`PlayCastleActions`/`PlayCurrentUnitTurn`/`EndRound`）见
+PROGRESS §6.16、ADR-214；人类输入与命令组装见 §6.17、ADR-215。
 
 依赖都已就位：`BattleArena` 的回合/近战/施法/塔/投石车、`BattleLoader`、`LocalEvent` + `MessageBox.Show`
-（G6.1–G6.3）、`ArmyBar`/`ItemsBar`/`SkillBars`。建议切五步，每步能单独截图：
-① 战场与边框绘制（含雾/掩体/桥）② 单位精灵与动画（`RandomMonsterAnimation` 已有）
-③ 行动交互（移动/攻击/施法/等待/防御）④ 布阵与自动战斗（`QuickCombat`/`ToggleAutoCombat` 命令已通）
-⑤ 胜负结算、经验与升级窗口（`LevelUpDialog` 已有）。
+（G6.1–G6.3）、`ArmyBar`/`ItemsBar`/`SkillBars`。建议按 PROGRESS §7.6 的五步往下切，每步能单独截图。
 
 ### 5.7 P4：战役
 

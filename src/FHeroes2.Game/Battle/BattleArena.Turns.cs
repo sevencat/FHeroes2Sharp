@@ -39,6 +39,12 @@ public delegate void BattleUnitTurnHandler(BattleArena arena, BattleUnit unit, L
 /// </remarks>
 public sealed partial class BattleArena
 {
+    /// <summary>Whether the catapult already fired in this round, <c>catapultActed</c> of <c>Turns()</c>.</summary>
+    private bool _roundCatapultActed;
+
+    /// <summary>Whether the towers already fired in this round, <c>towersActed</c> of <c>Turns()</c>.</summary>
+    private bool _roundTowersActed;
+
     /// <summary>
     /// Runs one whole round, <c>Battle::Arena::Turns()</c> (<c>battle_arena.cpp:552-682</c>).
     /// </summary>
@@ -51,56 +57,117 @@ public sealed partial class BattleArena
     /// </remarks>
     public void Turns(BattleUnitTurnHandler? humanTurn = null)
     {
-        StartNewRound();
-
-        _attackingForce.NewTurn();
-        _defendingForce.NewTurn();
-
-        bool towersActed = false;
-        bool catapultActed = false;
+        BeginRound();
 
         while (BattleValid())
         {
-            _currentUnit = GetCurrentUnit();
+            BattleUnit? next = SelectNextUnit();
 
-            if (_castle != null)
+            PlayCastleActions();
+
+            if (!BattleValid() || next is null)
             {
-                // 投石车在攻方第一个单位的回合里开火；攻方一个都动不了（全被致盲）时在这一轮末尾开火。
-                if (!catapultActed && (_currentUnit == null || _currentUnit.GetCurrentColor() == _attackingForce.Color))
-                {
-                    CatapultAction();
-
-                    catapultActed = true;
-                }
-
-                // 箭塔在守方第一个单位的回合里、或守方一个都动不了时开火；顺序固定为中央塔、左塔、右塔。
-                if (!towersActed && (_currentUnit == null || _currentUnit.GetCurrentColor() == _defendingForce.Color))
-                {
-                    TowerAction(_towers[1]);
-                    TowerAction(_towers[0]);
-                    TowerAction(_towers[2]);
-
-                    towersActed = true;
-
-                    // 塔可能打死了最后一个敌人。
-                    if (!BattleValid())
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (_currentUnit == null)
-            {
-                // 场上已经没有人能出手（全部被定身或打光）。
+                // 塔可能打死了最后一个敌人；也可能场上已经没有人能出手（全部被定身或打光）。
                 break;
             }
 
             UnitTurn(humanTurn);
         }
 
-        SettleResult();
+        EndRound();
     }
+
+    /// <summary>
+    /// Starts a round, the head of <c>Turns()</c>: <c>StartNewRound()</c>, both armies' <c>NewTurn()</c>
+    /// and the once-per-round flags of the castle.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 帧驱动的界面不能像参考那样在 <c>Turns()</c> 里阻塞等玩家：它每帧只推进一个单位，所以回合被拆成
+    /// <see cref="BeginRound"/> → 若干次 <see cref="SelectNextUnit"/> + <see cref="PlayCastleActions"/> +
+    /// <see cref="PlayCurrentUnitTurn(BattleUnitTurnHandler?)"/> → <see cref="EndRound"/>。
+    /// <see cref="Turns"/> 本身就是这套调用的一个循环封装，两边的语义完全相同。
+    /// </para>
+    /// </remarks>
+    public void BeginRound()
+    {
+        StartNewRound();
+
+        _attackingForce.NewTurn();
+        _defendingForce.NewTurn();
+
+        _roundCatapultActed = false;
+        _roundTowersActed = false;
+    }
+
+    /// <summary>
+    /// Picks the unit that acts next, the <c>_currentUnit = GetCurrentUnit()</c> of <c>Turns()</c>.
+    /// </summary>
+    /// <returns>The unit, or <see langword="null"/> when nobody can act any more this round.</returns>
+    public BattleUnit? SelectNextUnit()
+    {
+        _currentUnit = GetCurrentUnit();
+
+        return _currentUnit;
+    }
+
+    /// <summary>
+    /// Lets the castle fire once per round: the catapult on the attacker's first turn and the three
+    /// towers on the defender's, the block at <c>battle_arena.cpp:560-600</c> inside <c>Turns()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 攻方一个都动不了（全被致盲）时投石车在这一轮末尾开火，守方一个都动不了时塔也一样——所以这一步要在
+    /// 「选完下一个单位」之后、并且即使没人能出手也要跑一次。
+    /// </remarks>
+    public void PlayCastleActions()
+    {
+        if (_castle == null)
+        {
+            return;
+        }
+
+        if (!_roundCatapultActed && (_currentUnit == null || _currentUnit.GetCurrentColor() == _attackingForce.Color))
+        {
+            CatapultAction();
+
+            _roundCatapultActed = true;
+        }
+
+        if (!_roundTowersActed && (_currentUnit == null || _currentUnit.GetCurrentColor() == _defendingForce.Color))
+        {
+            TowerAction(_towers[1]);
+            TowerAction(_towers[0]);
+            TowerAction(_towers[2]);
+
+            _roundTowersActed = true;
+        }
+    }
+
+    /// <summary>
+    /// Plays the whole turn of the unit <see cref="SelectNextUnit"/> picked, <c>UnitTurn()</c>.
+    /// </summary>
+    /// <param name="humanTurn">
+    /// Who plays a human-controlled unit, or <see langword="null"/> to let the AI play it.
+    /// </param>
+    public void PlayCurrentUnitTurn(BattleUnitTurnHandler? humanTurn) => UnitTurn(humanTurn);
+
+    /// <summary>
+    /// Plays the turn of the picked unit with commands a human has already chosen, the port's answer to
+    /// the blocking <c>Interface::HumanTurn()</c> of the reference (<c>battle_arena.cpp:513</c>).
+    /// </summary>
+    /// <param name="commands">What the unit does; an empty list counts as "skip".</param>
+    /// <remarks>
+    /// 参考把「等玩家点」写在 <c>UnitTurn()</c> 里（界面的 <c>HumanTurn()</c> 自己带着事件循环），端口的场景
+    /// 是帧驱动的，所以玩家那一手由界面在<em>其他帧</em>收齐命令，再交给这里执行。士气、行动位与随机流的
+    /// 记账仍走同一条 <c>UnitTurn()</c>，与参考一致。
+    /// </remarks>
+    public void PlayCurrentUnitTurn(IReadOnlyList<BattleCommand> commands) => UnitTurn(null, commands);
+
+    /// <summary>
+    /// Settles the round, the tail of <c>Turns()</c> (<c>battle_arena.cpp:645-681</c>).
+    /// </summary>
+    public void EndRound() => SettleResult();
+
 
     /// <summary>
     /// The unit that acts next, <c>GetCurrentUnit( force, force, preferredColor )</c>
@@ -159,7 +226,7 @@ public sealed partial class BattleArena
     /// 掷出同样的骰子」。这一步必须在执行动作**之前**做，否则动作内部掷的骰子还用着旧的 stream。
     /// </para>
     /// </remarks>
-    private void UnitTurn(BattleUnitTurnHandler? humanTurn)
+    private void UnitTurn(BattleUnitTurnHandler? humanTurn, IReadOnlyList<BattleCommand>? preparedCommands = null)
     {
         BattleUnit unit = _currentUnit!;
 
@@ -201,7 +268,14 @@ public sealed partial class BattleArena
                 _bridge?.SetPassability(unit);
 
                 // AI 控制的一方本来就交给规划器；人类那一方可能已经把战斗托管给电脑（自动战斗）。
-                if (humanTurn != null && unit.GetCurrentControl().IsHuman() && !IsAutoCombat(unit.GetCurrentColor()))
+                if (preparedCommands is { Count: > 0 })
+                {
+                    // 玩家已经在别的帧里点好了这一手：直接执行，不再问任何人。
+                    actions.AddRange(preparedCommands);
+
+                    preparedCommands = null;
+                }
+                else if (humanTurn != null && unit.GetCurrentControl().IsHuman() && !IsAutoCombat(unit.GetCurrentColor()))
                 {
                     humanTurn(this, unit, actions);
                 }

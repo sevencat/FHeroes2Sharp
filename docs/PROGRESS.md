@@ -12,13 +12,16 @@
 | 项 | 数字 |
 | --- | --- |
 | 构建 `dotnet build FHeroes2Sharp.slnx` | 0 错误 / 0 警告 |
-| 测试 `dotnet test` | **5 535 绿**（Core 292 / Assets 428 / Game 3 299 / UI 1 516） |
+| 测试 `dotnet test` | **5 566 绿**（Core 292 / Assets 428 / Game 3 305 / UI 1 541） |
 | 冒烟 `--enter-map --smoke-frames 60 --no-audio --no-config` | 72.6 FPS，退出 0 |
 | 首运冒烟 `SmokeFirstRun.ps1` | 2026-11-24 通过：`--left-click-at` 四击从语言窗走到清旗标（§6.11），CI 一步 |
 | 像素基线 `menu.png`/`settings*.png`/`scenario*.png` | 2026-11-24 重建（Editor 招牌进基线），五张全部 identical |
 | `throw new NotImplementedException` | **5 处**（清单见 §7.2） |
-| 冒险地图基线 `VerifyAdventureMapBaseline.ps1` | 2026-11-24 结案：按 §7.5 的三条差异核对（英雄居中 / 迷雾生效 / 部队状态栏）后 `-Update`，加 `--seed 1` 固定随机，连跑三次 `identical`；同日 `adventure-map-boats` / `adventure-options` / `quick-info` 三张也重建（提示框靠 `--right-button` 按住，ADR-208），四张连跑两次 `identical`，CI 十条命令覆盖全部十张基线 |
-| 当前工序 | **P0/P1 完成**；**P2 AI 收口**——动作链已接通并通过 7 天冒烟（§6.3），余 App 的 AI 回合循环（§7.3）与估值数值核对；**P6 完成**——配置（§6.5）、首运三窗（§6.6/§6.9/§6.10）、难度（§6.7）、窗口状态（§6.8）、脚本点击（§6.11）、触摸输入与面板落位（§6.12）全落；下一步可选 P7 随机地图生成器 |
+| 冒险地图基线 `VerifyAdventureMapBaseline.ps1` | 2026-11-24 结案：按 §7.5 的三条差异核对（英雄居中 / 迷雾生效 / 部队状态栏）后 `-Update`，加 `--seed 1` 固定随机，连跑三次 `identical`；同日 `adventure-map-boats` / `adventure-options` / `quick-info` 三张也重建（提示框靠 `--right-button` 按住，ADR-208），四张连跑两次 `identical` |
+| 战斗屏幕基线 `VerifyBattleBaseline.ps1` | 2026-11-24 新增两张：`battle.png`（野战部署）与 `battle-siege.png`（攻城，多出城堡地面/护城河/城墙/塔/攻城车），各连跑两次 `identical`（§6.14、ADR-212） |
+| CI | `ci.yml` 的 `menu-baseline` job 十二条命令覆盖全部十二张基线 |
+| 当前工序 | **P0/P1/P6 完成**；**P2** 动作链接通并通过 7 天冒烟（§6.3），余估值数值核对；**P3 进行中**——战斗屏幕的静态层、待机动画、兵力计数条与逐单位推进接缝已落地（§6.14–§6.16），下一步是人类的行动交互（§7.6）；P4 战役、P5 高分屏、P7 随机地图生成器、P8 编辑器仍全缺 |
+
 | 参考实现 | fheroes2 1.1.18（`6c51acfdc`），源码 `F:\code\fheroes2` |
 
 ## 2. 里程碑（M0–M8、E1–E3b 全绿）
@@ -656,6 +659,104 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 `SmokeFirstRun.ps1 -SkipBuild` 通过。
 **没做**：窗口完全铺满（要变形，或者像参考那样让帧缓冲随窗口尺寸变、场景按任意尺寸重排——属 P7 之后）。
 
+### 6.14 P3 起步：战斗屏幕的静态层（2026-11-24）
+
+`PLAN.md` §5.6 的 P3 从此有一个文件：参考 `battle_interface.cpp`（6 144 行）的**绘制**那半按帧搬来了第一层，
+战斗终于有画面。规则层一行没动（`BattleArena`/`BattleLoader` 早就齐了），落点是新的 `UI/Battle/` 两个文件与
+`App/Scenes/BattleScene`。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 底图与边框杂物 | `_redrawBattleGround()`（`2477-2556`）：按地形挑 `CBKG*`/`FRNG*`，有树换一版 | `BattleFieldStyle.ForGround`（纯函数，九种地形 + 草/土/雪的树版）；`BattleFieldPainter` 用 `Copy` 铺底图、`Blit` 叠边框 |
+| 地表装饰与障碍 | 同一函数：`arena.GetICNCovr()`、`COBJ` 的 0x90/0x9E/0x9F 走地面、0x80–0x8F 与 0x91–0x9D 走高障碍 | 照抄两张映射表，偏移都是「格子中心 + 格底 + `cellYOffset(-9)`」 |
+| 攻城 | 城堡地面 `CASTBKG*` 第 1 帧、护城河 `MOATWHOL`、顶墙第 3/4 帧、城墙/塔/吊桥 `CASTLE*`、攻城车 `CATAPULT` | `RedrawCastle`/`RedrawCastleMainTower`/`DrawCastleWall`/`DrawCastleArcherTower` 逐支搬来，含 `isCellBeforeWall` 的折返规则 |
+| 单位 | `RedrawArmies()` 逐行：先高障碍、再墙、再本行单位；`GetTroopPosition` 按格宽与精灵偏移算锚点，防守方镜像 | 同一套行循环；每个单位一个 `AnimationState`，取 `Static` 首帧，`Sprite.Flip(true,false)` 表达镜像 |
+| 状态栏 | `TEXTBAR` 8/9 号两块 + Auto(4)/设置(6)/Skip(0) 三个按钮 | 只画底图，位置按参考的 `(0,443)`、`(0,461)`、`(49,443)`、`(49,463)`、`(591,443)` |
+| 竞技场摆格子 | `battle_arena.cpp:366` 的 `board.SetArea( _interface->GetArea() )`（界面坐标系） | `BattleFieldPainter` 构造函数里 `BattleArena.Board.SetArea(0,0,640,480)` |
+| 谁去打 | 英雄走到怪物格/城门格触发 `Battle::Loader` | `--battle`（第一只 `ActionMonster`）/`--battle-siege`（第一座别的颜色的城），场景一帧一个整回合；`--freeze-animation` 不推进 |
+| 城堡图 | `ICN::getCastleIcnId()` → `CASTLEB/K/N/S/W/Z`（`icn.cpp:928-948`） | 一开始误用 `CSTL*`（那是 `getBuildingIcnId` 的城镇建筑图，偏移全 0），整面墙画到左上角；截图上发现后改回 `CASTLE*` |
+
+**偏差（本步有意留的）**：六角网格（`Settings::BattleShowGrid` 的 `DrawHexagon` 未移植）、坟场
+（`RedrawKilled`，开战时本来没有尸体）、兵力计数条（要 `TEXTBAR` 指示帧与位图字体）、顺序条、对手英雄立绘与
+旗帜、所有动画与法术特效。人类的点选与 `IBattlePresenter.HumanTurn` 也还没接，两边都由 AI 打。
+
+**验证**：构建 0 错误 0 警告；`dotnet test` **5 560 绿**（Core 292 / Assets 428 / Game 3 299 / UI 1 541）；`BattleFieldStyleTests` 25 条（九种地形 × 背景/边框、
+草/土/雪的树版、六族城堡地面、六族战场城堡图、未知地形与未知种族、攻城沿用地形）；两张新基线
+`tests/baselines/battle.png`（兽人 27、沙漠）与 `battle-siege.png`（野蛮人 Visimir、护城河与城墙）各连跑两次
+`identical`，脚本 `VerifyBattleBaseline.ps1`（`-Siege` 切换）已进 CI；`--battle --smoke-frames 40` 打完整场并
+回地图（`The battle is over: attacker 'Loss', defender 'Wins'`）。
+
+### 6.15 P3 第二步：待机动画与兵力计数条（2026-11-24）
+
+战斗屏幕上的单位开始「呼吸」了，每队脚边也有了带数字的计数条——参考 `battle_interface.cpp` 的
+`IdleTroopsAnimation()`（`7199-7207`）与 `RedrawTroopCount()`（`2230-2267`）两段。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 节拍 | `Game::validateAnimationDelay( BATTLE_IDLE_DELAY )`，速度 4 约 160 毫秒（`game_delays.cpp:200`） | `GameDelays.ValidateAnimationDelay(DelayType.BattleIdleDelay)`，公式早已在 `GameDelays.UpdateGameSpeed` 里 |
+| 状态机 | `Force::animateIdleUnits()`（`battle_army.cpp:232-257`）：`IDLE` 播完或定身回 `STATIC`，否则推进一帧；停在 `STATIC` 且随机延迟到点才切 `IDLE` | `BattleFieldPainter.AnimateIdleUnits` 逐字照抄；随机延迟用 `RandomizedDelay(AnimationState.IdleDelay)`（75%–125%，`Battle::Unit::_idleTimer`） |
+| 状态放在哪 | `Battle::Unit::animation` 是单位成员 | **放在绘制器**（`Dictionary<uid, UnitAnimation>`）。见 ADR-213：`BattleUnit` 不拿资源，`Game` 层不引 `Assets` 的 `.BIN` 缓存 |
+| 计数条 | `TEXTBAR[GetIndexIndicator(unit)]`：10 紫 / 12 绿 / 13 黄 / 14 红（按好/坏法术位挑） | 同表；位置 `rt.x + (isReflect ? -7 : rt.width - 13)`、`rt.y + rt.height - bar.height - (isReflect ? 21 : 9)`，再按 `getTroopCountOffset` 平移 |
+| 数字 | `abbreviateNumber( count )`，`smallWhite`，条子正中偏下两像素 | `Army.AbbreviateNumber` + `IGlyphSource`（`GameFonts.SmallWhite` 由场景注入），`GlyphText.Measure` 居中 |
+| 邻居让位 | `(monsterIndex / width) == (tileInFront == width)` 才把偏移清零 | 原样照抄（那条表达式看起来是笔误，但改动会改变像素；注释里写明） |
+| 血量条 | `drawHitPointsBar`，两色由 `fheroes2::GetColorId` 从游戏调色板取 | **未做**：要调色板注入，且该设置默认关闭（`Settings` 默认选项不含 `BattleShowHitPointsBar`），随战斗设置窗一起补 |
+
+**验证**：构建 0 错误 0 警告；两张战斗基线重建（多了计数条）并各连跑两次 `identical`；待机动画用临时日志
+验证过状态机（把 `_idleTimer` 临时改成 50 毫秒、并临时绕过节拍门，120 帧内待机单位从 0 涨到 5；两处
+`TEMP-` 补丁都已撤，`git diff` 里没有残留）。真实延迟是怪物 `.BIN` 里的 9000 毫秒，所以一局短战斗里
+通常看不到待机动作——与参考一致。`dotnet test` 全绿（§1）。
+
+### 6.16 P3 第三步前置：给 `BattleArena` 加逐单位推进的接缝（2026-11-24）
+
+行动交互要等玩家点，而参考的 `Arena::Turns()` 是「一口气跑完一轮」——人类的 `Interface::HumanTurn()` 自己
+带着阻塞的事件循环。端口是帧驱动的场景，不能在里面阻塞，所以先把回合拆成可以在两帧之间停下来的几步。
+
+| 新接口 | 参考 | 说明 |
+| --- | --- | --- |
+| `BeginRound()` | `Turns()` 开头的 `StartNewRound()` + 两军 `NewTurn()` | 回合标志（投石车/塔各一次）也在这里清 |
+| `SelectNextUnit()` | `Turns()` 里的 `_currentUnit = GetCurrentUnit()` | 返回这一手出手的单位，`null` 表示这一轮没人能动 |
+| `PlayCastleActions()` | `Turns()` 里的投石车与三座塔 | 只在攻城里有事做；攻/守方第一个单位（或没人能动）时各一次 |
+| `PlayCurrentUnitTurn(handler)` | `UnitTurn()` | 原样转发，AI 那一手走这里 |
+| `PlayCurrentUnitTurn(commands)` | `Interface::HumanTurn()` 收齐的 `Actions` | **新增的路径**：玩家在别的帧里点好的命令直接执行，士气/行动位/随机流仍走同一条 `UnitTurn()` |
+| `EndRound()` | `Turns()` 末尾的 `SettleResult()` | 把「场上没人了」翻成战果 |
+
+`Turns()` 现在就是这套调用的循环封装，语义与之前逐字相同（`TheSteppingApiPlaysTheSameRoundAsTurns` 用同一
+颗种子跑两条路，比较战果、经验与两队总兵数）。`BattleScene` 改成**一帧推进一个单位**：`--battle
+--smoke-frames 400` 打完整场并回地图（日志里 `attacker 'Loss', defender 'Wins'`）。踩到并修好一处：战果要
+在离开前先 `EndRound()`，否则 `SettleResult()` 没跑，日志里是「nobody won」。
+
+**验证**：构建 0 错误 0 警告；`BattleArenaTurnTests` 新增 2 条（步进与整轮等价、玩家预备命令不需要控制器），
+全量 **5 562 绿**；四张相关基线（两张战斗、冒险地图、编辑器）复验 `identical`。
+
+### 6.17 P3 第三步（首批）：六角网格、悬停阴影、光标主题与点击下命令（2026-11-24）
+
+战斗屏幕第一次「能点」：鼠标移到格子上会暗一格，点空格子走、点敌人格打，空格跳过。参考的
+`DrawHexagon*`（`battle_interface.cpp:462-500`）、`RedrawCover()` 的悬停高亮（`:2285-2474`）、
+`GetBattleCursor()`（`:2922-3064`）与 `HumanBattleTurn()`（`:3210` 起）各取了一段。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 网格 | `CMBTMISC` 第 0 帧整体下移 1 像素、顶行透明、`ReplaceColorId(0, GetColorId(0x68,0x8C,0x04))` | `EnsureHexagonGrid()` 照做；颜色走 `PALColorId.Get(26,35,1, frame.Palette)`，调色板由场景从 `ScreenBuffer.Palette` 注入 |
+| 网格开关 | `Settings::BattleShowGrid()`（默认开） | `Settings.Get().IsBattleShowGrid` |
+| 悬停阴影 | `DrawHexagonShadow(2,1)`，画在单位之下 | `BuildHexagonShadow(2,1)` 逐圈内缩；在 `Redraw()`, 铺完底图、画单位之前叠上，只在「有当前单位 + 开关打开」时 |
+| 命中测试 | `Board::GetIndexAbsPosition()` | `BattleBoard.GetIndexAbsPosition(board, cursor)`（点不在任何六边形里答 -1） |
+| 光标主题 | 走 / 飞 / 箭 / 八向剑 / 施法，按「能不能走、能不能打、从哪边打」挑 | 先分三种：可走 `CombatMove`（飞兵 `CombatFly`）、可打 `CombatArrow`、其余 `CombatPointer`；只在悬停格变化时重算（可达性查询不便宜） |
+| 下命令 | `HumanBattleTurn()` 按光标拼 `BattleCommand` | 点空格子 → `BattleArena.CreateMoveCommand`；点敌人格 → `CreateAttackCommand`（贴身直接出刀，否则绕圈找最便宜的可站邻格）；空格 → `BattleCommand.Skip`，走 `PlayCurrentUnitTurn(commands)` |
+| 无人值守 | `EnableAutoCombatForHumanSides()` | `--battle-auto`（隐含 `--battle`）把两边都交给电脑；不带它时人类那一栈会停下来等点击（冒烟必须带） |
+| 输入来源 | 阻塞的 `LocalEvent` 循环 | 场景每帧读 `LocalEvent.Current`：`CursorPosition` 定悬停格，`MouseClickLeft(battlefield)` 定点击；`--cursor` 与新增的 `--left-click-at` 战斗转发让脚本也能点 |
+
+**未做**：等待/防御、施法（魔法书与施法光标）、八向剑光标、撤退/投降、Auto/设置/Skip 三个按钮的行为、
+路径预览箭头、状态栏文字与战斗日志、攻击/受击/移动动画。
+
+**验证**：构建 0 错误 0 警告；`BattleArenaCommandTests` 4 条（可达格出 Move、远角不出命令、敌人格出 Attack、
+友军/空格/越界不出 Attack）；全量 **5 566 绿**；两张战斗基线重建（多了网格）后各连跑两次 `identical`，
+其余五张基线仍 `identical`；`--battle --cursor 320,240 --freeze-animation` 的截图里网格与悬停阴影都在；
+`--battle --cursor 199,172 --left-click-at '20:199,172'` 的日志出现 `The player's Sprite acts: move to 24.`
+（脚本点击经 `LocalEvent` 驱动了人类回合），不带点击时 60 帧内不会结束（在等玩家）；
+`--battle --battle-auto --smoke-frames 400` 仍能打完整场并回地图。
+
+
+
 ## 7. 未完成清单（唯一列表）
 
 ### 7.1 主线
@@ -668,6 +769,10 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 **P6 现状（完成）**：配置读写（§6.5）、首运语言窗/问候/分辨率窗（§6.6、§6.9、§6.10）、会话难度（§6.7）、
 窗口状态恢复（§6.8）、首运脚本点击与冒烟（§6.11）、触摸输入与问候触摸段、隐藏界面面板落位（§6.12）全部已落，
 P6 没有剩余项。
+
+**P3 现状（进行中）**：静态层、待机动画、兵力计数条、逐单位推进接缝（§6.14–§6.16）与**首批行动交互**
+（网格 / 悬停阴影 / 三种光标 / 点击走打 / 空格跳过，§6.17）已落地；余施法、等待防御、按钮、路径预览、
+状态栏文字与动画见 §7.6。
 
 ### 7.2 仍抛 `NotImplementedException` 的 4 处
 
@@ -747,6 +852,29 @@ P1 居所留下的界面缺口：`IHeroActionHost` 目前**没有任何界面实
 所以修的是**钩子**而不是场景：`--right-button` 现在会为冒险地图把右键按进 `LocalEvent`（菜单与城镇屏各
 有 `SetRightButton`，冒险地图读事件状态，见 ADR-208），基线脚本同时带 `--quick-info` 与 `--right-button`。
 重建后框回来了（「Ore Mine」，`MineText.GetMineName`），四张冒险地图基线连跑两次全部 `identical`。
+
+### 7.6 战斗界面（P3）剩余
+
+§6.14、§6.15 落地的是静态层、待机动画与计数条。参考 `battle_interface.cpp` 6 144 行里剩下的按
+`PLAN.md` §5.6 的五步排：
+
+1. **单位动画的其余部分**（第二步的后半）：移动/飞行分支（`_drawTroopSprite` 的位移与 `movementProgress`）、
+   `RandomMonsterAnimation` 之外的受击/死亡/远程序列、`TargetInfo` 的弹道与命中动画、坟场（`RedrawKilled`）、
+   血量条（`drawHitPointsBar`，要游戏调色板取两色）。
+2. **行动交互的其余部分**（第三步）：等待/防御、施法（魔法书、施法光标与目标高亮）、撤退/投降、
+   八向剑光标（`GetBattleCursor` 的方向分支）、Auto/设置/Skip 三个按钮的行为、路径预览箭头、
+   状态栏文字与战斗日志（`Status`/`StatusListBox`）。已落的首批见 §6.17：网格、悬停阴影、三种光标、
+   点击走打、空格跳过、`--battle-auto`。
+3. **布阵与自动战斗**（第四步）：`battle_only.cpp` 的无人值守循环、布阵拖拽、`ToggleAutoCombat`/`QuickCombat`
+   按钮行为。
+4. **胜负与经验**（第五步）：`DialogBattleSummary`（`IBattlePresenter.ShowSummary` 的界面）、`FadeArena`、
+   招魂/鹰眼/套装提示，以及从冒险地图走进战斗的那条链（`Heroes::Action` → `Battle::Loader`）。
+5. **边框配件**：顺序条（`TurnOrder`）、对手英雄立绘与旗帜（`OpponentSprite`）、`Status` 的状态文字与
+   战斗日志（`StatusListBox`）、战斗设置窗（`battle_interface_settings.cpp`）、伤害预览（`PopupDamageInfo`）、
+   六角网格与闪避阴影（`DrawHexagon*`）、`battle_dialogs.cpp` 的三个窗口。
+
+依赖都已就位：`BattleArena` 的回合/近战/施法/塔/投石车、`BattleLoader`、`LocalEvent`、`MessageBox`、
+`ArmyBar`/`ItemsBar`/`SkillBars` 与新增的 `BattleFieldPainter`。
 
 ## 8. 保留的坑与教训
 

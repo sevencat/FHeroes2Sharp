@@ -81,6 +81,7 @@ public sealed class GameHost : IDisposable
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
+    private BattleScene? _battle;
     private CastleScene? _castle;
     private EditorScene? _editor;
     private EditorMainMenuScene? _editorMenu;
@@ -422,6 +423,15 @@ public sealed class GameHost : IDisposable
                     _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
                     _pendingClickRelease = click.Point;
                 }
+
+                // The battle screen reads the pointer and the click out of LocalEvent (its cells are hit
+                // tested against the cell geometry), so a scripted click has to go in there as well.
+                if (_battle is not null)
+                {
+                    _le.OnMouseMotion(click.Point);
+                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                    _pendingClickRelease = click.Point;
+                }
             }
 
             // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
@@ -429,6 +439,7 @@ public sealed class GameHost : IDisposable
             TryEnterAdventureMap();
             TryOpenCastleFromAdventure();
             CloseCastleWhenDone();
+            CloseBattleWhenDone();
 
             double now = clock.Elapsed.TotalSeconds;
 
@@ -476,6 +487,10 @@ public sealed class GameHost : IDisposable
         if (_castle is { } townScreen)
         {
             townScreen.SetCursor(logical);
+        }
+        else if (_battle is not null)
+        {
+            // The battle ignores the pointer until its action loop exists.
         }
         else if (_editorMenu is { } editorMenu)
         {
@@ -863,6 +878,18 @@ public sealed class GameHost : IDisposable
             return false;
         }
 
+        if (_battle is { } battleScene)
+        {
+            // The battle takes no keyboard input yet: Escape gives the screen back to the map, which is
+            // the port's stand-in for the reference's exit button until the action loop lands.
+            if (!key.Repeat && key.Key == SDL.Keycode.Escape)
+            {
+                battleScene.Close();
+            }
+
+            return false;
+        }
+
         if (_adventure is { } adventure)
         {
             return HandleAdventureKey(key, adventure);
@@ -1055,6 +1082,12 @@ public sealed class GameHost : IDisposable
                 townScreen.SetRightButton(button.Down);
             }
 
+            return false;
+        }
+
+        if (_battle is not null)
+        {
+            // The battle has no mouse handling yet: the click is dropped rather than reaching the map below.
             return false;
         }
 
@@ -1733,7 +1766,28 @@ public sealed class GameHost : IDisposable
         }
 
         _castle = null;
+        _scene = (IScene?)_battle ?? _adventure ?? (IScene?)_menu ?? _diagnostics;
+    }
+
+    /// <summary>
+    /// Goes back to the map when the battle is over, the <c>GameMode::BATTLE</c> return of
+    /// <c>Battle::Loader()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>Battle::Loader</c> 返回之后，调用方（<c>Heroes::Action</c> 或城堡）接着把结果写回地图；
+    /// 端口这一步只做画面，打完就回地图，瓦片与军队的结算留给接上 <c>BattleLoader</c> 的那一步。
+    /// </remarks>
+    private void CloseBattleWhenDone()
+    {
+        if (_battle is not { IsClosed: true })
+        {
+            return;
+        }
+
+        _battle = null;
         _scene = _adventure ?? (IScene?)_menu ?? _diagnostics;
+
+        GameLog.Info("The battle is over; the adventure map is back.");
     }
 
     /// <summary>
@@ -1788,6 +1842,7 @@ public sealed class GameHost : IDisposable
         }
 
         GameLog.Info($"Leaving the adventure map '{_adventure.MapName}'.");
+        _battle = null;
         _castle = null;
         _adventure = null;
         _scene = _menu is not null ? _menu : _diagnostics;
@@ -1986,6 +2041,19 @@ public sealed class GameHost : IDisposable
 
             GameLog.Info($"--skip-turns: ended {ended} turn(s); day {skipMap.Session?.DayCount.ToString() ?? "?"}.");
         }
+
+        // The battle normally starts by walking a hero onto a monster tile, which the human action chain
+        // cannot do yet (PROGRESS §7.4); --battle starts it here so the battle screen's frame can be
+        // captured and smoke tested without a mouse.
+        if (_options.Battle && _adventure is { } battleMap
+            && battleMap.TryStartBattle(_options.FreezeAnimation, _options.BattleSiege, _options.BattleAuto) is { } battleScene)
+        {
+            _battle = battleScene;
+            _scene = battleScene;
+
+            GameLog.Info("Opened the battle screen from the command line.");
+        }
+
 
         // The town screen normally opens by clicking one of the player's towns on the map; --enter-town
         // opens it here so its frame can be captured and smoke tested without a mouse.

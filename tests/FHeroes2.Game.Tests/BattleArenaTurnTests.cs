@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Random;
 using FHeroes2.Game.Battle;
+using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.System;
 using Xunit;
@@ -167,5 +168,79 @@ public class BattleArenaTurnTests
 
         Assert.True(attacker.HasModes(BattleMonsterState.Moved));
         Assert.True((int)defender.HitPoints < defenderHp);
+    }
+
+    /// <summary>
+    /// The stepping API a frame-driven screen uses — <c>BeginRound()</c>, one unit per call,
+    /// <c>EndRound()</c> — has to play exactly the round <c>Turns()</c> plays.
+    /// </summary>
+    [Fact]
+    public void TheSteppingApiPlaysTheSameRoundAsTurns()
+    {
+        SetControl(PlayerColor.Blue, PlayerControl.Ai);
+        SetControl(PlayerColor.Red, PlayerControl.Ai);
+
+        BattleArena whole = new(
+            Army(PlayerColor.Blue, MonsterType.Archer, 5), Army(PlayerColor.Red, MonsterType.Peasant, 7), new Pcg32(101));
+
+        BattleArena stepped = new(
+            Army(PlayerColor.Blue, MonsterType.Archer, 5), Army(PlayerColor.Red, MonsterType.Peasant, 7), new Pcg32(101));
+
+        whole.Turns();
+
+        stepped.BeginRound();
+
+        while (stepped.BattleValid())
+        {
+            BattleUnit? next = stepped.SelectNextUnit();
+
+            stepped.PlayCastleActions();
+
+            if (!stepped.BattleValid() || next is null)
+            {
+                break;
+            }
+
+            stepped.PlayCurrentUnitTurn((BattleUnitTurnHandler?)null);
+        }
+
+        stepped.EndRound();
+
+        Assert.Equal(whole.Result.Attacker, stepped.Result.Attacker);
+        Assert.Equal(whole.Result.Defender, stepped.Result.Defender);
+        Assert.Equal(whole.Result.AttackerExperience, stepped.Result.AttackerExperience);
+        Assert.Equal(whole.Result.DefenderExperience, stepped.Result.DefenderExperience);
+        Assert.Equal(TotalCount(whole.AttackingForce), TotalCount(stepped.AttackingForce));
+        Assert.Equal(TotalCount(whole.DefendingForce), TotalCount(stepped.DefendingForce));
+    }
+
+    /// <summary>
+    /// Commands a human picked while the screen waited are played without asking any controller: that is
+    /// the seam the frame-driven battle screen needs (the reference blocks inside <c>HumanTurn()</c>).
+    /// </summary>
+    [Fact]
+    public void AHumansPreparedCommandsPlayTheTurnWithoutAController()
+    {
+        BattleArena arena = HumanField(MonsterType.Peasant, MonsterType.Peasant, 103);
+        arena.BeginRound();
+
+        BattleUnit unit = arena.SelectNextUnit()!;
+        arena.PlayCastleActions();
+
+        arena.PlayCurrentUnitTurn([BattleCommand.Skip((int)unit.Uid)]);
+
+        Assert.True(unit.HasModes(BattleMonsterState.Moved));
+        Assert.Equal(Speed.Standing, unit.GetSpeed());
+    }
+
+    private static uint TotalCount(BattleForce force) =>
+        force.Aggregate(0u, (total, unit) => total + (unit.IsValid ? unit.Count : 0));
+
+    private static void SetControl(PlayerColor color, PlayerControl control)
+    {
+        Player player = Players.Get(color) ?? new Player(color);
+        player.Control = control;
+
+        Players.Set(color, player);
     }
 }

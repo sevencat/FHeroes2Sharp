@@ -98,7 +98,10 @@ jobs:
             # The options dialog and the tile popup sit on the same map, but each is a frame of its own.
             @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Switch = 'AdventureOptions' },
             @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Switch = 'QuickInfo' },
-            @{ Script = 'VerifyEditorBaseline.ps1'; Culture = 'en' }
+            @{ Script = 'VerifyEditorBaseline.ps1'; Culture = 'en' },
+            # The battle screen (P3): one frame of the deployment in the open field, one at a town.
+            @{ Script = 'VerifyBattleBaseline.ps1' },
+            @{ Script = 'VerifyBattleBaseline.ps1'; Switch = 'Siege' }
           )
 
           foreach ($run in $runs) {

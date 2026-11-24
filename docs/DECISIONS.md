@@ -7839,3 +7839,122 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 （`GeometryTests` 改 4 条并新增 3 条：非整数倍窗口取最大等比、整数倍窗口铺满、非整数倍点击往返不超过
 1 像素、取整边沿被 clamp）；十张像素基线全部 `identical`；`SmokeFirstRun.ps1 -SkipBuild` 通过（脚本点击
 用的是 640x480 的逻辑坐标，不受缩放影响）。
+
+## ADR-212：战斗界面从 UI 层起步——静态战场先落地，引擎的回合留在 Game 层
+
+**背景**：`PLAN.md` §5.6 把 `battle/battle_interface.cpp`（6 144 行）等四篇列为 P3，端口此前一个文件都没有。
+战斗规则层（`BattleArena`、`BattleLoader`、`BattleUnit`、AI）已经齐了，`IBattlePresenter` 也留好了
+「人类那一手怎么打」的回调，缺的正是「看得见」。摆位置时有个分层问题：参考的界面层直接摸 `Arena` 单例与
+`Settings` 全局，端口不允许（`Game` 不能引 `UI`）。绘制本身还需要 `LocalEvent`、`Dialog`、`ImageOps`，
+这些都只在上层。
+
+**决定**：
+1. 战斗的绘制落在 `src/FHeroes2.UI/Battle/`（`BattleFieldPainter`、`BattleFieldStyle`），与冒险地图的
+   `UI/Interface/` 同一层；引擎与规则一行都不动。参考的「界面给竞技场摆格子」这一步照样保留
+   （`board.SetArea(...)` 在绘制器的构造函数里）。
+2. 第一步只做静态层：底图、边框杂物、地表装饰、地图障碍、城堡地面/护城河/城墙/塔/攻城车、双方单位的
+   待机首帧，以及状态栏与三个按钮的**底图**。动画、按帧推进的走子、顺序条、状态栏文字、法术特效、
+   坟场与六角网格都不在这一步。
+3. 「谁去打」由命令行挑：`--battle` 取「地图里第一只游荡怪」，`--battle-siege` 取「第一座别的颜色的城」。
+   参考是英雄走到怪物格/城门格触发，端口的人类动作链还没有界面宿主（PROGRESS §7.4），所以先给画面一个
+   确定的入口；两者都直接跑 AI，等价于参考的无界面自动战斗。
+4. 场景 `BattleScene` 一帧推进一个整回合（`arena.Turns()`），`--freeze-animation` 时一帧都不推进：
+   基线要的是部署那一刻，冒烟要的是「能打完整场」。这两种口径都记在 `tests/baselines/README.md`。
+5. **战场城堡图是 `CASTLE*`，不是 `CSTL*`**：`ICN::getCastleIcnId()`（`icn.cpp:928-948`）给的是
+   `CASTLEB/K/N/S/W/Z`，`CSTL*` 属于城镇建筑的 `ICN::getBuildingIcnId()`；两套图帧数不同
+   （`CASTLEB` 有 31 帧、`CSTLBARB` 也有 31 帧但偏移全为 0），拿错的结果是所有墙都画在屏幕左上角。
+6. 势力计数条要 `TEXTBAR` 的指示帧与位图字体，随第二步（单位与动画）一起补；坟场（`RedrawKilled`）
+   同理，开战时本来没有尸体。
+
+**后果**：战斗第一次有画面，野战场地与攻城两套静态层都能截图；回合仍然是自动的，人类的点选与动画缺席。
+`--battle` 直接跑在英雄的真实军队上（AI 打完会真的损兵），它是画面冒烟入口而不是玩法入口，将来接上
+`BattleLoader` 与人类动作链后这一段自然收归那里。
+
+**验证**：构建 0 错误 0 警告；`BattleFieldStyleTests` 25 条全绿（九种地形的背景与边框、草/土/雪的有树与
+无树两版、六族的城堡地面、六族的战场城堡图、未知地形与未知种族的空答案、攻城时沿用地形底图）；
+`--battle --freeze-animation` 截图 `tests/baselines/battle.png`（兽人 27、沙漠地形），
+`--battle-siege` 截图 `tests/baselines/battle-siege.png`（野蛮人城、护城河与城墙），两张基线各连跑两次
+`identical`；`--battle --smoke-frames 40` 能把整场打完并回到地图（日志 `The battle is over ...`）。
+
+## ADR-213：单位的动画状态留在绘制器，`BattleUnit` 不拿资源；计数条的数字由场景注入字体
+
+**背景**：参考的 `Battle::Unit` 自带 `AnimationState animation` 与 `RandomizedDelay _idleTimer`
+（`battle_troop.h:349`、`:383`），构造函数从 `Bin_Info` 全局缓存里取怪物的 `.BIN` 记录。端口没有全局缓存：
+`AnimationState` 需要 `MonsterAnimInfoCache`，后者需要 `AssetBundle`，而 `Game` 层不碰资源定位，
+`BattleUnit` 又是由 `BattleForce` 从 `Army` 直接摆出来的（`battle_army.cpp:80-105` 的那套公式），中间没有
+资源可用。计数条上的数字要位图字体，字体同样只在上层（`GameFonts` 在 `App`）。
+
+**决定**：
+1. 动画状态放在 `BattleFieldPainter`：一个 `Dictionary<uid, UnitAnimation>`，`UnitAnimation` 持有
+   `AnimationState` 与 `RandomizedDelay(state.IdleDelay)`。推进由 `BattleFieldPainter.Update()` 负责，
+   节拍照参考问 `GameDelays.ValidateAnimationDelay(DelayType.BattleIdleDelay)`。
+2. 状态机本身逐字照抄 `Force::animateIdleUnits()`；将来行动/受击动画需要切换状态时，绘制器按引擎给出的
+   当前动作切序列，`BattleUnit` 仍然只回答「我是什么、站在哪、还剩多少」。
+3. 计数条的数字用可空的 `IGlyphSource` 注入（`BattleScene` 传 `GameFonts.SmallWhite`）；字体缺失时只画条子
+   不画数字，而不是崩掉。
+4. **血量条不做**：它要按游戏调色板取绿/红两个索引（`fheroes2::GetColorId`），而绘制器没有调色板；
+   该设置默认关闭，等战斗设置窗（`battle_interface_settings.cpp`）那一步把调色板与开关一起接上。
+5. `(monsterIndex / width) == (tileInFront == width)` 这条参考表达式原样保留：它看起来是笔误（比较的是
+   「行号」与「前格是否等于 11」），但它决定相邻单位的计数条会不会叠过来，改动会直接改像素。
+
+**后果**：`BattleUnit` 依旧没有资源依赖，单测里照常能造；代价是「谁在播什么动画」暂时只存在于界面这一侧，
+将来要把战斗动画接进行动循环时，得让绘制器接受引擎的动作通知（`SwitchAnimation(state)` 的入口已经在那里）。
+
+**验证**：构建 0 错误 0 警告；两张战斗基线重建（多了计数条）后各连跑两次 `identical`；待机状态机用临时日志
+验证（把 `_idleTimer` 临时改成 50 毫秒并绕过节拍门，120 帧内待机单位 0 → 5），补丁已撤；
+全量测试 5 560 绿。
+
+## ADR-214：`BattleArena` 拆出逐单位推进的五个入口，`Turns()` 变成它们的循环封装
+
+**背景**：P3 的行动交互卡在一个结构问题上。参考的 `Arena::Turns()` 里，人类的 `Interface::HumanTurn()` 是
+**阻塞**的（自己跑 `LocalEvent` 循环），所以整轮可以在一个函数里走完。端口的主循环是帧驱动的：场景每帧
+`Update` 一次、`DrawFrame` 一次，任何一处阻塞都会让窗口停摆。要接人类点选，就必须能在「轮到人类」处停下。
+
+**决定**：
+1. 把 `Turns()` 拆成 `BeginRound()`（开轮）、`SelectNextUnit()`（挑出手单位）、`PlayCastleActions()`
+   （投石车与三座塔，每轮各一次）、`PlayCurrentUnitTurn(handler)`（AI 那一手）、`PlayCurrentUnitTurn(commands)`
+   （玩家在别的帧里点好的那一手）与 `EndRound()`（结算）。
+2. `Turns()` 保留原签名与原语义，内部改成这五个调用的循环；`BattleLoader.RunToEnd`、AI 回合测试都不用改。
+3. `PlayCurrentUnitTurn(commands)` 走同一条 `UnitTurn()`：好士气带来的额外行动如果玩家没再给命令，就交给
+   规划器代打——这条偏差记在方法注释里，等界面真的能连点两下再收。
+4. 结算必须显式：`BattleScene` 在离开前调 `EndRound()`。忘了这一步的直接症状是战果全空（日志「nobody won」），
+   本次冒烟踩到了，已修。
+5. 场景改成**一帧推进一个单位**（以前是一帧一整轮）。这既让 AI 的每一手有独立的绘制帧，也为「轮到人类时
+   停住」留出了位置。
+
+**后果**：战斗的画面推进变慢（一场野战约几十帧），冒烟要相应放宽帧数（`--smoke-frames 400`）；
+`Turns()` 的行为由新增的等价测试钉住（同一颗种子，两条路得到同样的战果、经验与总兵力）。
+
+**验证**：构建 0 错误 0 警告；`BattleArenaTurnTests` 新增 2 条；全量 5 562 绿；两张战斗基线、冒险地图与
+编辑器基线复验 `identical`；`--battle --smoke-frames 400` 与 `--battle-siege --smoke-frames 600` 都打完整场
+并回到地图，日志 `attacker 'Loss', defender 'Wins'`。
+
+## ADR-215：战斗的人类输入读 `LocalEvent`、命令由 `BattleArena` 给出，自动驾驶另开 `--battle-auto`
+
+**背景**：参考的人类回合是阻塞的 `Interface::HumanBattleTurn()`：它自己跑事件循环、按光标主题拼
+`BattleCommand`、再交给 `Arena`。端口的屏幕是帧驱动的，而且游戏层不该认识像素或光标。§6.16 已经把
+「执行一手命令」做成 `PlayCurrentUnitTurn(commands)`，这一批要定的是**谁把点击变成命令**。
+
+**决定**：
+1. 场景每帧读 `LocalEvent.Current`：`CursorPosition` 交给 `BattleBoard.GetIndexAbsPosition()` 得到格子，
+   `MouseClickLeft(battlefieldArea)` 判定一次点击。**不新增** `GameHost` 的鼠标路由分支——冒险地图也是这么
+   读事件的，两屏一致。
+2. 「点哪一格 → 下什么命令」放进 `Game` 层的新文件 `BattleArena.Commands.cs`（`CreateMoveCommand` /
+   `CreateAttackCommand`），因为它要用寻路器与 `BattleTactics`。攻击命令：贴身直接出刀（方向让竞技场算），
+   否则绕目标一圈找「这一回合最便宜能站住」的邻格；**不用** AI 的 `GetUnitMovementTarget()`——它对
+   「目标格本身站不下」是断言，而点击只能回答「没有命令」。
+3. 光标主题暂时只分三类（走 / 飞 / 打），每次悬停格变化才重算：可达性查询带寻路，不能每帧跑。
+   八向剑与施法光标留给施法那一步。
+4. **交互与冒烟分开**：`--battle` 现在是真的人类可玩（人类那一栈停下来等点击），无人值守的冒烟与脚本
+   必须加 `--battle-auto`（等价于参考在没有界面时的 `EnableAutoCombatForHumanSides()`）。像素基线不受影响：
+   它们带 `--freeze-animation`，一帧都不推进。
+5. 网格与悬停阴影要游戏调色板里的两个索引，绘制器因此收一个可空的 `Palette`（场景传
+   `ScreenBuffer.Palette`，即 `Palette.FromGamePalette(KB.PAL)`），颜色走 `PALColorId.Get`。
+
+**后果**：战斗屏幕第一次可以只用鼠标打完一局（走、打、跳过）。代价是输入路径多了一条：
+`LocalEvent` → 场景 → `BattleArena.Commands` → `PlayCurrentUnitTurn`，三处都要有测试或冒烟证据
+（命令侧有 4 条单测，端到端靠 `--left-click-at` 的日志）。`--battle` 的语义变了，文档与脚本都要带
+`--battle-auto` 才能无人值守。
+
+**验证**：构建 0 错误 0 警告；`BattleArenaCommandTests` 4 条；全量 5 566 绿；七张基线全部 `identical`
+（两张战斗重建后各连跑两次）；脚本点击日志 `The player's Sprite acts: move to 24.`；无点击时 60 帧不结束。

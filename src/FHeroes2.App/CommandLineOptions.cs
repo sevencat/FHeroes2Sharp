@@ -17,7 +17,7 @@ namespace FHeroes2.App;
 ///                 [--freeze-animation]
 ///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--skip-turns &lt;n&gt;] [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--skip-turns &lt;n&gt;] [--view-world] [--battle|--battle-siege|--battle-auto] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
@@ -237,6 +237,26 @@ public sealed class CommandLineOptions
     /// so this is how its frame is screenshotted and smoke tested without a mouse.
     /// </summary>
     public bool EnterTown { get; private set; }
+
+    /// <summary>
+    /// Starts a battle as soon as the adventure map is up (<c>--battle</c>): the focus hero fights the first
+    /// wandering monster of the map. Fight always needs the map, so pair it with <c>--enter-map</c> or
+    /// <c>--map</c>; the battle normally starts by walking onto a monster tile, which the port cannot do yet.
+    /// </summary>
+    public bool Battle { get; private set; }
+
+    /// <summary>
+    /// Fights the first town of another colour instead of a wandering monster (<c>--battle-siege</c>), so the
+    /// castle half of the battlefield (ground, moat, walls, towers, catapult) can be screenshotted.
+    /// </summary>
+    public bool BattleSiege { get; private set; }
+
+    /// <summary>
+    /// Hands both sides of a battle to the computer (<c>--battle-auto</c>), the reference's
+    /// <c>EnableAutoCombatForHumanSides()</c>. Without it a human stack waits for a click, so an unattended
+    /// smoke run needs this flag; the pixel baselines do not, they freeze the battle.
+    /// </summary>
+    public bool BattleAuto { get; private set; }
 
     /// <summary>
     /// Opens one of the town screen's windows right after <c>--enter-town</c> (<c>--town-window
@@ -549,6 +569,20 @@ public sealed class CommandLineOptions
                     options.EnterTown = true;
                     break;
 
+                case "--battle":
+                    options.Battle = true;
+                    break;
+
+                case "--battle-siege":
+                    options.Battle = true;
+                    options.BattleSiege = true;
+                    break;
+
+                case "--battle-auto":
+                    options.Battle = true;
+                    options.BattleAuto = true;
+                    break;
+
                 case "--town-window":
                     options.TownWindow = RequireValue(arguments, ref i, argument);
                     break;
@@ -691,6 +725,9 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --skip-turns <n>    Ends the human turn n times at start up, so the computer plays.");
         Console.WriteLine("  --view-world        Opens the View World window as soon as the map is up.");
         Console.WriteLine("  --enter-town        Opens the town screen of the first town as soon as the map is up.");
+        Console.WriteLine("  --battle            Starts the battle of the focus hero and the first wandering monster.");
+        Console.WriteLine("  --battle-siege      Same, but against the first town of another colour (implies --battle).");
+        Console.WriteLine("  --battle-auto       Hand both sides of the battle to the computer (implies --battle).");
         Console.WriteLine("  --town-window <name>  Opens one of its windows, e.g. 'mageguild' or 'market', after --enter-town.");
         Console.WriteLine("  --town-select <n>   Opens the n-th town of the kingdom (0 based) instead of the first.");
         Console.WriteLine("  --town-build <name>  Adds one BuildingType to the entered town, e.g. 'MageGuild1'.");

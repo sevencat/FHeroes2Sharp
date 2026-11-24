@@ -95,6 +95,21 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 （`VerifyAdventureMapBaseline.ps1`）。仍缺：动画帧、超大对象（`tileUnfit`）、地图怪物与船、
 雾与路径、界面面板（`ADVBORD` 外壳与 448×448 视口），清单见 `docs/PROGRESS.md`。
 
+**战斗屏幕（P3 进行中）**：战斗第一次有画面、也能点。规则层（`BattleArena`）本来就在，缺的是参考
+`battle_interface.cpp` 的绘制与输入；目前已搬来：地形底图与边框杂物（`CBKG*`/`FRNG*`，草/土/雪按身边有没有树
+换一版）、地表装饰与地图障碍（`COVR*`/`COBJ*`）、攻城时的城堡地面/护城河/城墙/塔/吊桥/攻城车
+（`CASTBKG*`/`MOATWHOL`/`CASTLE*`/`CATAPULT`）、60 格六角网格（`CMBTMISC`）、鼠标悬停阴影、
+双方单位的待机首帧（防守方镜像）与每队的兵力计数条（`TEXTBAR` 10–14 号 + `smallWhite` 缩写数字）、
+待机动画（`BATTLE_IDLE_DELAY`，`.BIN` 里 9 000 毫秒一次），以及**人类输入**：点空格子走、点敌人格打、
+空格跳过，光标在可走/可打/其余三种主题间切换。底部 37 行是状态栏与 Auto/设置/Skip 三个按钮的**底图**
+（状态文字要战斗日志，随下一步）。`--battle` 让焦点英雄打地图上第一只游荡怪（人类那一栈会停下来等你点），
+`--battle-auto` 把两边都交给电脑（冒烟与脚本用），`--battle-siege` 改为攻打第一座别的颜色的城；场景
+**一帧推进一个单位**（引擎的 `BeginRound`/`SelectNextUnit`/`PlayCastleActions`/`PlayCurrentUnitTurn`/`EndRound`
+五步，ADR-214），`--freeze-animation` 时停在部署那一刻（战斗与待机动画都不推进）。仍未做：施法、等待/防御、
+撤退/投降、Auto/设置/Skip 按钮、路径预览、状态栏文字与战斗日志、顺序条、英雄立绘与所有动画特效
+（`docs/PROGRESS.md` §7.6、ADR-212–215）。
+两张像素基线是 `tests/baselines/battle.png` 与 `battle-siege.png`（`VerifyBattleBaseline.ps1`）。
+
 **世界视图（View World）**：冒险地图上按 `V` 打开参考的全图窗口（`view_world.cpp`）——整张图按 18×18 格
 重画后缩成四档、左键拖动地图、滚轮缩放、点缩放杆切换档位、点雷达跳过去、`EXIT` 或 `Esc` 关闭；关闭时记住
 档位，下次打开沿用。侧栏有五档模式（全图 / 城镇 / 矿井 / 资源 / 英雄）的图例，全图模式下城镇旗、英雄图标、
@@ -291,6 +306,11 @@ pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions   # 冒险�
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo          # 右键提示框（脚本自己带 --right-button 按住）
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update      # 有意改了视觉后重建基线
 
+# 战斗屏幕基线：野战部署（--battle）与攻城（--battle-siege），两张都带 --freeze-animation 与 --seed 1
+pwsh tools/scripts/VerifyBattleBaseline.ps1
+pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege
+pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update    # 有意改了视觉后重建攻城基线
+
 # 首运冒烟：临时配置里开着 'first time game run'，用 --left-click-at 四击走完语言窗 → 问候 → 分辨率窗，
 # 再按日志核对旗标已清；不带 -KeepRunning 时会把配置恢复（CI 也用这一条，见 ADR-209）
 pwsh tools/scripts/SmokeFirstRun.ps1
@@ -320,7 +340,7 @@ tests/…                  xunit 测试
 tools/FHeroes2.AssetProbe    归档检查工具
 tools/reference          参考引擎导出器（C++，链接 fheroes2 源码）
 tools/scripts            调色板表生成、程序图标生成、参考导出器编译、参考对拍、语言包编译、像素基线脚本
-tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + scenario*.png + adventure-map.png + 说明）
+tests/baselines          入库的回归基线 PNG（menu.png + settings*.png + scenario*.png + adventure-map*.png + battle*.png + 说明）
 translations/            语言包源文件（.po）；编译产物 .mo 安装到数据目录，不入库
 assets/                  logo.png / logo.ico（图标源图与生成物）、banner.jpg、author.jpg、可再分发字体
 docs/                    计划、进度、决策与参考笔记

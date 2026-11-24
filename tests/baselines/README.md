@@ -15,6 +15,8 @@
 | `adventure-options.png` | 冒险选项对话框（M4，`--adventure-options`）：同一张 `Alteris.mp2` 上盖一层 `StandardWindow` 石头窗口，窗口由按钮组反推尺寸（`APANEL.ICN` 四个 59×27 按钮排成两列，active area `(221,167,198,146)`），四按钮是 `APANEL.ICN` 的 8 帧（世界/谜题/信息/挖掘，各一对 released/pressed），底部居中是 `SYSTEM.ICN` 第 3/4 帧的 CANCEL（`{0,11}` 上抬 11 像素）。对话框不透明，把地图中间整块盖住，四周的边框、雷达、按钮面板与状态面板都不受影响 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update` |
 | `quick-info.png` | 冒险地图的右键提示框（M4，`--quick-info --right-button --cursor 250,190`）：光标停在一座矿上，`QWIKINFO.ICN` 的 158×94 木框挂在该 tile 的右下角，框内是 `smallWhite` 居中的对象名「Ore Mine」（`MineText.GetMineName`，ADR-207）。框只在地形上出现，`-QuickInfo` 把默认光标从 `620,100`（图标条上）挪到 `250,190`；框只活在右键按住期间，所以脚本同时带 `--right-button`，否则场景下一帧就把它收掉（ADR-208）。文本来自地图数据，框位置来自光标，所以帧是稳定的 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 居中到地图中心（编辑器没有焦点英雄，`EditorScene` 用 `CenterOn(width/2, height/2)`），`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
+| `battle.png` | 战斗屏幕（P3，`--battle --freeze-animation`）：`Alteris.mp2` 上焦点英雄与第一只游荡怪物（兽人 29 只）的野战部署。沙漠底图（`CBKGDSRT`）+ 边框仙人掌（`FRNG0004`）+ 地表装饰（`COVR*`）+ 地图障碍（`COBJ*`）+ 60 格六角网格（`CMBTMISC` 第 0 帧，色 `GetColorId(0x68,0x8C,0x04)`）+ 双方单位的待机首帧（防守方镜像向右）+ 每队的兵力计数条（`TEXTBAR` 10–14 号与 `smallWhite` 缩写数字），底部 37 行是状态栏与 Auto/设置/Skip 三个按钮的底图 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Update` |
+| `battle-siege.png` | 战斗屏幕的攻城画面（P3，`--battle-siege`）：同一张图上攻击另一色的城（野蛮人 Visimir，守军 150 哥布林），多出城堡地面（`CASTBKGB` 第 1 帧）、护城河（`MOATWHOL`）、顶墙（`CASTBKGB` 第 3 帧）、城墙/塔/吊桥（`CASTLEB` 的 4/5–8/17–19/20 帧）与攻城车（`CATAPULT`），网格与计数条与野战相同 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update` |
 
 ## 怎么用
 
@@ -32,20 +34,24 @@ pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions          # �
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update  # 重建对话框基线
 pwsh tools/scripts/VerifyEditorBaseline.ps1                 # 地图编辑器：0 = 一致
 pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update         # 有意改了视觉后重建编辑器基线
+pwsh tools/scripts/VerifyBattleBaseline.ps1                 # 战斗屏幕（野战部署）：0 = 一致
+pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege          # 战斗屏幕（攻城）
+pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update  # 有意改了视觉后重建攻城基线
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -RequireData      # 自建 runner 上把「没数据」当失败
 pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素漂移
 ```
 
-五个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
+六个脚本共用 `tools/scripts/PixelBaseline.ps1`：数据目录查找、`dotnet build`、基线自检、
 `AssetProbe compare` 与容差判定都在那里，脚本本身只剩「哪些开关让这一帧可复现」与
-「哪块区域要忽略」。所以五个脚本的命令行、退出码与失败输出格式完全一致。
+「哪块区域要忽略」。所以六个脚本的命令行、退出码与失败输出格式完全一致。
 
 脚本做的事：先做**基线自检**（PNG 魔数 + `IHDR` 必须是 640×480，失败即退出 `1`），
 再 `dotnet build` → 用 `--freeze-animation --cursor 620,100 --screenshot-frame 30`
 渲染一帧（设置基线多一个 `--open-settings`，场景基线多一个 `--open-scenario`）→ 交给
 `AssetProbe compare` 与基线逐像素比对（差异图写到 `tools-output/baseline/diff/diff_menu.png`、
 `diff_settings.png`、`diff_scenario.png`、`diff_adventure-map.png`、`diff_adventure-map-boats.png`、
-`diff_adventure-options.png`、`diff_quick-info.png`、`diff_editor.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
+`diff_adventure-options.png`、`diff_quick-info.png`、`diff_editor.png`、`diff_battle.png`、
+`diff_battle-siege.png`，退出码 `1` 表示超阈值）。找不到 `Heroes2.agg` 时
 打印 `skip` 并以 `0` 退出，与「依赖真实数据的 xunit 用例」策略一致（ADR-010）；只有显式给
 `-RequireData` 才把缺数据当失败。
 
@@ -139,11 +145,25 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   `--editor-object` + `--editor-place`、`--editor-panel-click` 的日志与 `MapEditSessionTests`，
   见 `PROGRESS.md` 的 E2 记录。
 
+## 战斗屏幕基线也是逐字节稳定的
+
+* 战斗画面只画静态层、待机动画与网格：底图、边框杂物、地表装饰、地图障碍、城堡地面/护城河/城墙/塔/攻城车、
+  60 格六角网格、双方单位的待机首帧与兵力计数条。没有指针（默认光标落在战场外的格间）、没有状态栏文字、没有法术特效。
+* `--freeze-animation` 让场景**一帧都不推进战斗、也不推进待机动画**：不加它时 `BattleScene.Update` 每帧
+  跑一个单位、`BattleFieldPainter.Update` 按 `BATTLE_IDLE_DELAY`（速度 4 约 160 毫秒）推进待机帧，
+  截图停在第几帧就等于打到第几手、动画到第几帧，帧数一变基线就变。**注意**：`--battle` 现在等人类点击，
+  无人值守的冒烟要带 `--battle-auto`；基线带 `--freeze-animation`，所以不受影响。
+* `--seed 1` 固定地图载入时的随机（英雄初始部队、随机物件，见 §7.5），`--battle` 挑的怪物格是
+  「地图里第一只 `ActionMonster`」，`--battle-siege` 挑的是「第一座别的颜色的城」：三者在同一张
+  `Alteris.mp2` 上是确定的。战场的装饰与障碍用「地图种子 + 格子号」派生随机源（`battle_arena.cpp:427-435`），
+  与战斗随机源无关，所以同一格永远同一套地形。
+* 状态的底部 37 行（`TEXTBAR` 8/9 号与 Auto/设置/Skip 三个按钮）只有底图，没有文字，不需要忽略区域。
+
 ## CI 怎么接
 
-`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用十条命令（job 名是历史原因，现在跑的是
-十份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图、船、
-冒险选项对话框、右键提示框、地图编辑器各一次）：
+`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用十二条命令（job 名是历史原因，现在跑的是
+十二份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图、船、
+冒险选项对话框、右键提示框、地图编辑器、战斗屏幕与攻城画面各一次）：
 
 * 托管 runner（`windows-latest`）没有游戏数据，脚本会停在自检之后：**基线文件本身**被校验
   （存在、是 PNG、640×480），像素比对退化为 `skip`。这一步拦的是「基线被删/被换错尺寸」。
@@ -192,7 +212,7 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 ## 基线的数据版本
 
-当前十张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
+当前十二张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
 `heroes2x.agg`，`AssetBundle` 优先取后者，因此 `HEROES.ICN` 是 *The Price of Loyalty* 横幅版本。
 只有基础版数据（原版街景背景）时基线必然对不上——那种情况应当另存一份（例如
 `menu-classic.png`）而不是覆盖它。`settings.zh_CN.png` 还额外依赖 `files/lang/zh_CN.mo`
@@ -211,6 +231,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `adventure-options.png` | 130,860 | `961E657BA1B4C2CFE5A5FB42A3810C39AE7D5A34D35296A198DFD2894A48507D` |
 | `quick-info.png` | 121,856 | `012B298143C38E786ED8834E85ABAA163BFA16BDED372BB35485C199A59F672F` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
+| `battle.png` | 171,260 | `F308168B13156E68EECDE9AB39A9E0A480FF32B08613E8EF9902D51274ABAF9F` |
+| `battle-siege.png` | 207,113 | `4507B6DF6385EE333B1ED5FE5F8E34C5AA3399BD8124A4BDE945E898918FB247` |
 
 ## 更新基线的规矩
 
