@@ -36,6 +36,22 @@ public static class Rand
     public static Pcg32 CurrentThreadRandomDevice => ThreadGenerator.Value!;
 
     /// <summary>
+    /// Replaces the generator of the current thread with one seeded from <paramref name="seed"/>.
+    /// </summary>
+    /// <remarks>
+    /// 参考没有这个入口：<c>currentThreadRandomDevice</c> 只有 OS 播种一条路，所以参考不做逐像素的
+    /// 基线断言。端口的 <c>--seed</c> 需要一条可复现的路：地图载入时英雄的初始部队数量由
+    /// <see cref="Get(uint, uint)"/> 抽取，同一张地图两次渲染会差几十个像素，基线永远对不上。
+    /// 调用之后本线程的 <see cref="Get(uint, uint)"/> 从给定的种子开始。
+    /// </remarks>
+    /// <param name="seed">Seed of the generator.</param>
+    /// <param name="stream">Stream of the generator, the second half of the reference's seed pair.</param>
+    public static void SeedThread(ulong seed, ulong stream = Pcg32.DefaultStream)
+    {
+        ThreadGenerator.Value = new Pcg32(seed, stream);
+    }
+
+    /// <summary>
     /// An inclusive value in <c>[from, to]</c>, <c>Rand::Get()</c> (<c>rand.cpp:93</c>).
     /// </summary>
     /// <remarks>

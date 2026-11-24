@@ -165,6 +165,77 @@ public sealed class BorderWindowTests
     }
 
     [Fact]
+    public void Drop_PlacesThePanelAtTheOutlineAndSavesItsPosition()
+    {
+        using AssetBundle? assets = OpenGameData();
+        if (assets is null)
+        {
+            return;
+        }
+
+        try
+        {
+            PixelBuffer target = new(640, 480);
+            TestPanel panel = new(target, new Rect(10, 10, 100, 60)) { HideInterfaceEnabled = true };
+            panel.MoveTo(100, 100);
+
+            LocalEvent events = new();
+            events.OnMouseButton(true, MouseButtonType.Left, new Point(120, 105));
+
+            BorderDrag drag = Assert.IsType<BorderDrag>(panel.QueueEventProcessing(events));
+
+            int savesBefore = panel.SaveCount;
+
+            Assert.Same(panel, drag.Owner);
+
+            // While the button is down only the outline moves, the panel stays where it was.
+            drag.MoveTo(new Point(250, 205));
+
+            Assert.Equal(new Point(230, 200), drag.Position);
+            Assert.Equal(new Rect(100, 100, 132, 92), panel.GetRect);
+            Assert.Equal(savesBefore, panel.SaveCount);
+
+            // On release the panel takes the place of the outline, exactly `SetPos( mp.x - ox, mp.y - oy )`.
+            drag.Drop(new Point(250, 205));
+
+            Assert.Equal(new Rect(230, 200, 132, 92), panel.GetRect);
+            Assert.Equal(new Point(246, 216), panel.Area.Position);
+            Assert.Equal(savesBefore + 1, panel.SaveCount);
+            Assert.Equal(new Point(246, 216), panel.SavedAreaOrigin);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
+    public void Drop_WithoutAPanel_OnlyPaintsTheOutline()
+    {
+        using AssetBundle? assets = OpenGameData();
+        if (assets is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // The outline of a drag nobody owns - a test that only paints it - has nowhere to drop.
+            BorderDrag drag = new(new Rect(100, 100, 40, 30), new Point(10, 5));
+
+            Assert.Null(drag.Owner);
+
+            drag.Drop(new Point(250, 205));
+
+            Assert.Equal(new Point(100, 100), drag.Position);
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
+    [Fact]
     public void IsMouseCaptured_ReleasesOnTheFrameTheButtonGoesUp()
     {
         PixelBuffer target = new(640, 480);

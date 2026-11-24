@@ -46,10 +46,10 @@ public enum KeyboardEventState
 /// <see cref="BeginFrame"/>, the SDL half is <see cref="IEventEngine"/> and the frame is
 /// <see cref="HandleEvents"/> itself — a dialog can therefore be written exactly like the reference,
 /// <c>while ( le.HandleEvents() ) { ... }</c>. A scene that drives its own loop keeps translating SDL
-/// events into <see cref="OnMouseMotion"/>, <see cref="OnMouseButton"/>, <see cref="OnKeyboard"/> and
-/// <see cref="OnMouseWheel"/> directly. The gamepad (<c>onController*</c>), the two-finger touchpad
-/// gesture (<c>onTouchFingerEvent</c>) and the emulated pointer are still not translated: they need
-/// SDL devices and a render loop. <c>KeySymGetName</c> goes through <c>SDL_GetKeyName</c> and is not
+/// events into <see cref="OnMouseMotion"/>, <see cref="OnMouseButton"/>, <see cref="OnKeyboard"/>,
+/// <see cref="OnMouseWheel"/> and <see cref="OnTouchFinger"/> directly. The gamepad (<c>onController*</c>)
+/// and the emulated pointer are still not translated: they need SDL devices and a render loop.
+/// <c>KeySymGetName</c> goes through <c>SDL_GetKeyName</c> and is not
 /// here either; <see cref="KeyText"/> has the character side of the keyboard.
 /// </para>
 /// <para>
@@ -65,6 +65,50 @@ public sealed class LocalEvent
     /// reference's <c>mouseButtonLongPressTimeout</c> (<c>localevent.cpp:74</c>).
     /// </summary>
     public const ulong LongPressTimeoutMs = 850;
+
+    /// <summary>Whether a finger went down, up or moved, the reference's <c>TouchFingerEventType</c>.</summary>
+    public enum TouchFinger
+    {
+        /// <summary>An event that is not a finger event.</summary>
+        Unknown,
+
+        /// <summary>A finger touched the screen.</summary>
+        Down,
+
+        /// <summary>A finger left the screen.</summary>
+        Up,
+
+        /// <summary>A finger that already touches the screen moved.</summary>
+        Motion,
+    }
+
+    /// <summary>What one <see cref="OnTouchFinger"/> call emulated, so the host can route it to its scenes.</summary>
+    /// <remarks>
+    /// The reference's menus read <see cref="LocalEvent"/> directly, so <c>onTouchFingerEvent</c> returns nothing.
+    /// The port's scenes take the mouse state from the host, which is why the emulated button (if any) and the
+    /// movement are reported back instead of having to be guessed from the state afterwards.
+    /// </remarks>
+    public enum TouchEmulation
+    {
+        /// <summary>Nothing was emulated: a third finger, an unknown finger or a stale event.</summary>
+        None,
+
+        /// <summary>The first finger moved the cursor, with or without the two-finger gesture in progress.</summary>
+        Motion,
+
+        /// <summary>The first finger emulated a left button press.</summary>
+        LeftPressed,
+
+        /// <summary>The first finger emulated a left button release.</summary>
+        LeftReleased,
+
+        /// <summary>The second finger emulated a right button press.</summary>
+        RightPressed,
+
+        /// <summary>The second finger emulated a right button release.</summary>
+        RightReleased,
+    }
+
 
     /// <summary>
     /// How long a frame sleeps after the events have been processed, the reference's
@@ -93,6 +137,12 @@ public sealed class LocalEvent
     private Point _wheelMovementOffset;
 
     private Rect _cursorRenderArea;
+
+    // IDs of the fingers currently on the screen, each a (touch device, finger) pair, and whether the
+    // two-finger gesture that emulates the right button is running (localevent.h:524-527).
+    private (ulong TouchId, ulong FingerId)? _firstFinger;
+    private (ulong TouchId, ulong FingerId)? _secondFinger;
+    private bool _twoFingerGestureInProgress;
 
     /// <summary>Creates the event state, the reference's private constructor.</summary>
     /// <param name="clockMs">
@@ -340,6 +390,144 @@ public sealed class LocalEvent
     }
 
     /// <summary>
+    /// Pushes a finger that went down, up or moved, the reference's <c>onTouchFingerEvent</c>
+    /// (<c>localevent.cpp:1358-1430</c>).
+    /// </summary>
+    /// <remarks>
+    /// The first finger on the screen drives the cursor and emulates the left button; a second finger that goes
+    /// down while the first one is still there emulates the right button, which is how a touch screen gets at the
+    /// quick information the right button shows. A third finger and events of a finger that is not on the screen
+    /// are ignored. <see cref="IsMouseEventFromTouchpad"/> is raised for every emulated event.
+    /// </remarks>
+    /// <param name="eventType">What the finger did.</param>
+    /// <param name="touchId">Touch device the finger belongs to, <c>touchID</c>.</param>
+    /// <param name="fingerId">Finger index on that device, <c>fingerID</c>.</param>
+    /// <param name="position">Finger position in logical pixels.</param>
+    /// <returns>What the call emulated, so a host that owns the scenes can route it.</returns>
+    public TouchEmulation OnTouchFinger(TouchFinger eventType, ulong touchId, ulong fingerId, Point position)
+    {
+        (ulong TouchId, ulong FingerId) id = (touchId, fingerId);
+
+        switch (eventType)
+        {
+            case TouchFinger.Down:
+                if (_firstFinger is null)
+                {
+                    _firstFinger = id;
+                }
+                else if (_secondFinger is null)
+                {
+                    _secondFinger = id;
+                }
+                else
+                {
+                    // Only two fingers take part; the reference has no slot for a third one.
+                    return TouchEmulation.None;
+                }
+
+                break;
+
+            case TouchFinger.Up:
+            case TouchFinger.Motion:
+                if (id != _firstFinger && id != _secondFinger)
+                {
+                    return TouchEmulation.None;
+                }
+
+                break;
+
+            default:
+                return TouchEmulation.None;
+        }
+
+        TouchEmulation emulated = TouchEmulation.None;
+
+        if (id == _firstFinger)
+        {
+            // The first finger always moves the cursor, also while the right button is being held.
+            _cursorPosition = position;
+            SetStates(ActionStates.MouseMotion);
+            SetStates(ActionStates.MouseTouch);
+            _cursorRenderArea = MouseMotionHook?.Invoke(position.X, position.Y) ?? _cursorRenderArea;
+
+            if (!_twoFingerGestureInProgress)
+            {
+                if (eventType == TouchFinger.Down)
+                {
+                    _leftPressPosition = _cursorPosition;
+                    _longPressDelay.Reset();
+                    SetStates(ActionStates.MousePressed);
+                    emulated = TouchEmulation.LeftPressed;
+                }
+                else if (eventType == TouchFinger.Up)
+                {
+                    _leftReleasePosition = _cursorPosition;
+                    ResetStates(ActionStates.MousePressed);
+                    ResetStates(ActionStates.DragOngoing);
+                    SetStates(ActionStates.MouseReleased);
+                    emulated = TouchEmulation.LeftReleased;
+                }
+
+                _currentButton = MouseButtonType.Left;
+            }
+
+            if (eventType == TouchFinger.Motion)
+            {
+                emulated = TouchEmulation.Motion;
+            }
+        }
+        else if (id == _secondFinger)
+        {
+            // The second finger does not move the cursor: the reference keeps it where the first finger left it.
+            if (eventType == TouchFinger.Down)
+            {
+                _rightPressPosition = _cursorPosition;
+                _longPressDelay.Reset();
+                SetStates(ActionStates.MousePressed);
+                SetStates(ActionStates.MouseTouch);
+                _twoFingerGestureInProgress = true;
+                emulated = TouchEmulation.RightPressed;
+            }
+            else if (eventType == TouchFinger.Up)
+            {
+                _rightReleasePosition = _cursorPosition;
+                ResetStates(ActionStates.MousePressed);
+                ResetStates(ActionStates.DragOngoing);
+                SetStates(ActionStates.MouseReleased);
+                SetStates(ActionStates.MouseTouch);
+                emulated = TouchEmulation.RightReleased;
+            }
+
+            _currentButton = MouseButtonType.Right;
+        }
+
+        if (eventType == TouchFinger.Up)
+        {
+            if (id == _firstFinger)
+            {
+                _firstFinger = null;
+            }
+            else
+            {
+                _secondFinger = null;
+            }
+
+            if (_firstFinger is null && _secondFinger is null)
+            {
+                _twoFingerGestureInProgress = false;
+            }
+        }
+
+        return emulated;
+    }
+
+    /// <summary>
+    /// Whether the frame's mouse events came from a touch screen rather than a mouse,
+    /// <c>isMouseEventFromTouchpad()</c>.
+    /// </summary>
+    public bool IsMouseEventFromTouchpad => (_actionStates & ActionStates.MouseTouch) != 0;
+
+    /// <summary>
     /// Pushes a key down or up, the reference's <c>onKeyboardEvent</c>
     /// (<c>localevent.cpp:1658-1674</c>).
     /// </summary>
@@ -449,14 +637,6 @@ public sealed class LocalEvent
     /// <summary>Whether the cursor is inside <paramref name="area"/>, <c>isMouseCursorPosInArea()</c>.</summary>
     /// <param name="area">Area in logical pixels.</param>
     public bool IsMouseCursorPosInArea(Rect area) => area.Contains(_cursorPosition);
-
-    /// <summary>
-    /// Whether the current mouse event came from a touchpad, <c>isMouseEventFromTouchpad()</c>.
-    /// </summary>
-    /// <remarks>
-    /// Always <see langword="false"/> until the two-finger gesture is ported: nothing sets the flag.
-    /// </remarks>
-    public bool IsMouseEventFromTouchpad => (_actionStates & ActionStates.MouseTouch) != 0;
 
     /// <summary>Whether a key went down this frame, <c>isAnyKeyPressed()</c>.</summary>
     public bool IsAnyKeyPressed => (_actionStates & ActionStates.KeyPressed) != 0;

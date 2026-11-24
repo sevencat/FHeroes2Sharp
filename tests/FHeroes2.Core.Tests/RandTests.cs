@@ -164,6 +164,27 @@ public sealed class RandTests
     }
 
     [Fact]
+    public void SeedThread_MakesTheThreadGeneratorReproducible()
+    {
+        // --seed relies on this: map loading draws hero army sizes and random objects from the thread
+        // generator, so the same seed has to give the same sequence (docs/PROGRESS.md §7.5).
+        Rand.SeedThread(2026);
+        uint[] first = [Rand.Get(1000u), Rand.Get(1000u), Rand.Get(1000u)];
+
+        Rand.SeedThread(2026);
+        uint[] second = [Rand.Get(1000u), Rand.Get(1000u), Rand.Get(1000u)];
+
+        Assert.Equal(first, second);
+    }
+
+    [Fact]
+    public void SeedThread_ReplacesTheGeneratorOfTheThread()
+    {
+        Rand.SeedThread(4711);
+        Assert.Equal(new Pcg32(seed: 4711).NextInclusive(0u, 99u), Rand.Get(99u));
+    }
+
+    [Fact]
     public void CurrentThreadRandomDevice_IsStableWithinAThread()
     {
         // thread_local PCG32 gen( rd ) (rand.cpp:87): one generator per thread, created on first use.

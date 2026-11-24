@@ -13,6 +13,7 @@ using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
@@ -21,6 +22,8 @@ using FHeroes2.UI.Interface;
 using AdventureInterface = FHeroes2.UI.Interface.AdventureMap;
 
 using CastleTown = FHeroes2.Game.Castle.Castle;
+
+using ZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 
 namespace FHeroes2.App.Scenes;
 
@@ -683,8 +686,9 @@ public sealed class AdventureMapScene : IScene
     /// <param name="drag">The drag the frame started, or <see langword="null"/>.</param>
     /// <param name="events">Input state of the frame.</param>
     /// <remarks>
-    /// 参考在松手时把面板摆到轮廓的位置（<c>BorderWindow::SetPosition</c>），而端口的
-    /// <see cref="AdventurePanelResult"/> 只带轮廓不带「是哪个面板」，所以这里先只画轮廓、松手丢掉。
+    /// 参考在松手时把面板摆到轮廓的位置（<c>BorderWindow::SetPosition</c>）。轮廓自己带着被拖的
+    /// <see cref="BorderDrag.Owner"/>，所以这里松手调 <see cref="BorderDrag.Drop"/> 就够；面板的
+    /// <c>SetPos</c> 会夹进屏幕并落进 <c>Settings</c> 的四个位置，退出时随配置写出。
     /// 只有隐藏界面模式有可抓的面板，正常布局下 <paramref name="drag"/> 一直是 <see langword="null"/>。
     /// </remarks>
     private void PumpDrag(BorderDrag? drag, LocalEvent events)
@@ -701,6 +705,7 @@ public sealed class AdventureMapScene : IScene
 
         if (!events.IsMouseLeftButtonPressed)
         {
+            _drag.Drop(events.CursorPosition);
             _drag = null;
 
             return;

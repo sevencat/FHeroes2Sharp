@@ -436,4 +436,30 @@ public sealed class WorldLoadMapTests
         Assert.Contains(world.Tiles, tile => tile.PassableDirections == Direction.Unknown);
         Assert.Contains(world.Tiles, tile => tile.PassableDirections == Directions.All);
     }
+
+    [Fact]
+    public void TheDifficultyPassedInDecidesTheStartingResources()
+    {
+        // 参考的 Kingdom::Init( color ) 取 Game::getDifficulty()（kingdom.cpp:103），也就是玩家在剧本信息屏上
+        // 挑的那一档；地图头里的难度只参与评分（Game::GetRating）。LoadMap 的第二个参数就是这份选择。
+        Mp2Map map = BlankMap();
+
+        var impossible = new World();
+        impossible.LoadMap(map, GameDifficulty.Impossible);
+
+        Assert.Equal(0, impossible.GetKingdom(PlayerColor.Blue).Treasury.Gold);
+
+        var easy = new World();
+        easy.LoadMap(map, GameDifficulty.Easy);
+
+        Assert.Equal(10_000, easy.GetKingdom(PlayerColor.Blue).Treasury.Gold);
+
+        // 没有玩家的选择时（测试与工具）退回地图头那一档，也就是老口径。
+        var header = new World();
+        header.LoadMap(map);
+
+        Assert.Equal(global::FHeroes2.Game.Kingdom.Kingdom.GetStartingResources(
+                map.Info.Difficulty, isAiControlled: false).Gold,
+            header.GetKingdom(PlayerColor.Blue).Treasury.Gold);
+    }
 }

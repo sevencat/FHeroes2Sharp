@@ -14,6 +14,11 @@ namespace FHeroes2.App.Graphics;
 /// platform reports too few of them. The port lists what the system reports and nothing else, so the dialog never
 /// offers a mode the window cannot actually be set to.
 /// </remarks>
+/// <remarks>
+/// 每一行都是「640x480 的帧缓冲 + 某个窗口尺寸」：参考的现代版本让游戏尺寸跟着窗口走，端口的场景全按 640x480 画
+/// （ADR-204），所以 <see cref="ResolutionInfo.GameSize"/> 恒等于当前帧缓冲，<see cref="ResolutionInfo.ScreenSize"/>
+/// 才是挑中的窗口（ADR-205）。这样 <see cref="SetResolution"/> 才不会因为游戏尺寸不是 640x480 而拒绝。
+/// </remarks>
 internal sealed class SdlDisplayControl : IDisplayControl
 {
     /// <summary>Smallest window the port offers, the 640x480 frame buffer, <c>IsLowerThanDefaultRes()</c>.</summary>
@@ -43,6 +48,7 @@ internal sealed class SdlDisplayControl : IDisplayControl
     /// <inheritdoc/>
     public IReadOnlyList<ResolutionInfo> GetAvailableResolutions()
     {
+        Size logical = _presenter.LogicalSize;
         SortedSet<ResolutionInfo> modes = [];
 
         uint[]? displays = SDL.GetDisplays(out int displayCount);
@@ -63,7 +69,7 @@ internal sealed class SdlDisplayControl : IDisplayControl
                     continue;
                 }
 
-                modes.Add(new ResolutionInfo(mode.W, mode.H));
+                modes.Add(new ResolutionInfo(logical.Width, logical.Height, mode.W, mode.H));
             }
         }
 
@@ -71,7 +77,7 @@ internal sealed class SdlDisplayControl : IDisplayControl
         {
             GameLog.Warn("The system reports no usable display mode; only the 640x480 default is offered.");
 
-            return [new ResolutionInfo(MinimumWidth, MinimumHeight)];
+            return [new ResolutionInfo(logical.Width, logical.Height, MinimumWidth, MinimumHeight)];
         }
 
         // SortedSet walks from the smallest to the largest; the reference offers the largest window first.

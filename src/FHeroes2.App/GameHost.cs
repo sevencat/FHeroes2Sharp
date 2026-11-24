@@ -12,6 +12,7 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.Core.Random;
 using FHeroes2.Core.Timing;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
@@ -49,6 +50,12 @@ public sealed class GameHost : IDisposable
     /// <summary>Frame at which <c>--left-click</c> fires: late enough for the menu to be laid out.</summary>
     private const int LeftClickFrame = 10;
 
+    /// <summary>
+    /// Window scale used when neither <c>--scale</c> nor a saved <c>videomode</c> asks for one; the pixel baselines
+    /// run with <c>--no-config</c> and rely on this 2.
+    /// </summary>
+    private const int DefaultWindowScale = 2;
+
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
     private readonly bool _syntheticCursor;
@@ -84,6 +91,12 @@ public sealed class GameHost : IDisposable
     private bool _running;
 
     /// <summary>
+    /// Whether <c>SDL_GetTouchDevices</c> found a touch screen, <c>System::isTouchInputAvailable()</c>; the
+    /// greeting of the first run mentions the two-finger gesture only when it is set.
+    /// </summary>
+    private bool _touchInputAvailable;
+
+    /// <summary>
     /// The configuration file of <c>fheroes2.cfg</c>, or <see langword="null"/> when there is none to use
     /// (<c>--no-config</c>, or no application data folder to put it in).
     /// </summary>
@@ -93,10 +106,27 @@ public sealed class GameHost : IDisposable
     private bool _screenshotRequested;
     private bool _disposed;
 
+    /// <summary>
+    /// The scripted left clicks of the run: the ones of <c>--left-click-at</c>, or the single replay of
+    /// <c>--left-click</c> on <see cref="LeftClickFrame"/>.
+    /// </summary>
+    private readonly IReadOnlyList<ScriptedClick> _clicks;
+
+    /// <summary>
+    /// The point of a scripted click whose press went into <see cref="FHeroes2.UI.Input.LocalEvent"/> and
+    /// still needs its release on the next frame.
+    /// </summary>
+    private Point? _pendingClickRelease;
+
     public GameHost(CommandLineOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _syntheticCursor = options.Cursor is not null;
+        _clicks = options.ScriptedClicks.Count > 0
+            ? options.ScriptedClicks
+            : options.LeftClick && options.Cursor is { } clickPoint
+                ? [new ScriptedClick(LeftClickFrame, clickPoint)]
+                : [];
 
         if (options.ScreenshotPath is not null)
         {
@@ -125,6 +155,10 @@ public sealed class GameHost : IDisposable
 
         _sdlInitialised = true;
 
+        // 参考自己把手指事件翻译成鼠标（onTouchFingerEvent），所以关掉 SDL 的触摸合成，否则每次点按都会来两遍。
+        SDL.SetHint(SDL.Hints.MouseTouchEvents, "0");
+        SDL.SetHint(SDL.Hints.TouchMouseEvents, "0");
+
         if (!TTF.Init())
         {
             GameLog.Error($"TTF_Init failed: {SDL.GetError()}");
@@ -133,15 +167,26 @@ public sealed class GameHost : IDisposable
         }
 
         _ttfInitialised = true;
+        _touchInputAvailable = !_options.NoTouch && HasTouchInput();
         GameLog.Info($"{BuildInfo.DisplayName} starting (SDL {SDL.GetVersion()}, SDL_ttf {TTF.Version()})");
+
+        if (_options.NoTouch)
+        {
+            GameLog.Info("Touch input disabled by --no-touch: the first-run greeting keeps the short layout.");
+        }
+        else if (_touchInputAvailable)
+        {
+            GameLog.Info("A touch screen was found: finger events drive the cursor and the two buttons.");
+        }
 
         LoadGameData();
         LoadSettings();
+        ApplySessionOptions();
         _fonts = GameFonts.TryLoad(_assets);
 
         try
         {
-            _presenter = new SdlPresenter(ScreenBuffer.DefaultSize, _options.WindowScale, _options.Fullscreen);
+            _presenter = CreatePresenter();
 
             _frame = new ScreenBuffer(ScreenBuffer.DefaultSize, _palette);
 
@@ -154,6 +199,14 @@ public sealed class GameHost : IDisposable
             {
                 _systemInfo = new SystemInfoRenderer();
                 GameLog.Info("System info overlay enabled: clock and FPS in the bottom left corner.");
+            }
+
+            // --seed has to run before anything is loaded: map loading draws hero army sizes and the
+            // random objects from the thread generator (see Rand.SeedThread).
+            if (_options.Seed is { } seed)
+            {
+                Rand.SeedThread(seed);
+                GameLog.Info($"Random generator seeded with {seed}.");
             }
 
             CreateTextRenderer();
@@ -307,27 +360,67 @@ public sealed class GameHost : IDisposable
             if (_syntheticCursor && _options.Cursor is { } syntheticCursor)
             {
                 _le.OnMouseMotion(syntheticCursor);
-            }
 
-            // --left-click replays one click from inside the loop, i.e. after the event batch and
-            // before the scene update, which is the frame order a player produces. Doing it in
-            // CreateScenes would skip the first frames of the new scene.
-            // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
-            // replaying there (the arrows need a second click in the same run to be visible).
-            if (_options.LeftClick && _castle is { } townScreen && _options.Cursor is { } townPoint && _timer.FrameCount == LeftClickFrame)
-            {
-                townScreen.SetCursor(townPoint);
-                townScreen.SetLeftButton(true);
-                townScreen.SetLeftButton(false);
-            }
-            else if (_options.LeftClick && _menu is not null && _timer.FrameCount == LeftClickFrame)
-            {
-                _menu.SetCursor(_options.Cursor);
-                _menu.SetLeftButton(true);
-
-                if (_menu.SetLeftButton(false) is { } clicked)
+                // --right-button holds the right button down. The menu and the town screen take that flag
+                // directly, but the adventure map reads the event state: the quick info box of a tile only
+                // exists while the button is pressed (Dialog::QuickInfo), and the scene drops it on the
+                // frame the press is gone. Pushing the held press into LocalEvent is what keeps the box up
+                // for --quick-info and for any other right-hold tooltip of the map.
+                if (_options.RightButton && _adventure is not null)
                 {
-                    HandleMenuAction(clicked);
+                    _le.OnMouseButton(isPressed: true, MouseButtonType.Right, syntheticCursor);
+                }
+            }
+
+            // A scripted click that went into LocalEvent releases on the frame after its press: one
+            // physical click spans two frames, and the button row and the list of the first-run chooser
+            // both fire on the release, not on the press.
+            if (_pendingClickRelease is { } releasePoint)
+            {
+                _le.OnMouseButton(isPressed: false, MouseButtonType.Left, releasePoint);
+                _pendingClickRelease = null;
+            }
+
+            // --left-click replays one click at frame 10 on --cursor; --left-click-at replays a whole script
+            // of them, because the first run needs three in one run (the language OKAY, the greeting OKAY,
+            // then a row of the resolution chooser). The clicks are replayed from inside the loop, i.e.
+            // after the event batch and before the scene update, which is the frame order a player
+            // produces. Doing it in CreateScenes would skip the first frames of the new scene.
+            foreach (ScriptedClick click in _clicks)
+            {
+                if (_timer.FrameCount != click.Frame)
+                {
+                    continue;
+                }
+
+                // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
+                // replaying there (the arrows need a second click in the same run to be visible).
+                if (_castle is { } townScreen)
+                {
+                    townScreen.SetCursor(click.Point);
+                    townScreen.SetLeftButton(true);
+                    townScreen.SetLeftButton(false);
+                }
+                else if (_menu is not null)
+                {
+                    _menu.SetCursor(click.Point);
+                    _menu.SetLeftButton(true);
+
+                    if (_menu.SetLeftButton(false) is { } clicked)
+                    {
+                        HandleMenuAction(clicked);
+                    }
+                }
+
+                // The first-run resolution chooser is the one window that reads LocalEvent instead of the
+                // scene's SetLeftButton API (its list drives the scrolling, the double click and the
+                // right-click explanation from that state), so the click is pushed there as well. The
+                // press goes in now and the release on the next frame: one physical click spans two
+                // frames, and both the button row and the list fire on the release.
+                if (_menu?.ResolutionPicker is not null)
+                {
+                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                    _pendingClickRelease = click.Point;
                 }
             }
 
@@ -347,6 +440,139 @@ public sealed class GameHost : IDisposable
             _audio?.Update();
             Draw();
         }
+    }
+
+    /// <summary>
+    /// Hands a cursor position to the scene that owns the pointer, shared by the mouse and the touch screen.
+    /// </summary>
+    /// <param name="point">Cursor position in logical pixels, or <see langword="null"/> to ignore the event.</param>
+    /// <remarks>
+    /// A modal window owns the pointer while it is open: the scene below keeps its state (it is frozen) and only
+    /// the window reacts. With <c>--cursor</c> the synthetic pointer is what a screenshot should show, so the real
+    /// one must not steal the hover state.
+    /// </remarks>
+    private void MoveSceneCursor(Point? point)
+    {
+        if (point is not { } logical)
+        {
+            return;
+        }
+
+        if (_modal is { } modal)
+        {
+            if (!_syntheticCursor)
+            {
+                modal.SetCursor(logical);
+            }
+
+            return;
+        }
+
+        if (_syntheticCursor)
+        {
+            return;
+        }
+
+        if (_castle is { } townScreen)
+        {
+            townScreen.SetCursor(logical);
+        }
+        else if (_editorMenu is { } editorMenu)
+        {
+            editorMenu.SetCursor(logical);
+        }
+        else if (_editor is { } editing)
+        {
+            editing.SetCursor(logical);
+        }
+        else if (_adventure is { } moving)
+        {
+            // The View World window drags its map with the same left button, so the pointer goes to the window
+            // while it is open; the adventure map itself reads the pointer out of LocalEvent.
+            if (moving.ViewWorld is { } viewWorld)
+            {
+                viewWorld.DragTo(logical);
+            }
+        }
+        else
+        {
+            _menu?.SetCursor(logical);
+        }
+    }
+
+    /// <summary>
+    /// Turns one finger event into <see cref="LocalEvent"/> state and the scene calls a mouse event would make,
+    /// the reference's <c>onTouchFingerEvent</c> plus the dispatch its menus get for free.
+    /// </summary>
+    /// <param name="finger">Finger event taken from the SDL queue.</param>
+    /// <remarks>
+    /// SDL reports the finger position normalized to the window, so it is scaled to the output pixels before
+    /// <see cref="ToCursor"/> applies the logical viewport. SDL's own touch-to-mouse synthesis is turned off when
+    /// the client starts, otherwise every finger would arrive twice.
+    /// </remarks>
+    private bool EmulateTouch(in SDL.TouchFingerEvent finger)
+    {
+        Size output = _presenter!.OutputSize;
+        Point cursor = ToCursor(finger.X * output.Width, finger.Y * output.Height);
+
+        LocalEvent.TouchFinger type = finger.Type switch
+        {
+            SDL.EventType.FingerDown => LocalEvent.TouchFinger.Down,
+            SDL.EventType.FingerUp => LocalEvent.TouchFinger.Up,
+            SDL.EventType.FingerMotion => LocalEvent.TouchFinger.Motion,
+            _ => LocalEvent.TouchFinger.Unknown,
+        };
+
+        LocalEvent.TouchEmulation emulated = _le.OnTouchFinger(type, finger.TouchID, finger.FingerID, cursor);
+
+        switch (emulated)
+        {
+            case LocalEvent.TouchEmulation.Motion:
+                MoveSceneCursor(cursor);
+                break;
+
+            case LocalEvent.TouchEmulation.LeftPressed:
+            case LocalEvent.TouchEmulation.LeftReleased:
+            case LocalEvent.TouchEmulation.RightPressed:
+            case LocalEvent.TouchEmulation.RightReleased:
+                MoveSceneCursor(cursor);
+                return DispatchButton(
+                    emulated is LocalEvent.TouchEmulation.LeftPressed or LocalEvent.TouchEmulation.RightPressed,
+                    emulated is LocalEvent.TouchEmulation.RightPressed or LocalEvent.TouchEmulation.RightReleased
+                        ? RightMouseButton
+                        : LeftMouseButton,
+                    finger.X * output.Width,
+                    finger.Y * output.Height);
+
+            default:
+                break;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Routes a button press or release to the scene that owns it; returns <see langword="true"/> when the client
+    /// must stop. The touch screen goes through here with the button <see cref="LocalEvent"/> emulated.
+    /// </summary>
+    private bool DispatchButton(bool down, int buttonId, float x, float y)
+    {
+        SDL.MouseButtonEvent button = new()
+        {
+            Type = down ? SDL.EventType.MouseButtonDown : SDL.EventType.MouseButtonUp,
+            Button = (byte)buttonId,
+            Down = down,
+            X = x,
+            Y = y,
+        };
+
+        if (_modal is { } clickedModal)
+        {
+            HandleModalButton(clickedModal, button);
+            return false;
+        }
+
+        return HandleMouseButton(button);
     }
 
     /// <summary>Drains the SDL event queue; returns <see langword="false"/> when the client must stop.</summary>
@@ -380,48 +606,15 @@ public sealed class GameHost : IDisposable
                     return false;
 
                 case SDL.EventType.MouseMotion:
-                    // A modal window owns the pointer while it is open: the scene below keeps its state
-                    // (it is frozen) and only the window reacts.
-                    if (_modal is { } modal)
-                    {
-                        if (!_syntheticCursor)
-                        {
-                            modal.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
-                        }
+                    MoveSceneCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
+                    break;
 
-                        break;
-                    }
-
-                    // With --cursor the synthetic pointer is what a screenshot should show, so the
-                    // real one must not steal the hover state.
-                    if (!_syntheticCursor)
+                case SDL.EventType.FingerDown:
+                case SDL.EventType.FingerUp:
+                case SDL.EventType.FingerMotion:
+                    if (EmulateTouch(evt.TFinger))
                     {
-                        if (_castle is { } townScreen)
-                        {
-                            townScreen.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
-                        }
-                        else if (_editorMenu is { } editorMenu)
-                        {
-                            editorMenu.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
-                        }
-                        else if (_editor is { } editing)
-                        {
-                            editing.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
-                        }
-                        else if (_adventure is { } moving)
-                        {
-                            // The View World window drags its map with the same left button, so the
-                            // pointer goes to the window while it is open; the adventure map itself
-                            // reads the pointer out of LocalEvent.
-                            if (moving.ViewWorld is { } viewWorld)
-                            {
-                                viewWorld.DragTo(ToLogical(evt.Motion.X, evt.Motion.Y));
-                            }
-                        }
-                        else
-                        {
-                            _menu?.SetCursor(ToLogical(evt.Motion.X, evt.Motion.Y));
-                        }
+                        return false;
                     }
 
                     break;
@@ -594,6 +787,22 @@ public sealed class GameHost : IDisposable
     private Point ToCursor(float x, float y) =>
         ToLogical(x, y) ?? new Point((int)MathF.Round(x), (int)MathF.Round(y));
 
+    /// <summary>
+    /// Whether SDL knows at least one touch device, <c>System::isTouchInputAvailable()</c>.
+    /// </summary>
+    /// <remarks>
+    /// SDL only learns about a device once it is used, so the answer can be <see langword="false"/> on the first
+    /// run on a machine that does have a touch screen; the greeting then simply omits the touch paragraph, the
+    /// same way the reference does.
+    /// </remarks>
+    private static bool HasTouchInput()
+    {
+        // The binding hands back a managed copy, so there is nothing to free here.
+        ulong[]? devices = SDL.GetTouchDevices(out _);
+
+        return devices is { Length: > 0 };
+    }
+
     /// <summary>Handles a key press; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleKeyDown(in SDL.KeyboardEvent key)
     {
@@ -601,7 +810,15 @@ public sealed class GameHost : IDisposable
         switch (key.Key)
         {
             case SDL.Keycode.F11 when !key.Repeat:
-                _presenter?.ToggleFullscreen();
+                if (_presenter is { } presenter)
+                {
+                    presenter.ToggleFullscreen();
+
+                    // 参考的 Display::toggleFullScreen() 由引擎的按键分发调用，配置里的 fullscreen 一直是现状
+                    // （settings.cpp:427 写的就是它），端口在同一个地方跟上，否则文件里永远停在开窗时那一档。
+                    Settings.Get().SetFullScreen(presenter.IsFullscreen);
+                }
+
                 return false;
 
             case SDL.Keycode.F12 when !key.Repeat:
@@ -1678,6 +1895,7 @@ public sealed class GameHost : IDisposable
             if (_menu is not null)
             {
                 _menu.AnimationEnabled = !_options.FreezeAnimation;
+                _menu.TouchInputAvailable = _touchInputAvailable;
                 _menu.LanguageChanged = OnLanguageChanged;
                 _menu.FirstRunFinished = OnFirstRunFinished;
 
@@ -1892,8 +2110,8 @@ public sealed class GameHost : IDisposable
             GameLog.Info("Opened the adventure options dialog from the command line.");
         }
 
-        // The popup lives only while the right button is held; --quick-info holds it on the tile under
-        // --cursor so the frame can be captured.
+        // The popup lives only while the right button is held; --quick-info opens it on the tile under
+        // --cursor (the button itself is held by --right-button, see the loop below).
         if (_options.QuickInfo && _adventure is { } infoMap && _options.Cursor is { } infoCursor)
         {
             GameLog.Info(infoMap.ShowQuickInfoAt(infoCursor)
@@ -2001,8 +2219,83 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
+    /// Applies the switches that describe one run rather than a preference, so they stay out of the
+    /// configuration file: <c>--difficulty</c> is the port's stand-in for the difficulty cursor of the
+    /// reference's scenario info screen (<c>Game::SelectScenario</c>), whose number the starting resources
+    /// are drawn from (<c>Kingdom::Init</c> reads <c>Game::getDifficulty()</c>).
+    /// </summary>
+    private void ApplySessionOptions()
+    {
+        if (_options.Difficulty is { } difficulty)
+        {
+            Settings.Get().SetGameDifficulty(difficulty);
+            GameLog.Info($"Difficulty set to {difficulty} on the command line.");
+        }
+    }
+
+    /// <summary>
+    /// Creates the window the way the reference's <c>DisplayInitializer</c> restores it (<c>game_init.cpp:70-99</c>):
+    /// the full screen state first (<c>engine().isFullScreen() != conf.FullScreen()</c> at <c>:89</c>), then the
+    /// saved position (<c>display.setWindowPos</c> at <c>:96</c>), then the resolution
+    /// (<c>display.setResolution</c> at <c>:98</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 命令行压过文件：<c>--fullscreen</c> 只会打开全屏，<c>--scale</c> 只改窗口倍数；给了 <c>--scale</c> 就不再
+    /// 应用文件里的窗口尺寸。像素基线脚本走的是「<c>--no-config</c> + 默认 2 倍」，文件缺席时窗口仍是 2 倍。
+    /// </para>
+    /// <para>
+    /// 参考能把帧缓冲也换成别的尺寸（<c>Display::setResolution</c> 会重建渲染目标），端口的场景全部按 640x480
+    /// 画，所以只应用 <c>videomode</c> 的窗口那一半，帧缓冲换尺寸要等场景与界面支持别的逻辑尺寸。
+    /// </para>
+    /// </remarks>
+    private SdlPresenter CreatePresenter()
+    {
+        Settings preferences = Settings.Get();
+        Point savedPosition = preferences.SavedWindowPosition;
+        bool hasPosition = savedPosition.X >= 0 && savedPosition.Y >= 0;
+
+        SdlPresenter presenter = new(ScreenBuffer.DefaultSize, _options.WindowScale ?? DefaultWindowScale,
+            _options.Fullscreen || preferences.IsFullScreen, hasPosition ? savedPosition : null);
+
+        if (hasPosition)
+        {
+            GameLog.Info($"The window is at [ {savedPosition.X}, {savedPosition.Y} ] from the configuration file.");
+        }
+
+        if (_options.WindowScale is not null)
+        {
+            return presenter;
+        }
+
+        ResolutionInfo saved = preferences.CurrentResolutionInfo;
+
+        if (saved.GameSize != ScreenBuffer.DefaultSize)
+        {
+            GameLog.Warn($"'videomode' asks for a {saved.GameSize} frame buffer; this build draws in "
+                + $"{ScreenBuffer.DefaultSize}, so only the window size is applied.");
+        }
+
+        ResolutionInfo target = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height,
+            saved.ScreenWidth, saved.ScreenHeight);
+
+        if (target.ScreenSize != presenter.OutputSize)
+        {
+            presenter.SetResolution(target);
+            GameLog.Info($"The window is {presenter.OutputSize} from the configuration file.");
+        }
+
+        return presenter;
+    }
+
+    /// <summary>
     /// Writes the preferences, <c>conf.Save( Settings::configFileName )</c>; does nothing with <c>--no-config</c>.
     /// </summary>
+    /// <remarks>
+    /// <c>videomode</c> 与 <c>game window position</c> 现场问窗口（<c>settings.cpp:427-433</c> 问的是
+    /// <c>Display::instance()</c>），全屏状态也是窗口的现状——参考在 <c>MainMenu</c> 关闭前把这两样记下来
+    /// （<c>game_mainmenu.cpp:239-244</c>），端口在同一处写。
+    /// </remarks>
     private void SaveSettings()
     {
         if (_configFile is not { } path || _presenter is not { } presenter)
@@ -2013,7 +2306,10 @@ public sealed class GameHost : IDisposable
         ResolutionInfo resolution = new(ScreenBuffer.DefaultSize.Width, ScreenBuffer.DefaultSize.Height,
             presenter.OutputSize.Width, presenter.OutputSize.Height);
 
-        if (Settings.Get().Save(path, resolution))
+        Settings settings = Settings.Get();
+        settings.SetFullScreen(presenter.IsFullscreen);
+
+        if (settings.Save(path, resolution, presenter.WindowPosition))
         {
             GameLog.Info($"Preferences saved to '{path}'.");
         }

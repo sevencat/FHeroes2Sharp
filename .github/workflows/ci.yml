@@ -95,12 +95,16 @@ jobs:
             @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en' },
             # The Alteris view has no boat in it, so the boat layer needs its own frame.
             @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Map = 'Undeada.mp2'; Baseline = 'adventure-map-boats.png' },
+            # The options dialog and the tile popup sit on the same map, but each is a frame of its own.
+            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Switch = 'AdventureOptions' },
+            @{ Script = 'VerifyAdventureMapBaseline.ps1'; Culture = 'en'; Switch = 'QuickInfo' },
             @{ Script = 'VerifyEditorBaseline.ps1'; Culture = 'en' }
           )
 
           foreach ($run in $runs) {
             $label = if ($run.Culture) { "$($run.Script) -Culture $($run.Culture)" } else { $run.Script }
             if ($run.Map) { $label = "$label ($($run.Map))" }
+            if ($run.Switch) { $label = "$label -$($run.Switch)" }
             Write-Host "::group::$label"
 
             $arguments = $splat.Clone()
@@ -110,6 +114,10 @@ jobs:
 
             if ($run.Map) {
               $arguments.MapFile = $run.Map
+            }
+
+            if ($run.Switch) {
+              $arguments[$run.Switch] = $true
             }
 
             if ($run.Baseline) {
@@ -136,3 +144,13 @@ jobs:
             tools-output/baseline/diff/
           if-no-files-found: ignore
           retention-days: 14
+
+      # The onboarding of the first run is click-only, so it is smoked with --left-click-at rather
+      # than compared pixel by pixel (ADR-209): four clicks walk the language picker, the greeting,
+      # the resolution chooser and back out. Needs the data like the baselines, hence the guard.
+      - name: Walk the first run with scripted clicks
+        if: vars.FHEROES2_DATA != ''
+        shell: pwsh
+        env:
+          FHEROES2_DATA: ${{ vars.FHEROES2_DATA }}
+        run: pwsh tools/scripts/SmokeFirstRun.ps1 -SkipBuild

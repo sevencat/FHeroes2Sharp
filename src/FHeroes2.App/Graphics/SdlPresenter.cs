@@ -33,7 +33,16 @@ internal sealed class SdlPresenter : IScreenPresenter
     private PresentationViewport _viewport;
     private bool _disposed;
 
-    public SdlPresenter(Size logicalSize, int windowScale, bool fullscreen)
+    /// <summary>Creates the window, its renderer and the streaming texture.</summary>
+    /// <param name="logicalSize">Size of the frame buffer every scene draws into.</param>
+    /// <param name="windowScale">Magnification of the frame buffer in the window.</param>
+    /// <param name="fullscreen">Whether the window starts full screen.</param>
+    /// <param name="windowPosition">
+    /// Where to put the window, or <see langword="null"/> to let the window manager decide. It is applied while the
+    /// window is still hidden, so it never shows up at the wrong place first (the <c>Display::setWindowPos</c> of
+    /// <c>game_init.cpp:96</c>).
+    /// </param>
+    public SdlPresenter(Size logicalSize, int windowScale, bool fullscreen, Point? windowPosition = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(logicalSize.Width, nameof(logicalSize));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(logicalSize.Height, nameof(logicalSize));
@@ -76,6 +85,11 @@ internal sealed class SdlPresenter : IScreenPresenter
             GameLog.Warn($"Fullscreen could not be enabled: {SDL.GetError()}");
         }
 
+        if (windowPosition is { } position && !SDL.SetWindowPosition(_window, position.X, position.Y))
+        {
+            GameLog.Warn($"The window could not be moved to [ {position.X}, {position.Y} ]: {SDL.GetError()}");
+        }
+
         SDL.ShowWindow(_window);
         _viewport = PresentationViewport.Compute(LogicalSize, OutputSize);
     }
@@ -104,6 +118,15 @@ internal sealed class SdlPresenter : IScreenPresenter
     public PresentationViewport Viewport => _viewport;
 
     public bool IsFullscreen => (SDL.GetWindowFlags(_window) & SDL.WindowFlags.Fullscreen) != 0;
+
+    /// <summary>
+    /// Where the window is on the desktop, the <c>Display::getWindowPos()</c> of <c>game_mainmenu.cpp:239</c>.
+    /// </summary>
+    /// <remarks>
+    /// <c>(-1, -1)</c> when the position cannot be read, which is the value the configuration file starts with.
+    /// </remarks>
+    public Point WindowPosition =>
+        SDL.GetWindowPosition(_window, out int x, out int y) ? new Point(x, y) : new Point(-1, -1);
 
     /// <summary>Uploads the dirty region of the frame into the streaming texture.</summary>
     public void Upload(ScreenBuffer frame)

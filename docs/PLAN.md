@@ -35,7 +35,8 @@
 城堡屏（M6）；存档序列化全链路（M8）；编辑器只读可视化、可改、保存 MP2（E1–E3b）。
 
 **未完成**：M7 只剩 `battle_interface.cpp`（6 144 行）等战斗界面（§5.6）；M9 的战役界面与 SMK 视频未做
-（§5.7、§5.9）；M3 难度与标准局-战役分叉（§5.9）。M2 的语言选择窗口与首运问候已接（§5.9、PROGRESS §6.6）。
+（§5.7、§5.9）；M3 难度与标准局-战役分叉（§5.9），其中难度选择已用 `--difficulty` 过渡到规则层
+（PROGRESS §6.7、DECISIONS ADR-203），界面未做。M2 的语言选择窗口与首运问候已接（§5.9、PROGRESS §6.6）。
 
 ## 3. 已完成的第一阶段：S0–S16 按目录整块转换
 
@@ -92,7 +93,7 @@ AI 之间真打起来之后又顺带补了战斗侧的五处：`GetUnitMovementT
 | **P3** | 战斗界面四篇（§5.6） | P0、P2 | **最大**（约 6 800 行） | 手动打完整场战斗 |
 | **P4** | 战役：联盟表、存档、主流程、界面（§5.7） | P2、P3 | 中 | 战役能开局到结局 |
 | **P5** | 高分屏与结局屏（§5.8） | P4 | 小 | 胜负后能进榜 |
-| **P6** | 启动缺口：配置接线、首运语言窗、难度分叉、SMK、淡入（§5.9） | P0 | 小 | 启动流程与参考一致（配置与首运已落） |
+| **P6** | 启动缺口：配置接线、首运语言窗、难度分叉、SMK、淡入（§5.9） | P0 | 小 | 启动流程与参考一致（P6 已结案，§6.5–§6.12） |
 | **P7** | 随机地图生成器（§5.10） | P6 | 大 | 能生成并开局随机图 |
 | **P8** | 编辑器窗口（§5.11） | 其余 | 大 | 编辑器窗口与参考同构 |
 
@@ -213,13 +214,18 @@ P0 → P1 → P2 是一条链；P3 与 P4 可以在 P2 之后并行开工；P6 �
 ### 5.9 P6：启动缺口
 
 * ~~配置文件读写与接线~~：`TinyConfig` + `Settings.Read`/`Save`/`GetOptionsString`（§6.4）与 `GameHost` 的
-  启动读、首运写默认、退出写、`--config`/`--no-config`、语言记忆（§6.5）都已完成；**剩**
-  `videomode`/`fullscreen`/隐藏界面位置的**生效**；
+  启动读、首运写默认、退出写、`--config`/`--no-config`、语言记忆（§6.5）都已完成；
+* ~~窗口状态恢复~~：`videomode`/`fullscreen`/`game window position` 启动即生效、退出即写回（PROGRESS §6.8、
+  DECISIONS ADR-204）；~~隐藏界面四个窗口位置的生效~~：拖动松手落位并经 `SavePosition` 写 `Settings`、退出写配置
+  （PROGRESS §6.12、DECISIONS ADR-210）；
 * ~~首运的语言选择与问候~~：`MainMenuScene.BeginFirstRun()` + `FirstRunFinished`，触发条件
   `_configFile is not null && Settings.IsFirstGameRun`，收尾清旗标并保存（PROGRESS §6.6、DECISIONS ADR-202）；
-  **剩**问候里的分辨率段与分辨率选择窗——它们和 `videomode` 的生效绑在一起；
+  分辨率选择窗也接了（PROGRESS §6.9、DECISIONS ADR-205），右键解释框在首运里也能弹（PROGRESS §6.10、
+  DECISIONS ADR-206）；~~问候里的触摸段与首运那一步的脚本化点击~~：`--left-click-at` + `SmokeFirstRun.ps1`
+  （PROGRESS §6.11、DECISIONS ADR-209）与触摸输入/问候触摸段（PROGRESS §6.12、DECISIONS ADR-210）；
 * **难度与标准局-战役分叉**（M3）：`game_scenarioinfo.cpp` 的难度行与「标准游戏 / 战役」两个入口，
-  难度模型 `Difficulty.cs` 已在；
+  难度模型 `Difficulty.cs` 已在；**过渡**：`--difficulty` 已把玩家的选择贯通到王国起始资源与城堡默认建筑
+  （PROGRESS §6.7、DECISIONS ADR-203），**剩**剧本信息屏的难度光标、`NGHSBKG` 与难度图标；
 * **SMK 视频**（M9）：解码器 + 播放（`game_video.cpp` 的对应段），现在只在 `GameOverResult` 里提了一句；
 * **`BaseInterface` 的两个淡入方法**：等 S14 的 `Game::validateDisplayFadeIn` 状态落地后再实现，
   现在抛（`BaseInterface.cs:142/149`）。

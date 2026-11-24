@@ -12,12 +12,13 @@
 | 项 | 数字 |
 | --- | --- |
 | 构建 `dotnet build FHeroes2Sharp.slnx` | 0 错误 / 0 警告 |
-| 测试 `dotnet test` | **5 513 绿**（Core 284 / Assets 428 / Game 3 295 / UI 1 506） |
+| 测试 `dotnet test` | **5 529 绿**（Core 286 / Assets 428 / Game 3 299 / UI 1 516） |
 | 冒烟 `--enter-map --smoke-frames 60 --no-audio --no-config` | 72.6 FPS，退出 0 |
+| 首运冒烟 `SmokeFirstRun.ps1` | 2026-11-24 通过：`--left-click-at` 四击从语言窗走到清旗标（§6.11），CI 一步 |
 | 像素基线 `menu.png`/`settings*.png`/`scenario*.png` | 2026-11-24 重建（Editor 招牌进基线），五张全部 identical |
 | `throw new NotImplementedException` | **5 处**（清单见 §7.2） |
-| 冒险地图基线 `VerifyAdventureMapBaseline.ps1` | 139 779 / 307 200 像素不同——**已改为「与参考一致」的目标，不再当回归** |
-| 当前工序 | **P0/P1 完成**；**P2 AI 收口**——动作链已接通并通过 7 天冒烟（§6.3），余 App 的 AI 回合循环（§7.3）与估值数值核对；**P6 起步**——配置读写与接线（§6.5）、首运语言窗与问候（§6.6）已落 |
+| 冒险地图基线 `VerifyAdventureMapBaseline.ps1` | 2026-11-24 结案：按 §7.5 的三条差异核对（英雄居中 / 迷雾生效 / 部队状态栏）后 `-Update`，加 `--seed 1` 固定随机，连跑三次 `identical`；同日 `adventure-map-boats` / `adventure-options` / `quick-info` 三张也重建（提示框靠 `--right-button` 按住，ADR-208），四张连跑两次 `identical`，CI 十条命令覆盖全部十张基线 |
+| 当前工序 | **P0/P1 完成**；**P2 AI 收口**——动作链已接通并通过 7 天冒烟（§6.3），余 App 的 AI 回合循环（§7.3）与估值数值核对；**P6 完成**——配置（§6.5）、首运三窗（§6.6/§6.9/§6.10）、难度（§6.7）、窗口状态（§6.8）、脚本点击（§6.11）、触摸输入与面板落位（§6.12）全落；下一步可选 P7 随机地图生成器 |
 | 参考实现 | fheroes2 1.1.18（`6c51acfdc`），源码 `F:\code\fheroes2` |
 
 ## 2. 里程碑（M0–M8、E1–E3b 全绿）
@@ -417,7 +418,7 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 | 解析 | `TinyConfig( '=', '#' )`：键小写 + 去空白 + 连续空白压一个、重复键留第一个、无分隔符的行跳过 | `Game/System/TinyConfig.cs` 同名同义；`IntParams` 整串必须是数字否则 0，`PointParams` 只认 `[ x, y ]`，`ResolutionParams` 认 `宽x高:宽x高` 与旧格式 `宽x高x倍数`（倍数为 0 或乘出溢出时回退） |
 | 读 | 每个键一个默认值 + `Exists` 检查；`music` 认不出就是 external、`battle turn order` 认不出就是 off、`interface type` 认不出就是 dynamic；`first time game run = off` 才清首运标记 | `Settings.Read(string)` 逐键照抄，读不到文件返回 false 且一个字段都不动 |
 | 写 | `GetConfigDirectory( "fheroes2" )` 下拼文件名 | `Settings.Save(string)` 收完整路径，位置归宿主（与 `GameHotKeys` 的热键文件一致） |
-| 键集合 | 音量、速度、全部开关、四个隐藏界面窗口位置、语言、首运标志、存档排序、兵力估算 | 同上，除 `videomode`、`game window position`（UI 层持有，`Save`/`GetOptionsString` 的可选参数写出）与 `debug`（日志层未移植）。`videomode`/窗口位置在 `Read` 里读到也跳过，不留半截状态 |
+| 键集合 | 音量、速度、全部开关、四个隐藏界面窗口位置、语言、首运标志、存档排序、兵力估算 | 同上，除 `debug`（日志层未移植）。`videomode`/`game window position` 读进 `CurrentResolutionInfo`/`SavedWindowPosition`，写回时由宿主把窗口的现状交进来（参考 `settings.cpp:303-309`、`:427-433`，见 §6.8） |
 
 **验证**：构建 0 错误 0 警告；全量测试 5 506 通过（`TinyConfigTests` 10 条 + `SettingsTests` 4 条，含一次
 「改字段 → 存盘 → 重置 → 读回」的往返）；冒烟 20 回合到 day 8。
@@ -425,7 +426,7 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 语言选择窗、`BaseInterface` 的淡入一起做（P6）。
 
 > 2026-11-24 已接：启动读、首次运行写默认、退出与设置应用时写都进了 `GameHost`，见 §6.5；分辨率/全屏的
-> **生效**仍等 UI 层，`videomode` 只写不读。
+> **生效**也已接，见 §6.8。
 
 ### 6.5 配置文件接线（2026-11-24）
 
@@ -450,7 +451,7 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 `IsFirstGameRun` 的清除（跟着首运 UI 一起做）。
 
 > 2026-11-24 已接：语言选择窗、问候消息与旗标清除都进了 `MainMenuScene`/`GameHost`，见 §6.6；`videomode`/`fullscreen`
-> 的生效仍等 UI 层。
+> 的生效见 §6.8。
 
 ### 6.6 首次运行的语言选择与问候（2026-11-24）
 
@@ -463,7 +464,7 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 | --- | --- | --- |
 | 触发 | `Game::MainMenu( isFirstGameRun )` 的参数，源头是 `conf.isFirstGameRun()` | `GameHost.ShouldStartFirstRun()`：`_configFile is not null` 且 `Settings.IsFirstGameRun`；`--no-config` 下旗标停在默认 `true` 上，若照它开窗，五张像素基线和所有脚本都会停在语言窗（ADR-202） |
 | 语言窗 | `fheroes2::selectLanguage( ..., true )`，OKAY + CANCEL | `MainMenuScene.BeginFirstRun()`：`LanguageSelectionDialog` 居中，按钮取 `SettingsArtwork` 的 OKAY（帧 1–2）与 CANCEL（帧 3–4，缺帧时退回 OK）；上下键走 `MoveLanguageSelection` |
-| 问候 | `Greetings!` + 欢迎段 +（触摸段）+（分辨率段） | `ShowWelcome()` 只写欢迎段：端口没有分辨率选择窗（`videomode` 只写不读），也没有触摸输入，写出来就是空承诺，差异记在 ADR-202 |
+| 问候 | `Greetings!` + 欢迎段 +（触摸段）+（分辨率段） | `ShowWelcome()` 写欢迎段与分辨率段（后面真的会打开选择窗，见 §6.9）；触摸段不写，端口没有触摸输入，差异记在 ADR-202 |
 | 收尾 | `conf.resetFirstGameRun(); conf.Save()` | `FirstRunFinished` → `GameHost.OnFirstRunFinished()`：`SetGameLanguage( menu.Text.Culture )`、`ResetFirstGameRun()`、`SaveSettings()` |
 | 语言记忆 | `selectLanguage` 直接改 `Settings` | 确认时 `SetLanguage` 切场景语言（CANCEL 保持原语言），收尾时宿主按菜单当前语言落盘；不论确认还是取消都走向问候，与参考一致 |
 | 语言落地 | 无 | 菜单在既无 `--lang`、配置里也没有 `lang` 时会自己落到系统语言上，`CreateScenes` 把这个结果记进 `Settings`，文件里的 `lang` 才不会和界面打架 |
@@ -477,8 +478,161 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 `SystemSettingsTests.ASavedResetFirstGameRunStaysClearedInTheFile` 守住：写出 `off`、读回仍清着。
 **没验到的**：合成点击一轮只发一次（`--left-click` 固定在第十帧、只有一个 `--cursor`），所以「点问候的 OKAY 之后旗标被清」
 没有端到端截图，只有上面那条持久化测试加四行接线；真要端到端点，得让脚本能连点两个位置。
-**未做**：分辨率选择窗与 `videomode` 的生效、触摸输入的检测、问候里的另两段、`MainMenu` 退出时的窗口位置保存
-（`game_mainmenu.cpp:240-244`，等窗口位置能被 UI 消费）。
+**未做**：触摸输入的检测与问候里的触摸段（分辨率选择窗见 §6.9，`videomode` 的生效与退出时的窗口位置保存见 §6.8）。
+
+> 2026-11-24 已接：`--left-click-at` 让一轮里连点四个位置，上面的「没验到的」由 `tools/scripts/SmokeFirstRun.ps1`
+> 端到端走通（语言窗 → 问候 → 分辨率窗 → 清旗标），见 §6.11 与 ADR-209。
+
+> 2026-11-24 已接：触摸输入进了 `LocalEvent`，问候的触摸段按 `SDL_GetTouchDevices` 的结果写（上面表格里的
+> 「触摸段不写」作废），见 §6.12 与 ADR-210；带 `--no-touch` 时保持原来的两段布局。
+
+### 6.7 会话难度：`--difficulty` 与 `Game::getDifficulty()` 的口径（2026-11-24）
+
+参考里难度是玩家在剧本信息屏上挑的（`game_scenarioinfo.cpp` 的难度光标），进 `Game::getDifficulty()` 之后被两处
+消费：`Kingdom::Init()` 发起始资源（`kingdom.cpp:103`）、`Castle::_setDefaultBuildings()` 抽二级兵营
+（`castle.cpp:542`）。端口还没有剧本信息屏，所以先用命令行开关把这份选择补上，规则层不再读地图头那一档。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 入口 | 剧本信息屏的难度光标 | `--difficulty <easy|normal|hard|expert|impossible|0..4>`，`CommandLineOptions.ParseDifficulty`；会话级开关，**不写配置文件**，`GameHost.ApplySessionOptions()` 写进 `Settings` |
+| 记录 | `Game::getDifficulty()` 全局 | `World.LoadMap( map, difficulty )` 存进 `World._difficulty`（参考的全局在端口没有对应物）；`Reset()` 复位成 `Normal` |
+| 起始资源 | `Kingdom::Init()`（`kingdom.cpp:103`） | `CreateMapKingdoms( info, _difficulty )` → `Kingdom.GetStartingResources` 的玩家/电脑两张表 |
+| 城堡默认建筑 | `Castle::_setDefaultBuildings()`（`castle.cpp:542`） | `ReadCastleBlock` 把 `_difficulty` 传给 `Castle.LoadFromMP2`：Easy 75% / Normal 50% / Hard 25% / Expert 10% / Impossible 0% 出二级兵营 |
+| 地图头难度 | 只参与 `Game::GetRating()` | 同上；`LoadMap( map )` 不传时才退回地图头那一档，那是测试与工具的老口径 |
+
+**验证**：构建 0 错误 0 警告；全量测试 5 515 通过（`TheDifficultyPassedInDecidesTheStartingResources`、
+`TheDifficultyOfTheGameDecidesTheDefaultBuildingsOfATown`）；`--difficulty impossible --enter-map --screenshot`
+冒烟通过，日志 `Difficulty set to Impossible on the command line.`，选中的 Alteris 地图头是 Hard，截图
+`tools-output/difficulty-town.png`；非法值（`bogus`）在参数解析阶段报错并打印用法。
+**未做**：剧本信息屏本身（难度光标、`NGHSBKG`、难度图标、对手/职业/评分绘制），`--difficulty` 只是过渡口子。
+
+### 6.8 窗口状态的恢复与保存：`videomode` / `fullscreen` / 窗口位置（2026-11-24）
+
+§6.4 之后 `videomode` 与 `game window position` 只写不读，`fullscreen` 读了不用：启动永远 2 倍窗口、永远窗口化。
+参考的这份活在 `DisplayInitializer` 里（`game_init.cpp:70-99`），退出时在 `MainMenu` 关闭前记下窗口位置
+（`game_mainmenu.cpp:239-244`）。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 读 | `conf.Read()` 存 `_resolutionInfo`/`_windowPos`（`settings.cpp:303-309`） | `Settings.Read`：`CurrentResolutionInfo`（默认 `640x480:640x480`）、`SavedWindowPosition`（默认 `(-1, -1)`） |
+| 应用顺序 | 先全屏（`engine().isFullScreen() != conf.FullScreen()`，`:89`）、再窗口位置（`:96`）、最后分辨率（`:98`） | `GameHost.CreatePresenter()`：`--fullscreen \|\| Settings.IsFullScreen` 交给 `SdlPresenter` 构造；`SdlPresenter` 新增可选 `windowPosition`，在 `SDL.ShowWindow` 之前摆好，不会先闪一下旧位置；随后 `SetResolution` |
+| 帧缓冲 | `Display::setResolution` 可以换逻辑尺寸 | 端口只画 640x480，`videomode` 的游戏尺寸不是 640x480 时打一行警告、只应用窗口那一半（ADR-204） |
+| 优先级 | 无命令行开关 | `--scale` 给了就不应用文件里的窗口尺寸（本次运行的倍数压过偏好）；`--fullscreen` 只会打开全屏；都没有时窗口倍数听文件，文件缺键才回落到默认 2 倍 |
+| 退出 | `MainMenu` 关闭前记窗口位置 + `conf.Save()` | `GameHost.SaveSettings()` 现场问窗口：`videomode = 640x480:当前窗口`、`game window position = 当前坐标`、`fullscreen = 当前状态`；`F11` 切换后同步 `Settings.SetFullScreen` |
+
+**验证**：构建 0 错误 0 警告；全量测试 5 517 通过（`SystemSettingsTests` 新增两条：读写 `videomode`/窗口位置、
+以及「写出去的是显示层给的现状、不改读进来的字段」）；三组冒烟（`--config <temp>`）：
+`videomode = 640x480:1600x1200` + 位置 `[150, 90]` → 日志 `The window is at [ 150, 90 ] ...`、`The window is 1600x1200 ...`，
+退出后文件仍写 `1600x1200` / `[ 150, 90 ]`；`videomode = 800x600:1280x960` → 警告「asks for a 800x600 frame buffer…only
+the window size is applied」；`videomode = 640x480:1600x1200 --scale 3` → 文件被改写成 `640x480:1920x1440`（命令行压过文件）。
+菜单与设置两张像素基线仍 `identical`。
+**已知未解**：冒险地图基线 `adventure-map.png` 当时在本机不过（§7.5 已结案：三条差异都是正确行为，加 `--seed`
+固定随机后已更新基线）。
+
+### 6.9 首运的分辨率选择窗（2026-11-24）
+
+§6.6 的首运只剩语言选择与问候，问候里少了「请选分辨率」那一段，因为端口没有那个窗口。这一轮补上：参考
+`game_mainmenu.cpp:265-300` 在问候之后调 `Dialog::SelectResolution()`（`dialog_resolution.cpp`），端口照做。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 触发 | `showGameResolutionSelection()`，只在首运跑一次 | `MainMenuScene.CloseWelcome()` → `TryOpenResolutionPicker()`；问候关掉就开，开不出来（缺素材/没显示层/没有可用的行）就跳过这一步直接收尾，并打一行警告 |
+| 窗口本身 | `Dialog::SelectResolution()`，阻塞 | 复用已转好的 `ResolutionDialog`（`Dialog::SelectResolution` 的移植，图形/系统选项页也在用），当场景级模态挂在场景上 |
+| 输入 | 阻塞循环里的 `LocalEvent` | `MainMenuScene.Update` 每帧 `ProcessEvents(LocalEvent.Current)`：`ListBox` 的滚动条拖动、双击、键盘箭头全在那一套输入上，场景只在窗口打开时挡住 `SetCursor`/`SetLeftButton`/`Select`，免得点到背后的招牌 |
+| 行 | `engine().getAvailableResolutions()`（游戏尺寸=窗口尺寸） | 每行是「640x480 帧缓冲 + 某窗口尺寸」（`SdlDisplayControl.GetAvailableResolutions`，ADR-205）；场景只留 `GameSize == 640x480` 的行，其余 `SetResolution` 会拒绝 |
+| 选中行 | 当前分辨率所在行，找不到就停在第一行 | 同上；`ResolutionDialog` 的预选与回退有测试（`TheRowOfTheCurrentWindowStartsSelected`、`AWindowThatIsNotAModeStartsAtTheTopRow`） |
+| OK | `engine().setResolution()` | `IDisplayControl.SetResolution`，随后 `FirstRunFinished` → 宿主 `SaveSettings()` 把新窗口写进 `videomode` |
+| 取消 | 保持当前分辨率 | 同左，日志留痕 |
+| 问候 | 分辨率段只在非手持设备上写 | 端口的桌面版一直写，触摸段仍不写（ADR-202 记的差异） |
+
+**验证**：构建 0 错误 0 警告；全量测试 5 519 通过（`ResolutionDialogTests` 新增两条预选测试）；首运冒烟（`--config <temp>`，
+`first time game run = on`、`videomode = 640x480:1280x960`，临时补丁把首运直接推进到该窗口）：日志
+`First run: resolution chooser open, 13 window(s), current 1280x960.`，截图里是 `Select Game Resolution:` 加 13 行
+`640 x 480 (x4.0…)`，注入 Enter 后 `First run: window resolution 2560x1600.`、文件写成 `videomode = 640x480:2560x1600`、
+`first time game run` 清掉。临时补丁已撤（`git diff` 里没有 `TEMP-SMOKE` 残留）。菜单/设置/剧本三张像素基线仍 `identical`。
+**顺带修正**：`SdlDisplayControl.GetAvailableResolutions()` 以前返回「游戏尺寸=窗口尺寸」的行，而端口的
+`SdlPresenter.SetResolution` 只接受 640x480 的帧缓冲，图形选项页里挑分辨率会抛 `ArgumentException`；现在统一成
+「帧缓冲 + 窗口」的配对，首运与图形选项页共用同一份列表（ADR-205）。
+**没做**：右键的解释弹窗当时被丢掉（§6.10 已补），首运那一步的 `--left-click` 脚本点击（窗口读 `LocalEvent`，
+合成点击只进场景接口）。
+
+> 2026-11-24 已接：`--left-click-at` 在窗口开着时把点击推进 `LocalEvent`，且按下与释放分两帧（列表在释放时触发），
+> 四击脚本走通首运，见 §6.11 与 ADR-209。
+
+### 6.10 首运分辨率窗的右键解释（2026-11-24）
+
+§6.9 的「没做」第一项。参考在 `Dialog::SelectResolution()` 的循环里对行做
+`showStandardTextMessage( rowText, explanation, Dialog::ZERO )`（`dialog_resolution.cpp:124-145`、`:291-296`）；
+端口的 `ResolutionDialog` 早就会把右键变成 `DialogPopup`（`TakePopup()`），只是首运那一步没人接。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 行 | `ActionListPressRight` 拼出「行文本」与缩放说明 | 同左（`GetDescription`）；`TakePopup()` 把它交出来 |
+| 承载 | `showStandardTextMessage`，阻塞在窗口循环里 | `MainMenuScene.ShowResolutionTip`：`MessageBox.Create(..., DialogButton.Ok, ResolutionArtwork.Buttons)`，挂在场景上当第二层模态（`_resolutionTip`） |
+| 输入 | 消息框自己转事件 | 与问候同一个消息框：`SetCursor`、`SetLeftButton`（OK）、`Select`（Enter/Esc）先让给它；`DriveResolutionPicker` 在它开着时不喂列表 |
+| 绘制 | 消息框盖住窗口 | `DrawFrame` 在 `_resolutionPicker` 之后画 `_resolutionTip` |
+| 按钮 | `Okay`/`Cancel` 也有右键解释 | 同左，文案同时对齐参考（`Click to apply the selected resolution.` / `Exit this menu without doing anything.`） |
+
+**一帧只关一层**：`TryOpenResolutionPicker` 打开窗口的那一帧，关闭问候的同一个 Enter/Esc 还在 `LocalEvent` 里；
+关闭解释框的那一次点击/按键也还在。`_skipResolutionInput` 让 `DriveResolutionPicker` 在「刚打开窗口」或
+「刚关掉解释框」的那一帧不把输入喂给列表——否则一次 Enter 会连过「问候 → 分辨率窗」两步。
+
+**验证**：构建 0 错误 0 警告；全量测试 5 521 通过（`ResolutionDialogTests` 新增两条：右键行的标题与正文、
+当前窗口行回 `Select this game resolution.`）；首运冒烟（临时补丁：语言 → 问候 → 分辨率窗 → 右键列表行 →
+释放 → 截图 → Enter 关解释框 → Enter 确认）：日志 `First run: resolution explanation '640 x 480 (x4.0)'.`，
+截图是标题 + 说明 + OKAY 的框盖在列表上，随后的 Enter 只关掉解释框（分辨率窗还在），再一次 Enter 才
+`First run: window resolution 1280x800.` 并收尾。补丁已撤（无 `TEMP-SMOKE` 残留）。菜单/设置/剧本三张像素基线
+仍 `identical`。
+**没做**：首运那一步的 `--left-click` 脚本点击（窗口读 `LocalEvent`，合成点击只进场景接口）。
+
+> 2026-11-24 已接：见 §6.11（`--left-click-at` + `SmokeFirstRun.ps1`，ADR-209）。
+
+### 6.11 首运的端到端脚本点击：`--left-click-at`（2026-11-24）
+
+§6.6、§6.9、§6.10 都记着同一项没做：首运是纯点击流程，而合成点击一轮只发一次，点不到第二层窗口。这一轮补的是
+**钩子**，不是场景：新增一次运行内可重放多点点击，首运从语言窗一路点到旗标清除，不再靠临时补丁。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 入口 | 无（参考的测试不做逐点驱动） | `--left-click-at <frame:x,y[;frame:x,y…]>`，`ScriptedClick`；帧 ≥1 且严格递增，`AddScriptedClicks` 在解析期报错；`--left-click` 是它的单点特例（第十帧 + `--cursor`），语义不变 |
+| 重放时机 | 玩家在两帧之间产生的事件 | `GameHost.Loop`：事件批之后、场景 `Update` 之前；不在 `CreateScenes`，否则会跳过新窗口的头几帧 |
+| 菜单/城镇屏 | 各自的 `SetLeftButton` 一路 | 菜单 `SetCursor` + `SetLeftButton` + `HandleMenuAction`；城镇屏 `SetCursor` + 按下/释放同帧 |
+| 分辨率窗 | 阻塞循环里的 `LocalEvent` | 窗口开着时同时推进 `_le.OnMouseButton`：按下帧记 `_pendingClickRelease`，**下一帧**发释放——列表与按钮行都在释放时触发 |
+| 冒烟 | 无 | `tools/scripts/SmokeFirstRun.ps1`：写临时配置（`lang = en`、`first time game run = on`），跑四击，按五个日志标记核对，非 `-KeepRunning` 时恢复配置 |
+| 四击坐标 | — | `10:236,380` 语言 OKAY、`20:320,322` 问候 OKAY、`30:300,114` 分辨率列表第一行、`40:236,356` 分辨率 OKAY（取自 345x306 居中布局，布局变了要改脚本） |
+| CI | — | `ci.yml` 加一步 `Walk the first run with scripted clicks`，条件 `vars.FHEROES2_DATA != ''`，跑 `SmokeFirstRun.ps1 -SkipBuild` |
+
+**验证**：构建 0 错误 0 警告；全量测试 5 523 绿；十张像素基线一次性复验全部 `identical`；
+`SmokeFirstRun.ps1 -SkipBuild` 输出 `the first run walked from the language picker to the cleared flag, match`；
+`--left-click` 单点回归日志仍为 `language 'en' -> 'en'.` + `greeting shown.`；无 `TEMP-` 残留。
+**没做**：问候里的触摸段（端口没有触摸输入）、隐藏界面的四个窗口位置——P6 就剩这两项。
+
+> 2026-11-24 已接：两项都在 §6.12 补上（触摸输入与问候触摸段、拖面板落位并落盘），P6 清空，见 ADR-210。
+
+### 6.12 触摸输入、问候的触摸段与隐藏界面面板落位（2026-11-24）
+
+§6.11 之后 P6 剩下的两项：问候缺「两指右键」段，根子是端口没有触摸输入（§6.6 记的差异）；四个隐藏界面面板的
+位置只读不写——拖面板时只画轮廓，松手丢掉，`pos_*` 永远是默认 `-1`，读取那一半等于死代码。
+
+| 项 | 参考 | 端口 |
+| --- | --- | --- |
+| 手指状态 | `onTouchFingerEvent`（`localevent.cpp:1358-1430`），两根手指的 `_fingerIds` | `LocalEvent.OnTouchFinger` + `TouchFinger`/`TouchEmulation`；第三指与不在屏上的手指忽略 |
+| 第一指 | 驱动光标，仿真左键 | 同左；每次仿真置 `MOUSE_TOUCH`，`IsMouseEventFromTouchpad` 真的能为真 |
+| 第二指 | 第一指还在时按下 = 右键；抬起第一指不释放右键 | 同左，两指状态 `_twoFingerGestureInProgress` 照抄 |
+| 返回值 | 无（按钮直接读 `LocalEvent`） | 返回 `None/Motion/Left\|Right Pressed/Released`，宿主据此调 `MoveSceneCursor`/`DispatchButton`，场景看到的与鼠标一致 |
+| SDL 合成 | 关掉触摸→鼠标合成 | `SDL_Init` 后设 `MouseTouchEvents = 0`、`TouchMouseEvents = 0`，否则一次点按来两遍 |
+| 坐标 | 归一化 × 显示尺寸 | 归一化 × `SdlPresenter.OutputSize` 再 `ToCursor`（视口换算） |
+| 检测 | `System::isTouchInputAvailable()` | `SDL.GetTouchDevices`（托管数组）→ `MainMenuScene.TouchInputAvailable`；设备用过之前可能报告不到，与参考同 |
+| 问候 | 欢迎 → 触摸（有设备时）→ 分辨率 | `WelcomeTouchId` 照抄文案，`ShowWelcome` 按同一顺序拼 |
+| 布局开关 | 无 | `--no-touch`：只关检测与段落，不关手指翻译。本机有设备上报时问候变高、OKAY 下移，`SmokeFirstRun.ps1` 的固定坐标会点空（本轮实际踩到），脚本已带上它 |
+| 面板落位 | 松手 `SetPos( mp.x - ox, mp.y - oy )` | `BorderDrag.Owner` + `Drop(cursor)`；`AdventureMapScene.PumpDrag` 在释放帧调，`SetPos` 夹进屏幕并 `SavePosition` 进 `Settings`，退出写配置 |
+
+**验证**：构建 0 错误 0 警告；全量测试 5 529 通过（`LocalEventTests` +4 条触摸语义：第一指左键、移动、第二指右键
+在第一指抬起后仍按住、第三指/离屏手指被忽略；`BorderWindowTests` +2 条：松手落位并保存、无主轮廓只画）；
+十张像素基线一次性复验全部 `identical`；`SmokeFirstRun.ps1 -SkipBuild` 通过；不带 `--no-touch` 截的问候图是三段
+（欢迎、触摸、分辨率），带开关时是两段。
+**没做**：真机两指手势未实际点过（本机只报告了设备，没有手指输入）；捏合/滑动等指针手势（参考也只在未移植的
+battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差异。
 
 ## 7. 未完成清单（唯一列表）
 
@@ -488,6 +642,10 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 宝藏点、怪物居所、设施类对象、狮身人面像与事件瓦片、上下船与海岸、军队升级对象已落，见 §6.1d–§6.1i，
 **P1 收口**）→ **P2** AI 收口（`ai_hero_action` 的解耦与 B7 两个入口）→ **P3** 战斗界面四篇 → **P4** 战役 →
 **P5** 高分屏与结局 → **P6** 启动缺口 → **P7** 随机地图生成器 → **P8** 编辑器。P3/P4 在 P2 之后可并行，P6 随时可插。
+
+**P6 现状（完成）**：配置读写（§6.5）、首运语言窗/问候/分辨率窗（§6.6、§6.9、§6.10）、会话难度（§6.7）、
+窗口状态恢复（§6.8）、首运脚本点击与冒烟（§6.11）、触摸输入与问候触摸段、隐藏界面面板落位（§6.12）全部已落，
+P6 没有剩余项。
 
 ### 7.2 仍抛 `NotImplementedException` 的 4 处
 
@@ -512,7 +670,8 @@ AI 本来就不逛市场（它在 `ai_hero_action.cpp` 里自己算）。
 
 ### 7.4 界面缺口（非主线，按里程碑挂账）
 
-语言选择窗口（M2）、难度与标准局-战役分叉（M3）、战役界面接线（M9）、SMK 视频（M9）、
+语言选择窗口（M2）、难度与标准局-战役分叉（M3，难度选择已由 `--difficulty` 过渡到规则层，见 §6.7，界面未做）、
+战役界面接线（M9）、SMK 视频（M9）、
 随机地图生成器（S8 旁支）、编辑器窗口按参考重写（S16）；`FinishHumanTurn` 的 `Win`/`Lose`（胜负屏）、
 `HighScore`、战役分支还没有处理器，现在只记一行日志。
 
@@ -539,6 +698,34 @@ P1 居所留下的界面缺口：`IHeroActionHost` 目前**没有任何界面实
 `DECISIONS.md` 691 KB 未压缩（ADR 条目还在快速增长）；`REFERENCE.md` 64 KB 的参考件位置表与本文件
 同源，两者谁先失真以 `REFERENCE.md` 为准。
 
+2026-11-24 发现：`adventure-map.png` 与 HEAD（88ac029）自己的渲染不一致——本机跑 `VerifyAdventureMapBaseline.ps1`
+得 165 198 像素差（视口偏移与缩放都不一样，物件层与状态栏文字缺失）。在 `git worktree` 里重建 HEAD 复现同一帧，
+所以不是 §6.8 的回归，也不是启动慢（换 `--screenshot-frame 60` 也一样）。两条线索：基线可能是在别的渲染状态下
+截的，或者物件层在 HEAD 上没画完。查清之前不要 `-Update`。
+
+**2026-11-24 稍后：结案。** 用 worktree 二分：基线最后一次更新在 `11e6a51`，在该提交上重建跑同一脚本得
+`identical`；到 `748904e`（「冒险场景输入三路交给 LocalEvent 并删除 `StatusPanelPainter` 与场景诊断状态行」）
+就变成 139 785 像素差，`88ac029` 再变。逐项核对后的三条差异全是**正确行为**，不是回归：
+
+| 差异 | 原因 | 判定 |
+| --- | --- | --- |
+| 视口不是基线那一块 | 基线时代场景自己拿「最近的城堡」`SetCenter`；现在 `AdventureSession.Start` 成功后有焦点英雄，`Interface::AdventureMap::SetFocus` 与参考 `interface_base.cpp:76-79` 一样**总是居中于英雄**，并 `SetState(STATUS_ARMY)` | 正确 |
+| 雷达只有零星亮点 | `Radar` 的迷雾生效了（`748904e` 把 `_hide` 默认值与迷雾色修对），只画已探索区域；基线是全地形，那是没有雾的旧图 | 正确 |
+| 状态栏没有「Month/Week/Day」 | 同第一行：`STATUS_ARMY` 时状态栏显示焦点英雄的部队（放大后是「19 精灵 + 4 兵」），日期是 `11e6a51` 场景自绘 `StatusPanelPainter` 的产物 | 正确 |
+
+注意「物件层缺失」是误判：把当前渲染中心放大后城堡、矿、独眼巨人都在，只是视口不同。真正要修的是
+**渲染的非确定性**：同一脚本连跑两次差 27～40 个像素，位置都在状态栏部队那一格——地图载入时英雄的初始部队
+数量由 `Rand` 抽（OS 播种），所以两次运行的兵力不同。补丁：`Rand.SeedThread(seed)` + `--seed <n>`
+（`game_init` 之前应用，`Rand.cs` 新增入口，参考没有对应物，是端口测试设施的接缝），基线脚本加 `--seed 1`。
+之后 `-Update` 冒险地图基线，连跑三次 `identical`；菜单/设置/剧本三张仍 `identical`。测试 5 523（`RandTests` 新增两条）。
+
+**同日再补一张：`quick-info.png`。** 重建基线时发现提示框根本没在图上——`--quick-info` 只在启动时开一次，
+而 `AdventureMapScene.UpdateQuickInfo` 每帧按 `LocalEvent` 判「右键还按着吗」，没有按住就收掉，所以那一帧
+退化成普通地图（与 `adventure-map.png` 逐字节相同）。参考的 `Dialog::QuickInfo()` 本来就是「按住期间阻塞」，
+所以修的是**钩子**而不是场景：`--right-button` 现在会为冒险地图把右键按进 `LocalEvent`（菜单与城镇屏各
+有 `SetRightButton`，冒险地图读事件状态，见 ADR-208），基线脚本同时带 `--quick-info` 与 `--right-button`。
+重建后框回来了（「Ore Mine」，`MineText.GetMineName`），四张冒险地图基线连跑两次全部 `identical`。
+
 ## 8. 保留的坑与教训
 
 1. **依赖先落接口**：S12 转 `interface_gamearea.cpp` 时踩到尚未转的 `maps_tiles_render.cpp`，临时替代后来全要拆。
@@ -547,7 +734,8 @@ P1 居所留下的界面缺口：`IHeroActionHost` 目前**没有任何界面实
 3. **自建绘制会静默失真**：`StatusPanelPainter` 少画当前玩家的英雄，就是「自己拼」的典型症状。
 4. **`.h` 里的内联函数也是移植对象**：G1–G5 里几次漏项都出在头文件的 inline 方法上。
 5. **冒烟模式没有光标**：依赖鼠标位置的逻辑在 `--smoke-frames` 下都看到 `(0,0)`，排查画面问题前先排除它。
-6. **基线漂移要先定性再定量**：139 753 这个数字长期被当回归，实际是「基线来自自建渲染」，定性错误修错方向。
+6. **基线漂移要先定性再定量**：139 753 这个数字长期被当回归，实际是「基线来自自建渲染」；2026-11-24 用 worktree
+   二分才定性（§7.5 结案），顺带挖出渲染的非确定性（英雄初始部队没固定种子）。
 7. **换桩时同一入口的两条路要一起掐**：第 4 步接上 `ProcessPanels` 后，场景的 `ClickPanel` 与屏幕的
    `ButtonsPanel` 会同时收到同一次点击，按一次「结束回合」结束两个回合。输入归属转移时，旧那一路必须在
    同一提交里关掉。

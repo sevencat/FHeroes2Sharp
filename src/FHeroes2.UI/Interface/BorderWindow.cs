@@ -163,7 +163,7 @@ public abstract class BorderWindow : IDisposable
         Rect panel = GetRect;
         Point cursor = events.CursorPosition;
 
-        var drag = new BorderDrag(panel, new Point(cursor.X - panel.X, cursor.Y - panel.Y));
+        var drag = new BorderDrag(panel, new Point(cursor.X - panel.X, cursor.Y - panel.Y), this);
 
         // The reference also hands the drag state to the cursor layer by clearing the capture here.
         _isMouseCaptured = false;
@@ -254,10 +254,14 @@ public sealed class BorderDrag
     /// <summary>Starts a drag of a panel that begins at <paramref name="panel"/>.</summary>
     /// <param name="panel">Rectangle of the panel when the drag began, <c>GetRect()</c>.</param>
     /// <param name="grabOffset">Offset of the cursor inside the panel, <c>ox/oy</c>.</param>
-    public BorderDrag(Rect panel, Point grabOffset)
+    /// <param name="owner">
+    /// The panel being dragged, or <see langword="null"/> when there is none (a test that only paints the outline).
+    /// </param>
+    public BorderDrag(Rect panel, Point grabOffset, BorderWindow? owner = null)
     {
         Panel = panel;
         GrabOffset = grabOffset;
+        Owner = owner;
 
         // MovableSprite( pos.width, pos.height, pos.x, pos.y ) then reset() + DrawBorder().
         _indicator = new MovableSprite(panel.Width, panel.Height, panel.X, panel.Y);
@@ -280,6 +284,9 @@ public sealed class BorderDrag
     /// <summary>Where the outline currently is.</summary>
     public Point Position => new(_indicator.X, _indicator.Y);
 
+    /// <summary>The panel this drag moves, or <see langword="null"/> for an outline with no panel behind it.</summary>
+    public BorderWindow? Owner { get; }
+
     /// <summary>The outline, for callers that want to place it themselves.</summary>
     public MovableSprite Indicator => _indicator;
 
@@ -288,6 +295,17 @@ public sealed class BorderDrag
     /// </summary>
     /// <param name="cursor">Current cursor position.</param>
     public void MoveTo(Point cursor) => _indicator.SetPosition(cursor.X - GrabOffset.X, cursor.Y - GrabOffset.Y);
+
+    /// <summary>
+    /// Ends the drag at <paramref name="cursor"/>, the <c>SetPos( mp.x - ox, mp.y - oy )</c> that follows the
+    /// reference's drag loop.
+    /// </summary>
+    /// <param name="cursor">Cursor position on the release frame, <c>mp</c>.</param>
+    /// <remarks>
+    /// <see cref="BorderWindow.SetPos"/> clamps the window to the display and saves the new position, which is how a
+    /// hidden-interface panel keeps the place the player dropped it on. A drag without an owner only paints.
+    /// </remarks>
+    public void Drop(Point cursor) => Owner?.SetPos(cursor.X - GrabOffset.X, cursor.Y - GrabOffset.Y);
 
     /// <summary>Paints the outline at its current position.</summary>
     /// <param name="target">Frame buffer to paint into.</param>

@@ -168,12 +168,21 @@ E3 起可以**存回 MP2**：`Ctrl+S` 写回打开的那个 `.mp2`，状态栏�
 `*.82M`。没有声卡、或缺 `MUSIC/` 目录时只记一条日志，客户端照常运行；`--no-audio` 完全静音，
 `--play-sound PICKUP01` 单独试一个音效。
 
-偏好：界面语言、音量、速度与各开关记在 `%APPDATA%\fheroes2\fheroes2.cfg`（首次运行自动生成一份默认文件，
-退出时落盘；格式与参考的 `fheroes2.cfg` 相同，键名一致，可以直接编辑）。`--config <file>` 换一份，
-`--no-config` 完全不碰文件——像素基线脚本都带它，免得开发机上的偏好影响比对。
+触摸：检测到触摸屏时单指就是鼠标，第一指按住后第二指点一下即右键（冒险地图的物件信息就靠这个手势），
+首运的问候会多一段说明；`--no-touch` 假装没有触摸设备，只影响问候布局，给首运冒烟的固定坐标用。
 
-第一次启动（配置文件里还写着 `first time game run = on`）会先问界面语言，再弹一条欢迎消息；答完就把旗标清掉。
-用 `--config <file>` 做脚本或截图的，先把那一行改成 `off`，否则会停在语言选择窗上。
+偏好：界面语言、音量、速度与各开关记在 `%APPDATA%\fheroes2\fheroes2.cfg`（首次运行自动生成一份默认文件，
+退出时落盘；格式与参考的 `fheroes2.cfg` 相同，键名一致，可以直接编辑）。窗口状态也记在里面：`videomode` 的
+窗口尺寸、`game window position` 的坐标、`fullscreen` 的开关，启动照它们恢复、退出写回现状（`--scale` 压过
+文件里的窗口尺寸）。`--config <file>` 换一份，`--no-config` 完全不碰文件——像素基线脚本都带它，免得开发机上的
+偏好影响比对。
+
+第一次启动（配置文件里还写着 `first time game run = on`）会连着问三件事：界面语言、一条欢迎消息、最后是游戏分辨率
+（`Select Game Resolution:`，列出当前显示设备支持的窗口尺寸，回车确认、`Esc` 用当前值）；答完就把旗标清掉。
+分辨率选完当场生效（窗口跟着变）并写进 `videomode` 的窗口那一半。用 `--config <file>` 做脚本或截图的，
+先把那一行改成 `off`，否则会停在语言选择窗、欢迎消息或分辨率窗上。分辨率窗里的行都是「640x480 帧缓冲 + 窗口尺寸」，
+与图形选项页同一份列表，改窗口不会改场景的画布尺寸。窗口里右键一行（或 OK / Cancel 按钮）会弹出该行缩放关系的说明框，
+Enter、Esc 或点 OK 关掉。
 
 ## 快速开始
 
@@ -188,6 +197,10 @@ dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2"
 # 主菜单默认上屏；按键：ESC 退出、F2 切换中英文、N/L/H/C/Q 选招牌、F11 全屏、F12 截图
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --lang zh_CN
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --scene diagnostics
+
+# 会话难度（等同于参考的 Game::getDifficulty()）：起始资源与各城的默认建筑跟着它走，只在本次运行生效，
+# 不写进配置文件；不传时退回地图头那一档（剧本信息屏还没移植，这是它的过渡入口）
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --difficulty impossible --enter-map
 
 # 地图编辑器（E2 可改地形，E3 可存盘）：左键刷、右键拖、右键单击吸管、1~9 选地面
 # Ctrl+Z/Y 撤销重做、Ctrl+S 保存、G 切网格、方向键/滚轮滚动、Home 回左上、ESC 退出
@@ -211,11 +224,19 @@ dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 230,210 --sc
 # 右键提示框只存在于按住期间，所以抓图要人造光标 + --right-button
 dotnet run --project src/FHeroes2.App -- --smoke-frames 40 --cursor 520,230 --right-button --screenshot tip.png
 
-# 冒险地图的右键提示框（QWIKINFO 木框）同理，--quick-info 会把光标所在格的说明打进日志
-dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --map "F:\game\fh2\maps\Alteris.mp2" --cursor 250,190 --quick-info --smoke-frames 40 --screenshot quick-info.png
+# 冒险地图的右键提示框（QWIKINFO 木框）同理：--quick-info 把光标所在格的说明开出来并打进日志，
+# 但要配上 --right-button 把右键按住，否则场景下一帧就把它收掉（ADR-208）
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --map "F:\game\fh2\maps\Alteris.mp2" --cursor 250,190 --quick-info --right-button --smoke-frames 40 --screenshot quick-info.png
 
 # --left-click 在人造光标处点一下左键：用来验证「点招牌 → 进编辑器」这条只有鼠标能走的路径
 dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --cursor 565,380 --left-click --smoke-frames 20 --screenshot editor-from-menu.png
+
+# --left-click-at 一次运行里按帧连点多个位置（帧必须严格递增）：首运要点语言窗 → 问候 → 分辨率窗
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --config tools-output/first-run.cfg --no-touch --smoke-frames 60 --left-click-at "10:236,380;20:320,322;30:300,114;40:236,356"
+
+# --seed 固定随机源（参考没有这个开关）：地图载入时英雄的初始部队数量是抽的，不固定的话同一张图
+# 两次渲染的状态栏不一样，像素基线永远差几十个像素
+dotnet run --project src/FHeroes2.App -- --data "F:\game\fh2" --map "F:\game\fh2\maps\Alteris.mp2" --seed 1 --smoke-frames 30 --screenshot seeded.png
 
 # 资产归档检查
 dotnet run --project tools/FHeroes2.AssetProbe -- info
@@ -257,10 +278,19 @@ pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update
 pwsh tools/scripts/VerifyEditorBaseline.ps1
 pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update           # 有意改了视觉后重建基线
 
-# 冒险地图基线：--map 直接开 Alteris.mp2，居中到地图中部的城堡（地形 + 对象层 + 英雄层 + 小地图）
+# 冒险地图基线：--map 直接开 Alteris.mp2，居中到焦点英雄（地形 + 对象层 + 英雄层 + 小地图），
+# 脚本带 --seed 1 固定随机（英雄初始部队是抽的），所以同一张图每次渲染逐像素一致
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile 'D:\HoMM2\maps\Beltway.mp2'
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions   # 冒险选项对话框
+pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo          # 右键提示框（脚本自己带 --right-button 按住）
 pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update      # 有意改了视觉后重建基线
+
+# 首运冒烟：临时配置里开着 'first time game run'，用 --left-click-at 四击走完语言窗 → 问候 → 分辨率窗，
+# 再按日志核对旗标已清；不带 -KeepRunning 时会把配置恢复（CI 也用这一条，见 ADR-209）
+pwsh tools/scripts/SmokeFirstRun.ps1
+pwsh tools/scripts/SmokeFirstRun.ps1 -SkipBuild
 
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1

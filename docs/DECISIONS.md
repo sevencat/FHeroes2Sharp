@@ -7580,3 +7580,236 @@ App 的消息层，与 `Sign` 同一个缺口。
 都抓到了，但「点问候的 OK 之后清旗标」没有端到端截图；那一步由 `Settings.ResetFirstGameRun()` + `Save` 的持久化测试
 （`SystemSettingsTests.ASavedResetFirstGameRunStaysClearedInTheFile`）加四行接线守住，要端到端就得让脚本能连点两个位置。
 **没做**：分辨率选择窗与 `videomode` 的生效、触摸输入、`MainMenu` 退出时的窗口位置保存。
+（2026-11-24：`videomode` 与窗口位置见 ADR-204，分辨率选择窗见 ADR-205，只剩触摸输入没人用。）
+
+## ADR-203：会话难度用 `--difficulty` 先落地，起始资源与城堡默认建筑都跟随 `Game::getDifficulty()` ✅
+
+**背景**：参考在剧本信息屏上用难度光标选难度（`game_scenarioinfo.cpp` 的 `ActionCursor` 分支），选中的那一档
+进 `Game::getDifficulty()`，之后 `Kingdom::Init()` 拿它发起始资源（`kingdom.cpp:103`）、`Castle::_setDefaultBuildings()`
+拿它抽二级兵营（`castle.cpp:542`）。端口还没有剧本信息屏（没有 `NGHSBKG`、没有难度图标），但 `Kingdom.GetStartingResources`
+与 `Castle.SetDefaultBuildings` 都已经按难度分表，缺的只是「谁把这一档告诉它们」。在此之前 `World.LoadMap` 拿地图头里
+的 `Mp2FileInfo.Difficulty` 顶上，这跟参考口径不一致：地图头那一档只参与 `Game::GetRating()`。
+
+**决定**：
+
+1. **`--difficulty <easy|normal|hard|expert|impossible|0..4>`** 作为玩家的选择的过渡入口，解析在
+   `CommandLineOptions.ParseDifficulty`，非法值在参数解析阶段就报错。它是会话级开关，**不写进配置文件**
+   （与 ADR-201 的 `--lang` 同一条线：命令行优先且不落盘），`GameHost.ApplySessionOptions()` 把它写进
+   `Settings.SetGameDifficulty`，日志留一行 `Difficulty set to ... on the command line.`。
+2. **`World.LoadMap( map, difficulty )` 记下这一档**：新增 `World._difficulty`（参考的 `Game::getDifficulty()`
+   在端口没有对应的全局对象，装载时记在世界里），`CreateMapKingdoms` 用它发起始资源，`ReadCastleBlock` 用它抽
+   城堡默认建筑（`Castle.LoadFromMP2` 的 `difficulty` 参数）。
+3. **不传就退回地图头**：`LoadMap( map )` 保持老口径（`map.Info.Difficulty`），测试与工具不必改；`Reset()` 把
+   它复位成 `Normal`，空世界不再带着上一张图的答案。
+4. **`AdventureMapScene` 开局时传 `Settings.Get().GameDifficulty`**，所以 `--difficulty` 一路贯通到资源与城堡。
+
+**后果**：`--difficulty impossible` 下起始金币为 0、任何城的二级兵营都不会出现；`--difficulty easy` 下 75% 的城
+会带二级兵营。地图头难度退为评分口径，与参考一致。
+**验证**：`TheDifficultyPassedInDecidesTheStartingResources`（资源）与
+`TheDifficultyOfTheGameDecidesTheDefaultBuildingsOfATown`（城堡，八次装载 + 地图头 Easy / 会话 Impossible 对拍）；
+全量 5515 测试绿；`--difficulty impossible --enter-map --screenshot` 冒烟通过（地图头 Hard、会话 Impossible 同时存在）。
+**没做**：剧本信息屏的难度光标、`NGHSBKG`、难度图标、对手/职业/评分绘制——`--difficulty` 只是这些界面落地之前的过渡口子。
+
+## ADR-204：窗口状态（`videomode` / `fullscreen` / 窗口位置）启动恢复、退出写回 ✅
+
+**背景**：参考的 `DisplayInitializer`（`game_init.cpp:70-99`）在窗口创建后按配置恢复三样东西——全屏状态
+（`:89`）、窗口位置（`:96`，`display.setWindowPos( conf.getSavedWindowPos() )`）、分辨率（`:98`，
+`display.setResolution( conf.currentResolutionInfo() )`）；`MainMenu` 关闭前把窗口位置记回去（`game_mainmenu.cpp:239-244`），
+`conf.Save()` 写文件时也是现场问 `Display::instance()`（`settings.cpp:427-433`）。端口此前只写不读：配置文件里
+的 `videomode`、`game window position` 被 `Read` 跳过，`fullscreen` 读了却没人用，启动永远是 2 倍窗口、永远窗口化。
+
+**决定**：
+
+1. **读进设置**：`Settings.CurrentResolutionInfo`（默认 `640x480:640x480`，同 `settings.cpp:95`）与
+   `Settings.SavedWindowPosition`（默认 `(-1, -1)`，意思是「没记过」），`Read` 见键才改，与其余键一致。
+2. **恢复交给宿主**：`GameHost.CreatePresenter()` 按参考的次序来——全屏（`--fullscreen || Settings.IsFullScreen`）
+   随 `SdlPresenter` 构造一起设好，窗口位置作为构造的可选参数在 `SDL.ShowWindow` **之前**应用（否则先闪一下
+   默认位置），最后 `SetResolution` 应用 `videomode` 的窗口尺寸。
+3. **只应用窗口那一半**：参考的帧缓冲可以换尺寸（`Display::setResolution` 重建渲染目标），端口的场景全部按
+   640x480 画；`videomode` 的游戏尺寸不是 640x480 时打一行警告、只应用窗口尺寸，而不是抛异常。等场景与界面
+   支持别的逻辑尺寸再放开。
+4. **命令行压过文件**：`--scale` 从「默认 2」改成可空——给了就不看文件里的窗口尺寸（基线脚本靠默认 2 倍与
+   `--no-config` 固定窗口）；`--fullscreen` 只会打开全屏。文件缺键时仍是 2 倍。
+5. **写回的是现状**：`SaveSettings()` 现场问窗口（`videomode = 640x480:当前窗口`、`game window position = 当前坐标`、
+   `fullscreen = 当前状态`），不把读进来的值原样写回；`F11` 切换后同步 `Settings.SetFullScreen`，文件里才不会
+   永远停在开窗时那一档。`SdlPresenter` 相应加了 `WindowPosition` 读取与构造参数。
+
+**后果**：改过窗口大小的玩家下次启动就在自己习惯的尺寸里；全屏状态、窗口位置都能记住；配置文件里三项与窗口实际
+状态一致（此前的写入是「猜」的）。
+**验证**：全量 5 517 测试绿（新增两条设置测试）；三组 `--config` 冒烟（1600x1200 生效并写回、800x600 游戏尺寸
+只取窗口那一半并警告、`--scale 3` 压过文件的 1600x1200 写成 1920x1440）；菜单与设置像素基线仍 `identical`。
+**没做**：分辨率选择窗（首运那次挑分辨率，`Dialog::SelectResolution`）、问候里的分辨率段、隐藏界面四个窗口位置的
+生效；`videomode` 的游戏尺寸仍锁 640x480。另：冒险地图基线在本机不过，已用 HEAD 的 worktree 复现，与本条无关
+（PROGRESS §7.5）。（2026-11-24 后续：首运的分辨率窗与问候里的那一段见 ADR-205。）
+
+## ADR-205：首运的分辨率选择窗，以及「帧缓冲 + 窗口」的分辨率配对 ✅
+
+**背景**：参考的首运（`game_mainmenu.cpp:265-300`）在问候之后调 `Dialog::SelectResolution()`，窗口列出
+`engine().getAvailableResolutions()`（`dialog_resolution.cpp`）。端口的 `ResolutionDialog` 早就转好了（图形/系统选项页
+在用），但没人调得动它：`IDisplayControl.GetAvailableResolutions()` 返回的是「游戏尺寸 = 窗口尺寸」的行，而
+`SdlPresenter.SetResolution` 只认 640x480 的帧缓冲，挑一行就抛 `ArgumentException`；首运也缺这一步。
+
+**决定**：
+
+1. **统一成「帧缓冲 + 窗口」的配对**：`SdlDisplayControl.GetAvailableResolutions()` 用当前帧缓冲的尺寸当
+   `GameSize`、显示模式当 `ScreenSize`。参考的现代版本让游戏尺寸跟着窗口走；端口所有场景按 640x480 画
+   （ADR-204），所以只有窗口那一半能变。这样同一个列表既喂首运、也喂图形选项页，`SetResolution` 不再拒收。
+2. **首运那一步照参考的顺序与文案**：语言选择 → 问候（欢迎段 + 「请选分辨率」段）→ 分辨率窗口 → 收尾（清旗标、
+   保存）。问候里的触摸段仍不写，端口没有触摸输入。
+3. **场景级模态，不阻塞**：参考的窗口是阻塞的，端口沿用 ADR-202 给语言窗定的做法——`ResolutionDialog` 挂在
+   `MainMenuScene` 上，`Update` 每帧把 `LocalEvent.Current` 喂给 `ProcessEvents`。这样 `ListBox` 的滚动条拖动、
+   双击、键盘全不用重写，`--smoke-frames`/`--screenshot` 也照常跑得下去。
+4. **预选与回退按参考**：当前窗口所在行预选；当前窗口不是某个显示模式（端口开窗默认是 640x480 放大 2 倍，
+   1280x960 往往不是一个模式）时停在第一行，参考同样如此。
+5. **开不出来就跳过**：缺 `SCROLL.ICN`/`ADVBORD.ICN`、没有显示层、没有可用行，都只打警告并直接收尾，首运不会卡住。
+
+**后果**：首运真的会让玩家挑窗口尺寸，挑中的写进 `videomode`；图形选项页里挑分辨率不再抛异常。
+**验证**：全量 5 519 测试绿（`ResolutionDialogTests` 新增预选/回退两条）；首运冒烟（临时补丁把首运推进到该窗口）
+日志 `resolution chooser open, 13 window(s), current 1280x960`、注入 Enter 后 `window resolution 2560x1600` 且
+`videomode` 写成 `640x480:2560x1600`、`first time game run` 清掉；菜单/设置/剧本三张像素基线 `identical`。
+**没做**：右键解释弹窗在首运里被丢弃（ADR-206 已补）；首运这一步的脚本点击（窗口读 `LocalEvent`，
+合成的 `--left-click` 只进场景接口）。
+
+## ADR-206：首运分辨率窗的右键解释，用第二层场景级消息框 ✅
+
+**背景**：`ResolutionDialog` 早就把右键变成 `DialogPopup`（行文本 + 缩放说明），参考在
+`Dialog::SelectResolution()` 的阻塞循环里用 `showStandardTextMessage( ..., Dialog::ZERO )` 弹出来
+（`dialog_resolution.cpp:124-145`、`:291-296`）。ADR-205 把窗口挂进首运后，`TakePopup()` 被丢掉，右键没有反应。
+
+**决定**：
+
+1. **不改成阻塞的 `MessageBox.Show`**：首运的三个窗口都按 ADR-202/ADR-205 的分帧做法（`Update` 每帧喂输入）。
+   中途起一层阻塞循环会让 `--smoke-frames`/`--screenshot` 的帧计数与事件批错位，也让「场景级模态」出现两种实现。
+2. **消息框当第二层场景级模态**：`MainMenuScene._resolutionTip` 由 `MessageBox.Create` 拼出（OK 按钮，按钮素材复用
+   `ResolutionArtwork.Buttons`）。`SetCursor`/`SetLeftButton`/`Select` 先让给它，`HasModalDialog` 计入它，
+   `DrawFrame` 在分辨率窗之后画它。
+3. **一帧只关一层**：`_skipResolutionInput` 让 `DriveResolutionPicker` 在「刚打开分辨率窗」或「刚关掉解释框」的那一帧
+   不把 `LocalEvent` 喂给列表。否则关闭问候的 Enter 会直接确认分辨率窗，关闭解释框的 Esc 会直接取消它。
+4. **文案照参考**：按钮的右键解释同时对齐原文（`Okay` → `Click to apply the selected resolution.`、
+   `Cancel` → `Exit this menu without doing anything.`）。
+
+**后果**：首运里右键任意一行（或 OK/Cancel 按钮）弹出与参考同文案的解释框，Enter/Esc/点的 OK 都能关；
+列表在关闭的那一帧不会收到同一个按键。
+**验证**：见 PROGRESS §6.10（5 521 测试绿、首运冒烟截图、菜单/设置/剧本三张基线 `identical`）。
+**没做**：首运那一步的脚本化点击（窗口读 `LocalEvent`，合成的 `--left-click` 只进场景接口）。
+
+## ADR-207：冒险地图基线按「参考行为」更新，并给随机源加 `--seed` ✅
+
+**背景**：`adventure-map.png` 长期与 HEAD 的渲染差 165 198 个像素（PROGRESS §7.5 记为「已知未解，查清前不要 `-Update`」）。
+worktree 二分：基线在 `11e6a51` 上 `identical`，`748904e`（冒险场景改为整屏交给 `Interface::AdventureMap::RedrawInterface`、
+删掉场景自绘的状态行）之后才对不上。逐项核对后三条差异都是**正确行为**：
+
+| 差异 | 参考 | 端口 |
+| --- | --- | --- |
+| 视口不居中在「最近的城堡」 | `game_startgame.cpp` 开局 `ResetFocus(FIRSTHERO)` → `interface_base.cpp:76-79` 的 `SetFocus` 总是 `SetCenter(hero)` | `AdventureSession.Start` 成功就 `SetFocus(actingHero, false)`（第二参数是「保留滚动条位置」，不是「不居中」） |
+| 雷达只有零星亮点 | 雷达只画已探索区域 | 迷雾生效（`748904e` 修了 `Radar._hide` 默认值与迷雾色） |
+| 状态栏是「19 精灵 + 4 兵」而不是日期 | `SetFocus` 里 `statusPanel.SetState(STATUS_ARMY)` | 同左；日期是旧的场景自绘 `StatusPanelPainter` 的产物，那个类已删除 |
+
+**决定**：
+1. **更新基线**，不把正确的参考行为当成回归去迁就旧图。
+2. **补 `--seed <n>`**：更新后同一脚本连跑两次仍差 27～40 个像素，位置都在状态栏部队那一格——地图载入时英雄
+   初始部队数量由 `Rand` 抽（OS 播种）。新增 `Rand.SeedThread(seed)` 与命令行 `--seed`（在
+   `CreateScenes()` 之前应用），基线脚本带 `--seed 1`。参考没有这个开关（它的测试不做逐像素断言），这是端口
+   像素回归设施的接缝，不改默认行为。
+3. **不把随机写进 `Settings`**：种子是「本次运行」的东西，跟 `fheroes2.cfg` 无关。
+
+**后果**：冒险地图基线可复现（连跑三次 `identical`），四张像素基线全部 `identical`；`--map` 的截图/冒烟从此确定。
+**验证**：见 PROGRESS §7.5 结案段（5 523 测试绿，`RandTests` 两条）。
+**没做**：多线程（AI）下的随机复现——`SeedThread` 只覆盖调用线程，AI 开工后各线程仍各自 OS 播种。
+
+## ADR-208：`--right-button` 也为冒险地图按住右键（提示框基线） ✅
+
+**背景**：重建 `quick-info.png` 时发现它其实是「没有提示框的地图」——与 `adventure-map.png` 逐字节相同。
+`--quick-info` 只在 `GameHost.CreateScenes()` 里调一次 `ShowQuickInfoAt`，而
+`AdventureMapScene.UpdateQuickInfo` 每帧检查 `LocalEvent.IsMouseRightButtonPressed`，没有按住就 `_quickInfo = null`，
+于是框活不过第一帧。参考的 `Dialog::QuickInfo()` 是按住右键期间的阻塞循环，所以「框跟着松手消失」本身是对的，
+错的是钩子：脚本从没真的按住过按钮。
+
+**决定**：
+1. **不改场景语义**，改钩子：`--right-button` 在 `GameHost.Loop` 里把「按住右键」推进 `LocalEvent`
+   （`_le.OnMouseButton(true, Right, cursor)`，每帧在合成光标之后）。菜单与城镇屏各有自己的 `SetRightButton`，
+   冒险地图读全局事件状态，所以要补在事件这一层；只在冒险地图场景存在时生效，不影响菜单基线。
+2. **基线脚本同时带 `--quick-info` 与 `--right-button`**：前者负责「开一次 + 日志」，后者负责「按住」。
+   CI 也补了这一条与 `-AdventureOptions`。
+3. 不改 `UpdateQuickInfo`：它是参考语义（松手收框），为截图放宽会掩盖真问题。
+
+**后果**：`quick-info.png` 重新带框（「Ore Mine」，`MineText.GetMineName` 按矿的资源取名，与参考
+`showMineInfo` 一致）；四张冒险地图基线连跑两次 `identical`。`--right-button` 从此在冒险地图上也能用于
+其他「按住才出现」的提示（状态面板、雷达的右键说明）。
+**验证**：`VerifyAdventureMapBaseline.ps1 -QuickInfo` 连跑两次 `identical`；其余九张基线不受影响（全部 `identical`）。
+**没做**：右键按住期间的拖拽卷屏（参考 `MouseRightClick` 的拖动分支）还没有端口的截图用例。
+
+## ADR-209：`--left-click-at` 多点脚本点击与首运端到端冒烟 ✅
+
+**背景**：首运是纯点击流程（语言窗 → 问候 → 分辨率窗），但 `--left-click` 固定在第十帧、只认一个 `--cursor`，
+一次运行只能点一下，所以 §6.6/§6.9/§6.10 一直记着「首运那一步的脚本点击没做」，之前那次冒烟靠临时补丁直接跳过
+前两个窗口。缺口不在场景，在钩子：脚本没法在一轮里连点四个位置。
+
+**决定**：
+1. **新增 `--left-click-at <frame:x,y[;frame:x,y…]>`**：一次运行里按帧重放任意多个左键点击，记录成
+   `ScriptedClick(int Frame, Point Point)`。帧从第一帧起数（与 `--smoke-frames` 同口径），必须 ≥1 且**严格递增**，
+   否则在参数解析阶段抛 `ArgumentException`——乱序的点击没有对应的玩家操作，静默重排只会掩盖脚本写错。
+2. **`--left-click` 成为它的单点特例**：构造时若没有 `--left-click-at`，`--left-click` 合成
+   `ScriptedClick(LeftClickFrame, --cursor)`；已有的单点用法与基线脚本不受影响。
+3. **点击仍在主循环里重放**（事件批之后、场景 `Update` 之前），不在 `CreateScenes` 里——后者会跳过新场景的头几帧，
+   而首运的每个窗口都是打开后先画一帧再收输入。
+4. **分辨率窗单独走 `LocalEvent`**：首运的分辨率窗（`ResolutionDialog`）的列表滚动、双击、右键解释都读全局事件，
+   而菜单/城镇屏读各自的 `SetLeftButton`。所以菜单那一路照旧（`SetCursor` + `SetLeftButton` + `HandleMenuAction`），
+   另在分辨率窗开着时把点击推进 `_le.OnMouseButton`。
+5. **按下与释放分两帧**：一次物理点击本来就跨两帧，列表与按钮行都在**释放**时触发；按下帧记
+   `_pendingClickRelease`，下一帧先发释放再处理本帧点击。同帧按下+释放对列表完全无效（本轮踩过这个坑）。
+6. **冒烟脚本 `tools/scripts/SmokeFirstRun.ps1`**：写一个仍带 `first time game run = on` 的临时配置，四击
+   `10:236,380`（语言 OKAY）、`20:320,322`（问候 OKAY）、`30:300,114`（分辨率列表第一行）、`40:236,356`
+   （分辨率 OKAY），然后按日志五个标记逐步核对；不带 `-KeepRunning` 时把配置恢复成首运状态。坐标取自窗口布局
+   （两个窗的内容都是 345x306 居中），布局改动要同步改脚本里的数字。
+7. **接进 CI**：`ci.yml` 末尾加一步 `Walk the first run with scripted clicks`，条件同其他数据依赖步骤
+   （`vars.FHEROES2_DATA != ''`），跑 `SmokeFirstRun.ps1 -SkipBuild`。
+
+**后果**：首运从语言窗到旗标清除有了不靠补丁的端到端冒烟；任何一步的输入接线断了，脚本会在对应标记上报缺失。
+`--left-click-at` 也可以用于其他多步点击流程（设置页、剧本屏），但城镇屏内部仍只有「按下+释放同帧」的出口，
+多点连点在那里的语义未验证。
+
+**验证**：构建 0 错误 0 警告；全量测试 5 523 绿；十张像素基线一次性复验全部 `identical`；
+`SmokeFirstRun.ps1 -SkipBuild` 输出 `the first run walked from the language picker to the cleared flag, match`；
+`--left-click` 单点回归日志仍是 `language 'en' -> 'en'.` + `greeting shown.`；日志里没有 `TEMP-` 残留。
+
+**没做**：问候里的触摸段（端口没有触摸输入）、隐藏界面的四个窗口位置。
+
+## ADR-210：触摸输入、问候里的触摸段与隐藏界面面板的落位 ✅
+
+**背景**：P6 就剩两项。其一，问候少一「两指右键」段（ADR-202 记的差异），根子是端口没有触摸输入：
+参考在 `onTouchFingerEvent`（`localevent.cpp:1358-1430`）里自己把手指翻译成左右键，并关掉 SDL 的触摸合成，
+所以那一段讲的手势真的能用。其二，隐藏界面模式下四个面板（雷达/按钮/图标/状态栏）从配置里读出的位置
+（§6.8 读取、`AdventureMap.Reset` 应用）没人写过：拖面板时只画轮廓，松手丢掉，`pos_*` 永远是默认 `-1`，
+读取那一半等于死代码。
+
+**决定**：
+1. **触摸状态进 `LocalEvent`**：新增 `TouchFinger`（Down/Up/Motion）、`TouchEmulation` 与两根手指的 ID 状态，
+   `OnTouchFinger` 逐行照参考：第一指驱动光标并仿真左键；第一指还在时第二指按下仿真右键，抬起第一指**不**释放
+   右键（这就是「按住物件，再看别处」）；第三指、以及不在屏上的手指事件一律忽略；每次仿真都置 `MOUSE_TOUCH`，
+   `IsMouseEventFromTouchpad` 从此能真为 `true`。
+2. **返回仿真结果**：参考的按钮直接读 `LocalEvent`，方法不必返回；端口的场景由宿主送输入，所以 `OnTouchFinger`
+   返回 `None/Motion/Left|Right Pressed/Released`，宿主据此调 `MoveSceneCursor` 或 `DispatchButton`，
+   场景看到的东西与鼠标事件相同。
+3. **关掉 SDL 的合成**：启动 `SDL_Init` 之后设 `MouseTouchEvents = 0`、`TouchMouseEvents = 0`，否则一次点按会以
+   「合成鼠标 + 手指事件」两条路各来一遍。手指坐标按窗口归一化，先乘 `OutputSize` 再走 `ToCursor`。
+4. **检测**：`SDL_GetTouchDevices`（绑定返回托管数组，无需释放），结果交给 `MainMenuScene.TouchInputAvailable`。
+   SDL 只在设备被用过之后才报告，所以首运仍可能看不到触摸屏——参考同样如此，段落只是少写一段。
+5. **问候段**：`WelcomeTouchId` 照抄参考文案，按 `欢迎 → 触摸 → 分辨率` 的顺序拼；分辨率段照写（桌面版永远不是
+   手持设备）。
+6. **`--no-touch`**：本机有设备上报时，问候会因为多一段而变高、OKAY 下移，`SmokeFirstRun.ps1` 的固定坐标就会点空
+   （本轮实际踩到，冒烟停在语言窗之后）。这个开关只关「检测 + 段落」，不关手指翻译，给脚本一个稳定的布局；
+   首运冒烟已带上它。
+7. **面板落位**：`BorderDrag` 带上被拖的 `Owner`，并新增 `Drop(cursor)`（参考松手时的
+   `SetPos( mp.x - ox, mp.y - oy )`）；`AdventureMapScene.PumpDrag` 在释放帧调它。面板的 `SetPos` 本就会夹进屏幕
+   并 `SavePosition()` 进 `Settings`，退出时随配置写出，于是「读位置 → 拖 → 落盘 → 下次启动复位」闭环。
+
+**后果**：触摸屏上单指即鼠标、两指即右键，问候里的手势说明是真的；隐藏界面面板拖完会停在新位置并记住。
+`Drop` 对没有 `Owner` 的轮廓（只画轮廓的测试）什么都不做。
+
+**验证**：构建 0 错误 0 警告；全量测试 5 529 通过（`LocalEventTests` 新增 4 条触摸语义，`BorderWindowTests`
+新增 2 条落位/无主轮廓）；十张像素基线一次性复验全部 `identical`；`SmokeFirstRun.ps1 -SkipBuild` 通过；
+本机（有触摸设备上报）不带 `--no-touch` 截的问候图是三段（欢迎、触摸、分辨率），带 `--no-touch` 时回到两段。
+
+**没做**：真机两指手势未实际点过（本机只报告了设备，没有手指输入）；捏合/滑动等指针手势（参考也只在未移植的
+battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差异。

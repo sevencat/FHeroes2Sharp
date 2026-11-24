@@ -196,6 +196,9 @@ $appArguments = @(
     '--freeze-animation',
     '--no-audio',
     '--no-config',
+    # Map loading draws hero army sizes and random objects from the thread generator; without a
+    # seed the status bar shows a different army in every run (docs/PROGRESS.md §7.5).
+    '--seed', '1',
     '--screenshot-frame', '30',
     '--smoke-frames', $Frames,
     '--screenshot', $screenshot
@@ -206,6 +209,10 @@ if ($AdventureOptions) {
 }
 
 if ($QuickInfo) {
+    # The box only lives while the right button is held (the reference's Dialog::QuickInfo blocks
+    # until the release), and the scene drops it on any frame without the press. --quick-info opens
+    # it once, --right-button keeps the button down so it stays on the captured frame.
+    $appArguments += '--right-button'
     $appArguments += '--quick-info'
 }
 

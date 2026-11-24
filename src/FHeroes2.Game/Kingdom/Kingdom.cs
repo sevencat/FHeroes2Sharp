@@ -252,7 +252,7 @@ public sealed partial class Kingdom
     /// </para>
     /// <para>表在参考里是 <c>Cost{ gold, wood, mercury, ore, sulfur, crystal, gems }</c>，这里直接给 <see cref="Funds"/>。</para>
     /// </remarks>
-    /// <param name="difficulty">Map difficulty.</param>
+    /// <param name="difficulty">The difficulty the treasury comes from, <c>Game::getDifficulty()</c>.</param>
     /// <param name="isAiControlled">Whether the player of this kingdom is the computer.</param>
     /// <returns>The starting treasury.</returns>
     public static Funds GetStartingResources(GameDifficulty difficulty, bool isAiControlled)
@@ -291,7 +291,9 @@ public sealed partial class Kingdom
     /// </para>
     /// </remarks>
     /// <param name="color">The color of the kingdom.</param>
-    /// <param name="difficulty">Map difficulty, which decides the starting resources.</param>
+    /// <param name="difficulty">
+    /// 玩家挑的那一档（<c>Game::getDifficulty()</c>），决定起始资源；不是地图头里制作者定的那一档。
+    /// </param>
     /// <param name="isAiControlled">Whether the computer plays this color.</param>
     public void Init(PlayerColor color, GameDifficulty difficulty, bool isAiControlled)
     {

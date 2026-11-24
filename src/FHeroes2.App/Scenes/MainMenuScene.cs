@@ -10,6 +10,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.H2D;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.App.Scenes;
@@ -154,10 +155,33 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>
     /// Body of the greeting of the first run, <c>_( "Welcome to Heroes of Might and Magic II powered by
-    /// fheroes2 engine!" )</c>. The reference appends two paragraphs - one about the resolution selection
-    /// and one about touch input; the port has neither (see the remarks of <see cref="BeginFirstRun"/>).
+    /// fheroes2 engine!" )</c>. The reference appends two paragraphs - one about touch input and one about
+    /// the resolution selection; the touch one is added only when a touch device is present (see
+    /// <see cref="TouchInputAvailable"/> and <see cref="WelcomeTouchId"/>).
     /// </summary>
     public const string WelcomeBodyId = "Welcome to Heroes of Might and Magic II powered by fheroes2 engine!";
+
+    /// <summary>
+    /// Touch paragraph of the greeting, <c>_( "To simulate a right-click with a touch ..." )</c> of
+    /// <c>Game::MainMenu()</c>, written only when <c>System::isTouchInputAvailable()</c> is true; here when
+    /// <see cref="TouchInputAvailable"/> is set by the host.
+    /// </summary>
+    public const string WelcomeTouchId =
+        "To simulate a right-click with a touch to get info on various items, you need to first touch and keep " +
+        "touching on the item of interest and then touch anywhere else on the screen. While holding the second " +
+        "finger, you can remove the first one from the screen and keep viewing the information on the item.";
+
+    /// <summary>
+    /// Second paragraph of the greeting, <c>_( "Before starting the game, please select a game resolution." )</c>,
+    /// the line that introduces the resolution chooser of <c>Game::MainMenu()</c>.
+    /// </summary>
+    public const string WelcomeResolutionId = "Before starting the game, please select a game resolution.";
+
+    /// <summary>Frames of the resolution chooser's scroll bar, <c>ICN::SCROLL</c>.</summary>
+    public const string ResolutionScrollAssetName = "SCROLL.ICN";
+
+    /// <summary>Board behind the resolution chooser, <c>ICN::ADVBORD</c> frame 0.</summary>
+    public const string ResolutionBoardAssetName = "ADVBORD.ICN";
 
     /// <summary><c>SDL_Keycode.ESCAPE</c>, which arrives as a character through the hot key path.</summary>
     private const char EscapeCharacter = '\u001b';
@@ -199,6 +223,7 @@ public sealed class MainMenuScene : IScene
     private readonly byte _statusBarColor;
     private readonly SettingsArtwork? _settingsArtwork;
     private readonly ScenarioDialogArtwork? _scenarioArtwork;
+    private readonly ResolutionArtwork? _resolutionArtwork;
     private readonly string? _dataDirectory;
 
     private int _languageIndex;
@@ -213,6 +238,9 @@ public sealed class MainMenuScene : IScene
     private SettingsDialog? _settings;
     private LanguageSelectionDialog? _languagePicker;
     private MessageBox? _welcome;
+    private ResolutionDialog? _resolutionPicker;
+    private MessageBox? _resolutionTip;
+    private bool _skipResolutionInput;
     private IReadOnlyList<Mp2FileInfo>? _maps;
     private ScenarioSelectionDialog? _scenario;
     private Mp2FileInfo? _confirmedScenario;
@@ -231,6 +259,7 @@ public sealed class MainMenuScene : IScene
         string? culture,
         SettingsArtwork? settingsArtwork,
         ScenarioDialogArtwork? scenarioArtwork,
+        ResolutionArtwork? resolutionArtwork,
         string? dataDirectory)
     {
         _frame = frame;
@@ -245,6 +274,7 @@ public sealed class MainMenuScene : IScene
         _languages = languages;
         _settingsArtwork = settingsArtwork;
         _scenarioArtwork = scenarioArtwork;
+        _resolutionArtwork = resolutionArtwork;
         _dataDirectory = dataDirectory;
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
@@ -273,10 +303,16 @@ public sealed class MainMenuScene : IScene
     /// <c>isFirstGameRun</c> branch of <c>Game::MainMenu()</c>.
     /// </summary>
     /// <remarks>
-    /// 参考在这一支里也把分辨率选择当成了首运的一部分（<c>showGameResolutionSelection()</c>）；端口没有分辨率选择
-    /// 窗口（<c>videomode</c> 只写不读），所以首运只剩语言选择加问候消息，旗标照样在这里清掉。
+    /// 参考在这一支里也把分辨率选择当成了首运的一部分（<c>showGameResolutionSelection()</c>），端口的顺序与它一致：
+    /// 语言选择、问候、分辨率选择，最后才走到这里；此时宿主写出的 <c>videomode</c> 已经是玩家挑的那一档。
     /// </remarks>
     public Action? FirstRunFinished { get; set; }
+
+    /// <summary>
+    /// Whether a touch device is present, <c>System::isTouchInputAvailable()</c>, which adds the touch paragraph
+    /// to the greeting of the first run. The host fills it from <c>SDL_GetTouchDevices</c> before the onboarding.
+    /// </summary>
+    public bool TouchInputAvailable { get; set; }
 
     /// <summary>The status bar rectangle at the bottom of the logical frame.</summary>
     public Rect StatusBarArea => _statusBar;
@@ -352,10 +388,12 @@ public sealed class MainMenuScene : IScene
             IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
 
             ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
+            SettingsArtwork? settingsArtwork = SettingsArtwork.TryCreate(assets);
+            ResolutionArtwork? resolutionArtwork = CreateResolutionArtwork(assets, settingsArtwork);
 
             MainMenuScene scene = new(
                 frame, streetScene, lanternBase, lantern, door, hasMessageFrame, buttons, editorSign, fonts,
-                languages, culture, SettingsArtwork.TryCreate(assets), scenarioArtwork, assets.DataDirectory);
+                languages, culture, settingsArtwork, scenarioArtwork, resolutionArtwork, assets.DataDirectory);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -368,6 +406,7 @@ public sealed class MainMenuScene : IScene
                 (editorSign is null ? "editor sign drawn here, " : "editor sign from resurrection.h2d, ") +
                 (hasMessageFrame ? "right click tooltips, " : "no tooltips, ") +
                 (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
+                (resolutionArtwork is null ? "no resolution chooser, " : "resolution chooser ready, ") +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -464,6 +503,9 @@ public sealed class MainMenuScene : IScene
         {
             _lantern?.Advance(TimeSpan.FromSeconds(elapsedSeconds));
         }
+
+        // 首运的分辨率窗口是场景级模态，但输入走 LocalEvent（见 DriveResolutionPicker 的备注）。
+        DriveResolutionPicker();
     }
 
     /// <summary>
@@ -511,6 +553,8 @@ public sealed class MainMenuScene : IScene
         _scenario?.Draw(pixels);
         _languagePicker?.Draw(pixels);
         _welcome?.Draw(pixels);
+        _resolutionPicker?.Draw(pixels);
+        _resolutionTip?.Draw(pixels);
 
         _frame.InvalidateAll();
     }
@@ -543,6 +587,20 @@ public sealed class MainMenuScene : IScene
         if (_welcome is not null)
         {
             _welcome.SetCursor(cursor);
+            return;
+        }
+
+        // The explanation of the resolution chooser sits on top of it and owns the cursor while it is up.
+        if (_resolutionTip is not null)
+        {
+            _resolutionTip.SetCursor(cursor);
+            return;
+        }
+
+        // The resolution chooser of the first run reads the pointer from LocalEvent itself, so the
+        // scene only has to keep it away from the signs.
+        if (_resolutionPicker is not null)
+        {
             return;
         }
 
@@ -612,6 +670,26 @@ public sealed class MainMenuScene : IScene
                     break;
             }
 
+            return null;
+        }
+
+        // The right click explanation of the resolution chooser is a small OK box on top of it: its
+        // button closes the box, nothing else happens while it is up.
+        if (_resolutionTip is not null)
+        {
+            if (_resolutionTip.SetLeftButton(down) == DialogButton.Ok)
+            {
+                _resolutionTip = null;
+                _skipResolutionInput = true;
+            }
+
+            return null;
+        }
+
+        // The resolution chooser of the first run owns the mouse through LocalEvent (see
+        // DriveResolutionPicker); a click must not reach the signs behind it.
+        if (_resolutionPicker is not null)
+        {
             return null;
         }
 
@@ -704,6 +782,31 @@ public sealed class MainMenuScene : IScene
     /// </summary>
     public MainMenuAction? Select(char hotKey)
     {
+        // The explanation of the resolution chooser is an OK box: Escape and Enter close it, the
+        // chooser behind it keeps its keys until the box is gone.
+        if (_resolutionTip is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter or EnterCharacter or LineFeedCharacter:
+                    _resolutionTip = null;
+                    _skipResolutionInput = true;
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
+        // The resolution chooser of the first run reads the keys from LocalEvent itself (see
+        // DriveResolutionPicker); Escape and Enter are answered there, not here.
+        if (_resolutionPicker is not null)
+        {
+            return null;
+        }
+
         // The language picker of the first run owns the keyboard: Escape is CANCEL, Enter goes through
         // the button row as OK. The arrow keys are not characters, the host routes them through
         // MoveLanguageSelection.
@@ -875,17 +978,19 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>
     /// Starts the onboarding of a first run: the language picker of <c>fheroes2::selectLanguage()</c>,
-    /// followed by the greeting of <c>Game::MainMenu()</c> once the picker is answered.
+    /// followed by the greeting and the resolution chooser of <c>Game::MainMenu()</c>.
     /// </summary>
     /// <remarks>
     /// <para>
     /// 参考的首运分支（<c>game_mainmenu.cpp:265-300</c>）依次是 <c>selectLanguage( true )</c>、
-    /// <c>showStandardTextMessage( _( "Greetings!" ), ... )</c>，最后 <c>conf.resetFirstGameRun()</c> 加
-    /// <c>conf.Save()</c>——清旗标与保存是宿主的事，场景只在收尾时抛 <see cref="FirstRunFinished"/>。
+    /// <c>showStandardTextMessage( _( "Greetings!" ), ... )</c>、<c>Dialog::SelectResolution()</c>，最后
+    /// <c>conf.resetFirstGameRun()</c> 加 <c>conf.Save()</c>——清旗标与保存是宿主的事，场景只在收尾时抛
+    /// <see cref="FirstRunFinished"/>（此时窗口已经是玩家挑的那一档，宿主写出去的就是它）。
     /// </para>
     /// <para>
-    /// 问候消息比参考短：参考那段还写着「请选择游戏分辨率」并随后打开分辨率选择窗，端口没有这个窗口
-    /// （<c>videomode</c> 只写不读），也还没有触摸输入，所以那两段不写，免得承诺一件不会发生的事。
+    /// 问候消息的触摸段与参考一致：只有 <see cref="TouchInputAvailable"/>（宿主按 <c>SDL_GetTouchDevices</c>
+    /// 给出的结果）为真时才写，因为这一段讲的两指手势在 <c>LocalEvent</c> 里真的被翻译成左右键；分辨率段照写，
+    /// 因为后面真的会打开 <see cref="ResolutionDialog"/>。
     /// </para>
     /// </remarks>
     /// <returns><see langword="true"/> when the picker is now open.</returns>
@@ -931,10 +1036,17 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>
     /// Whether a modal window owns the input: the settings dialog, the scenario list, or the language
-    /// picker and greeting of the first run.
+    /// picker, greeting and resolution chooser of the first run.
     /// </summary>
     public bool HasModalDialog =>
-        _settings is not null || _scenario is not null || _languagePicker is not null || _welcome is not null;
+        _settings is not null || _scenario is not null || _languagePicker is not null || _welcome is not null ||
+        _resolutionPicker is not null || _resolutionTip is not null;
+
+    /// <summary>The open resolution chooser of the first run, or <see langword="null"/>.</summary>
+    public ResolutionDialog? ResolutionPicker => _resolutionPicker;
+
+    /// <summary>The explanation of a row of the resolution chooser, or <see langword="null"/>.</summary>
+    public MessageBox? ResolutionTip => _resolutionTip;
 
     /// <summary>
     /// Opens the scenario selection window of the main menu, the <c>Dialog::SelectScenario()</c> the
@@ -1159,9 +1271,20 @@ public sealed class MainMenuScene : IScene
             return;
         }
 
+        // The paragraphs are appended in the reference's order: touch first, resolution last
+        // (game_mainmenu.cpp:265-300).
+        string body = Text.Get(WelcomeBodyId);
+
+        if (TouchInputAvailable)
+        {
+            body += $"\n\n{Text.Get(WelcomeTouchId)}";
+        }
+
+        body += $"\n\n{Text.Get(WelcomeResolutionId)}";
+
         _welcome = MessageBox.Create(
             Text.Get(WelcomeTitleId),
-            Text.Get(WelcomeBodyId),
+            body,
             _fonts.Yellow,
             _fonts.Normal,
             buttons: DialogButton.Ok,
@@ -1170,10 +1293,200 @@ public sealed class MainMenuScene : IScene
         GameLog.Info("First run: greeting shown.");
     }
 
-    /// <summary>Closes the greeting and ends the onboarding, the OK button and the Escape key.</summary>
+    /// <summary>
+    /// Closes the greeting and opens the resolution chooser, the <c>Dialog::SelectResolution()</c> that
+    /// follows <c>showStandardTextMessage( _( "Greetings!" ), ... )</c>; the onboarding ends when the
+    /// chooser does, or right away when it cannot be built.
+    /// </summary>
     private void CloseWelcome()
     {
         _welcome = null;
+
+        if (!TryOpenResolutionPicker())
+        {
+            FinishFirstRun();
+        }
+    }
+
+    /// <summary>
+    /// Opens the resolution chooser of the first run, <c>Game::MainMenu()</c>'s
+    /// <c>showGameResolutionSelection()</c> (<c>game_mainmenu.cpp:265-300</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这里调 <c>Dialog::SelectResolution()</c>，是个阻塞窗口；端口沿用首运两个窗口的做法，把
+    /// <see cref="ResolutionDialog"/> 当场景级模态挂起来：<see cref="Update"/> 每帧从
+    /// <see cref="LocalEvent.Current"/> 取一次输入，<c>--smoke-frames</c> 与 <c>--screenshot</c> 照常跑得下去。
+    /// </para>
+    /// <para>
+    /// 行是「640x480 的帧缓冲 + 某个窗口尺寸」（<see cref="IDisplayControl.GetAvailableResolutions"/>，ADR-205），
+    /// 所以这里只保留游戏尺寸等于帧缓冲的那些行：其余的 <see cref="IDisplayControl.SetResolution"/> 会拒绝。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="true"/> when the chooser is now open.</returns>
+    private bool TryOpenResolutionPicker()
+    {
+        if (_resolutionArtwork is null)
+        {
+            GameLog.Warn("First run: the resolution chooser has no artwork, the step is skipped.");
+
+            return false;
+        }
+
+        if (LocalEvent.Current.Engine?.Display is not { } display)
+        {
+            GameLog.Warn("First run: there is no display to read the resolutions from, the step is skipped.");
+
+            return false;
+        }
+
+        Size frameSize = _frame.Size;
+        List<ResolutionInfo> available = [];
+
+        foreach (ResolutionInfo resolution in display.GetAvailableResolutions())
+        {
+            if (resolution.GameSize == frameSize)
+            {
+                available.Add(resolution);
+            }
+        }
+
+        if (available.Count == 0)
+        {
+            GameLog.Warn(
+                $"First run: the display offers no window for a {frameSize.Width}x{frameSize.Height} frame " +
+                "buffer, the step is skipped.");
+
+            return false;
+        }
+
+        ResolutionInfo current = new(frameSize.Width, frameSize.Height, display.ScreenSize.Width,
+            display.ScreenSize.Height);
+
+        _resolutionPicker = ResolutionDialog.TryCreate(frameSize, _resolutionArtwork, _fonts.Yellow,
+            _fonts.Normal, _fonts.Yellow, available, current);
+
+        if (_resolutionPicker is null)
+        {
+            GameLog.Warn("First run: the resolution chooser has no resolution to offer, the step is skipped.");
+
+            return false;
+        }
+
+        // 打开它的那次按键（问候里的回车或 Esc）还在本帧的事件状态里；不跳过这一帧，
+        // 同一次按键会立刻回答分辨率窗，跳过参考顺序里的一个窗口。
+        _skipResolutionInput = true;
+
+        GameLog.Info(
+            $"First run: resolution chooser open, {available.Count} window(s), current " +
+            $"{current.ScreenWidth}x{current.ScreenHeight}.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Pumps one frame of the open resolution chooser. OK switches the window, Cancel and Escape end the
+    /// onboarding with the current resolution.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>Dialog::SelectResolution()</c> 由引擎的输入状态驱动，端口的其它场景级窗口是自己接
+    /// <c>SetCursor</c>/<c>SetLeftButton</c>；这里直接用 <see cref="LocalEvent.Current"/>，因为
+    /// <see cref="ResolutionDialog"/> 继承的 <c>ListBox</c> 的滚动条拖动、双击、右键解释全都挂在那一套输入上。
+    /// 右键解释在参考里是窗口循环内的一次 <c>showStandardTextMessage</c>；端口把它挂成
+    /// <see cref="_resolutionTip"/>，同样模态于列表之上，但只等一个按键或一次点击（见 <see cref="ShowResolutionTip"/>）。
+    /// </remarks>
+    private void DriveResolutionPicker()
+    {
+        if (_resolutionPicker is not { } picker)
+        {
+            _skipResolutionInput = false;
+
+            return;
+        }
+
+        // The press that closed the greeting or the explanation box is still in this frame's event
+        // state; answering the list with it would close a second window in one press.
+        if (_skipResolutionInput)
+        {
+            _skipResolutionInput = false;
+
+            return;
+        }
+
+        // The explanation box is modal over the list: while it is up the list must not see the same
+        // press that closed the box, exactly like the blocking call of the reference.
+        if (_resolutionTip is not null)
+        {
+            return;
+        }
+
+        DialogButton answer = picker.ProcessEvents(LocalEvent.Current);
+
+        if (picker.TakePopup() is { } popup)
+        {
+            ShowResolutionTip(popup);
+
+            return;
+        }
+
+        switch (answer)
+        {
+            case DialogButton.Ok when picker.IsSelected:
+                ApplyFirstRunResolution(picker.SelectedResolution);
+                break;
+
+            case DialogButton.Cancel:
+                _resolutionPicker = null;
+                GameLog.Info("First run: resolution selection cancelled, keeping the current window.");
+                FinishFirstRun();
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Composes the explanation of a row into <see cref="_resolutionTip"/>, the
+    /// <c>showStandardTextMessage( ..., Dialog::ZERO )</c> of <c>dialog_resolution.cpp:291-296</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的右键解释是带 OK 的模态框；端口没有可阻塞的窗口栈，于是把它当成场景级模态：
+    /// <see cref="SetCursor"/>/<see cref="SetLeftButton"/>/<see cref="Select(char)"/> 都先让给它，
+    /// <see cref="DriveResolutionPicker"/> 在它开着时不再驱动下面的列表。
+    /// </remarks>
+    /// <param name="popup">The header and body the dialog asked for.</param>
+    private void ShowResolutionTip(DialogPopup popup)
+    {
+        if (_resolutionArtwork is null)
+        {
+            return;
+        }
+
+        _resolutionTip = MessageBox.Create(popup.Header, popup.Body, _fonts.Yellow, _fonts.Normal,
+            buttons: DialogButton.Ok, buttonArtwork: _resolutionArtwork.Buttons);
+
+        GameLog.Info($"First run: resolution explanation '{popup.Header}'.");
+    }
+
+    /// <summary>
+    /// Switches the window to <paramref name="resolution"/> and ends the onboarding, the
+    /// <c>engine().setResolution()</c> of <c>Dialog::SelectResolution()</c>.
+    /// </summary>
+    private void ApplyFirstRunResolution(ResolutionInfo resolution)
+    {
+        _resolutionPicker = null;
+
+        try
+        {
+            LocalEvent.Current.Engine?.Display?.SetResolution(resolution);
+            GameLog.Info($"First run: window resolution {resolution.ScreenWidth}x{resolution.ScreenHeight}.");
+        }
+        catch (ArgumentException exception)
+        {
+            GameLog.Warn($"First run: the window could not be resized: {exception.Message}");
+        }
+
         FinishFirstRun();
     }
 
@@ -1263,6 +1576,40 @@ public sealed class MainMenuScene : IScene
         }
 
         return available;
+    }
+
+    /// <summary>
+    /// Builds the scroll bar, the board and the buttons of the resolution chooser of the first run.
+    /// The menu works without it, so missing artwork only costs the resolution step.
+    /// </summary>
+    /// <param name="assets">Game data the sprites are read from.</param>
+    /// <param name="buttons">Source of the OK and Cancel buttons; taken from the settings dialog.</param>
+    /// <remarks>
+    /// 参考这里读的是 <c>ICN::SCROLL</c> 与 <c>ICN::ADVBORD</c>，界面风格由
+    /// <c>Settings::isEvilInterfaceEnabled()</c> 挑（<c>dialog_resolution.cpp:283-330</c>）。主菜单场景不持有设置，
+    /// 菜单本身也一直用好的界面素材（消息框同理），所以这里固定读好界面的那两份。
+    /// </remarks>
+    private static ResolutionArtwork? CreateResolutionArtwork(AssetBundle assets,
+        IDialogButtonArtworkSource? buttons)
+    {
+        IcnSpriteFile? scroll = assets.TryReadIcn(ResolutionScrollAssetName);
+        IcnSpriteFile? board = assets.TryReadIcn(ResolutionBoardAssetName);
+
+        if (buttons is null || scroll is null || scroll.Count <= 4 || board is null || board.Count == 0)
+        {
+            GameLog.Warn(
+                $"The resolution chooser artwork is missing ('{ResolutionScrollAssetName}' or " +
+                $"'{ResolutionBoardAssetName}'); the first run will not offer the resolution step.");
+
+            return null;
+        }
+
+        return new ResolutionArtwork
+        {
+            ScrollBarFrames = scroll.Sprites,
+            ScrollBarBackground = board.Sprites[0],
+            Buttons = buttons,
+        };
     }
 
     /// <summary>

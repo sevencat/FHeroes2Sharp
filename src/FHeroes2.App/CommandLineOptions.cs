@@ -11,9 +11,10 @@ namespace FHeroes2.App;
 ///
 /// <code>
 ///   FHeroes2Sharp [--data &lt;dir&gt;] [--config &lt;file&gt;|--no-config] [--scene menu|diagnostics|editor]
-///                 [--lang &lt;culture&gt;]
-///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--list-assets]
-///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--freeze-animation]
+///                 [--lang &lt;culture&gt;] [--difficulty &lt;level&gt;]
+///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--seed &lt;n&gt;] [--list-assets]
+///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--left-click-at &lt;frame:x,y[;...]&gt;]
+///                 [--freeze-animation]
 ///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
 ///                 [--skip-turns &lt;n&gt;] [--view-world] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
@@ -23,7 +24,7 @@ namespace FHeroes2.App;
 ///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
 ///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;] [--editor-info &lt;x,y&gt;]
 ///                 [--editor-data &lt;x,y,value&gt;]
-///                 [--no-audio] [--play-sound &lt;name&gt;]
+///                 [--no-audio] [--no-touch] [--play-sound &lt;name&gt;]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
 /// </summary>
@@ -31,6 +32,8 @@ public sealed class CommandLineOptions
 {
     public const int MinimumScale = 1;
     public const int MaximumScale = 4;
+
+    private readonly List<ScriptedClick> _scriptedClicks = [];
 
     private CommandLineOptions()
     {
@@ -66,6 +69,17 @@ public sealed class CommandLineOptions
     public string? Language { get; private set; }
 
     /// <summary>
+    /// Difficulty the scenario starts on, passed with <c>--difficulty</c>; <see langword="null"/> keeps the
+    /// default of <see cref="FHeroes2.Game.System.Settings"/> (normal).
+    /// </summary>
+    /// <remarks>
+    /// 参考在剧本信息屏上让玩家挑这一档（<c>Game::SelectScenario</c> 的难度光标），端口还没有那张屏，
+    /// 而起始资源按这一档发（<c>Kingdom::Init</c> 取 <c>Game::getDifficulty()</c>）。这个开关就是替玩家
+    /// 做选择的那个口子：脚本、截图与测试不必去点一张还没有的窗口。
+    /// </remarks>
+    public GameDifficulty? Difficulty { get; private set; }
+
+    /// <summary>
     /// Initial cursor position in logical (640x480) pixels passed with <c>--cursor</c>. Smoke runs
     /// use it to capture the hover state of a widget, which no headless test can produce. The
     /// position is synthetic: the host then ignores real mouse motion and mouse-leave events, so
@@ -75,9 +89,9 @@ public sealed class CommandLineOptions
 
     /// <summary>
     /// Pretends the right mouse button is held down at the position of <c>--cursor</c>. The
-    /// tooltips of the main menu and the marketplace's kingdom income popup only exist while the
-    /// button is pressed, so this is what makes a screenshot of one possible; it has no effect
-    /// without <c>--cursor</c>.
+    /// tooltips of the main menu, the marketplace's kingdom income popup and the adventure map's
+    /// quick info box only exist while the button is pressed, so this is what makes a screenshot of
+    /// one possible; it has no effect without <c>--cursor</c>.
     /// </summary>
     public bool RightButton { get; private set; }
 
@@ -87,15 +101,51 @@ public sealed class CommandLineOptions
     /// is how a screenshot can walk through a click-only path (the editor entrance) and how the log
     /// shows whether the hit test matched; it has no effect without <c>--cursor</c>.
     /// </summary>
+    /// <remarks>
+    /// 一次运行只有这一下；要在一轮里点好几下（首运的语言窗 → 问候 → 分辨率列表）用
+    /// <see cref="ScriptedClicks"/>（ADR-209）。
+    /// </remarks>
     public bool LeftClick { get; private set; }
 
-    /// <summary>Window scale factor applied to the 640x480 logical resolution.</summary>
-    public int WindowScale { get; private set; } = 2;
+    /// <summary>
+    /// Clicks of <c>--left-click-at &lt;frame:x,y[;frame:x,y…]&gt;</c>, in strictly increasing frame order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 每一击都是「同一帧按一下再抬起」，与真实点击落在 <see cref="FHeroes2.UI.Input.LocalEvent"/> 里的
+    /// 状态一致：场景自己的 <c>SetLeftButton</c> 接口与读 <see cref="FHeroes2.UI.Input.LocalEvent"/> 的窗口
+    /// （首运的分辨率列表）看到的是同一次点击。首运要三下：语言窗的 OKAY、问候的 OKAY、再在列表上挑一行。
+    /// </para>
+    /// <para>
+    /// 帧号必须严格递增：主循环每个帧号只经过一次，重复或倒退的帧就是一次永远不发的点击，所以解析时直接报错。
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<ScriptedClick> ScriptedClicks => _scriptedClicks;
+
+    /// <summary>
+    /// Window scale factor applied to the 640x480 logical resolution, or <see langword="null"/> when
+    /// <c>--scale</c> was not given.
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/> 与 <c>2</c> 不是一回事：不给开关时窗口尺寸听配置文件 <c>videomode</c> 的，
+    /// 而 <c>--scale</c> 是本次运行的窗口倍数，压过文件里的值，像素基线脚本靠它固定住窗口。
+    /// </remarks>
+    public int? WindowScale { get; private set; }
 
     public bool Fullscreen { get; private set; }
 
     /// <summary>When set the client exits after rendering the given number of frames.</summary>
     public int? SmokeFrames { get; private set; }
+
+    /// <summary>
+    /// Seeds the thread level random generator before anything is loaded (<c>--seed &lt;n&gt;</c>), so a run
+    /// is reproducible: the reference draws hero army sizes and random objects from the OS entropy.
+    /// </summary>
+    /// <remarks>
+    /// 像素基线与冒烟需要它：<c>--map</c> 打开地图时英雄的初始部队数量是抽出来的，不固定种子，
+    /// 同一张地图两次渲染的状态栏就不一样（见 <c>docs/PROGRESS.md</c> §7.5）。
+    /// </remarks>
+    public ulong? Seed { get; private set; }
 
     /// <summary>
     /// Keeps the main menu lantern on its first glow frame. The animation is driven by wall clock
@@ -173,9 +223,11 @@ public sealed class CommandLineOptions
     public bool AdventureOptions { get; private set; }
 
     /// <summary>
-    /// Holds the right button on the tile under <c>--cursor</c> as soon as the adventure map is up
-    /// (<c>--quick-info</c>). The popup only exists while the button is held, so this is how its frame is
-    /// screenshotted and how the tile to text path is smoke tested without a mouse.
+    /// Opens the quick info of the tile under <c>--cursor</c> as soon as the adventure map is up
+    /// (<c>--quick-info</c>), and logs whether the cursor was over the map. The box itself only exists
+    /// while the right button is held (the reference's <c>Dialog::QuickInfo</c> blocks until the release),
+    /// so a screenshot needs <c>--right-button</c> as well; on its own this option is the smoke test of
+    /// the tile to text path without a mouse.
     /// </summary>
     public bool QuickInfo { get; private set; }
 
@@ -307,6 +359,13 @@ public sealed class CommandLineOptions
     public bool NoAudio { get; private set; }
 
     /// <summary>
+    /// Pretends there is no touch screen (<c>--no-touch</c>): the greeting of the first run then keeps the
+    /// short layout. It exists for the scripted first run and its fixed click coordinates - a touch screen
+    /// adds a paragraph to the greeting, which moves the OKAY button (<c>ADR-210</c>).
+    /// </summary>
+    public bool NoTouch { get; private set; }
+
+    /// <summary>
     /// Name of a sound effect of the original archives (for example <c>PICKUP01</c>) that is played
     /// once after start up (<c>--play-sound</c>). It exists because M2 has no gameplay yet: this is
     /// how the sound path is verified by ear without inventing a trigger.
@@ -359,6 +418,10 @@ public sealed class CommandLineOptions
                     options.Language = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--difficulty":
+                    options.Difficulty = ParseDifficulty(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--cursor":
                     options.Cursor = ParsePoint(RequireValue(arguments, ref i, argument), argument);
                     break;
@@ -369,6 +432,10 @@ public sealed class CommandLineOptions
 
                 case "--left-click":
                     options.LeftClick = true;
+                    break;
+
+                case "--left-click-at":
+                    options.AddScriptedClicks(RequireValue(arguments, ref i, argument), argument);
                     break;
 
                 case "--scale":
@@ -394,6 +461,16 @@ public sealed class CommandLineOptions
                     }
 
                     options.SmokeFrames = frames;
+                    break;
+
+                case "--seed":
+                    string rawSeed = RequireValue(arguments, ref i, argument);
+                    if (!ulong.TryParse(rawSeed, out ulong seed))
+                    {
+                        throw new ArgumentException($"'{argument}' expects an unsigned 64-bit number, got '{rawSeed}'.");
+                    }
+
+                    options.Seed = seed;
                     break;
 
                 case "--screenshot":
@@ -549,6 +626,10 @@ public sealed class CommandLineOptions
                     options.NoAudio = true;
                     break;
 
+                case "--no-touch":
+                    options.NoTouch = true;
+                    break;
+
                 case "--play-sound":
                     options.PlaySound = RequireValue(arguments, ref i, argument);
                     break;
@@ -580,15 +661,24 @@ public sealed class CommandLineOptions
         Console.WriteLine("                      'editor' (the map editor; pass --map to choose the map).");
         Console.WriteLine("  --lang <culture>    Interface language, e.g. 'zh_CN' or 'en'. A catalog must");
         Console.WriteLine("                      exist in <data>/files/lang; see BuildTranslations.ps1.");
+        Console.WriteLine("  --difficulty <lvl>  Difficulty the scenario starts on: easy, normal, hard, expert,");
+        Console.WriteLine("                      impossible, or 0..4. It is Game::getDifficulty() for this run: the");
+        Console.WriteLine("                      starting resources and a town's default buildings follow it.");
         Console.WriteLine("  --cursor <x,y>      Puts the cursor at a logical pixel, e.g. to screenshot a hover.");
         Console.WriteLine("                      The position is synthetic: real mouse motion is ignored, so the");
         Console.WriteLine("                      hover state survives the physical pointer leaving the window.");
         Console.WriteLine("  --left-click        Clicks the left button once at --cursor, e.g. to open the editor from the menu.");
-    Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
-        Console.WriteLine("                      of the sign under it (the original shows it only while pressed).");
-        Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2).");
+        Console.WriteLine("  --left-click-at <frame:x,y[;...]>");
+        Console.WriteLine("                      Clicks at the given frames and points, e.g. to walk the first run's");
+        Console.WriteLine("                      language picker, greeting and resolution chooser in one run (ADR-209).");
+        Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
+        Console.WriteLine("                      of the sign under it and keeps the map's quick info box up (the");
+        Console.WriteLine("                      original shows both only while the button is pressed).");
+        Console.WriteLine($"  --scale <1..{MaximumScale}>       Window scale of the 640x480 logical resolution (default 2, or the");
+        Console.WriteLine("                      window size saved in the configuration file).");
         Console.WriteLine("  --fullscreen        Starts in borderless fullscreen mode.");
         Console.WriteLine("  --smoke-frames <n>  Renders n frames and exits (used by CI / smoke tests).");
+        Console.WriteLine("  --seed <n>          Seeds the random generator before loading, so runs are reproducible (pixel baselines).");
         Console.WriteLine("  --screenshot <png>  Saves the composed 640x480 frame after 30 rendered frames, then exits.");
         Console.WriteLine("  --screenshot-frame <n>  Frame that --screenshot captures (default 30).");
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
@@ -626,6 +716,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --editor-data <x,y,value>  Writes that data word (0..8191) into the object on the tile");
         Console.WriteLine("                      when the editor opens, the scripted version of the [ and ] keys.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
+        Console.WriteLine("  --no-touch          Pretends there is no touch screen: the first-run greeting keeps its");
+        Console.WriteLine("                      short layout, which the scripted clicks rely on (ADR-210).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
         Console.WriteLine("  --help              Shows this help.");
@@ -642,6 +734,31 @@ public sealed class CommandLineOptions
         return arguments[index];
     }
 
+    /// <summary>
+    /// Reads <c>--left-click-at</c>'s <c>frame:x,y[;frame:x,y…]</c> value and appends the clicks.
+    /// </summary>
+    private void AddScriptedClicks(string value, string option)
+    {
+        foreach (string entry in value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = entry.Split(':', StringSplitOptions.TrimEntries);
+            if (parts.Length != 2 || !int.TryParse(parts[0], out int frame) || frame < 1)
+            {
+                throw new ArgumentException(
+                    $"'{option}' expects '<frame>:<x>,<y>[;<frame>:<x>,<y>...]' with a frame of at least 1, got '{entry}'.");
+            }
+
+            int previous = _scriptedClicks.Count > 0 ? _scriptedClicks[^1].Frame : 0;
+            if (frame <= previous)
+            {
+                throw new ArgumentException(
+                    $"'{option}' expects strictly increasing frames, got {frame} after {previous}.");
+            }
+
+            _scriptedClicks.Add(new ScriptedClick(frame, ParsePoint(parts[1], option)));
+        }
+    }
+
     private static Point ParsePoint(string value, string option)
     {
         string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
@@ -653,6 +770,31 @@ public sealed class CommandLineOptions
         }
 
         throw new ArgumentException($"'{option}' expects '<x>,<y>', got '{value}'.");
+    }
+
+    /// <summary>
+    /// Reads a difficulty as a name (<c>easy</c>, <c>normal</c>, <c>hard</c>, <c>expert</c>, <c>impossible</c>)
+    /// or as its index 0 to 4, the order of the five shields of the scenario info screen.
+    /// </summary>
+    private static GameDifficulty ParseDifficulty(string value, string option)
+    {
+        if (int.TryParse(value, out int index)
+            && index >= (int)GameDifficulty.Easy
+            && index <= (int)GameDifficulty.Impossible)
+        {
+            return (GameDifficulty)index;
+        }
+
+        return value.ToLowerInvariant() switch
+        {
+            "easy" => GameDifficulty.Easy,
+            "normal" => GameDifficulty.Normal,
+            "hard" => GameDifficulty.Hard,
+            "expert" => GameDifficulty.Expert,
+            "impossible" => GameDifficulty.Impossible,
+            _ => throw new ArgumentException(
+                $"'{option}' expects 0..4 or easy/normal/hard/expert/impossible, got '{value}'."),
+        };
     }
 
     private static EditorPaintRequest ParseEditorPaint(string value, string option)
@@ -798,3 +940,10 @@ public readonly record struct EditorRadarRequest(Point Start, Point? DragTo);
 /// <param name="Tile">Tile that receives the value, must hold an object.</param>
 /// <param name="Value">Data word to write, 0 to <c>MapEditSession.MaxObjectData</c>.</param>
 public readonly record struct EditorDataRequest(Point Tile, int Value);
+
+/// <summary>
+/// One click of <c>--left-click-at</c>: the loop frame it fires on and the point it hits.
+/// </summary>
+/// <param name="Frame">Frame of the main loop, counted from the first one, like <c>--smoke-frames</c>.</param>
+/// <param name="Point">Cursor position of the click, in 640x480 logical pixels.</param>
+public readonly record struct ScriptedClick(int Frame, Point Point);

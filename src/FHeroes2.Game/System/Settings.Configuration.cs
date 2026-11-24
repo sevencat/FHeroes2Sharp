@@ -19,13 +19,37 @@ namespace FHeroes2.Game.System;
 /// 文件一致。
 /// </para>
 /// <para>
-/// <b>三个键不在这里</b>，有对应状态才写、才读：<c>videomode</c> 与 <c>game window position</c> 属于
-/// <c>screen.cpp</c> 的分辨率与窗口（端口由 UI 层持有），<c>debug</c> 属于未移植的 <c>logging.cpp</c>。它们通过
-/// <see cref="Save"/> / <see cref="GetOptionsString"/> 的可选参数写出去；<see cref="Read"/> 读到也跳过，不留半截状态。
+/// <b><c>videomode</c> 与 <c>game window position</c> 只读不写</b>：参考把它们读进 <c>_resolutionInfo</c> 与
+/// <c>_windowPos</c>（<c>settings.cpp:303-309</c>），写文件时却不是从这两个字段取，而是现场问
+/// <c>Display::instance()</c>（<c>settings.cpp:427-433</c>）——窗口的现状只有显示层知道。端口照这个分工：
+/// <see cref="Read"/> 把它们读进 <see cref="CurrentResolutionInfo"/> 与 <see cref="SavedWindowPosition"/>，
+/// 写回则由宿主把窗口的现状交给 <see cref="Save"/> / <see cref="GetOptionsString"/> 的可选参数。
+/// <c>debug</c> 仍然不在这里，它属于未移植的 <c>logging.cpp</c>。
 /// </para>
 /// </remarks>
 public sealed partial class Settings
 {
+    /// <summary>
+    /// The in-game and window sizes read from <c>videomode</c>, <c>currentResolutionInfo()</c>
+    /// (<c>settings.h:257</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的默认值是 <c>ResolutionInfo( Display::DEFAULT_WIDTH, Display::DEFAULT_HEIGHT )</c>，即帧缓冲与窗口
+    /// 都是 640x480（<c>settings.cpp:95</c>）。谁把它交给窗口由显示层决定：参考是 <c>DisplayInitializer</c>
+    /// （<c>game_init.cpp:78-97</c>），端口是 <c>GameHost.RestoreWindow()</c>。
+    /// </remarks>
+    public ResolutionInfo CurrentResolutionInfo { get; private set; } = new(640, 480);
+
+    /// <summary>
+    /// The window position read from <c>game window position</c>, <c>getSavedWindowPos()</c>
+    /// (<c>settings.h:262</c>).
+    /// </summary>
+    /// <remarks>
+    /// 默认 <c>(-1, -1)</c> 意思是「没记过」，显示层据此让窗口管理器自己摆（参考 <c>Display::setWindowPos</c>
+    /// 收到负坐标时也只是照传）。
+    /// </remarks>
+    public Point SavedWindowPosition { get; private set; } = new(-1, -1);
+
     /// <summary>
     /// Reads a configuration file, <c>Settings::Read()</c> (<c>settings.cpp:145-387</c>).
     /// </summary>
@@ -191,6 +215,17 @@ public sealed partial class Settings
         if (config.Exists("status window position"))
         {
             PosStatus = config.PointParams("status window position", new Point(-1, -1));
+        }
+
+        // 分辨率与窗口位置照参考存起来（settings.cpp:303-309），由显示层在启动时应用。
+        if (config.Exists("videomode"))
+        {
+            CurrentResolutionInfo = config.ResolutionParams("videomode", new ResolutionInfo(640, 480));
+        }
+
+        if (config.Exists("game window position"))
+        {
+            SavedWindowPosition = config.PointParams("game window position", new Point(-1, -1));
         }
 
         if (config.Exists("fullscreen"))

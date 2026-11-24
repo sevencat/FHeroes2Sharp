@@ -1199,7 +1199,7 @@ public sealed partial class Castle
     /// <see cref="Army.Reset"/> uses.
     /// </para>
     /// </remarks>
-    /// <param name="difficulty">The map's difficulty, which only changes the second dwelling's odds.</param>
+    /// <param name="difficulty">The difficulty of the game, <c>Game::getDifficulty()</c>, which only changes the second dwelling's odds.</param>
     /// <param name="generator">The generator for the roll; the thread generator when absent.</param>
     public void SetDefaultBuildings(GameDifficulty difficulty, Pcg32? generator = null)
     {
@@ -1333,8 +1333,9 @@ public sealed partial class Castle
     /// <b>Three seams stand in for the world</b>. The faction byte's catch-all branch in the reference asks
     /// <c>Players::GetPlayerRace()</c> for the owner's kingdom race and rolls a random one when there is no owner;
     /// the port takes that answer as <paramref name="ownerRace"/> (and still rolls when it is absent, because a
-    /// random castle with no owner is a random castle). The default buildings' roll needs the map difficulty, which
-    /// is the caller's knowledge. And the "no sea access removes the shipyard" rule of the tail needs
+    /// random castle with no owner is a random castle). The default buildings' roll needs the difficulty of the game —
+    /// the reference asks <c>Game::getDifficulty()</c>, the port takes it from the caller. And the "no sea access
+    /// removes the shipyard" rule of the tail needs
     /// <see cref="HasSeaAccess"/>, which is answered by the map — <b>set it before calling this method</b>, or a
     /// shipyard the block names will be taken away again.
     /// </para>
@@ -1345,7 +1346,9 @@ public sealed partial class Castle
     /// </para>
     /// </remarks>
     /// <param name="data">The 70-byte block, exactly.</param>
-    /// <param name="difficulty">The map's difficulty, used only when the block has no custom buildings.</param>
+    /// <param name="difficulty">
+    /// The difficulty of the game, <c>Game::getDifficulty()</c>, used only when the block has no custom buildings.
+    /// </param>
     /// <param name="ownerRace">The race of the owner's kingdom, when there is an owner.</param>
     /// <param name="generator">Generator for the random race and the default buildings; the thread generator when absent.</param>
     /// <param name="dayCount">Days elapsed on the map, used for a neutral town's reinforcements.</param>

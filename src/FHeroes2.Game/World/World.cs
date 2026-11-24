@@ -102,6 +102,18 @@ public sealed partial class World
     private uint _month;
 
     /// <summary>
+    /// 本局的难度，也就是玩家挑的那一档，<c>Game::getDifficulty()</c>。
+    /// </summary>
+    /// <remarks>
+    /// 参考把这一档放在全局的 <c>Game</c> 上，装着城堡时由 <c>Castle::_setDefaultBuildings()</c> 直接去问
+    /// （<c>castle.cpp:542</c>），算王国起始资源时由 <c>Kingdom::Init()</c> 去问（<c>kingdom.cpp:103</c>）。
+    /// 端口还没有 <c>Game</c>，所以 <see cref="LoadMap"/> 装载时把它记在这里，城堡块再从这里读
+    /// （<see cref="ReadCastleBlock"/>）。它和地图头里的 <see cref="Mp2FileInfo.Difficulty"/> 不是一回事：
+    /// 后者是制作者给这张图定的说法，只参与评分。
+    /// </remarks>
+    private GameDifficulty _difficulty;
+
+    /// <summary>
     /// The seed of the map, <c>_seed</c> (<c>world.h:575</c>): drawn once at the start and persisted in saves.
     /// </summary>
     /// <remarks>
@@ -1281,6 +1293,9 @@ public sealed partial class World
         // The seed goes with the counters: Defaults() draws a new one for every map (world.cpp:291, :335).
         _seed = 0;
 
+        // 难度不是世界的一部分，参考里它在 Game 上；这里回到默认那一档，免得空世界还带着上一张图的答案。
+        _difficulty = GameDifficulty.Normal;
+
         // The conditions belong to one map: the header they are read from and the two heroes they name
         // (world.cpp:308-330 resets the condition state along with the rest of the world).
         MapInfo = null;
@@ -1500,9 +1515,14 @@ public sealed partial class World
         // (world_loadmap.cpp:296-355). An empty world has an empty table of width zero.
         _castles = new AllCastles(Width);
 
+        // The difficulty of the game, Game::getDifficulty(): the player's choice, which decides the starting
+        // resources of a kingdom (World.Kingdoms.cs) and the default buildings of a town
+        // (Castle.SetDefaultBuildings). The header's own difficulty only feeds the map rating.
+        _difficulty = difficulty ?? map.Info.Difficulty;
+
         // World::Defaults() -> vec_kingdoms.Init() (world.cpp:287): the kingdoms come first, because a kingdom's
         // starting resources depend on the difficulty and on whether the computer plays it (see World.Kingdoms.cs).
-        CreateMapKingdoms(map.Info, difficulty ?? map.Info.Difficulty);
+        CreateMapKingdoms(map.Info, _difficulty);
 
         // World::Defaults() -> vec_heroes.Init(): the hero table depends on the map version, because The
         // Price of Loyalty heroes only exist for maps of the expansions. The reference builds the table
@@ -1682,7 +1702,7 @@ public sealed partial class World
                 case Mp2ObjectType.Castle:
                 case Mp2ObjectType.ActionCastle:
                     // A town that stands on its entrance: the block fills the town the table already holds.
-                    ReadCastleBlock(map, block, tileIndex, false);
+                    ReadCastleBlock(block, tileIndex, false);
                     break;
 
                 case Mp2ObjectType.RandomCastle:
@@ -1690,7 +1710,7 @@ public sealed partial class World
                 case Mp2ObjectType.RandomTown:
                 case Mp2ObjectType.ActionRandomTown:
                     // A random town: the tile says "random" until the block says which town it is.
-                    ReadCastleBlock(map, block, tileIndex, true);
+                    ReadCastleBlock(block, tileIndex, true);
                     break;
             }
         }

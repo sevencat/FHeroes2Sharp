@@ -523,16 +523,16 @@ public sealed class ResolutionDialog : ListBox<ResolutionRow>
             .Replace("%{scale}", scale, StringComparison.Ordinal));
     }
 
-    /// <summary>Fills <see cref="_popup"/> for a right click on the buttons.</summary>
+    /// <summary>Fills <see cref="_popup"/> for a right click on the buttons, <c>dialog_resolution.cpp:291-296</c>.</summary>
     private void ShowExplanation(LocalEvent events)
     {
         if (events.IsMouseRightButtonPressedInArea(_buttons[0].Area))
         {
-            _popup = new DialogPopup("Okay", "Click to select this resolution.");
+            _popup = new DialogPopup("Okay", "Click to apply the selected resolution.");
         }
         else if (_buttons.Count > 1 && events.IsMouseRightButtonPressedInArea(_buttons[1].Area))
         {
-            _popup = new DialogPopup("Cancel", "Click to cancel the resolution selection.");
+            _popup = new DialogPopup("Cancel", "Exit this menu without doing anything.");
         }
     }
 }

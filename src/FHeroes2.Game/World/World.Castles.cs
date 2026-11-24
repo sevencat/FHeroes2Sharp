@@ -330,16 +330,17 @@ public sealed partial class World
     /// warned about and skipped, where the reference asserts.
     /// </para>
     /// <para>
-    /// The difficulty reaches the block because a town without custom buildings rolls its defaults, and the race of
-    /// an owned random town would be asked of the owner's kingdom — the port has no kingdom at load time, so the
-    /// block rolls a random race for such a town exactly as it does for a neutral one.
+    /// The difficulty reaches the block because a town without custom buildings rolls its defaults, and the roll
+    /// depends on it (<c>castle.cpp:542</c> asks <c>Game::getDifficulty()</c>, which the port records in
+    /// <c>World._difficulty</c>). The race of an owned random town would be asked of the owner's kingdom — the port
+    /// has no kingdom at load time, so the block rolls a random race for such a town exactly as it does for a
+    /// neutral one.
     /// </para>
     /// </remarks>
-    /// <param name="map">The map being loaded.</param>
     /// <param name="block">The information block of the town.</param>
     /// <param name="tileIndex">Tile the block belongs to.</param>
     /// <param name="isRandom">Whether the tile is a random town or castle.</param>
-    private void ReadCastleBlock(Mp2Map map, Mp2InfoBlock block, int tileIndex, bool isRandom)
+    private void ReadCastleBlock(Mp2InfoBlock block, int tileIndex, bool isRandom)
     {
         if (block.Data.Length != CastleTown.Mp2BlockSize)
         {
@@ -357,7 +358,7 @@ public sealed partial class World
             return;
         }
 
-        castle.LoadFromMP2(block.Data, map.Info.Difficulty, ownerRace: null, generator: null, _day);
+        castle.LoadFromMP2(block.Data, _difficulty, ownerRace: null, generator: null, _day);
 
         if (isRandom)
         {

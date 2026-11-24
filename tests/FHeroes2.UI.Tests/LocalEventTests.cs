@@ -448,6 +448,105 @@ public sealed class LocalEventTests
         Assert.Empty(engine.Sleeps);
     }
 
+    [Fact]
+    public void Touch_FirstFingerDrivesTheLeftButtonAndTheCursor()
+    {
+        LocalEvent events = CreateEvents();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.LeftPressed,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Down, 1, 0, new Point(15, 15)));
+
+        Assert.True(events.IsMouseLeftButtonPressed);
+        Assert.True(events.IsMouseEventFromTouchpad);
+        Assert.Equal(new Point(15, 15), events.CursorPosition);
+
+        events.BeginFrame();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.LeftReleased,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Up, 1, 0, new Point(15, 15)));
+
+        Assert.True(events.IsMouseLeftButtonReleased);
+        Assert.False(events.IsMouseLeftButtonPressed);
+    }
+
+    [Fact]
+    public void Touch_MotionOfTheFirstFingerMovesTheCursorWithoutReleasing()
+    {
+        LocalEvent events = CreateEvents();
+        events.OnTouchFinger(LocalEvent.TouchFinger.Down, 1, 0, new Point(15, 15));
+        events.BeginFrame();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.Motion,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Motion, 1, 0, new Point(35, 45)));
+
+        Assert.Equal(new Point(35, 45), events.CursorPosition);
+        Assert.True(events.IsMouseLeftButtonPressed);
+        Assert.True(events.HasMouseMoved);
+    }
+
+    [Fact]
+    public void Touch_SecondFingerEmulatesTheRightButtonAndOutlivesTheFirstFinger()
+    {
+        LocalEvent events = CreateEvents();
+        events.OnTouchFinger(LocalEvent.TouchFinger.Down, 1, 0, new Point(15, 15));
+        events.BeginFrame();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.RightPressed,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Down, 2, 1, new Point(50, 50)));
+
+        Assert.True(events.IsMouseRightButtonPressed);
+
+        // The second finger must not drag the cursor away from the item being inspected.
+        Assert.Equal(new Point(15, 15), events.CursorPosition);
+
+        // Lifting the first finger keeps the right button held, which is the whole point of the gesture.
+        events.BeginFrame();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.None,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Up, 1, 0, new Point(15, 15)));
+
+        Assert.True(events.IsMouseRightButtonPressed);
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.None,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Motion, 2, 1, new Point(60, 60)));
+
+        Assert.True(events.IsMouseRightButtonPressed);
+
+        events.BeginFrame();
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.RightReleased,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Up, 2, 1, new Point(60, 60)));
+
+        Assert.False(events.IsMouseRightButtonPressed);
+    }
+
+    [Fact]
+    public void Touch_IgnoresAThirdFingerAndFingersThatAreNotOnTheScreen()
+    {
+        LocalEvent events = CreateEvents();
+        events.OnTouchFinger(LocalEvent.TouchFinger.Down, 1, 0, new Point(10, 10));
+        events.OnTouchFinger(LocalEvent.TouchFinger.Down, 2, 1, new Point(20, 20));
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.None,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Down, 3, 2, new Point(30, 30)));
+
+        Assert.Equal(
+            LocalEvent.TouchEmulation.None,
+            events.OnTouchFinger(LocalEvent.TouchFinger.Motion, 9, 9, new Point(30, 30)));
+
+        // The stray events did not disturb the gesture: the second finger still holds the right button.
+        Assert.True(events.IsMouseRightButtonPressed);
+        Assert.Equal(new Point(10, 10), events.CursorPosition);
+    }
+
     private static LocalEvent CreateEvents() => new(() => 0);
 
     /// <summary>An event engine that records what <see cref="LocalEvent.HandleEvents"/> asked it to do.</summary>

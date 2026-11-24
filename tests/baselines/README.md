@@ -10,11 +10,11 @@
 | `settings.zh_CN.png` | 同上，界面语言 `zh_CN`（`设置` / `语言` / `简体中文`） | 640×480 | `pwsh tools/scripts/VerifySettingsBaseline.ps1 -Culture zh_CN -Update` |
 | `scenario.png` | 主菜单 + 场景选择窗口（`en`：`Alteris` 行选中、`Hard` 难度、ALL 尺寸筛选） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Update` |
 | `scenario.zh_CN.png` | 同上，界面语言 `zh_CN`（`地图难度：困难`） | 640×480 | `pwsh tools/scripts/VerifyScenarioBaseline.ps1 -Culture zh_CN -Update` |
-| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以「最靠地图中心的城堡」居中，含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（右列四个城堡 `LOCATORS` 图标、左列四个空槽）与八个命令按钮、按钮下方的 `STONBACK` 石头状态面板（「Month: 1 Week: 1」/「Day: 1」与 `SUNMOON` 月相，`(480,392,144,72)`）、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
-| `adventure-map-boats.png` | 冒险地图的第二个画面（M4，船）：`Undeada.mp2` 以「最靠地图中心的城堡」居中，城堡西南角的海面上停着一条空船 —— 船体取自 `BOAT32` 第 18 帧（`RIGHT`，62×56，比瓦片高 33 像素、向上伸两格），影子取自 `BOATSHAD` 第 18 帧（74×28），瓦片原来的 `OBJNWAT2` 帧被丢掉。`Alteris.mp2` 的视野里一条船都没有，所以船的像素只能靠这张图守住 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png -Update` |
+| `adventure-map.png` | 冒险地图（M4，外壳 + 地形 + 对象层 + 怪物层 + 英雄层 + 小地图）：`Alteris.mp2` 以焦点英雄居中（`AdventureSession.Start` 之后 `SetFocus` 总是居中于英雄，见 ADR-207），含城镇（门口的紫色亡灵英雄）、成片的游荡怪物（`MINIMON`：骷髅、僵尸、骨龙等）、树林、山脊、海岸与沙滩；`ADVBORD` 框架外壳（16px 边框、`16,16` 处 448×448 视口）、右上角 144×144 雷达面板带视口虚线框、雷达下方的砖纹面板与图标条（左列英雄槽：焦点英雄头像；右列城堡槽：本王国唯一的一座城，其余是空槽；`LOCATORS`，ADR-055、ADR-207）与八个命令按钮、按钮下方的 `STONBACK` 石头状态面板（`STATUS_ARMY`：焦点英雄的部队，精灵 19 + 另一个 4，`(480,392,144,72)`；日期面板是旧的场景自绘，ADR-207）、底边框带上的状态栏，以及战争迷雾（`CLOF32` 整瓦 + `CLOP32` 边界件；初始侦察 = 蓝方英雄半径 4 + 聚焦城堡半径 5，ADR-061） | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -Update` |
+| `adventure-map-boats.png` | 冒险地图的第二个画面（M4，船）：`Undeada.mp2` 以焦点英雄居中（ADR-207），城堡西南角的海面上停着一条空船 —— 船体取自 `BOAT32` 第 18 帧（`RIGHT`，62×56，比瓦片高 33 像素、向上伸两格），影子取自 `BOATSHAD` 第 18 帧（74×28），瓦片原来的 `OBJNWAT2` 帧被丢掉。`Alteris.mp2` 的视野里一条船都没有，所以船的像素只能靠这张图守住 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -MapFile Undeada.mp2 -Baseline tests/baselines/adventure-map-boats.png -Update` |
 | `adventure-options.png` | 冒险选项对话框（M4，`--adventure-options`）：同一张 `Alteris.mp2` 上盖一层 `StandardWindow` 石头窗口，窗口由按钮组反推尺寸（`APANEL.ICN` 四个 59×27 按钮排成两列，active area `(221,167,198,146)`），四按钮是 `APANEL.ICN` 的 8 帧（世界/谜题/信息/挖掘，各一对 released/pressed），底部居中是 `SYSTEM.ICN` 第 3/4 帧的 CANCEL（`{0,11}` 上抬 11 像素）。对话框不透明，把地图中间整块盖住，四周的边框、雷达、按钮面板与状态面板都不受影响 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update` |
-| `quick-info.png` | 冒险地图的右键提示框（M4，`--quick-info --cursor 250,190`）：光标停在一座矿上，`QWIKINFO.ICN` 的 158×94 木框挂在该 tile 的右下角，框内是 `smallWhite` 居中的对象名「Mine」。框只在地形上出现，`-QuickInfo` 把默认光标从 `620,100`（图标条上）挪到 `250,190`；文本来自地图数据，框位置来自光标，所以帧是稳定的 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo -Update` |
-| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 同上居中，`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
+| `quick-info.png` | 冒险地图的右键提示框（M4，`--quick-info --right-button --cursor 250,190`）：光标停在一座矿上，`QWIKINFO.ICN` 的 158×94 木框挂在该 tile 的右下角，框内是 `smallWhite` 居中的对象名「Ore Mine」（`MineText.GetMineName`，ADR-207）。框只在地形上出现，`-QuickInfo` 把默认光标从 `620,100`（图标条上）挪到 `250,190`；框只活在右键按住期间，所以脚本同时带 `--right-button`，否则场景下一帧就把它收掉（ADR-208）。文本来自地图数据，框位置来自光标，所以帧是稳定的 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo -Update` |
+| `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 居中到地图中心（编辑器没有焦点英雄，`EditorScene` 用 `CenterOn(width/2, height/2)`），`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
 
 ## 怎么用
 
@@ -78,8 +78,10 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 * `--map <file>`：直接打开一张地图，不经过 NEW GAME 与场景列表，所以基线只依赖**一个**地图文件
   （默认 `Alteris.mp2`），与安装了多少地图、地图目录叫什么无关。
-* 视口居中到「最靠地图中心的城堡」：M4 还没有英雄可以居中，这是 `AdventureMapScene.TryCreate`
-  的占位规则，因此滚动偏移由地图文件唯一决定。
+* 视口居中在焦点英雄：开局 `ResetFocus(FIRSTHERO)` → `SetFocus` 总是 `SetCenter(hero)`（参考
+  `interface_base.cpp:76-79`，ADR-207），所以滚动偏移由地图文件唯一决定，不带时钟。
+* `--seed 1`：地图载入时英雄的初始部队数量是从线程随机源抽的（`Rand.Get`，OS 播种），不固定的话
+  状态栏部队格每次差 27～40 个像素。脚本把它钉死，见 ADR-207。
 * 地形图来自 `GROUND32.TIL`，四个 shape 变体（原图 / 上下 / 左右 / 两者）在启动时预生成再拷贝，
   不经过任何时钟，所以同一台机器上逐帧相同。
 * 对象层不带时钟：`--freeze-animation` 下帧号直接用 MP2 文件里存的静态帧（参考的动画表还没移植，
@@ -92,13 +94,13 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
   再贴到视口 `16,16`；雷达下方的砖纹面板按 `(480,176,72,32)` 平铺同一帧的像素。三者都是静态美术，
   只有位置来自 `MapFrame` 的常量，所以逐帧相同。
 * 状态面板（`480,392,144,72`，`StatusPanel.AreaFor`）：按钮底到框底正好 72 像素，即一帧
-  `STONBACK.ICN`；面板里只有「Month: 1 Week: 1」/「Day: 1」（`SMALFONT` + `FONT`）与 `SUNMOON`
-  月相，日期取自 `World` 的 `Month`/`Week`/`Day`，月相帧由「本月的第几周」决定（`day > 1` 用
-  `((week-1)%4)+1`，否则第 0 帧）。开局第 0 天没有日期可印，面板只留石头，所以也不带时钟。
-  资源态要左键点面板才切过去（参考 `StatusPanel::QueueEventProcessing`），基线里不会出现。
-* 图标条（ADR-055）：`LOCATORS.ICN` 的城堡帧（9…14 城堡、15…20 城镇，都由地图的城堡表决定）与空槽
-  帧（1…8 循环）按 `(480,176)`、`(552,176)` 两列各四格摆好，图标内缩 `5,5`。没有悬停、没有高亮标记，
-  所以也不带时钟；英雄列全是空槽，因为 MP2 的 tile 里没有英雄身份（见 ADR-055）。
+  `STONBACK.ICN`；`SetFocus` 同时 `SetState(STATUS_ARMY)`（参考同一处，ADR-207），所以面板里是焦点
+  英雄的部队（本例精灵 19 + 另一个 4），部队是地图载入抽的、靠 `--seed` 钉住。日期态
+  （`Month: 1 Week: 1` / `Day: 1` + `SUNMOON` 月相）要左键点面板才切过去
+  （`StatusPanel::QueueEventProcessing`），基线里不会出现，所以面板也不带时钟。
+* 图标条（ADR-055、ADR-207）：`LOCATORS.ICN` 的英雄帧与城堡帧按 `(480,176)`、`(552,176)` 两列各四格
+  摆好，图标内缩 `5,5`，空槽用帧 1…8 循环。左列是本王国的英雄（焦点英雄），右列是本王国拥有的城
+  （`Alteris` 开局只有一座，其余空槽）；没有悬停、没有高亮标记，所以也不带时钟。
 * 状态栏（`16,466,608,11`）搬到了底边框带上，里面印着视口偏移与版本号，后者每次发版都会变，所以
   排除掉。地图内容本身是数据文件的字节，不受语言影响；`-Culture` 只决定文件名，为与其它脚本对称而保留。
 * 战争迷雾（ADR-061）也不带时钟：初始侦察只有「人类颜色的英雄半径 4」与「聚焦城堡半径 5」两个圆盘，
@@ -125,7 +127,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 ## 编辑器基线也是逐字节稳定的
 
-* 与冒险地图同一张图（`Alteris`，居中规则相同），多出来的只有编辑器自己画的东西：tile 网格、光标
+* 与冒险地图同一张图（`Alteris`，编辑器居中到地图中心，不像冒险地图那样跟英雄走），多出来的只有编辑器
+  自己画的东西：tile 网格、光标
   双线高亮、`ADVBORD` 外壳与其中的雷达 / `EditorPanel`。它们都不带时钟。
 * `--editor-paint 46,52,6,4,Snow`：脚本先刷一块雪地再截帧。没有这一笔，基线分不出「编辑器能改 tile」
   与「只是把地图画出来了」。
@@ -138,8 +141,9 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 ## CI 怎么接
 
-`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用七条命令（job 名是历史原因，现在跑的是
-七份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图、地图编辑器各一次）：
+`.github/workflows/ci.yml` 的 `menu-baseline` job 依次调用十条命令（job 名是历史原因，现在跑的是
+十份基线：菜单、设置对话框 `en` 与 `zh_CN`、场景选择窗口 `en` 与 `zh_CN`、冒险地图、船、
+冒险选项对话框、右键提示框、地图编辑器各一次）：
 
 * 托管 runner（`windows-latest`）没有游戏数据，脚本会停在自检之后：**基线文件本身**被校验
   （存在、是 PNG、640×480），像素比对退化为 `skip`。这一步拦的是「基线被删/被换错尺寸」。
@@ -149,7 +153,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 * 失败时 job 会把 `tools-output/baseline/*.png`（刚渲染的图，文件名带语言后缀）与
   `diff/` 目录（`diff_menu.png` / `diff_settings.png` / `diff_settings.zh_CN.png` /
   `diff_scenario.png` / `diff_scenario.zh_CN.png` / `diff_adventure-map.png` /
-  `diff_adventure-map-boats.png` / `diff_editor.png`）作为
+  `diff_adventure-map-boats.png` / `diff_adventure-options.png` / `diff_quick-info.png` /
+  `diff_editor.png`）作为
   artifact `pixel-baseline-diff` 上传。
 
 ## 为什么逐字节一致是可达的
@@ -177,12 +182,17 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 
 `menu.png`、`settings.png`、`settings.zh_CN.png`、`scenario.png`、`scenario.zh_CN.png` 五张重建了一次：主菜单
 右下角的 **Editor 招牌**（E1/E2 之后接进 `MainMenuScene`）一直没进基线，五张图的右下角都少一块，差异恒为
-9 867 像素——不是改坏了像素，是基线从 2026-11-14 起就落后于代码。重建后五张全部 `identical`；
-`adventure-map*.png` 与 `editor.png` 属「与参考对齐」的那一套，没有动。
+9 867 像素——不是改坏了像素，是基线从 2026-11-14 起就落后于代码。
+
+同一天 `adventure-map.png`、`adventure-map-boats.png`、`adventure-options.png`、`quick-info.png` 四张也重建了：
+它们来自自建渲染时代（视口居中在「最近的城堡」、雷达没有雾、状态栏是场景自绘的日期），逐项核对后确认
+现在这三处都是参考行为，所以按参考更新基线，并给脚本加 `--seed 1`（ADR-207）。`quick-info.png` 另外还暴露
+一个真问题：提示框只活在右键按住期间，而脚本并没有按住，于是框在第一帧就被场景收掉、基线退化成「没有框的
+地图」——`--right-button` 现在会为冒险地图按住右键，脚本也带上了它（ADR-208）。`editor.png` 没有动。
 
 ## 基线的数据版本
 
-当前七张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
+当前十张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
 `heroes2x.agg`，`AssetBundle` 优先取后者，因此 `HEROES.ICN` 是 *The Price of Loyalty* 横幅版本。
 只有基础版数据（原版街景背景）时基线必然对不上——那种情况应当另存一份（例如
 `menu-classic.png`）而不是覆盖它。`settings.zh_CN.png` 还额外依赖 `files/lang/zh_CN.mo`
@@ -196,9 +206,10 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `settings.zh_CN.png` | 231,331 | `3B04E01CB3DA0D86BF781C338555B5041F8CAACD4D40B4A207627877A465071E` |
 | `scenario.png` | 212,241 | `03EAB07B6AC553C95470678BE0EF9B5A764EEB54F2BA4EAB7BA4476C4178947F` |
 | `scenario.zh_CN.png` | 212,244 | `567D2DC0CEBFF60702D678AA6066F6ACF114930198C4583954050B058DCC1E63` |
-| `adventure-map.png` | 120,368 | `897A5D9747AE0DDCD30262300CC4B175AE46E5BC104DD68FBC2232776DD328A1` |
-| `adventure-map-boats.png` | 134,334 | `B2270574025A5739860F40EF9643B714656D6CAC1EDA1921771BF3E5DE8A6BAE` |
-| `adventure-options.png` | 119,941 | `10FF7501123FA825B7AF1A0A661B97D6CCA2211B55D86B755950F6C5F6C6C4EB` |
+| `adventure-map.png` | 122,397 | `849702BFAFAC122952FD633AC32DD9283718A542DC6A2FA21FA88E749CDD4C1F` |
+| `adventure-map-boats.png` | 132,362 | `63A9722237F906BACFD7DD8317B952DC2B870ABD9BE4577FDEC3B6D1DE2D8136` |
+| `adventure-options.png` | 130,860 | `961E657BA1B4C2CFE5A5FB42A3810C39AE7D5A34D35296A198DFD2894A48507D` |
+| `quick-info.png` | 121,856 | `012B298143C38E786ED8834E85ABAA163BFA16BDED372BB35485C199A59F672F` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
 
 ## 更新基线的规矩

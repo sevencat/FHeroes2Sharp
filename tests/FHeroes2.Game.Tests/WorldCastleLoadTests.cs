@@ -201,6 +201,39 @@ public sealed class WorldCastleLoadTests
     }
 
     [Fact]
+    public void TheDifficultyOfTheGameDecidesTheDefaultBuildingsOfATown()
+    {
+        // 参考的 Castle::_setDefaultBuildings() 问的是 Game::getDifficulty()（castle.cpp:542），也就是玩家挑的那一档，
+        // 不是地图头里的那一档。这里让地图头说 Easy（二级兵营 75%）、会话难度说 Impossible（0%）：一座没有自定义
+        // 建筑的城一定只剩第一兵营。地图头若被误用，八次装载里一次都抽不到第二兵营的概率只有 0.25^8。
+        byte[] block = TownBlock(faction: 0);
+        block[1] = 0; // No custom buildings, so the block rolls the defaults.
+
+        for (int attempt = 0; attempt < 8; ++attempt)
+        {
+            Mp2Map map = MapWithTown(block);
+            map = map with { Info = map.Info with { Difficulty = GameDifficulty.Easy } };
+
+            World world = new();
+            world.LoadMap(map, GameDifficulty.Impossible);
+
+            CastleTown castle = Assert.Single(world.Castles);
+
+            Assert.True(castle.IsBuild(BuildingType.DwellingMonster1));
+            Assert.False(castle.IsBuild(BuildingType.DwellingMonster2));
+        }
+
+        // 没有玩家的选择时（测试与工具）退回地图头那一档，也就是老口径。
+        Mp2Map headerOnly = MapWithTown(block);
+        headerOnly = headerOnly with { Info = headerOnly.Info with { Difficulty = GameDifficulty.Impossible } };
+
+        World headerWorld = new();
+        headerWorld.LoadMap(headerOnly);
+
+        Assert.False(Assert.Single(headerWorld.Castles).IsBuild(BuildingType.DwellingMonster2));
+    }
+
+    [Fact]
     public void UnnamedTownsGetDifferentDefaultNames()
     {
         World world = new();

@@ -70,6 +70,9 @@ public sealed class SettingsTests
         Assert.Equal(GameDifficulty.Normal, settings.GameDifficulty);
         Assert.Equal(GameTypes.None, settings.GameType);
 
+        Assert.Equal(new ResolutionInfo(640, 480), settings.CurrentResolutionInfo);
+        Assert.Equal(new Point(-1, -1), settings.SavedWindowPosition);
+
         Assert.Equal(string.Empty, settings.GameLanguage);
         Assert.Null(settings.CurrentMapFileInfo);
         Assert.False(settings.IsMapSmoothScrollingEnabled);
@@ -578,6 +581,44 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void AVideoModeAndAWindowPositionAreReadFromTheFile()
+    {
+        Settings settings = Fresh();
+        string path = Path.Combine(Path.GetTempPath(), $"fh2-cfg-{Guid.NewGuid():N}.cfg");
+
+        try
+        {
+            // 参考把这两键读进 _resolutionInfo 与 _windowPos（settings.cpp:303-309），启动时由显示层应用；
+            // 端口在 Read 里同样存下来，只是应用方是 GameHost.CreatePresenter()。
+            File.WriteAllText(path, "videomode = 640x480:1920x1440\ngame window position = [ 128, 96 ]\n");
+
+            Assert.True(settings.Read(path));
+
+            Assert.Equal(new Size(640, 480), settings.CurrentResolutionInfo.GameSize);
+            Assert.Equal(new Size(1920, 1440), settings.CurrentResolutionInfo.ScreenSize);
+            Assert.Equal(new Point(128, 96), settings.SavedWindowPosition);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void AVideoModeAndAWindowPositionAreWrittenWhenTheDisplayGivesThem()
+    {
+        Settings settings = Fresh();
+
+        string text = settings.GetOptionsString(new ResolutionInfo(640, 480, 1280, 960), new Point(64, 32));
+
+        Assert.Contains("videomode = 640x480:1280x960", text, StringComparison.Ordinal);
+        Assert.Contains("game window position = [ 64, 32 ]", text, StringComparison.Ordinal);
+
+        // 写出去的是窗口的现状（settings.cpp:427-433 问 Display::instance()），不改这里读进来的值。
+        Assert.Equal(new Point(-1, -1), settings.SavedWindowPosition);
+    }
+
+    [Fact]
     public void TheOptionsStringQuotesTheEngineVersionAndEveryKey()
     {
         Settings settings = Fresh();
@@ -590,7 +631,7 @@ public sealed class SettingsTests
         Assert.Contains("first time game run = on", text, StringComparison.Ordinal);
         Assert.Contains("radar window position = [ -1, -1 ]", text, StringComparison.Ordinal);
 
-        // 分辨率和窗口位置属于 UI 层，不给参数就不写。
+        // 分辨率和窗口位置只有显示层给出时才写（读进来的值不是写出去的值），不给参数就整行不出现。
         Assert.DoesNotContain("videomode", text, StringComparison.Ordinal);
         Assert.DoesNotContain("game window position", text, StringComparison.Ordinal);
     }
