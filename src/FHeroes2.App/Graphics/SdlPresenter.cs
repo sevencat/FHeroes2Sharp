@@ -275,6 +275,10 @@ internal sealed class SdlPresenter : IScreenPresenter
         }
 
         SDL.SetTextureScaleMode(_frameTexture, SDL.ScaleMode.Nearest);
+
+        // The logical target is stretched to whole-window pixels; an integer multiple maps one to one,
+        // anything else (a 1280x800 window is x1.67, ADR-211) reads better filtered than sampled.
+        SDL.SetTextureScaleMode(_logicalTarget, SDL.ScaleMode.Linear);
         SDL.SetTextureBlendMode(_logicalTarget, SDL.BlendMode.None);
     }
 
