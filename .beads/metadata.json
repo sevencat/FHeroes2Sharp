@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "FHeroes2Sharp",
+  "project_id": "d5e1d5fe-4edf-41b0-ab1d-2271ba451d9a"
+}
