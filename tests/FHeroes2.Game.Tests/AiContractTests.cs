@@ -12,6 +12,12 @@ namespace FHeroes2.Game.Tests;
 /// exercised: they throw until their translation unit is ported (ADR-161). <c>ai_common.cpp</c> is ported, so
 /// its behaviour is covered by <see cref="AiCommonTests"/> instead.
 /// </remarks>
+/// <remarks>
+/// <see cref="BattlePlanner"/> is a process-wide singleton that remembers the battle it last served, so the
+/// turn-limit assertions below share a collection with <see cref="BattleArenaTurnTests"/>: that class runs real
+/// turns, which overwrite the singleton's counters between <c>BattleBegins()</c> and the read-back.
+/// </remarks>
+[Collection(BattleArenaTurnTests.PlannerSingletonCollection)]
 public sealed class AiContractTests
 {
     [Fact]

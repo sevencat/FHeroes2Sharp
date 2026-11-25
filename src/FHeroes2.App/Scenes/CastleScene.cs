@@ -2099,7 +2099,7 @@ public sealed class CastleScene : IScene
             return false;
         }
 
-        _recruit = RecruitWindow.TryCreate(assets, Castle, monster, available, kingdom, _fonts, windowOffsetY);
+        _recruit = RecruitWindow.TryCreate(assets, monster, available, kingdom, _fonts, windowOffsetY);
 
         if (_recruit is not { } window)
         {

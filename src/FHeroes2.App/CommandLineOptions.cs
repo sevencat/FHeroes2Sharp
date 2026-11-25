@@ -18,7 +18,7 @@ namespace FHeroes2.App;
 ///                 [--freeze-animation]
 ///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--skip-turns &lt;n&gt;] [--view-world] [--battle|--battle-siege|--battle-auto|--battle-only] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--skip-turns &lt;n&gt;] [--view-world] [--sphinx-riddle] [--adventure-window &lt;name&gt;] [--cast-spell &lt;name&gt;] [--battle|--battle-siege|--battle-auto|--battle-only] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
@@ -26,6 +26,7 @@ namespace FHeroes2.App;
 ///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;] [--editor-info &lt;x,y&gt;]
 ///                 [--editor-data &lt;x,y,value&gt;]
 ///                 [--no-audio] [--no-touch] [--play-sound &lt;name&gt;]
+///                 [--video &lt;name&gt;] [--video-loop]
 ///                 [--screenshot &lt;png&gt;] [--screenshot-frame &lt;n&gt;]
 /// </code>
 /// </summary>
@@ -203,6 +204,13 @@ public sealed class CommandLineOptions
     public int? ScenarioSelection { get; private set; }
 
     /// <summary>
+    /// Confirms the scenario selection at start up so that the scenario info screen stays open
+    /// (<c>--scenario-info</c>). It is how that screen is screenshotted and smoke tested without a mouse:
+    /// <c>--enter-map</c> would accept the screen and go straight to the map.
+    /// </summary>
+    public bool OpenScenarioInfo { get; private set; }
+
+    /// <summary>
     /// Confirms the scenario selection at start up and opens its adventure map (<c>--enter-map</c>).
     /// The scenario window is opened first when it is not already, and the first map is used unless
     /// <c>--scenario-select</c> picks another one. It is how M4 is screenshotted and smoke tested
@@ -251,6 +259,45 @@ public sealed class CommandLineOptions
     public bool QuickInfo { get; private set; }
 
     /// <summary>
+    /// Opens the riddle input window of the sphinx nearest the focus hero as soon as the adventure map is up
+    /// (<c>--sphinx-riddle</c>), the <c>Dialog::inputString()</c> of <c>heroes_action.cpp:3563</c>.
+    /// </summary>
+    /// <remarks>
+    /// 窗口正常只在英雄走到狮身人面像上时开，而最近的一座离出生点也有十几格：截图与冒烟等不起那段路，所以
+    /// 这个开关替英雄把窗口开出来，答案照样交回 <c>IHeroActionHost.AskRiddle</c>，返回的字符串写进日志。
+    /// </remarks>
+    public bool SphinxRiddle { get; private set; }
+
+    /// <summary>
+    /// Casts an adventure spell of the focus hero as soon as the map is up (<c>--cast-spell DimensionDoor</c>),
+    /// skipping the spell book the player would normally pick it from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 有些冒险法术的入口是界面里的阻塞循环：次元门要玩家在灰框里点一格，城镇门户要在一张城列表里选一座。
+    /// 那两处脚本点不到法术书上的图标，所以这个开关替玩家把「书里选好法术」那一步做掉，从
+    /// <c>AdventureMap.CastAdventureSpell</c> 进入——之后的选择方框、点击与返回值都还是真实路径。
+    /// </para>
+    /// <para>
+    /// 地图上的英雄未必带着这本法术书，法力也未必够，所以开关会先补上：书、法术、满法力。这是为了走到施法界面
+    /// 而做的补课，与 <c>--sphinx-riddle</c> 把英雄送到狮身人面像前是同一类事。
+    /// </para>
+    /// </remarks>
+    public FHeroes2.Game.Spells.SpellType? CastSpell { get; private set; }
+
+    /// <summary>
+    /// Opens one of the windows the adventure map's objects show as soon as the map is up
+    /// (<c>--adventure-window market</c> or <c>guild</c>): the trading post's marketplace and the oracle's
+    /// thieves' guild report, <c>Dialog::Marketplace()</c> and <c>Dialog::ThievesGuild()</c> of the reference.
+    /// </summary>
+    /// <remarks>
+    /// 这两个窗口正常要英雄走到交易站或预言所上才开，而最近的一处也在几十格之外：截图与冒烟等不起那段路。
+    /// 开关替英雄把窗口开出来，走的仍是 <c>IHeroActionHost</c> 上那两个入口，所以窗口、输入与返回值都是真实路径。
+    /// <c>market</c> 一律当交易站（汇率固定三座市场），与地图上的入口一致。
+    /// </remarks>
+    public string? AdventureWindow { get; private set; }
+
+    /// <summary>
     /// Opens the town screen of the first town of the acting kingdom as soon as the adventure map is up
     /// (<c>--enter-town</c>). The screen normally opens by clicking one of the player's towns on the map,
     /// so this is how its frame is screenshotted and smoke tested without a mouse.
@@ -260,7 +307,7 @@ public sealed class CommandLineOptions
     /// <summary>
     /// Starts a battle as soon as the adventure map is up (<c>--battle</c>): the focus hero fights the first
     /// wandering monster of the map. Fight always needs the map, so pair it with <c>--enter-map</c> or
-    /// <c>--map</c>; the battle normally starts by walking onto a monster tile, which the port cannot do yet.
+    /// <c>--map</c>; the battle then opens with no walking, which is what the pixel baselines freeze.
     /// </summary>
     public bool Battle { get; private set; }
 
@@ -418,6 +465,16 @@ public sealed class CommandLineOptions
     /// </summary>
     public string? PlaySound { get; private set; }
 
+    /// <summary>
+    /// Name of a Smacker movie of the game data (for example <c>intro.smk</c>) that is played once over the
+    /// start screen (<c>--video</c>). It exists because no screen triggers a video yet on its own from the
+    /// command line: this is how the decoder and the player are checked without playing a whole scenario.
+    /// </summary>
+    public string? VideoFile { get; private set; }
+
+    /// <summary>Starts the video over when it ends (<c>--video-loop</c>), the losing clip does.</summary>
+    public bool VideoLoop { get; private set; }
+
     public bool ShowHelp { get; private set; }
 
     public static CommandLineOptions Parse(IReadOnlyList<string> arguments)
@@ -523,6 +580,14 @@ public sealed class CommandLineOptions
                     options.Seed = seed;
                     break;
 
+                case "--video":
+                    options.VideoFile = RequireValue(arguments, ref i, argument);
+                    break;
+
+                case "--video-loop":
+                    options.VideoLoop = true;
+                    break;
+
                 case "--screenshot":
                     options.ScreenshotPath = RequireValue(arguments, ref i, argument);
                     break;
@@ -565,6 +630,10 @@ public sealed class CommandLineOptions
                     options.ScenarioSelection = selection;
                     break;
 
+                case "--scenario-info":
+                    options.OpenScenarioInfo = true;
+                    break;
+
                 case "--enter-map":
                     options.EnterMap = true;
                     break;
@@ -593,6 +662,30 @@ public sealed class CommandLineOptions
 
                 case "--quick-info":
                     options.QuickInfo = true;
+                    break;
+
+                case "--sphinx-riddle":
+                    options.SphinxRiddle = true;
+                    break;
+
+                case "--cast-spell":
+                {
+                    string rawSpell = RequireValue(arguments, ref i, argument);
+
+                    if (!Enum.TryParse(rawSpell, ignoreCase: true, out FHeroes2.Game.Spells.SpellType spell)
+                        || spell == FHeroes2.Game.Spells.SpellType.None
+                        || !new FHeroes2.Game.Spells.Spell(spell).IsAdventure())
+                    {
+                        throw new ArgumentException(
+                            $"'{argument}' expects the name of an adventure spell, got '{rawSpell}'.");
+                    }
+
+                    options.CastSpell = spell;
+                    break;
+                }
+
+                case "--adventure-window":
+                    options.AdventureWindow = RequireValue(arguments, ref i, argument);
                     break;
 
                 case "--enter-town":
@@ -764,6 +857,14 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");
         Console.WriteLine("  --skip-turns <n>    Ends the human turn n times at start up, so the computer plays.");
         Console.WriteLine("  --view-world        Opens the View World window as soon as the map is up.");
+        Console.WriteLine("  --sphinx-riddle     Opens the riddle window of the sphinx nearest the focus hero;");
+        Console.WriteLine("                      the typed answer is logged, empty when the window was cancelled.");
+        Console.WriteLine("  --cast-spell <name> Casts an adventure spell of the focus hero as soon as the map is up,");
+        Console.WriteLine("                      skipping the spell book: 'DimensionDoor', 'TownGate', 'TownPortal'.");
+        Console.WriteLine("                      The hero is given the book, the spell and a full mana pool first, and");
+        Console.WriteLine("                      the tile he ends up on is logged.");
+        Console.WriteLine("  --adventure-window <name>  Opens a window of the map's objects: 'market' (trading post)");
+        Console.WriteLine("                      or 'guild' (oracle) as soon as the map is up.");
         Console.WriteLine("  --enter-town        Opens the town screen of the first town as soon as the map is up.");
         Console.WriteLine("  --battle            Starts the battle of the focus hero and the first wandering monster.");
         Console.WriteLine("  --battle-siege      Same, but against the first town of another colour (implies --battle).");
@@ -798,6 +899,9 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --no-touch          Pretends there is no touch screen: the first-run greeting keeps its");
         Console.WriteLine("                      short layout, which the scripted clicks rely on (ADR-210).");
         Console.WriteLine("  --play-sound <name> Plays one sound effect of the archives, e.g. 'PICKUP01'.");
+        Console.WriteLine("  --video <name>      Plays one Smacker movie of the game data over the start screen,");
+        Console.WriteLine("                      e.g. 'intro.smk' (the extension may be left out).");
+        Console.WriteLine("  --video-loop        Starts the movie over when it ends, as the losing clip does.");
         Console.WriteLine("  --list-assets       Prints the archive inventory and exits.");
         Console.WriteLine("  --help              Shows this help.");
     }

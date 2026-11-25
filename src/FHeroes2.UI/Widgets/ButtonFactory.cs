@@ -1,7 +1,9 @@
 using System.Text;
+using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Gui;
+using FHeroes2.Game.H2D;
 using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Widgets;
@@ -367,6 +369,75 @@ public static class ButtonFactory
             (buttonSize.Height - pressedText.Height(buttonSize.Width)) / 2 + 1,
             buttonSize.Width,
             pressed.Image);
+    }
+
+    /// <summary>
+    /// Room the keyboard icon of the virtual keyboard button gets around it inside its plate,
+    /// the <c>extraWidth</c> of <c>game_assets.cpp:5489</c>.
+    /// </summary>
+    public const int VirtualKeyboardExtraWidth = 19;
+
+    /// <summary>
+    /// Builds the button that opens the virtual keyboard, i.e. the generated
+    /// <c>ICN::BUTTON_VIRTUAL_KEYBOARD_GOOD</c> / <c>ICN::BUTTON_VIRTUAL_KEYBOARD_EVIL</c>
+    /// (<c>game_assets.cpp:5466-5511</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把 h2d 里的键盘小图贴到放大过的空按钮上，再拿 <c>UNIFORMBAK</c> 补掉按下态多出来的四个角；返回的
+    /// 释放态与「贴在底纹上的按下态」就是它生成的三张图里的第 0 和第 2 张，也正是对话框取用的那两张
+    /// （<c>Button( …, 0, 2 )</c>）。
+    /// </para>
+    /// <para>
+    /// 端口读到的档案里没有 <c>UNIFORMBAK.ICN</c>（它不在 AGG 里），底纹一律用 <c>STONEBAK</c> 的第 0 帧，
+    /// 与 <see cref="VirtualKeyboardArtwork"/>、各对话框的按下态一致。
+    /// </para>
+    /// <para>
+    /// h2d 里的释放态小图比按下态低一个像素（参考在 <c>game_assets.cpp:5493</c> 的注释里说明了这一点），
+    /// 所以贴释放态时往上挪一格。没有 h2d 或没有底纹时返回 <see langword="null"/>，对话框据此不画这个键。
+    /// </para>
+    /// </remarks>
+    /// <param name="isEvilInterface">Whether the gray plate and the evil icon are used.</param>
+    /// <returns>The released look and the pressed look on the uniform background, or <see langword="null"/>.</returns>
+    public static (Sprite Released, Sprite Pressed)? MakeVirtualKeyboardButton(bool isEvilInterface)
+    {
+        string iconName = isEvilInterface
+            ? "keyboard_button_released_evil.image"
+            : "keyboard_button_released_good.image";
+        string pressedIconName = isEvilInterface
+            ? "keyboard_button_pressed_evil.image"
+            : "keyboard_button_pressed_good.image";
+
+        if (!H2DResources.TryReadCurrentImage(iconName, out Sprite? icon)
+            || !H2DResources.TryReadCurrentImage(pressedIconName, out Sprite? pressedIcon))
+        {
+            return null;
+        }
+
+        (Sprite released, Sprite pressed, Point releasedTextOffset, Point pressedTextOffset) =
+            GetCustomNormalButton(new Size(icon.Width + VirtualKeyboardExtraWidth, icon.Height), isEvilInterface);
+
+        ImageOps.BlitSprite(
+            released,
+            new Point((VirtualKeyboardExtraWidth / 2) + releasedTextOffset.X, releasedTextOffset.Y - 1),
+            icon);
+
+        ImageOps.BlitSprite(
+            pressed,
+            new Point((VirtualKeyboardExtraWidth / 2) + pressedTextOffset.X, pressedTextOffset.Y),
+            pressedIcon);
+
+        Sprite? background = GameAssets.GetImage(
+            IcnCatalog.GetFileName(isEvilInterface ? IcnType.StonebakEvil : IcnType.Stonebak), 0);
+
+        if (background is null)
+        {
+            return null;
+        }
+
+        ButtonArtwork.MakeTransparentBackground(released, pressed, background);
+
+        return (released, pressed);
     }
 
     /// <summary>Names the asset an <see cref="DialogButtonTemplate"/> is cut from.</summary>

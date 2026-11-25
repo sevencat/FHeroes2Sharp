@@ -13,6 +13,7 @@ using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
@@ -366,6 +367,49 @@ public sealed class AdventureMapScene : IScene
     public void CloseAdventureOptions() => _options = null;
 
     /// <summary>
+    /// Casts an adventure spell of the focused hero without the spell book, for <c>--cast-spell</c>.
+    /// </summary>
+    /// <param name="spell">The spell to cast.</param>
+    /// <remarks>
+    /// 转发到 <see cref="FHeroes2.UI.Interface.AdventureMap.CastAdventureSpell"/>：施法之后地图会动（英雄可能落到
+    /// 另一格），所以不能只改场景自己的状态。
+    /// </remarks>
+    public void CastAdventureSpell(Spell spell)
+    {
+        _interface.CastAdventureSpell(spell);
+
+        GameArea gameArea = _interface.GetGameArea();
+        Hero? focused = FHeroes2.UI.Interface.InterfaceFocus.GetFocusHeroes();
+        Point? relative = focused is null
+            ? null
+            : gameArea.GetRelativeTilePosition(
+                new Point(focused.MapIndex % _world.Width, focused.MapIndex / _world.Width));
+        int plainMonsters = 0, actionMonsters = 0, plainHeroes = 0, actionHeroes = 0, plainBoats = 0, actionBoats = 0;
+        for (int i = 0; i < _world.Width * _world.Height; ++i)
+        {
+            switch (_world.GetTile(i).MainObjectType)
+            {
+                case Mp2ObjectType.Monster: ++plainMonsters; break;
+                case Mp2ObjectType.ActionMonster: ++actionMonsters; break;
+                case Mp2ObjectType.Hero: ++plainHeroes; break;
+                case Mp2ObjectType.ActionHero: ++actionHeroes; break;
+                case Mp2ObjectType.Boat: ++plainBoats; break;
+                case Mp2ObjectType.ActionBoat: ++actionBoats; break;
+                default: break;
+            }
+        }
+
+        GameLog.Info($"--dd-debug: monsters {plainMonsters}/{actionMonsters}, heroes {plainHeroes}/{actionHeroes}, boats {plainBoats}/{actionBoats}");
+        GameLog.Info(
+            $"--dd-debug: map {_world.Width}x{_world.Height}, hero {focused?.MapIndex} at {relative?.X},{relative?.Y} " +
+            $"fog {(focused is null ? Direction.Unknown : _world.GetTile(focused.MapIndex).FogDirection)}, " +
+            $"center {gameArea.CurrentCenterInPixels.X},{gameArea.CurrentCenterInPixels.Y}, roi {gameArea.Roi}, " +
+            $"sprite {focused?.SpriteIndex}, dir {focused?.Direction}, alpha {focused?.AlphaValue}, " +
+            $"parts {(focused is null ? -1 : TileRendering.GetHeroSpritesPerTile(focused).Count)}, " +
+            $"tileType {(focused is null ? default : _world.GetTile(focused.MapIndex).MainObjectType)}");
+    }
+
+    /// <summary>
     /// Opens the View World window on <paramref name="mode"/>, the body of <c>ViewWorld::ViewWorldWindow()</c>
     /// (<c>view_world.cpp:589-700</c>) up to its event loop.
     /// </summary>
@@ -659,6 +703,54 @@ public sealed class AdventureMapScene : IScene
         _interface.MouseCursorAreaPressRight(index);
 
         return _quickInfo is not null;
+    }
+
+    /// <summary>
+    /// The riddle of the sphinx nearest the focus hero, the <c>--sphinx-riddle</c> of the command line.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 谜语窗正常是英雄走到狮身人面像上时从动作链里开的（<c>heroes_action.cpp:3563</c>）。冒烟与截图不肯等英雄
+    /// 走十几格，所以这里只负责挑一座最近的、把它的问句交回去；窗口本身仍旧由宿主按 <c>IHeroActionHost.AskRiddle</c>
+    /// 开，和真实动作同一条路。
+    /// </para>
+    /// <para>
+    /// 距离用切比雪夫距离（横竖斜都算一格），与地图移动的八方向一致；同距离时取先读到的那个，只是为了让
+    /// 同一张地图的两次运行拿到同一座。
+    /// </para>
+    /// </remarks>
+    /// <returns>The riddle text, or <see langword="null"/> when there is no focus hero or no valid sphinx.</returns>
+    public string? FindSphinxRiddle()
+    {
+        if (_session?.FocusHero is not { MapIndex: >= 0 } hero || _world.Width <= 0)
+        {
+            return null;
+        }
+
+        int heroX = hero.MapIndex % _world.Width;
+        int heroY = hero.MapIndex / _world.Width;
+        MapSphinx? nearest = null;
+        int nearestDistance = int.MaxValue;
+
+        foreach (MapObject mapObject in _world.MapObjects.All)
+        {
+            if (mapObject is not MapSphinx { IsValid: true, TileIndex: >= 0 } sphinx)
+            {
+                continue;
+            }
+
+            int distance = Math.Max(
+                Math.Abs((sphinx.TileIndex % _world.Width) - heroX),
+                Math.Abs((sphinx.TileIndex / _world.Width) - heroY));
+
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearest = sphinx;
+            }
+        }
+
+        return nearest?.Riddle;
     }
 
     /// <summary>

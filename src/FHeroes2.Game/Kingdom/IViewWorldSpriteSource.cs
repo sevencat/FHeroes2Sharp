@@ -42,5 +42,16 @@ public sealed class IcnViewWorldSpriteSource : IViewWorldSpriteSource
     public int Count => _cache.Count;
 
     /// <inheritdoc/>
-    public Sprite? GetSprite(IcnType icn, int index) => _cache.GetSprite(IcnCatalog.GetFileName(icn), index);
+    /// <remarks>
+    /// 合成表（<c>BUTTON_SMALL_OKAY_*</c>、次元门方框的 EXIT 等）没有归档条目，先问 <see cref="Assets.GetImage"/>，
+    /// 免得归档侧的解码缓存为它们报「缺图」。其余仍是先问注入的归档，再问全局的 <see cref="Assets"/>。
+    /// </remarks>
+    public Sprite? GetSprite(IcnType icn, int index)
+    {
+        string fileName = Assets.GetFileName(icn);
+
+        return Assets.IsRuntimeTable(fileName)
+            ? Assets.GetImage(fileName, index)
+            : _cache.GetSprite(fileName, index) ?? Assets.GetImage(fileName, index);
+    }
 }

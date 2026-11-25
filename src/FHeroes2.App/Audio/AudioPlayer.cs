@@ -34,6 +34,7 @@ public sealed class AudioPlayer : IDisposable
     private readonly string[] _musicDirectories;
     private readonly Dictionary<string, IntPtr> _soundCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<IntPtr> _activeSoundTracks = [];
+    private readonly Dictionary<IntPtr, IntPtr> _transientAudio = [];
 
     private IntPtr _mixer;
     private IntPtr _musicTrack;
@@ -256,6 +257,50 @@ public sealed class AudioPlayer : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Plays a WAV file held in memory once, on a track of its own. The decoded audio is released with the track
+    /// when the sound ends, unlike the cached sound effects of <see cref="PlaySound"/>.
+    /// </summary>
+    /// <param name="wave">A complete RIFF WAVE file.</param>
+    /// <returns>Whether the sound started.</returns>
+    public bool PlayWave(ReadOnlySpan<byte> wave)
+    {
+        if (!IsAvailable || wave.IsEmpty)
+        {
+            return false;
+        }
+
+        IntPtr audio = LoadWave(wave.ToArray());
+        if (audio == IntPtr.Zero)
+        {
+            GameLog.Warn($"A wave could not be prepared: {SDL.GetError()}");
+            return false;
+        }
+
+        IntPtr trackHandle = Mixer.CreateTrack(_mixer);
+        if (trackHandle == IntPtr.Zero)
+        {
+            GameLog.Warn($"No mixer track for a wave: {SDL.GetError()}");
+            Mixer.DestroyAudio(audio);
+            return false;
+        }
+
+        if (!Mixer.SetTrackAudio(trackHandle, audio)
+            || !Mixer.SetTrackGain(trackHandle, _soundVolume)
+            || !Mixer.PlayTrack(trackHandle, 0))
+        {
+            GameLog.Warn($"A wave could not be played: {SDL.GetError()}");
+            Mixer.DestroyTrack(trackHandle);
+            Mixer.DestroyAudio(audio);
+            return false;
+        }
+
+        _activeSoundTracks.Add(trackHandle);
+        _transientAudio.Add(trackHandle, audio);
+
+        return true;
+    }
+
     /// <summary>Releases the tracks of the sound effects that finished playing; call it once per frame.</summary>
     public void Update()
     {
@@ -269,6 +314,11 @@ public sealed class AudioPlayer : IDisposable
 
             Mixer.DestroyTrack(trackHandle);
             _activeSoundTracks.RemoveAt(index);
+
+            if (_transientAudio.Remove(trackHandle, out IntPtr audio))
+            {
+                Mixer.DestroyAudio(audio);
+            }
         }
     }
 
@@ -289,6 +339,13 @@ public sealed class AudioPlayer : IDisposable
         }
 
         _activeSoundTracks.Clear();
+
+        foreach (IntPtr audio in _transientAudio.Values)
+        {
+            Mixer.DestroyAudio(audio);
+        }
+
+        _transientAudio.Clear();
 
         foreach (IntPtr audio in _soundCache.Values)
         {

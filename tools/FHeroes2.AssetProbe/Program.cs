@@ -718,6 +718,28 @@ internal static class Program
                 $"  {hero.X},{hero.Y}  {hero.Color} {hero.Race}  MINIHERO {hero.SpriteIndex}");
         }
 
+        // Where the object a smoke script has to click actually is: an object type alone does not say which
+        // of its many instances sits next to the hero.
+        if (arguments.ObjectType is { } wanted)
+        {
+            Console.WriteLine($"Tiles of type '{wanted}':");
+            int found = 0;
+            for (int index = 0; index < map.Tiles.Count; ++index)
+            {
+                Mp2TileInfo tile = map.Tiles[index];
+                if (tile.IsEmpty ||
+                    !string.Equals(tile.ObjectType.ToString(), wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                ++found;
+                Console.WriteLine($"  {index % map.Width},{index / map.Width}  {tile.ObjectType}");
+            }
+
+            Console.WriteLine($"  {found} found");
+        }
+
         Console.WriteLine($"Castles ({map.Castles.Count}):");
         foreach (Mp2CastlePosition castle in map.Castles)
         {

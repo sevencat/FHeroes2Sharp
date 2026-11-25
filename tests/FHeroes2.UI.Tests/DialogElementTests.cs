@@ -462,6 +462,20 @@ public sealed class DialogElementTests
     }
 
     [Fact]
+    public void Monster_WithoutPopupTexts_AsksForNothing()
+    {
+        Sprite plate = new(40, 44);
+        var element = new MonsterDialogElement(plate, null, null, string.Empty, string.Empty);
+
+        LocalEvent rightClick = new(() => 0);
+        rightClick.OnMouseMotion(new Point(10, 10));
+        rightClick.OnMouseButton(true, MouseButtonType.Right, new Point(10, 10));
+
+        // 生物资料窗还没转，调用方给两张空文本就表示「点了也不用报弹窗」，画像照常画。
+        Assert.Null(element.ProcessEvents(rightClick, new Point(0, 0)).Popup);
+    }
+
+    [Fact]
     public void Monster_RejectsAMissingPlate()
     {
         Assert.Throws<ArgumentNullException>(() => new MonsterDialogElement(null!, null, null, "Pikeman", string.Empty));

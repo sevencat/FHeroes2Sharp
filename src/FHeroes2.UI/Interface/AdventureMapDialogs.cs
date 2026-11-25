@@ -15,6 +15,8 @@ using FHeroes2.Game.Gui;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
@@ -206,6 +208,9 @@ public sealed class AdventureMapDialogs
     private IVanquishedSignArtworkSource? _signArtwork;
     private bool _signArtworkLoaded;
 
+    /// <summary>The <c>STRIP</c> plate and the dwelling picture of the creature element, read on the first Visions.</summary>
+    private readonly MonsterPlateArtwork _monsterPlates = new();
+
     /// <summary>Builds the helper around the frame the screen paints into and the archives it was opened with.</summary>
     /// <param name="display">The frame the dialogs draw into; it must already contain the map behind them.</param>
     /// <param name="assets">The archives the screen reads its own artwork from.</param>
@@ -238,8 +243,46 @@ public sealed class AdventureMapDialogs
             return;
         }
 
-        MessageBox.Show(_display, box, events);
+        MessageBox.Show(_display, box, events, ShowPopup(events));
     }
+
+    /// <summary>
+    /// Shows a message that carries creatures of the map, the <c>Dialog::Message( header, body, elements )</c> of the
+    /// Visions spell (<c>heroes_spell.cpp:284-321</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把 <c>fheroes2::MonsterDialogElement</c> 塞进标准文本框，生物画像排在文字下面一行居中。画像点下去本该开
+    /// 生物资料窗（<c>Dialog::ArmyInfo( troop, 0 )</c>），那一窗还没转，所以这里不给元素挂弹窗，只把画像画出来。
+    /// </remarks>
+    /// <param name="header">The yellow title; empty for a message without one.</param>
+    /// <param name="body">The white body text.</param>
+    /// <param name="monster">The creature whose plate goes under the text.</param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    public void ShowMonsterMessage(string header, string body, MonsterType monster, LocalEvent? events = null)
+    {
+        if (_monsterPlates.TryCreate(monster) is not { } element)
+        {
+            // 没有 STRIP 第 12 帧就没有画像可贴，退回纯文字，和参考拿到坏档案时的表现一致。
+            ShowMessage(header, body, events);
+
+            return;
+        }
+
+        if (TryCreateBox(header, body, DialogButton.Ok, [element]) is not { } box)
+        {
+            return;
+        }
+
+        MessageBox.Show(_display, box, events, ShowPopup(events));
+    }
+
+    /// <summary>
+    /// The handler a box uses for the popups its elements ask for, <see cref="MessageBox.Show(PixelBuffer, MessageBox, LocalEvent?, Action{DialogPopup}?)"/>.
+    /// </summary>
+    /// <param name="events">Event state of the box that is running.</param>
+    /// <returns>The handler that shows the popup as another standard message.</returns>
+    private Action<DialogPopup> ShowPopup(LocalEvent? events) =>
+        popup => ShowMessage(popup.Header, popup.Body, events);
 
     /// <summary>
     /// Asks a yes/no question, <c>fheroes2::showStandardTextMessage( header, body, Dialog::YES | Dialog::NO )</c>.
@@ -493,6 +536,78 @@ public sealed class AdventureMapDialogs
         spell = new Spell(picked);
 
         return true;
+    }
+
+    /// <summary>
+    /// Lets the player pick one of his towns, <c>Dialog::selectKingdomCastle()</c>
+    /// (<c>dialog_selectitems.cpp:846-904</c>), which is what Town Portal asks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在工厂里按 <c>notOccupiedByHero</c> 剔掉有英雄驻守的城；端口的筛选在
+    /// <c>Hero.FindTownPortalTowns()</c> 一侧完成（同一条件，同一顺序），这里照收到的清单原样显示。
+    /// 清单为空时不是开一个空窗口，而是先弹参考那句
+    /// <c>_( "There are no castles to select from." )</c> 再返回 -1。
+    /// </para>
+    /// <para>
+    /// 右键一行弹城堡快速信息，参考的 <c>QuickInfoWithIndicationOnRadar()</c>。这里不能用
+    /// <see cref="Present"/>：窗口循环是本方法自己在跑，交出去的面板没有人画，所以直接
+    /// <see cref="QuickInfoPopup.Show"/> 就地阻塞，也就没有雷达上的标记。
+    /// </para>
+    /// </remarks>
+    /// <param name="castles">The towns to offer, in the order they are listed.</param>
+    /// <param name="title">Heading of the window.</param>
+    /// <param name="description">Explanation under the heading.</param>
+    /// <param name="castlePositionIndex">
+    /// Town to select on open, i.e. the tile index of its gate (<c>castlePositionIndex</c> of the reference);
+    /// -1 leaves the first row selected.
+    /// </param>
+    /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <returns>The tile index of the picked town's gate, or -1 when the player cancelled.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="castles"/>, <paramref name="title"/> or <paramref name="description"/> is <see langword="null"/>.
+    /// </exception>
+    public int SelectKingdomCastle(IReadOnlyList<CastleTown> castles, string title, string description,
+        int castlePositionIndex = -1, LocalEvent? events = null)
+    {
+        ArgumentNullException.ThrowIfNull(castles);
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(description);
+
+        LocalEvent input = events ?? LocalEvent.Current;
+
+        if (castles.Count == 0)
+        {
+            ShowMessage(SelectKingdomCastleDialog.EmptyListHeading, SelectKingdomCastleDialog.EmptyListMessage, input);
+
+            return -1;
+        }
+
+        Settings settings = Settings.Get();
+        bool evilInterface = settings.IsEvilInterfaceEnabled;
+
+        if (GetIcons() is not { } icons ||
+            ItemSelectionWindowArtwork.TryCreate(icons, evilInterface) is not { } artwork ||
+            GetHeaderFont() is not { } titleFont ||
+            GetBodyFont() is not { } font)
+        {
+            return -1;
+        }
+
+        Funds treasury = World.Current.GetKingdom(settings.Players.CurrentColor).GetFunds();
+
+        SelectKingdomCastleWindow? window = SelectKingdomCastleDialog.TryCreate(castles, icons, treasury, title,
+            description, artwork, titleFont, font, castlePositionIndex, evilInterface,
+            castle =>
+            {
+                if (CreateCastleQuickInfo(castle, input) is { } view)
+                {
+                    QuickInfoPopup.Show(_display, view, input);
+                }
+            },
+            _display.Bounds.Size);
+
+        return window is null ? -1 : SelectKingdomCastleDialog.Show(_display, window, input);
     }
 
     /// <summary>
@@ -1517,12 +1632,32 @@ public sealed class AdventureMapDialogs
 
         LocalEvent input = events ?? LocalEvent.Current;
 
+        if (CreateCastleQuickInfo(castle, input) is { } view)
+        {
+            Present(view, input);
+        }
+    }
+
+    /// <summary>
+    /// Composes the castle quick info box, the panel half of <see cref="ShowQuickInfo(CastleTown, LocalEvent?)"/>.
+    /// </summary>
+    /// <remarks>
+    /// 单独拆出来是给<b>阻塞</b>的调用方用的：<see cref="SelectKingdomCastle"/> 自己驱动窗口循环，期间
+    /// <see cref="Present"/> 交出去的面板没有人画，所以那里直接把面板交给 <see cref="QuickInfoPopup.Show"/>。
+    /// 两处「看得见」决定面板画多少：自家城堡或水晶球照到的城堡给完整驻军（<c>isDetailedView</c>），
+    /// 盗贼公会等级决定守卫数量是精确值还是模糊区间（<c>thievesGuildCount</c>）。
+    /// </remarks>
+    /// <param name="castle">Castle to describe.</param>
+    /// <param name="input">Input of the frame, which decides where the box goes.</param>
+    /// <returns>The box, or <see langword="null"/> when its artwork, fonts or the frame are missing.</returns>
+    private CastleQuickInfoView? CreateCastleQuickInfo(CastleTown castle, LocalEvent input)
+    {
         if (GetCastleQuickInfoArtwork() is not { } artwork ||
             GetSmallFont() is not { } font ||
             GetMonsters() is not { } monsters ||
             GetIcons() is not { } icons)
         {
-            return;
+            return null;
         }
 
         Settings settings = Settings.Get();
@@ -1535,19 +1670,16 @@ public sealed class AdventureMapDialogs
 
         uint thievesGuildCount = (uint)Math.Max(kingdom.CountThievesGuilds(), 0);
 
-        if (QuickInfoDialog.CreateForCastle(castle).TryCreateCastleView(
-                artwork,
-                font,
-                monsters,
-                icons,
-                settings.IsEvilInterfaceEnabled,
-                detailedView,
-                thievesGuildCount,
-                input.CursorPosition,
-                _display.Bounds) is { } view)
-        {
-            Present(view, input);
-        }
+        return QuickInfoDialog.CreateForCastle(castle).TryCreateCastleView(
+            artwork,
+            font,
+            monsters,
+            icons,
+            settings.IsEvilInterfaceEnabled,
+            detailedView,
+            thievesGuildCount,
+            input.CursorPosition,
+            _display.Bounds);
     }
 
     /// <summary>
@@ -1688,6 +1820,28 @@ public sealed class AdventureMapDialogs
         }
 
         return MessageBox.Create(header, body, headerFont, bodyFont, buttons: buttons, buttonArtwork: artwork);
+    }
+
+    /// <summary>Builds a standard box that shows elements under its text, <c>MessageBox::Create( …, elements )</c>.</summary>
+    /// <param name="header">The yellow title; empty for a message without one.</param>
+    /// <param name="body">The white body text.</param>
+    /// <param name="buttons">Buttons to show.</param>
+    /// <param name="elements">The elements to lay out under the text.</param>
+    /// <returns>The box, or <see langword="null"/> when the fonts or the button artwork are missing.</returns>
+    private MessageBox? TryCreateBox(
+        string header,
+        string body,
+        DialogButton buttons,
+        IReadOnlyList<DialogElement> elements)
+    {
+        if (GetHeaderFont() is not { } headerFont || GetBodyFont() is not { } bodyFont ||
+            GetButtons() is not { } artwork)
+        {
+            return null;
+        }
+
+        return MessageBox.Create(
+            header, body, headerFont, bodyFont, buttons: buttons, buttonArtwork: artwork, elements: elements);
     }
 
     /// <summary>The yellow title font, <c>Font::Get( FontSize::NORMAL, YELLOW_FONT )</c>.</summary>

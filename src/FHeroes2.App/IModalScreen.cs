@@ -1,5 +1,6 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.App;
@@ -42,6 +43,21 @@ public interface IModalScreen
     /// <summary>Pushes the key that stands for one of the standard buttons.</summary>
     /// <param name="hotKey">Key that was pressed.</param>
     void HotKey(ButtonHotKey hotKey);
+
+    /// <summary>
+    /// Pushes every other key, the ones that are not a standard button: the text of an input window, the arrow keys
+    /// of a list. Windows that take no typing ignore it.
+    /// </summary>
+    /// <remarks>
+    /// 参考里这些键走 <c>LocalEvent::isKeyPressed</c> / <c>getKeyValue</c>，由窗口自己的循环读；端口的内层循环
+    /// 已经把 ESC/回车折成 <see cref="HotKey"/>,剩下的键需要一条通道才能到窗口，于是有了这个方法。默认什么都不做，
+    /// 只读按钮的窗口不必改。
+    /// </remarks>
+    /// <param name="key">Key that was pressed.</param>
+    /// <param name="modifier">Modifiers held with it.</param>
+    void PressKey(Key key, KeyModifier modifier)
+    {
+    }
 
     /// <summary>Draws the window over the frame of the scene below it.</summary>
     /// <param name="frame">Indexed frame the scene has just painted.</param>

@@ -197,6 +197,24 @@ public sealed class LocalEvent
     public Func<bool>? QuitEventHook { get; set; }
 
     /// <summary>
+    /// The application's work at the end of every frame this class starts, run after the engine has polled the
+    /// platform; returning <see langword="false"/> ends the caller's loop as well.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的 <c>LocalEvent::HandleEvents</c> 只管平台事件。端口要多做的那些事——重放 <c>--cursor</c>、
+    /// <c>--left-click-at</c>、<c>--key-at</c> 的脚本输入，以及界面自己转帧时补计时与冒烟预算——是应用的事，
+    /// 所以挂成回调而不是写死在这里。
+    /// </para>
+    /// <para>
+    /// 之所以必须挂在这一层：界面里也有阻塞循环（次元门的选择方框、View World 窗口、音频设置）
+    /// 直接写 <c>while ( le.HandleEvents() )</c>，主循环根本轮不到它们。脚本点击若不在这里重放，
+    /// 那些循环就永远等不到关闭自己的那一下。
+    /// </para>
+    /// </remarks>
+    public Func<bool>? EndOfFrame { get; set; }
+
+    /// <summary>
     /// Area the cursor layer asked to redraw for the last movement, the reference's
     /// <c>_mouseCursorRenderArea</c>. Empty when no movement happened this frame.
     /// </summary>
@@ -265,6 +283,12 @@ public sealed class LocalEvent
         BeginFrame();
 
         if (!engine.HandleEvents(this, allowExit, out bool displayRefreshRequired))
+        {
+            return false;
+        }
+
+        // 帧末的应用侧工作（脚本输入、界面内循环的计时与预算），见 <see cref="EndOfFrame"/>。
+        if (EndOfFrame is { } endOfFrame && !endOfFrame())
         {
             return false;
         }

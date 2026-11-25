@@ -2,6 +2,7 @@ using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Monsters;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using GameAssets = FHeroes2.Game.Assets;
@@ -184,6 +185,41 @@ public sealed class MessageBoxTests
         }));
 
     [Fact]
+    public void MonsterPlateArtwork_PutsTheCreatureOnTheArchivedPlate() => Assert.True(TryWithArchives(
+        () =>
+        {
+            // The Visions box of the adventure map: the plate is ICN::STRIP frame 12 and the race background and the
+            // creature are the army bar's frames, so `TryCreate` is the whole of `MonsterDialogElement( troop )`.
+            MonsterDialogElement? element = new MonsterPlateArtwork().TryCreate(MonsterType.Pikeman);
+
+            Assert.NotNull(element);
+
+            return MessageBox.Create(
+                "10 Pikemen",
+                "These weak creatures will surely flee before us.",
+                new FakeGlyphSource(HeaderColor),
+                new FakeGlyphSource(BodyColor),
+                elements: [element!]);
+        },
+        box =>
+        {
+            PixelBuffer target = new(640, 480);
+            target.Fill(0);
+
+            box.Draw(target);
+
+            Rect rect = box.ElementAreas[0];
+
+            Assert.True(rect.Width > 0 && rect.Height > 0);
+
+            // A text-only box leaves nothing but its own frame here; the plate covers the whole slot, so both corners
+            // and the middle of the slot carry artwork.
+            Assert.NotEqual(0, target[rect.X, rect.Y]);
+            Assert.NotEqual(0, target[rect.X + rect.Width - 1, rect.Y + rect.Height - 1]);
+            Assert.NotEqual(0, target[rect.Center.X, rect.Center.Y]);
+        }));
+
+    [Fact]
     public void Create_RejectsNullElements()
     {
         // The check runs before the frame is composed, so the test does not need the archives.
@@ -222,6 +258,28 @@ public sealed class MessageBoxTests
                     new FakeGlyphSource(HeaderColor),
                     new FakeGlyphSource(BodyColor),
                     events: events));
+        }));
+
+    [Fact]
+    public void Show_HandsAnElementPopupToTheCallback() => Assert.True(TryWithArchives(
+        () => MessageBox.Create(
+            "Title",
+            "Body",
+            new FakeGlyphSource(HeaderColor),
+            new FakeGlyphSource(BodyColor),
+            elements: [new MonsterDialogElement(new Sprite(20, 20), null, null, "Pikeman", "A sturdy defender.")]),
+        box =>
+        {
+            DialogPopup? shown = null;
+            LocalEvent events = new(() => 0) { Engine = new RightClickingEngine(box.ElementAreas[0].Center) };
+
+            Assert.Equal(
+                DialogButton.None,
+                MessageBox.Show(new PixelBuffer(640, 480), box, events, popup => shown = popup));
+
+            Assert.NotNull(shown);
+            Assert.Equal("Pikeman", shown!.Value.Header);
+            Assert.Equal("A sturdy defender.", shown.Value.Body);
         }));
 
     /// <summary>Opens the game data the message frame is read from.</summary>
@@ -266,6 +324,41 @@ public sealed class MessageBoxTests
             displayRefreshRequired = false;
 
             return false;
+        }
+
+        public void Render(Rect area)
+        {
+        }
+
+        public void Sleep(ulong milliseconds)
+        {
+        }
+    }
+
+    /// <summary>One right press at a point, then the loop stops; the element asks for its popup on that frame.</summary>
+    private sealed class RightClickingEngine : IEventEngine
+    {
+        private readonly Point _point;
+        private bool _pressed;
+
+        public RightClickingEngine(Point point) => _point = point;
+
+        public Rect ScreenArea => new(0, 0, 640, 480);
+
+        public bool HandleEvents(LocalEvent state, bool allowExit, out bool displayRefreshRequired)
+        {
+            displayRefreshRequired = false;
+
+            if (_pressed)
+            {
+                return false;
+            }
+
+            _pressed = true;
+            state.OnMouseMotion(_point);
+            state.OnMouseButton(true, MouseButtonType.Right, _point);
+
+            return true;
         }
 
         public void Render(Rect area)

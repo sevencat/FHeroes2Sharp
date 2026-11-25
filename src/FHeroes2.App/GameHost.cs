@@ -2,7 +2,9 @@ using System.Diagnostics;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Audio;
 using FHeroes2.Assets.Maps;
+using FHeroes2.Assets.Video;
 using FHeroes2.App.Audio;
+using FHeroes2.App.Video;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
 using FHeroes2.App.Input;
@@ -14,6 +16,7 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Core.Random;
 using FHeroes2.Core.Timing;
+using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
 using FHeroes2.Game.Castle;
@@ -131,6 +134,44 @@ public sealed class GameHost : IDisposable
     /// </summary>
     private Point? _pendingClickRelease;
 
+    /// <summary>
+    /// The window a scripted click was pressed on; the matching release goes there on the next frame.
+    /// </summary>
+    private IModalScreen? _pendingModalClick;
+
+    /// <summary>
+    /// Whether <c>--sphinx-riddle</c> still has to open its window, which happens on the first loop frame
+    /// rather than while the map is being set up: the window draws the scene behind itself and needs the renderer.
+    /// </summary>
+    private bool _pendingSphinxRiddle;
+
+    /// <summary>
+    /// Which window of the map's objects <c>--adventure-window</c> still has to open, for the same reason as
+    /// <see cref="_pendingSphinxRiddle"/>: the window paints the map behind itself and needs the renderer.
+    /// </summary>
+    private string? _pendingAdventureWindow;
+
+    /// <summary>
+    /// The spell <c>--cast-spell</c> still has to cast, for the same reason as <see cref="_pendingSphinxRiddle"/>:
+    /// the picker of the Dimension Door and the town list of the Town Portal paint the map behind themselves and
+    /// run their own loops, so they need the renderer the loop installs on its first frame.
+    /// </summary>
+    private FHeroes2.Game.Spells.SpellType? _pendingSpellCast;
+
+    /// <summary>
+    /// Whether the frame being handled belongs to the main loop's own <c>HandleEvents</c>, see
+    /// <see cref="OnFrameEnded"/>.
+    /// </summary>
+    private bool _mainLoopFrame;
+
+    /// <summary>
+    /// Wall clock of the frames the interface's own blocking loops produce, whose ticks nobody else counts.
+    /// </summary>
+    private readonly Stopwatch _frameClock = Stopwatch.StartNew();
+
+    /// <summary>Seconds of <see cref="_frameClock"/> at the last tick issued from <see cref="OnFrameEnded"/>.</summary>
+    private double _lastFrameClockSeconds;
+
     public GameHost(CommandLineOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -209,6 +250,10 @@ public sealed class GameHost : IDisposable
             _le.Engine = new SdlEventEngine(PumpEvents, _ => _presenter?.Upload(_frame), _frame.Bounds,
                 new SdlDisplayControl(_presenter));
 
+            // 界面里的阻塞循环（次元门的选择方框、View World、音频设置）自己转帧，主循环轮不到它们：
+            // 脚本输入与冒烟预算都得从这一层补，见 OnFrameEnded。
+            _le.EndOfFrame = OnFrameEnded;
+
             // 光标主题是冒险地图的输入分类（点空地 = 走路、点怪物 = 交战），没有它地图上的左键什么都不做；
             // 指针图的绘制归窗口系统，这里只把位置与可见性接进来。
             CursorState.Current = new CursorState(new WindowCursorRenderer());
@@ -241,6 +286,10 @@ public sealed class GameHost : IDisposable
             }
 
             _running = true;
+
+            // 视频要等呈现器就绪才有画面，参考也是在主循环之前播这几个 logo（game_mainmenu.cpp:125-128）。
+            PlayStartupVideos();
+
             Loop();
 
             // 参考在各修改点各自保存（设置窗、热键、雷达位置……），端口在退出时统一落一次，是所有修改点的超集。
@@ -294,6 +343,173 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
+    /// Copyright logos the reference plays before the main menu, <c>Game::runMainGameLoop()</c>
+    /// (<c>game_mainmenu.cpp:125-128</c>).
+    /// </summary>
+    private static readonly string[] StartupLogos = ["NWCLOGO.SMK", "CYLOGO.SMK", "H2XINTRO.SMK"];
+
+    /// <summary>
+    /// Plays the videos that come before the first frame of the menu: the one <c>--video</c> asked for, or the
+    /// copyright logos of the reference.
+    /// </summary>
+    /// <remarks>
+    /// 冒烟与截图是脚本，不是一局游戏：版权 logo 与要截的画面毫无关系，只会让一趟无人值守的运行多等几秒，
+    /// 所以带 <c>--smoke-frames</c> / <c>--screenshot</c> 时一律跳过。<c>--video</c> 是显式要求，照播。
+    /// </remarks>
+    private void PlayStartupVideos()
+    {
+        if (_options.VideoFile is { } file)
+        {
+            PlayVideo(file, _options.VideoLoop);
+
+            return;
+        }
+
+        if (_options.SmokeFrames is not null || _options.ScreenshotPath is not null)
+        {
+            return;
+        }
+
+        foreach (string logo in StartupLogos)
+        {
+            PlayVideo(logo);
+        }
+    }
+
+    /// <summary>
+    /// Plays the end-of-game clip of <c>GameOver::Result::checkGameOver()</c> (<c>game_over.cpp:544-559</c>):
+    /// <c>LOSE.SMK</c> loops, <c>WIN.SMK</c> plays once and waits for a key.
+    /// </summary>
+    private void PlayGameOverVideos()
+    {
+        GameOverRequests requests = GameOverResult.Current.Requests;
+
+        if (requests.LoseVideo)
+        {
+            GameLog.Info("Play the defeat movie.");
+            PlayVideo("LOSE.SMK", loop: true);
+        }
+
+        if (requests.WinVideo)
+        {
+            GameLog.Info("Play the victory movie.");
+            PlayVideo("WIN.SMK");
+        }
+    }
+
+    /// <summary>
+    /// Plays a Smacker video over the current scene, the port of <c>Video::ShowVideo()</c>: the clip is looked up in
+    /// the <c>anim</c>, <c>anim2</c>, <c>heroes2/anim</c> and <c>data</c> folders of the game data, its soundtrack is
+    /// mixed with the sound volume, and any key or mouse button stops it.
+    /// </summary>
+    /// <param name="fileName">File name such as <c>intro.smk</c>; the extension is added when missing.</param>
+    /// <param name="loop">Whether the video starts over when it ends, the victory and defeat clips do.</param>
+    /// <returns>Whether the clip was found and played.</returns>
+    public bool PlayVideo(string fileName, bool loop = false)
+    {
+        byte[]? data = FindVideo(fileName);
+
+        if (data is null)
+        {
+            GameLog.Warn($"Video '{fileName}' is not in the game data.");
+            return false;
+        }
+
+        SmkVideoSequence sequence;
+
+        try
+        {
+            sequence = new SmkVideoSequence(data, _audio is not null);
+        }
+        catch (BinaryFormatException error)
+        {
+            GameLog.Warn($"Video '{fileName}' is corrupted: {error.Message}");
+
+            return false;
+        }
+
+        GameLog.Info(
+            $"Playing video '{fileName}' ({sequence.FrameCount} frame(s), {sequence.Width}x{sequence.Height}, " +
+            $"{sequence.MicrosecondsPerFrame / 1000.0:0.0} ms per frame, {sequence.AudioChannels.Count} audio channel(s)" +
+            $"{(loop ? ", looping" : string.Empty)}).");
+
+        using (sequence)
+        {
+            RunModal(new VideoModalScreen(sequence, _audio, _audio is not null, loop));
+        }
+
+        GameLog.Info($"Video '{fileName}' finished.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Finds a movie the way <c>Video::getVideoFilePath()</c> (<c>game_video.cpp:75-101</c>) does: the
+    /// <c>anim</c>, <c>anim2</c>, <c>heroes2/anim</c> and <c>data</c> folders of every game data root, and the
+    /// archives as the last resort.
+    /// </summary>
+    /// <remarks>
+    /// 数据目录指的是 <c>Data</c>（聚合文件所在处），而 <c>anim</c> 在它的上一级：参考的根目录列表里两者都有，
+    /// 端口于是把两级都当候选。
+    /// </remarks>
+    private byte[]? FindVideo(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return null;
+        }
+
+        string name = fileName.Trim();
+
+        // A direct path is a debugging aid: the reference always looks the clip up by name.
+        if (File.Exists(name))
+        {
+            return File.ReadAllBytes(name);
+        }
+
+        if (!name.EndsWith(".smk", StringComparison.OrdinalIgnoreCase))
+        {
+            name += ".smk";
+        }
+
+        string? dataDirectory = _assets?.DataDirectory;
+        string? gameRoot = dataDirectory is null ? null : Path.GetDirectoryName(dataDirectory);
+
+        string[] folders = ["anim", "anim2", Path.Combine("heroes2", "anim"), "data"];
+
+        foreach (string folder in folders)
+        {
+            foreach (string? root in new[] { gameRoot, dataDirectory })
+            {
+                if (root is null)
+                {
+                    continue;
+                }
+
+                string path = Path.Combine(root, folder, name);
+
+                if (File.Exists(path))
+                {
+                    GameLog.Debug($"Video found on disk: '{path}'.");
+
+                    return File.ReadAllBytes(path);
+                }
+            }
+
+            string entry = $"{folder.Replace(Path.DirectorySeparatorChar, '/')}/{name}";
+
+            if (_assets?.TryRead(entry) is { } data)
+            {
+                GameLog.Debug($"Video found in the archives: '{entry}' ({data.Length} bytes).");
+
+                return data;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Runs <paramref name="screen"/> on top of the current scene until it closes, the port's stand-in for
     /// the blocking dialogs of the reference (<c>Dialog::Message</c> opens its own loop and returns when the
     /// player has answered).
@@ -340,6 +556,9 @@ public sealed class GameHost : IDisposable
                     break;
                 }
 
+                // 窗口开着时输入只流向窗口，脚本回放也要在这一层跑一遍，否则窗口等不到点击。
+                ReplayScriptedInput();
+
                 double now = clock.Elapsed.TotalSeconds;
 
                 // 与主循环同样的钳位理由：拖动窗口不该让动画跳帧。
@@ -347,6 +566,12 @@ public sealed class GameHost : IDisposable
                 previous = now;
 
                 screen.Update(_frame, elapsed);
+
+                // 窗口画的这一帧也算进 --smoke-frames：窗口若在等人（战斗的人类回合就是），预算花完也不能
+                // 一直等下去，否则无人值守的冒烟会挂在这里。
+                _timer.Tick(elapsed);
+                SpendSmokeBudget();
+
                 Draw();
             }
         }
@@ -366,121 +591,23 @@ public sealed class GameHost : IDisposable
             // The frame starts at the event state, like the reference: LocalEvent::HandleEvents resets
             // the one-shot states, lets the engine poll, and skips presenting because this loop draws
             // and uploads right after, which is the reference's HandleEvents( false ) + render() pair.
-            if (!_le.HandleEvents(sleepAfterEventProcessing: false, allowExit: true))
+            // 这一帧的脚本输入由 OnFrameEnded 在 HandleEvents 末尾回放；标出「这是主循环自己的帧」，
+            // 它才会把计时让给下面的 Update。
+            _mainLoopFrame = true;
+
+            bool alive;
+            try
+            {
+                alive = _le.HandleEvents(sleepAfterEventProcessing: false, allowExit: true);
+            }
+            finally
+            {
+                _mainLoopFrame = false;
+            }
+
+            if (!alive)
             {
                 break;
-            }
-
-            // --cursor is the synthetic pointer of a screenshot: the real one must not steal the hover
-            // state, so the synthetic position is pushed into the event state after the real events.
-            // Scenes that read the pointer out of LocalEvent (the adventure map, the View World window)
-            // then hover exactly where the command line asked.
-            if (_syntheticCursor && _options.Cursor is { } syntheticCursor)
-            {
-                _le.OnMouseMotion(syntheticCursor);
-
-                // --right-button holds the right button down. The menu and the town screen take that flag
-                // directly, but the adventure map reads the event state: the quick info box of a tile only
-                // exists while the button is pressed (Dialog::QuickInfo), and the scene drops it on the
-                // frame the press is gone. Pushing the held press into LocalEvent is what keeps the box up
-                // for --quick-info and for any other right-hold tooltip of the map.
-                if (_options.RightButton && _adventure is not null)
-                {
-                    _le.OnMouseButton(isPressed: true, MouseButtonType.Right, syntheticCursor);
-                }
-            }
-
-            // A scripted click that went into LocalEvent releases on the frame after its press: one
-            // physical click spans two frames, and the button row and the list of the first-run chooser
-            // both fire on the release, not on the press.
-            if (_pendingClickRelease is { } releasePoint)
-            {
-                _le.OnMouseButton(isPressed: false, MouseButtonType.Left, releasePoint);
-                _pendingClickRelease = null;
-            }
-
-            // A scripted key press releases on the frame after its press, for the same reason: a real press
-            // spans two frames, and the one-shot key state of LocalEvent is what the battle hot keys read.
-            if (_pendingKeyRelease is { } releaseKey)
-            {
-                _le.OnKeyboard(releaseKey, FHeroes2.UI.Input.KeyModifier.None,
-                    FHeroes2.UI.Input.KeyboardEventState.Up);
-                _pendingKeyRelease = null;
-            }
-
-            // --left-click replays one click at frame 10 on --cursor; --left-click-at replays a whole script
-            // of them, because the first run needs three in one run (the language OKAY, the greeting OKAY,
-            // then a row of the resolution chooser). The clicks are replayed from inside the loop, i.e.
-            // after the event batch and before the scene update, which is the frame order a player
-            // produces. Doing it in CreateScenes would skip the first frames of the new scene.
-            foreach (ScriptedClick click in _clicks)
-            {
-                if (_timer.FrameCount != click.Frame)
-                {
-                    continue;
-                }
-
-                // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
-                // replaying there (the arrows need a second click in the same run to be visible).
-                if (_castle is { } townScreen)
-                {
-                    townScreen.SetCursor(click.Point);
-                    townScreen.SetLeftButton(true);
-                    townScreen.SetLeftButton(false);
-                }
-                else if (ReferenceEquals(_scene, _adventure) && _adventure is not null)
-                {
-                    // 冒险地图与战场一样从 LocalEvent 里读指针与点击，所以脚本点击要推进去；按下与抬起
-                    // 得落在同一帧（与真实点击一致），它按<b>点击</b>找瓦片：GameArea 先按光标位置取格，
-                    // 再看这次的按下与抬起是否都在这一格里（MouseClickLeft）。
-                    _le.OnMouseMotion(click.Point);
-                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
-                    _le.OnMouseButton(isPressed: false, MouseButtonType.Left, click.Point);
-                }
-                else if (_menu is not null && _battle is null)
-                {
-                    _menu.SetCursor(click.Point);
-                    _menu.SetLeftButton(true);
-
-                    if (_menu.SetLeftButton(false) is { } clicked)
-                    {
-                        HandleMenuAction(clicked);
-                    }
-                }
-
-                // The first-run resolution chooser is the one window that reads LocalEvent instead of the
-                // scene's SetLeftButton API (its list drives the scrolling, the double click and the
-                // right-click explanation from that state), so the click is pushed there as well. The
-                // press goes in now and the release on the next frame: one physical click spans two
-                // frames, and both the button row and the list fire on the release.
-                if (_menu?.ResolutionPicker is not null)
-                {
-                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
-                    _pendingClickRelease = click.Point;
-                }
-
-                // The battle screen reads the pointer and the click out of LocalEvent (its cells are hit
-                // tested against the cell geometry), so a scripted click has to go in there as well.
-                if (_battle is not null)
-                {
-                    _le.OnMouseMotion(click.Point);
-                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
-                    _pendingClickRelease = click.Point;
-                }
-            }
-
-            // --key-at is the keyboard twin of the script: the battle's R, S, C and Space are hot keys read
-            // out of LocalEvent, so a smoke run can only reach the retreat and surrender dialogs this way.
-            foreach (ScriptedKey key in _keys)
-            {
-                if (_timer.FrameCount != key.Frame)
-                {
-                    continue;
-                }
-
-                _le.OnKeyboard(key.Key, FHeroes2.UI.Input.KeyModifier.None,
-                    FHeroes2.UI.Input.KeyboardEventState.Down);
-                _pendingKeyRelease = key.Key;
             }
 
             // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
@@ -490,15 +617,330 @@ public sealed class GameHost : IDisposable
             CloseCastleWhenDone();
             CloseBattleWhenDone();
 
+            // --sphinx-riddle 的窗口要等渲染器就位才开：它是阻塞式的，每帧自己重画场景，地图这才在窗后。
+            if (_pendingSphinxRiddle)
+            {
+                _pendingSphinxRiddle = false;
+                AskSphinxRiddle();
+            }
+
+            // --adventure-window 同理。
+            if (_pendingAdventureWindow is { } window)
+            {
+                _pendingAdventureWindow = null;
+                OpenAdventureWindow(window);
+            }
+
+            // --cast-spell 同理：法术读完到施放下去之间还有一个界面里的阻塞循环（次元门的选择方框）。
+            if (_pendingSpellCast is { } spell)
+            {
+                _pendingSpellCast = null;
+                CastScriptedSpell(spell);
+            }
+
             double now = clock.Elapsed.TotalSeconds;
 
             // Clamp the step so that dragging the window does not teleport the animation.
             double elapsed = Math.Clamp(now - previous, 0.0, 0.5);
             previous = now;
 
+            _lastFrameClockSeconds = _frameClock.Elapsed.TotalSeconds;
+
             Update(elapsed);
             _audio?.Update();
             Draw();
+        }
+    }
+
+    /// <summary>
+    /// The application's work at the end of a frame: replays the scripted input of the command line, and for the
+    /// frames an interface loop of its own produces, counts them as well.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="LocalEvent.HandleEvents"/> is the frame source of every blocking loop, and two of them live
+    /// inside the interface: the Dimension Door picker (<c>interface_utilities.cpp</c>'s destination square) and
+    /// the View World window. The main loop never runs during those, so the click of <c>--left-click-at</c> has to
+    /// be replayed here — otherwise the loop never gets the click that ends it — and their frames have to be
+    /// counted here: the picker has to draw one frame of its own before the click of the next can land on it, and
+    /// <c>--screenshot-frame</c> can only name that frame if it counts.
+    /// </para>
+    /// <para>
+    /// 窗口开着时帧归 <see cref="RunModal"/> 管：它自己就回放脚本并计时，这里什么都不做，否则同一次点击会被
+    /// 送两遍。<c>--screenshot</c> 在命令行的截图里结束进程，这一点在内层循环里也照办——它关掉的是整个客户端。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="false"/> when the client has to stop, which also ends the caller's loop.</returns>
+    private bool OnFrameEnded()
+    {
+        if (_modal is not null)
+        {
+            return _running;
+        }
+
+        if (!_mainLoopFrame)
+        {
+            // 界面内的阻塞循环：没有 Update，帧号与预算都得在这里补，截图也只能在这里拍。
+            double now = _frameClock.Elapsed.TotalSeconds;
+            _timer.Tick(Math.Clamp(now - _lastFrameClockSeconds, 0.0, 0.5));
+            _lastFrameClockSeconds = now;
+
+            SpendSmokeBudget();
+        }
+
+        ReplayScriptedInput();
+
+        if (_mainLoopFrame)
+        {
+            return _running;
+        }
+
+        CaptureScreenshot(composedFrameOnly: true);
+
+        return _running;
+    }
+
+    /// <summary>
+    /// Casts the spell <c>--cast-spell</c> asked for, from the same entry the spell book leads to.
+    /// </summary>
+    /// <remarks>
+    /// 书、法术与满法力都是补课：地图上的英雄未必带着次元门，法力也未必够，而这些都只是走到施法界面前的
+    /// 门槛。过了门槛之后走的是与法术书上选完法术完全相同的一段，见 <see cref="AdventureMap.CastAdventureSpell"/>。
+    /// </remarks>
+    /// <param name="type">The spell to cast.</param>
+    private void CastScriptedSpell(FHeroes2.Game.Spells.SpellType type)
+    {
+        if (_adventure is not { } map)
+        {
+            GameLog.Warn("--cast-spell: the adventure map is not running.");
+            return;
+        }
+
+        if (InterfaceFocus.GetFocusHeroes() is not { } hero)
+        {
+            GameLog.Warn("--cast-spell: no hero is focused.");
+            return;
+        }
+
+        FHeroes2.Game.Spells.Spell spell = new(type);
+
+        if (!hero.HasSpellBook)
+        {
+            hero.SpellBookActivate();
+        }
+
+        if (!hero.HasSpell(spell))
+        {
+            hero.AppendSpellToBook(spell, ignoreWisdom: true);
+        }
+
+        if (!hero.HaveSpellPoints(spell) || !hero.HaveMovePoints(spell))
+        {
+            hero.SetSpellPoints(hero.GetMaxSpellPoints());
+        }
+
+        if (!hero.CanCastSpell(spell, World.Current))
+        {
+            GameLog.Warn($"--cast-spell: {type} cannot be cast here; the picker is opened anyway.");
+        }
+
+        int before = hero.MapIndex;
+        uint points = hero.SpellPoints;
+
+        GameLog.Info($"--cast-spell: casting {type} from tile {before} with {points} spell points.");
+        map.CastAdventureSpell(spell);
+        GameLog.Info(
+            $"--cast-spell: {type} done, the hero is on tile {hero.MapIndex} with {hero.SpellPoints} spell points.");
+    }
+
+    /// <summary>
+    /// Replays the input of the command line (<c>--cursor</c>, <c>--left-click-at</c>, <c>--key-at</c>) for the
+    /// current frame into <see cref="LocalEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// --cursor is the synthetic pointer of a screenshot: the real one must not steal the hover state, so the
+    /// synthetic position is pushed into the event state after the real events. Scenes that read the pointer out
+    /// of LocalEvent (the adventure map, the View World window) then hover exactly where the command line asked.
+    /// </para>
+    /// <para>
+    /// <see cref="OnFrameEnded"/> 调它（主循环与界面内的阻塞循环都从这里过），<see cref="RunModal"/> 自己调：
+    /// 窗口开着时输入只流向窗口，脚本回放也得走同一条路，否则窗口永远等不到那一下点击——战斗的人类回合、
+    /// 战斗结果窗都是这种窗口。
+    /// </para>
+    /// </remarks>
+    private void ReplayScriptedInput()
+    {
+        if (_syntheticCursor && _options.Cursor is { } syntheticCursor)
+        {
+            _le.OnMouseMotion(syntheticCursor);
+
+            // --right-button holds the right button down. The menu and the town screen take that flag
+            // directly, but the adventure map reads the event state: the quick info box of a tile only
+            // exists while the button is pressed (Dialog::QuickInfo), and the scene drops it on the
+            // frame the press is gone. Pushing the held press into LocalEvent is what keeps the box up
+            // for --quick-info and for any other right-hold tooltip of the map.
+            if (_options.RightButton && _adventure is not null)
+            {
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Right, syntheticCursor);
+
+                // 窗口开着时输入只流向窗口，和左键一样要在窗口自己身上按一次；地图上那两个窗口的右键提示
+                // （市场的日收入框、盗贼公会的 EXIT 说明）正是「按住右键才在」，所以每帧都要补这一次。
+                if (_modal is { } modal)
+                {
+                    modal.SetCursor(syntheticCursor);
+                    modal.SetRightButton(down: true);
+                }
+            }
+        }
+
+        // A scripted click that went into LocalEvent releases on the frame after its press: one
+        // physical click spans two frames, and the button row and the list of the first-run chooser
+        // both fire on the release, not on the press.
+        if (_pendingClickRelease is { } releasePoint)
+        {
+            _le.OnMouseButton(isPressed: false, MouseButtonType.Left, releasePoint);
+            _pendingClickRelease = null;
+        }
+
+        // The press of a scripted click that went to an open window releases on this frame, the same way a
+        // physical click spans two frames.
+        if (_pendingModalClick is { } clickedModal)
+        {
+            _pendingModalClick = null;
+            clickedModal.SetLeftButton(down: false);
+        }
+
+        // A scripted key press releases on the frame after its press, for the same reason: a real press
+        // spans two frames, and the one-shot key state of LocalEvent is what the battle hot keys read.
+        if (_pendingKeyRelease is { } releaseKey)
+        {
+            _le.OnKeyboard(releaseKey, FHeroes2.UI.Input.KeyModifier.None,
+                FHeroes2.UI.Input.KeyboardEventState.Up);
+            _pendingKeyRelease = null;
+        }
+
+        // --left-click replays one click at frame 10 on --cursor; --left-click-at replays a whole script
+        // of them, because the first run needs three in one run (the language OKAY, the greeting OKAY,
+        // then a row of the resolution chooser). The clicks are replayed from inside the loop, i.e.
+        // after the event batch and before the scene update, which is the frame order a player
+        // produces. Doing it in CreateScenes would skip the first frames of the new scene.
+        foreach (ScriptedClick click in _clicks)
+        {
+            if (_timer.FrameCount != click.Frame)
+            {
+                continue;
+            }
+
+            // 窗口开着时输入只流向窗口（见 RunModal 的说明），脚本点击也一样：按下落这一帧、抬下落下一帧
+            // （同一次点击的两个状态不能落在同一帧，不然按住的样子永远留着）。窗口的点击不走 LocalEvent，
+            // 而是和真实事件一样直接交给窗口，所以这里自带坐标地调它的两个入口。
+            if (_modal is { } modal)
+            {
+                modal.SetCursor(click.Point);
+                modal.SetLeftButton(down: true);
+                _pendingModalClick = modal;
+            }
+
+            // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
+            // replaying there (the arrows need a second click in the same run to be visible).
+            else if (_castle is { } townScreen)
+            {
+                townScreen.SetCursor(click.Point);
+                townScreen.SetLeftButton(true);
+                townScreen.SetLeftButton(false);
+            }
+            else if (ReferenceEquals(_scene, _adventure) && _adventure is not null)
+            {
+                // 冒险地图与战场一样从 LocalEvent 里读指针与点击，所以脚本点击要推进去；按下与抬起
+                // 得落在同一帧（与真实点击一致），它按<b>点击</b>找瓦片：GameArea 先按光标位置取格，
+                // 再看这次的按下与抬起是否都在这一格里（MouseClickLeft）。
+                _le.OnMouseMotion(click.Point);
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                _le.OnMouseButton(isPressed: false, MouseButtonType.Left, click.Point);
+            }
+            else if (_menu is not null && _battle is null)
+            {
+                _menu.SetCursor(click.Point);
+                _menu.SetLeftButton(true);
+
+                if (_menu.SetLeftButton(false) is { } clicked)
+                {
+                    HandleMenuAction(clicked);
+                }
+            }
+
+            // The first-run resolution chooser is the one window that reads LocalEvent instead of the
+            // scene's SetLeftButton API (its list drives the scrolling, the double click and the
+            // right-click explanation from that state), so the click is pushed there as well. The
+            // press goes in now and the release on the next frame: one physical click spans two
+            // frames, and both the button row and the list fire on the release.
+            if (_menu?.ResolutionPicker is not null)
+            {
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                _pendingClickRelease = click.Point;
+            }
+
+            // The battle screen reads the pointer and the click out of LocalEvent (its cells are hit
+            // tested against the cell geometry), so a scripted click has to go in there as well.
+            if (_battle is not null && _modal is null)
+            {
+                _le.OnMouseMotion(click.Point);
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                _pendingClickRelease = click.Point;
+            }
+        }
+
+        // --key-at is the keyboard twin of the script: the battle's R, S, C and Space are hot keys read
+        // out of LocalEvent, so a smoke run can only reach the retreat and surrender dialogs this way.
+        foreach (ScriptedKey key in _keys)
+        {
+            if (_timer.FrameCount != key.Frame)
+            {
+                continue;
+            }
+
+            _le.OnKeyboard(key.Key, FHeroes2.UI.Input.KeyModifier.None,
+                FHeroes2.UI.Input.KeyboardEventState.Down);
+            _pendingKeyRelease = key.Key;
+
+            // 窗口开着时键盘只流向窗口（与点击同一个理由）：脚本键不进 SDL 的事件队列，所以在这里按
+            // HandleModalKey 的规则再分派一次，输入框才收得到脚本打进去的字。
+            if (_modal is { } modal)
+            {
+                DispatchModalKey(modal, key.Key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Hands one key to the open window with the split of <see cref="HandleModalKey"/>.
+    /// </summary>
+    /// <remarks>
+    /// 脚本回放的键没有 SDL <c>KeyboardEvent</c>，所以那套按 SDL <c>Keycode</c> 的分流在这里按游戏自己的
+    /// <see cref="Key"/> 再做一遍：ESC 是取消、回车与空格是确认，其余键原样交给窗口。
+    /// </remarks>
+    /// <param name="modal">Window that owns the keyboard.</param>
+    /// <param name="key">Key that was pressed.</param>
+    private static void DispatchModalKey(IModalScreen modal, Key key)
+    {
+        switch (key)
+        {
+            case Key.Escape:
+                modal.HotKey(ButtonHotKey.Cancel);
+
+                break;
+
+            case Key.Enter:
+            case Key.Space:
+                modal.HotKey(ButtonHotKey.Okay);
+
+                break;
+
+            default:
+                modal.PressKey(key, KeyModifier.None);
+
+                break;
         }
     }
 
@@ -1031,7 +1473,12 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>Maps the keys that stand for the standard buttons of a window, <c>Dialog::YES_NO</c>'s Enter.</summary>
-    private static void HandleModalKey(IModalScreen modal, in SDL.KeyboardEvent key)
+    /// <remarks>
+    /// ESC/回车/空格折成按钮热键；其余键原样交给窗口，输入框才收得到字（<see cref="IModalScreen.PressKey"/>）。
+    /// 修饰键取 <see cref="LocalEvent.CurrentKeyModifiers"/>，它已由本帧的事件处理填好，SDL 的
+    /// <c>key.mod</c> 在脚本回放里拿不到。
+    /// </remarks>
+    private void HandleModalKey(IModalScreen modal, in SDL.KeyboardEvent key)
     {
         if (key.Repeat)
         {
@@ -1042,15 +1489,19 @@ public sealed class GameHost : IDisposable
         {
             case SDL.Keycode.Escape:
                 modal.HotKey(ButtonHotKey.Cancel);
-                break;
+
+                return;
 
             case SDL.Keycode.Return:
             case SDL.Keycode.KpEnter:
             case SDL.Keycode.Space:
                 modal.HotKey(ButtonHotKey.Okay);
-                break;
+
+                return;
 
             default:
+                modal.PressKey(SdlKeyMap.ToKey((int)key.Key), _le.CurrentKeyModifiers);
+
                 break;
         }
     }
@@ -1781,9 +2232,11 @@ public sealed class GameHost : IDisposable
         scene.ExitEvent = LeaveAdventureMap;
 
         // 人类英雄打起来的仗要借主循环的一段帧（参考在这里是阻塞的，heroes_action.cpp）：把宿主的帧泵接上。
+        // 城堡屏也一样：进城之后英雄动作停在那里，屏本身由冒险地图造（与地图点进城同一个 CastleScene）。
         if (scene.HeroActionHost is { } host)
         {
             host.RunModal = RunModal;
+            host.OpenCastleScreen = scene.TryOpenCastle;
         }
 
         _adventure = scene;
@@ -1883,6 +2336,7 @@ public sealed class GameHost : IDisposable
         if (scene.HeroActionHost is { } host)
         {
             host.RunModal = RunModal;
+            host.OpenCastleScreen = scene.TryOpenCastle;
         }
 
         _adventure = scene;
@@ -1915,6 +2369,10 @@ public sealed class GameHost : IDisposable
         _castle = null;
         _adventure = null;
         _scene = _menu is not null ? _menu : _diagnostics;
+
+        // The verdict of the scenario stays in GameOverResult until the next game starts, so the clip is played
+        // when the map is left because the game is over, not when the player quits.
+        PlayGameOverVideos();
     }
 
     /// <summary>Maps a window coordinate onto the 640x480 logical frame, or <see langword="null"/> outside it.</summary>
@@ -1935,11 +2393,25 @@ public sealed class GameHost : IDisposable
         _timer.Tick(elapsedSeconds);
         _scene?.Update(elapsedSeconds);
 
-        if (_options.SmokeFrames is int maxFrames && _timer.FrameCount >= maxFrames)
+        SpendSmokeBudget();
+    }
+
+    /// <summary>
+    /// Stops the client once <c>--smoke-frames</c> rendered frames are spent, the scripted end of a run.
+    /// </summary>
+    /// <remarks>
+    /// 主循环与 <see cref="RunModal"/> 的内层循环都要调它：预算只在一个地方算，模态窗口里等人输入的那几帧
+    /// 也算数，否则挂在一个等不到输入的窗口上就永远退不出来。
+    /// </remarks>
+    private void SpendSmokeBudget()
+    {
+        if (_options.SmokeFrames is not int maxFrames || _timer.FrameCount < maxFrames || !_running)
         {
-            GameLog.Info($"Smoke mode finished after {_timer.FrameCount} frames ({_timer.FramesPerSecond:0.0} FPS).");
-            _running = false;
+            return;
         }
+
+        GameLog.Info($"Smoke mode finished after {_timer.FrameCount} frames ({_timer.FramesPerSecond:0.0} FPS).");
+        _running = false;
     }
 
     private void Draw()
@@ -1987,6 +2459,80 @@ public sealed class GameHost : IDisposable
         CaptureScreenshot();
 
         _presenter.EndFrame();
+    }
+
+    /// <summary>
+    /// Opens the riddle window of the sphinx nearest the focus hero, the <c>--sphinx-riddle</c> of the command line.
+    /// </summary>
+    /// <remarks>
+    /// 正常时机是英雄走到狮身人面像上（<c>heroes_action.cpp:3563</c>），那要走十几格；这个钩子替英雄把窗口开出来，
+    /// 用的仍是同一个 <c>IHeroActionHost.AskRiddle</c>，所以窗口、输入与返回值走的都是真实路径。窗口是阻塞式的，
+    /// 由主循环第一帧调用，等渲染器就位之后再把地图画在自己身后。
+    /// </remarks>
+    private void AskSphinxRiddle()
+    {
+        if (_adventure is not { } map || map.FindSphinxRiddle() is not { } riddle)
+        {
+            GameLog.Warn("--sphinx-riddle: the map has no sphinx whose riddle can be asked.");
+
+            return;
+        }
+
+        string answer = map.HeroActionHost?.AskRiddle(riddle) ?? string.Empty;
+
+        GameLog.Info($"The sphinx of '{map.MapName}' was asked from the command line: the answer was '{answer}'.");
+    }
+
+    /// <summary>
+    /// Opens one of the windows the map's objects show, the <c>--adventure-window</c> of the command line.
+    /// </summary>
+    /// <remarks>
+    /// 正常时机是英雄走到交易站或预言所上（<c>heroes_action.cpp:1288</c> 与 <c>:3039</c>），那要走几十格；这个钩子
+    /// 替英雄把窗口开出来，走的仍是 <c>IHeroActionHost</c> 上那两个入口，所以窗口与返回值都是真实路径。与谜语窗
+    /// 一样由主循环第一帧调用，等渲染器就位之后再把地图画在自己身后。
+    /// </remarks>
+    /// <param name="name">Name of the window: <c>market</c> or <c>guild</c>.</param>
+    private void OpenAdventureWindow(string name)
+    {
+        if (_adventure is not { } map || map.HeroActionHost is not { } host)
+        {
+            GameLog.Warn($"--adventure-window {name}: the adventure map is not up.");
+
+            return;
+        }
+
+        if (map.FocusHero is not { } hero)
+        {
+            GameLog.Warn($"--adventure-window {name}: the map has no focus hero whose kingdom could open it.");
+
+            return;
+        }
+
+        Kingdom kingdom = map.World.Kingdoms.GetKingdom(hero.GetColor());
+
+        switch (name.ToLowerInvariant())
+        {
+            case "market":
+            case "marketplace":
+                // 地图上的入口就是交易站，汇率固定三座市场（heroes_action.cpp:1288）。
+                host.OpenMarketplace(kingdom, fromTradingPost: true);
+
+                break;
+
+            case "guild":
+            case "thievesguild":
+            case "oracle":
+                host.OpenThievesGuild(kingdom);
+
+                break;
+
+            default:
+                GameLog.Warn($"--adventure-window {name}: expected 'market' or 'guild'.");
+
+                return;
+        }
+
+        GameLog.Info($"--adventure-window {name}: the window of '{map.MapName}' was closed again.");
     }
 
     /// <summary>
@@ -2068,16 +2614,23 @@ public sealed class GameHost : IDisposable
 
         _scene = _menu is not null ? _menu : _diagnostics;
 
-        if (_options.EnterMap && _menu is not null)
+        if ((_options.EnterMap || _options.OpenScenarioInfo) && _menu is not null)
         {
             if (_menu.Scenario is null)
             {
                 _menu.OpenScenario();
             }
 
-            // Confirm what the list shows: the first map, or the one --scenario-select picked.
-            _menu.ConfirmScenario();
-            TryEnterAdventureMap();
+            // Confirm what the list shows: the first map, or the one --scenario-select picked. That opens the
+            // scenario info screen (Game::SelectScenario() of the reference).
+            bool confirmed = _menu.ConfirmScenario() is not null;
+
+            // --scenario-info stops on that screen for the screenshot; --enter-map accepts it and starts the map.
+            if (confirmed && _options.EnterMap)
+            {
+                _menu.AcceptScenarioInfo();
+                TryEnterAdventureMap();
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(_options.MapFile))
@@ -2256,13 +2809,46 @@ public sealed class GameHost : IDisposable
                 : "--quick-info: the cursor is not over the map area.");
         }
 
+        // The riddle window normally opens when a hero walks onto a sphinx, which needs a walk of a dozen
+        // tiles; --sphinx-riddle asks the nearest one instead. The window blocks its caller and paints the
+        // map behind itself, so it cannot open here where the renderer does not exist yet: the loop opens
+        // it on its first frame.
+        if (_options.SphinxRiddle)
+        {
+            _pendingSphinxRiddle = true;
+        }
+
+        // --adventure-window 的两个窗口同样要等渲染器：它们也由主循环的内层循环跑，关掉之后才回到地图。
+        if (_options.AdventureWindow is { } adventureWindow)
+        {
+            _pendingAdventureWindow = adventureWindow;
+        }
+
+        // --cast-spell 的次元门要玩家在灰框里点一格，而那个方框也是界面里的阻塞循环：同样等渲染器。
+        if (_options.CastSpell is { } castSpell && _adventure is not null)
+        {
+            _pendingSpellCast = castSpell;
+        }
+
         GameLog.Info(_menu is null
             ? "Starting on the diagnostics screen."
             : $"Starting on the main menu (language '{_menu.Text.Culture}', " +
               $"{_menu.Languages.Count} available).");
     }
 
-    private void CaptureScreenshot()
+    /// <summary>
+    /// Writes the screenshot the command line or F12 asked for, and closes the client when a script asked for it.
+    /// </summary>
+    /// <param name="composedFrameOnly">
+    /// Encodes <see cref="_frame"/> itself instead of reading the render target back, for the frames an interface
+    /// loop of its own produced (see <see cref="OnFrameEnded"/>).
+    /// </param>
+    /// <remarks>
+    /// 主循环在 <see cref="Draw"/> 里拍的是还没上屏的后缓冲（<c>SDL_RenderReadPixels</c>），读回来就是这一帧。
+    /// 界面内层循环的帧在上一次循环里已经 present 过，后缓冲是空的，读回来只有一片白，所以那条路改成直接从
+    /// <see cref="_frame"/> 编码。
+    /// </remarks>
+    private void CaptureScreenshot(bool composedFrameOnly = false)
     {
         bool requestedByCommandLine = _screenshotFrame >= 0 && _timer.FrameCount >= _screenshotFrame;
         bool requestedByKey = _screenshotRequested;
@@ -2286,7 +2872,16 @@ public sealed class GameHost : IDisposable
                 Directory.CreateDirectory(directory);
             }
 
-            _presenter!.SaveLogicalFrame(path);
+            if (composedFrameOnly)
+            {
+                using FileStream stream = File.Create(path);
+                PngWriter.WriteRgba(stream, _frame.Pixels, _frame.Palette);
+            }
+            else
+            {
+                _presenter!.SaveLogicalFrame(path);
+            }
+
             GameLog.Info($"Screenshot saved to '{Path.GetFullPath(path)}'.");
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or UnauthorizedAccessException)

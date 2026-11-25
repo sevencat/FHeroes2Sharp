@@ -11,7 +11,6 @@ using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
-using CastleTown = FHeroes2.Game.Castle.Castle;
 using GameKingdom = FHeroes2.Game.Kingdom.Kingdom;
 using SpriteFile = FHeroes2.Assets.Icn.IcnSpriteFile;
 
@@ -38,12 +37,18 @@ public sealed class RecruitWindow
     private const int ScreenWidth = 640;
     private const int ScreenHeight = 480;
 
-    /// <summary>Pixels the window is pushed down, the <c>windowOffsetY</c> argument of the two callers.</summary>
+    /// <summary>Pixels the window is pushed down, the <c>windowOffsetY</c> argument of the callers.</summary>
     /// <remarks>井里是 <c>2</c>（<c>castle_well.cpp:266</c>），城镇屏是 <c>-65</c>（<c>castle_dialog.cpp:685</c>）。</remarks>
     public const int WellWindowOffsetY = 2;
 
     /// <inheritdoc cref="WellWindowOffsetY"/>
     public const int CastleWindowOffsetY = -65;
+
+    /// <summary>
+    /// The offset a dwelling out on the map asks for, <c>Dialog::RecruitMonster( …, 0 )</c>
+    /// (<c>heroes_action.cpp:276</c>): the window sits where it is, over the adventure map.
+    /// </summary>
+    public const int MapWindowOffsetY = 0;
 
     /// <summary>Where the pointer is parked while it is outside the window.</summary>
     private static readonly Point OffScreen = new(-1, -1);
@@ -70,6 +75,7 @@ public sealed class RecruitWindow
 
     private Point? _cursor;
     private bool _closePressed;
+    private bool _okayPressed;
 
     private RecruitWindow(RecruitWindowView view) => _view = view;
 
@@ -77,16 +83,19 @@ public sealed class RecruitWindow
     /// Builds the window of one dwelling, <c>Dialog::RecruitMonster()</c> up to its loop.
     /// </summary>
     /// <param name="assets">The archives the sprites come from.</param>
-    /// <param name="castle">The town the dwelling belongs to; only its race is read.</param>
     /// <param name="monster">The unit on offer.</param>
     /// <param name="available">How many units the dwelling holds.</param>
     /// <param name="kingdom">The kingdom that pays; <see cref="RecruitDialog"/> only reads its treasury.</param>
     /// <param name="fonts">The text faces of the game.</param>
     /// <param name="windowOffsetY">How far the window is pushed down; see <see cref="WellWindowOffsetY"/>.</param>
     /// <returns>The window, or <see langword="null"/> when an archive is missing frames.</returns>
+    /// <remarks>
+    /// 参考的 <c>Dialog::RecruitMonster</c> 不收城堡，只要兵种、存货、能否换降级兵和一个纵向偏移
+    /// （<c>dialog_recruit.cpp:253</c>）；端口早先多要了一个 <c>Castle</c>，实际只在空检查里用过，地图上的居所
+    /// 根本没有城可以传，于是把它去掉了。
+    /// </remarks>
     public static RecruitWindow? TryCreate(
         AssetBundle assets,
-        CastleTown castle,
         MonsterType monster,
         uint available,
         GameKingdom kingdom,
@@ -94,7 +103,6 @@ public sealed class RecruitWindow
         int windowOffsetY = WellWindowOffsetY)
     {
         ArgumentNullException.ThrowIfNull(assets);
-        ArgumentNullException.ThrowIfNull(castle);
         ArgumentNullException.ThrowIfNull(kingdom);
         ArgumentNullException.ThrowIfNull(fonts);
 
@@ -208,11 +216,21 @@ public sealed class RecruitWindow
     public void SetRightButton(bool down) =>
         _events.OnMouseButton(down, MouseButtonType.Right, _cursor ?? OffScreen);
 
-    /// <summary>Marks ESC/Enter, which the next <see cref="Update"/> answers as CANCEL.</summary>
+    /// <summary>Marks ESC, which the next <see cref="Update"/> answers as CANCEL.</summary>
     public void PressClose() => _closePressed = true;
 
+    /// <summary>
+    /// Marks Enter, which the next <see cref="Update"/> answers as OKAY, <c>Game::HotKeyPressEvent( DEFAULT_OKAY )</c>
+    /// (<c>dialog_recruit.cpp:617</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考里回车只在那颗 OKAY 按钮可用时才算数（数量为 0 时按钮是灰的），这里照同一条门：数量为 0 时连
+    /// <see cref="Update"/> 都不动，窗口继续等。
+    /// </remarks>
+    public void PressOkay() => _okayPressed = true;
+
     /// <summary>Consumes the events of this frame, <c>dialog_recruit.cpp</c>'s loop.</summary>
-    /// <remarks>一次调用对应一帧：读完之后输入状态被清空，ESC 标记也一起用掉。</remarks>
+    /// <remarks>一次调用对应一帧：读完之后输入状态被清空，ESC/回车标记也一起用掉。</remarks>
     public void Update()
     {
         if (_closePressed)
@@ -223,6 +241,21 @@ public sealed class RecruitWindow
             IsClosed = true;
 
             return;
+        }
+
+        if (_okayPressed)
+        {
+            _okayPressed = false;
+
+            // 数量为 0 时参考的那颗 OKAY 是灰的，回车什么也不做，窗口继续等。
+            if (Dialog.IsOkayEnabled)
+            {
+                Dialog.Choose(Dialog.Selected);
+                Selected = Dialog.Result;
+                IsClosed = true;
+
+                return;
+            }
         }
 
         RecruitWindowAction action = _view.ProcessEvents(_events);

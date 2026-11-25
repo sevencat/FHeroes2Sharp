@@ -1084,7 +1084,10 @@ public sealed class MonsterDialogElement : DialogElement
     }
 
     /// <inheritdoc/>
-    /// <remarks>Both the right click and the left one ask for the creature info, like the reference.</remarks>
+    /// <remarks>
+    /// Both the right click and the left one ask for the creature info, like the reference. 生物资料窗（参考的
+    /// <c>Dialog::ArmyInfo( troop, 0 )</c>）还没转，所以调用方给两张空文本时不报弹窗，元素照常画。
+    /// </remarks>
     public override DialogElementResult ProcessEvents(LocalEvent events, Point offset)
     {
         ArgumentNullException.ThrowIfNull(events);
@@ -1092,6 +1095,11 @@ public sealed class MonsterDialogElement : DialogElement
         Rect area = new(offset, Area);
 
         if (!events.IsMouseRightButtonPressedInArea(area) && !events.MouseClickLeft(area))
+        {
+            return default;
+        }
+
+        if (_popupHeader.Length == 0 && _popupBody.Length == 0)
         {
             return default;
         }

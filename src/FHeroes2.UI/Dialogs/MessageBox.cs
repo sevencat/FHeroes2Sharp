@@ -305,7 +305,7 @@ public sealed class MessageBox
 
         MessageBox box = Create(header, body, headerFont, bodyFont, buttons: buttons, buttonArtwork: buttonArtwork);
 
-        return Run(box, target, events ?? LocalEvent.Current);
+        return Run(box, target, events ?? LocalEvent.Current, showPopup: null);
     }
 
     /// <summary>
@@ -320,19 +320,32 @@ public sealed class MessageBox
     /// <param name="target">Indexed frame to draw into and to submit, as in <see cref="Show"/>.</param>
     /// <param name="box">The composed box to run.</param>
     /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <param name="showPopup">
+    /// How to open a <see cref="DialogPopup"/> an element asked for; the reference lets the element call
+    /// <c>Dialog::Message</c> itself, but the port keeps the fonts and the frame in the owner, so the box hands the
+    /// request back. <see langword="null"/> ignores the popups, which is what a caller without fonts wants.
+    /// </param>
     /// <returns>The button that closed the box, or <see cref="DialogButton.None"/> when the client was asked to exit.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="box"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">No <see cref="IEventEngine"/> is attached.</exception>
-    public static DialogButton Show(PixelBuffer target, MessageBox box, LocalEvent? events = null)
+    public static DialogButton Show(
+        PixelBuffer target,
+        MessageBox box,
+        LocalEvent? events = null,
+        Action<DialogPopup>? showPopup = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(box);
 
-        return Run(box, target, events ?? LocalEvent.Current);
+        return Run(box, target, events ?? LocalEvent.Current, showPopup);
     }
 
     /// <summary>The event loop of <see cref="Show"/>, the <c>while ( le.HandleEvents() )</c> of the reference.</summary>
-    private static DialogButton Run(MessageBox box, PixelBuffer target, LocalEvent events)
+    private static DialogButton Run(
+        MessageBox box,
+        PixelBuffer target,
+        LocalEvent events,
+        Action<DialogPopup>? showPopup)
     {
         IEventEngine engine = events.Engine ?? throw new InvalidOperationException(
             "MessageBox.Show() needs an event engine: attach LocalEvent.Engine before calling it.");
@@ -380,6 +393,14 @@ public sealed class MessageBox
 
             box.Update(target, elapsed);
             box.Draw(target);
+
+            // 元素自己的点击（生物、宝物、法术的画像）在参考里由元素同步开一个模态框，这里把请求交回所有者；框关掉
+            // 之后参考只重画对话框本身（<c>dialog.render()</c>），所以这里也只重画框。
+            if (showPopup is not null && box.ProcessEvents(events).Popup is { } popup)
+            {
+                showPopup(popup);
+                box.Draw(target);
+            }
 
             engine.Render(target.Bounds);
             engine.Sleep(LocalEvent.LoopSleepTimeMs);

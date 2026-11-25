@@ -237,6 +237,19 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 各带一面旗。改动同样是**新增绘制**，没有挪动既有内容；立绘与旗帜都由种族、英雄/队长身份与战场位置唯一决定，
 没有随机量，所以重跑不带 `-Update` 的校验即为 `identical`。
 
+## 2026-11-25 的城堡图标偏移修正
+
+同日第三轮：**修正**城堡图标在槽位里的落点，`adventure-map.png`、`adventure-map-boats.png`、
+`adventure-options.png`、`quick-info.png` 四张重建（差异恒为 1 300 个像素，首个差异像素 `557,181`，
+即右列城堡槽里的那张图标）。
+
+原因是 `CastleIconPainter.Draw()` 把 `LOCATORS` 帧自带的 `5,5` 偏移**又加了一遍**：参考的
+`fheroes2::drawCastleIcon( castle, output, offset )` 是直接 `Copy` 到 `offset`，帧自带的偏移只给地图物件用；
+而端口三个调用点（`IconsPanel`、`KingdomHeroRow`、`CastleQuickInfoView`）传的已经是参考里的最终坐标
+（`redrawCastleIcon( castle, ox + 5, oy + 5 )`、`{ dstx + 17, dsty + 19 }`、`{ 4, 4 }`），于是图标实际落在槽位
+右下方 5 像素处。去掉那次额外的偏移后，图标回到槽位四周各留 5 像素的位置，与 `interface_icons.cpp` 一致。
+新像素由地图文件与槽位几何唯一决定，重跑不带 `-Update` 的校验即为 `identical`。
+
 ## 基线的数据版本
 
 当前十二张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
@@ -253,10 +266,10 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `settings.zh_CN.png` | 231,331 | `3B04E01CB3DA0D86BF781C338555B5041F8CAACD4D40B4A207627877A465071E` |
 | `scenario.png` | 212,241 | `03EAB07B6AC553C95470678BE0EF9B5A764EEB54F2BA4EAB7BA4476C4178947F` |
 | `scenario.zh_CN.png` | 212,244 | `567D2DC0CEBFF60702D678AA6066F6ACF114930198C4583954050B058DCC1E63` |
-| `adventure-map.png` | 122,397 | `849702BFAFAC122952FD633AC32DD9283718A542DC6A2FA21FA88E749CDD4C1F` |
-| `adventure-map-boats.png` | 132,362 | `63A9722237F906BACFD7DD8317B952DC2B870ABD9BE4577FDEC3B6D1DE2D8136` |
-| `adventure-options.png` | 130,860 | `961E657BA1B4C2CFE5A5FB42A3810C39AE7D5A34D35296A198DFD2894A48507D` |
-| `quick-info.png` | 121,856 | `012B298143C38E786ED8834E85ABAA163BFA16BDED372BB35485C199A59F672F` |
+| `adventure-map.png` | 122,427 | `43E061BFF8B9AAF3E7FE27C09A8C883038A41196E37A6706FCE20C555AA14A54` |
+| `adventure-map-boats.png` | 132,360 | `2B82CC1096DD9057E358EA3B4734C2834D830FCB47BBB0FEF4D4DBFB78261265` |
+| `adventure-options.png` | 130,914 | `C706C8C180DDCD21217D5E68E14CECAE62A2334171E1ED144D88C9D8053469CE` |
+| `quick-info.png` | 121,902 | `80550B859F6ABEBC83887EFF50CFE56A1BDE2C1E3C4F7B397219C6C809AD4C22` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
 | `battle.png` | 172,852 | `A2F4133C902BFF3CC4B9B2CBEDCAFBD9E0EBEF4753CC02312073364CEFCE1B79` |
 | `battle-siege.png` | 210,501 | `95E0B235975A836D1C85A831F3370A9940E5FB33FE4D36628918DC28214013EA` |

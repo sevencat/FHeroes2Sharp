@@ -49,6 +49,16 @@ public sealed partial class AdventureMap : BaseInterface
     /// <summary>The scrolled map the View World window shows, set by <see cref="AttachView"/>.</summary>
     private AdventureMapView? _view;
 
+    /// <summary>
+    /// The artwork by ICN name, the <c>getImage()</c> of the reference: the map buttons, the Dimension Door panel and
+    /// whatever else the screen draws that no dedicated panel owns.
+    /// </summary>
+    /// <remarks>
+    /// 面板各自从 <see cref="IViewWorldSpriteSource"/> 取自己的帧，但次元门这种「临时借地图当选择器」的画面不属于
+    /// 任何面板，所以整份来源留在这里。没有美术数据时是 null，屏幕退回不画这条路径。
+    /// </remarks>
+    private IViewWorldSpriteSource? _sprites;
+
     /// <summary>The map viewport on the screen, in pixels, the <c>GameArea::GetROI()</c> of the reference.</summary>
     private Rect _viewport;
 
@@ -191,6 +201,7 @@ public sealed partial class AdventureMap : BaseInterface
         IcnViewWorldSpriteSource sprites = new(assets);
 
         map._dialogs = new AdventureMapDialogs(display, assets);
+        map._sprites = sprites;
         map._iconsPanel = new IconsPanel(map, display, world, sprites, evilInterface);
         map._statusPanel = new StatusPanel(map, display, world, sprites, monsters);
         map._buttonsPanel = CreateButtonsPanel(display, sprites, buttonSet);

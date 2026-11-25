@@ -285,6 +285,31 @@ public sealed partial class AdventureMap
             return;
         }
 
+        CastAdventureSpell(spell);
+    }
+
+    /// <summary>
+    /// Casts an adventure spell for the focused hero, the tail of <see cref="EventCastSpell"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 法术书窗口要玩家读两屏才走到这里，而 <c>--cast-spell</c> 的冒烟脚本点不到那些按钮（次元门的选择方框
+    /// 是界面内的阻塞循环，脚本只送得进一格点击）。所以把「选完法术之后」这一段单独开一个入口：它走的是与
+    /// 法术书选完之后<i>同一条</i>路——<c>ActionSpellCast</c> 与焦点重置——只是省掉了选法术那一步。
+    /// </para>
+    /// <para>
+    /// 调用方要先过 <c>CanCastSpell</c>，与参考一样；返回值不可靠，次元门在自己那一支里已经收过费并返回假，
+    /// 见 <see cref="Hero.ActionSpellCast"/>。
+    /// </para>
+    /// </remarks>
+    /// <param name="spell">The spell to cast.</param>
+    public void CastAdventureSpell(Game.Spells.Spell spell)
+    {
+        if (InterfaceFocus.GetFocusHeroes() is not { } hero)
+        {
+            return;
+        }
+
         hero.ActionSpellCast(spell, World.Current, _spellCastHost);
 
         // The spell consumes spell points (and maybe movement points) and can move the hero, so the terrain music

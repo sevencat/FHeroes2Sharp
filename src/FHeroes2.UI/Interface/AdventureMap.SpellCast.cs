@@ -17,10 +17,9 @@ namespace FHeroes2.UI.Interface;
 /// view that <see cref="AttachView"/> handed over, and neither is reachable from the game layer.
 /// </para>
 /// <para>
-/// <b>Not ported yet.</b> The two picks — the Dimension Door square and the town list of Town Portal — are
-/// interactive modes of the adventure map, and the Visions dialogs wait for the monster portrait element that the
-/// text-only message box cannot draw. Until those arrive the two picks answer "cancelled", which costs no spell
-/// points, and Visions only records the stacks in the kingdom.
+/// The town list of Town Portal is <see cref="AdventureMapDialogs.SelectKingdomCastle"/>, the
+/// <c>dialog_selectitems.cpp</c> list box with the castle icons. The Dimension Door square is an interactive mode of
+/// this screen and the Visions dialogs already draw the creature on the stone plate, <see cref="MonsterPlateArtwork"/>.
 /// </para>
 /// </remarks>
 public sealed partial class AdventureMap
@@ -49,11 +48,25 @@ public sealed partial class AdventureMap
     }
 
     /// <summary>
+    /// The town Town Portal sends the hero to, <c>Dialog::selectKingdomCastle()</c>
+    /// (<c>heroes_spell.cpp:861-880</c>).
+    /// </summary>
+    /// <remarks>
+    /// The reference asks with the fixed texts <c>_( "Town Portal" )</c> and <c>_( "Select town to port to." )</c> and
+    /// lets the dialog layer filter and draw the list; the hero's own town comes first because the caller keeps the
+    /// kingdom's order.
+    /// </remarks>
+    /// <param name="castles">The towns the hero may port to, already without the ones a hero stands in.</param>
+    /// <returns>The tile index of the chosen town's gate, or -1 when the player cancelled.</returns>
+    private int SelectTownPortalTown(IReadOnlyList<CastleTown> castles) =>
+        _dialogs.SelectKingdomCastle(castles, "Town Portal", "Select town to port to.");
+
+    /// <summary>
     /// One stack the Visions spell shows, <c>heroes_spell.cpp:284-321</c>.
     /// </summary>
     /// <remarks>
     /// The reference header is <c>"%{count} plural-name"</c> and the body is chosen by the joining reason; the
-    /// monster portrait that goes with the message waits for the dialog element.
+    /// creature goes onto the stone plate under the text, <c>fheroes2::MonsterDialogElement</c>.
     /// </remarks>
     /// <param name="troop">The stack on the tile.</param>
     /// <param name="join">What the stack would do.</param>
@@ -74,7 +87,7 @@ public sealed partial class AdventureMap
             _ => "I fear these creatures are in the mood for a fight.",
         };
 
-        _dialogs.ShowMessage(header, body);
+        _dialogs.ShowMonsterMessage(header, body, troop.Monster);
     }
 
     /// <summary>
@@ -84,18 +97,11 @@ public sealed partial class AdventureMap
     private sealed class SpellCastHost(AdventureMap screen) : IHeroSpellCastHost
     {
         /// <inheritdoc />
-        public int SelectDimensionDoorDestination(int sourceIndex, int distance, bool isWater)
-        {
-            // 目的地选取是冒险地图的一种交互模式（参考里那圈虚线框），随冒险地图一起归 S12。
-            return -1;
-        }
+        public int SelectDimensionDoorDestination(int sourceIndex, int distance, bool isWater) =>
+            screen.SelectDimensionDoorDestination(sourceIndex, distance, isWater);
 
         /// <inheritdoc />
-        public int SelectTownPortalTown(IReadOnlyList<CastleTown> castles)
-        {
-            // 城列表选取要一个带城堡图标的列表框，同上。
-            return -1;
-        }
+        public int SelectTownPortalTown(IReadOnlyList<CastleTown> castles) => screen.SelectTownPortalTown(castles);
 
         /// <inheritdoc />
         public void OpenViewWorld(ViewWorldMode mode) => screen.OpenSpellViewWorld(mode);

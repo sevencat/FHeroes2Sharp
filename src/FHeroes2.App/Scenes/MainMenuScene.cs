@@ -243,6 +243,9 @@ public sealed class MainMenuScene : IScene
     private bool _skipResolutionInput;
     private IReadOnlyList<Mp2FileInfo>? _maps;
     private ScenarioSelectionDialog? _scenario;
+    private ScenarioInfoDialog? _scenarioInfo;
+    private ScenarioInfoArtwork? _scenarioInfoArtwork;
+    private MessageBox? _scenarioInfoTip;
     private Mp2FileInfo? _confirmedScenario;
 
     private MainMenuScene(
@@ -551,6 +554,8 @@ public sealed class MainMenuScene : IScene
         // time, the order only keeps the code in the order the host opens them.
         _settings?.Draw(pixels);
         _scenario?.Draw(pixels);
+        _scenarioInfo?.Draw(pixels);
+        _scenarioInfoTip?.Draw(pixels);
         _languagePicker?.Draw(pixels);
         _welcome?.Draw(pixels);
         _resolutionPicker?.Draw(pixels);
@@ -575,6 +580,14 @@ public sealed class MainMenuScene : IScene
         if (_scenario is not null)
         {
             _scenario.SetCursor(cursor);
+            return;
+        }
+
+        // The scenario info screen has no hover state of its own: it reads the pointer from LocalEvent when it is
+        // clicked, so only the position is remembered - and the cursor stays away from the signs behind it.
+        if (_scenarioInfo is not null)
+        {
+            _cursor = cursor;
             return;
         }
 
@@ -635,6 +648,38 @@ public sealed class MainMenuScene : IScene
             if (_settings.SetLeftButton(down) == DialogButton.Ok)
             {
                 ApplySettings();
+            }
+
+            return null;
+        }
+
+        // The help box of the scenario info screen sits on top of it: its OK button closes the box and nothing
+        // else is reached while it is up, the way <c>Dialog::Message</c> swallows the clicks inside its loop.
+        if (_scenarioInfoTip is not null)
+        {
+            if (_scenarioInfoTip.SetLeftButton(down) == DialogButton.Ok)
+            {
+                _scenarioInfoTip = null;
+            }
+
+            return null;
+        }
+
+        // The scenario info screen owns the mouse while it is open: it answers with the screen to go to next.
+        // 它从 LocalEvent 里读光标与按键（和窗口里的按钮同一套写法），而 SetCursor 只改菜单自己的 _cursor，
+        // 所以这里先把光标位置推进 LocalEvent，脚本点击才能落到按钮上。
+        if (_scenarioInfo is not null)
+        {
+            LocalEvent events = LocalEvent.Current;
+            if (_cursor is { } cursor)
+            {
+                events.OnMouseMotion(cursor);
+                events.OnMouseButton(down, MouseButtonType.Left, cursor);
+            }
+
+            if (down)
+            {
+                ApplyScenarioInfoResult(_scenarioInfo.ProcessEvents(events));
             }
 
             return null;
@@ -861,6 +906,48 @@ public sealed class MainMenuScene : IScene
             };
         }
 
+        // The help box of the scenario info screen is an OK box: Escape and Enter close it, the screen behind it
+        // keeps its keys until the box is gone.
+        if (_scenarioInfoTip is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter or EnterCharacter or LineFeedCharacter:
+                    _scenarioInfoTip = null;
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
+        // While the scenario info screen is open the keyboard belongs to it: Escape is CANCEL, Enter is OKAY and M
+        // is the "Select Maps" button (<c>game_scenarioinfo.cpp:395-420</c>).
+        if (_scenarioInfo is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter:
+                    CloseScenarioInfo();
+                    break;
+
+                case EnterCharacter or LineFeedCharacter:
+                    AcceptScenarioInfo();
+                    break;
+
+                case 'm' or 'M':
+                    ReopenScenarioList();
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
         // While the scenario list is open the keyboard belongs to it as well: Escape closes it
         // without a choice, Enter is the OKAY hot key. The arrow, page, Home and End keys are not
         // characters, the host routes them through MoveScenarioSelection / MoveScenarioPage.
@@ -1039,7 +1126,8 @@ public sealed class MainMenuScene : IScene
     /// picker, greeting and resolution chooser of the first run.
     /// </summary>
     public bool HasModalDialog =>
-        _settings is not null || _scenario is not null || _languagePicker is not null || _welcome is not null ||
+        _settings is not null || _scenario is not null || _scenarioInfo is not null ||
+        _scenarioInfoTip is not null || _languagePicker is not null || _welcome is not null ||
         _resolutionPicker is not null || _resolutionTip is not null;
 
     /// <summary>The open resolution chooser of the first run, or <see langword="null"/>.</summary>
@@ -1099,12 +1187,10 @@ public sealed class MainMenuScene : IScene
     }
 
     /// <summary>
-    /// Accepts the selected map and closes the dialog, the OKAY button and Enter of the reference.
+    /// Accepts the row of the scenario list and goes on to the scenario info screen, the OKAY button and Enter of
+    /// <c>Dialog::SelectScenario()</c> followed by <c>Game::SelectScenario()</c> (<c>game_scenarioinfo.cpp:95-212</c>).
     /// </summary>
-    /// <returns>
-    /// The chosen map, or <see langword="null"/> when the dialog is not open or the list is empty;
-    /// the host takes it and starts the game with it.
-    /// </returns>
+    /// <returns>The map the info screen was opened for, or <see langword="null"/> when the list is not open or empty.</returns>
     public Mp2FileInfo? ConfirmScenario()
     {
         if (_scenario?.Selected is not { } map)
@@ -1113,14 +1199,92 @@ public sealed class MainMenuScene : IScene
         }
 
         _scenario = null;
-        _status = $"{map.Name} - M4";
-        _confirmedScenario = map;
 
         GameLog.Info(
             $"Scenario selected: '{map.Name}' ({map.Width}x{map.Height}, difficulty {map.Difficulty}, " +
             $"{map.PlayerCount} kingdom(s)) from '{map.FilePath}'.");
 
+        OpenScenarioInfo(map);
+
         return map;
+    }
+
+    /// <summary>The scenario info screen, or <see langword="null"/> when it is not open.</summary>
+    public ScenarioInfoDialog? ScenarioInfo => _scenarioInfo;
+
+    /// <summary>
+    /// Accepts the scenario the info screen shows and remembers it for the host, which starts the game with it.
+    /// </summary>
+    /// <returns><see langword="true"/> when the screen was open and the game may start.</returns>
+    public bool AcceptScenarioInfo()
+    {
+        if (_scenarioInfo is not { } dialog)
+        {
+            return false;
+        }
+
+        dialog.Accept();
+
+        Mp2FileInfo map = dialog.Map;
+        GameDifficulty difficulty = dialog.Difficulty;
+        int slots = dialog.Players.All.Count;
+
+        _scenarioInfo = null;
+        _status = $"{map.Name} - M4";
+        _confirmedScenario = map;
+
+        GameLog.Info($"Scenario accepted: '{map.Name}', difficulty {difficulty}, {slots} slot(s); the game starts.");
+
+        return true;
+    }
+
+    /// <summary>Goes back from the info screen to the main menu, Escape and CANCEL.</summary>
+    /// <returns><see langword="true"/> when the screen was open.</returns>
+    public bool CloseScenarioInfo()
+    {
+        if (_scenarioInfo is null)
+        {
+            return false;
+        }
+
+        _scenarioInfo = null;
+        _scenarioInfoTip = null;
+        GameLog.Info("Scenario info closed without starting a game.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Goes back from the info screen to the map list, the "Select Maps" button and the M key
+    /// (<c>game_scenarioinfo.cpp:395-402</c>).
+    /// </summary>
+    /// <returns><see langword="true"/> when the list was opened again.</returns>
+    public bool ReopenScenarioList()
+    {
+        if (_scenarioInfo is not { } dialog)
+        {
+            return false;
+        }
+
+        Mp2FileInfo map = dialog.Map;
+
+        _scenarioInfo = null;
+
+        if (!OpenScenario())
+        {
+            return false;
+        }
+
+        for (int i = 0; i < _scenario!.Maps.Count; ++i)
+        {
+            if (_scenario.Maps[i].FilePath == map.FilePath)
+            {
+                _scenario.Select(i);
+                break;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1150,6 +1314,120 @@ public sealed class MainMenuScene : IScene
 
     /// <summary>Selects the last row of the open scenario list (the End key).</summary>
     public void SelectLastScenario() => _scenario?.Select(int.MaxValue);
+
+    /// <summary>
+    /// Opens the scenario info screen for <paramref name="map"/>, <c>Game::SelectScenario()</c>
+    /// (<c>game_scenarioinfo.cpp:95-212</c>).
+    /// </summary>
+    /// <remarks>
+    /// 这一屏要 NGEXTRA / NGHSBKG / MAP_SELECT 的图；缺图时 <see cref="ScenarioInfoArtwork"/> 会抛，此时不硬撑一个空窗口，
+    /// 记一条警告后按旧行为直接开始这张图，跟 <see cref="OpenScenario"/> 在缺图时干脆不开窗口是同一个思路。
+    /// </remarks>
+    private void OpenScenarioInfo(Mp2FileInfo map)
+    {
+        try
+        {
+            _scenarioInfoArtwork ??= new ScenarioInfoArtwork(Game.System.Settings.Get().IsEvilInterfaceEnabled);
+
+            ScenarioInfoDialog dialog = new(
+                Maps,
+                _scenarioInfoArtwork,
+                _fonts.Normal,
+                _fonts.SmallWhite,
+                ShowScenarioInfoMessage,
+                CreateScenarioInfoText());
+
+            int index = IndexOfMap(map);
+            if (index >= 0)
+            {
+                dialog.SelectMap(index);
+            }
+
+            _scenarioInfo = dialog;
+
+            GameLog.Info($"Scenario info opened: '{dialog.Map.Name}', difficulty {dialog.Difficulty}.");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            GameLog.Warn($"The scenario info screen cannot be shown: {ex.Message}; '{map.Name}' starts directly.");
+
+            _status = $"{map.Name} - M4";
+            _confirmedScenario = map;
+        }
+    }
+
+    /// <summary>Turns the answer of the info screen into the next screen of the menu.</summary>
+    /// <param name="result">What the click asked for.</param>
+    private void ApplyScenarioInfoResult(ScenarioInfoResult result)
+    {
+        switch (result)
+        {
+            case ScenarioInfoResult.Started:
+                AcceptScenarioInfo();
+                break;
+
+            case ScenarioInfoResult.Cancelled:
+                CloseScenarioInfo();
+                break;
+
+            case ScenarioInfoResult.SelectMaps:
+                ReopenScenarioList();
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>Shows a help message of the scenario info screen on top of it.</summary>
+    /// <param name="title">The header of the box.</param>
+    /// <param name="body">The text of the box.</param>
+    private void ShowScenarioInfoMessage(string title, string body)
+    {
+        _scenarioInfoTip = MessageBox.Create(title, body, _fonts.Yellow, _fonts.Normal);
+    }
+
+    /// <summary>The index of <paramref name="map"/> in <see cref="Maps"/>, or -1 when it is not there.</summary>
+    /// <param name="map">The map the info screen has to open with.</param>
+    private int IndexOfMap(Mp2FileInfo map)
+    {
+        for (int i = 0; i < Maps.Count; ++i)
+        {
+            if (Maps[i].FilePath == map.FilePath)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The labels of the scenario info screen, resolved through the current text catalog.</summary>
+    private ScenarioInfoText CreateScenarioInfoText()
+    {
+        ScenarioInfoText untranslated = ScenarioInfoText.Default;
+
+        return new ScenarioInfoText
+        {
+            ScenarioLabel = Text.Get(untranslated.ScenarioLabel),
+            DifficultyLabel = Text.Get(untranslated.DifficultyLabel),
+            OpponentsLabel = Text.Get(untranslated.OpponentsLabel),
+            ClassLabel = Text.Get(untranslated.ClassLabel),
+            Difficulties = [.. untranslated.Difficulties.Select(Text.Get)],
+            RatingTemplate = Text.Get(untranslated.RatingTemplate),
+            SelectMapsButton = Text.Get(untranslated.SelectMapsButton),
+            ScenarioHelpTitle = Text.Get(untranslated.ScenarioHelpTitle),
+            ScenarioHelp = Text.Get(untranslated.ScenarioHelp),
+            DifficultyHelpTitle = Text.Get(untranslated.DifficultyHelpTitle),
+            DifficultyHelp = Text.Get(untranslated.DifficultyHelp),
+            RatingHelpTitle = Text.Get(untranslated.RatingHelpTitle),
+            RatingHelp = Text.Get(untranslated.RatingHelp),
+            OkayHelpTitle = Text.Get(untranslated.OkayHelpTitle),
+            OkayHelp = Text.Get(untranslated.OkayHelp),
+            CancelHelpTitle = Text.Get(untranslated.CancelHelpTitle),
+            CancelHelp = Text.Get(untranslated.CancelHelp),
+        };
+    }
 
     /// <summary>Every map the dialog may offer, read on first use and cached for the session.</summary>
     private IReadOnlyList<Mp2FileInfo> Maps

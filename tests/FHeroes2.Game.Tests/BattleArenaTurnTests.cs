@@ -14,8 +14,16 @@ namespace FHeroes2.Game.Tests;
 /// Covers the turn loop: who acts next, what a turn does to the board, and what the arena settles to
 /// (<c>battle_arena.cpp:460-682</c>).
 /// </summary>
+/// <remarks>
+/// The AI of a turn is <see cref="FHeroes2.Game.Ai.BattlePlanner"/>, a process-wide singleton, so this class shares the
+/// <see cref="PlannerSingletonCollection"/> collection with <see cref="AiContractTests"/>, which pins that singleton's
+/// reset behaviour.
+/// </remarks>
+[Collection(PlannerSingletonCollection)]
 public class BattleArenaTurnTests
 {
+    /// <summary>The xUnit collection that keeps every reader of the battle planner's singleton state serial.</summary>
+    public const string PlannerSingletonCollection = "BattlePlannerSingleton";
     private static GameArmy Army(PlayerColor color, MonsterType monster = MonsterType.Peasant, int count = 10)
     {
         GameArmy army = new()

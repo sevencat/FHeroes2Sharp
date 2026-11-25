@@ -134,6 +134,33 @@ public static class Assets
     }
 
     /// <summary>
+    /// The archive entry (or run-time table) an ICN id stands for, i.e. what the reference's
+    /// <c>icnFileNames</c> does before <c>loadICN()</c> asks for it.
+    /// </summary>
+    /// <param name="type">The ICN id.</param>
+    /// <returns>The name <see cref="GetImage"/> takes, e.g. <c>MISC12.ICN</c>.</returns>
+    /// <remarks>
+    /// <see cref="IcnCatalog.GetFileName"/> 对 <see cref="IcnType.LastValidFileIcn"/> 之后的 id 一律回 <c>CUSTOM</c>
+    /// （参考的 <c>icn.cpp:224</c> 也这样），但参考的 <c>icnFileNames</c> 表里这些 id 是有名字的，
+    /// <c>loadICN</c> 才排得到 <c>generateDefaultImages()</c>。本项目把名字留在各自的生成器里
+    /// （<see cref="Gui.SmallOkayCancelButtons"/>、<see cref="Gui.ScenarioInfoIcons"/>），由这里把 id 接过去。
+    /// </remarks>
+    public static string GetFileName(IcnType type) => type switch
+    {
+        IcnType.ButtonMapSelectGood => Gui.ScenarioInfoIcons.MapSelectGoodFileName,
+        IcnType.ButtonMapSelectEvil => Gui.ScenarioInfoIcons.MapSelectEvilFileName,
+        IcnType.ButtonSmallOkayGood => Gui.SmallOkayCancelButtons.OkayGoodFileName,
+        IcnType.ButtonSmallOkayEvil => Gui.SmallOkayCancelButtons.OkayEvilFileName,
+        IcnType.ButtonSmallCancelGood => Gui.SmallOkayCancelButtons.CancelGoodFileName,
+        IcnType.ButtonSmallCancelEvil => Gui.SmallOkayCancelButtons.CancelEvilFileName,
+        IcnType.ButtonExitPuzzleDimDoorGood => Gui.ExitButtons.PuzzleDimDoorGoodFileName,
+        IcnType.ButtonExitPuzzleDimDoorEvil => Gui.ExitButtons.PuzzleDimDoorEvilFileName,
+        IcnType.ButtonViewworldExitGood => Gui.ExitButtons.ViewWorldGoodFileName,
+        IcnType.ButtonViewworldExitEvil => Gui.ExitButtons.ViewWorldEvilFileName,
+        _ => IcnCatalog.GetFileName(type),
+    };
+
+    /// <summary>
     /// Number of frames in an ICN, the counterpart of <c>Assets::getImageCount</c>.
     /// </summary>
     /// <param name="fileName">Archive entry name, for example <c>FONT.ICN</c>.</param>
@@ -154,12 +181,32 @@ public static class Assets
     }
 
     /// <summary>
+    /// Whether <paramref name="fileName"/> is a table the engine assembles itself rather than an archive entry.
+    /// </summary>
+    /// <param name="fileName">Asset name, for example <c>LGNDXTRA.ICN</c> or <c>BUTTON_SMALL_OKAY_GOOD.ICN</c>.</param>
+    /// <returns><see langword="true"/> when <see cref="GetSynthetic"/> builds the frames.</returns>
+    /// <remarks>
+    /// 归档侧的解码缓存（<c>IcnSpriteCache</c>）把查不到的名字记成「缺图」并告警；合成表本来就没有归档条目，
+    /// 先问这里就不会为它们报假警。
+    /// </remarks>
+    public static bool IsRuntimeTable(string fileName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(fileName);
+
+        lock (SyncRoot)
+        {
+            return GetSynthetic(fileName) is not null;
+        }
+    }
+
+    /// <summary>
     /// The frames of an ICN the engine assembles itself, or <see langword="null"/> when
     /// <paramref name="fileName"/> is an ordinary archive entry.
     /// </summary>
     /// <remarks>
     /// 参考：<c>generateDefaultImages()</c>（<c>game_assets.cpp:749</c>）在 <c>loadICN()</c> 里先造图、再造不出来的
-    /// 时候才读归档；本项目的「造图」集中在 <see cref="Gui.EmptyButtons"/>。结果按文件名缓存，失败也记成
+    /// 时候才读归档；本项目的「造图」集中在 <see cref="Gui.EmptyButtons"/>、
+    /// <see cref="Gui.SmallOkayCancelButtons"/> 与 <see cref="Gui.ScenarioInfoIcons"/>。结果按文件名缓存，失败也记成
     /// <see langword="null"/>，免得每次取图都重算一遍。
     /// </remarks>
     private static Sprite?[]? GetSynthetic(string fileName)
@@ -169,7 +216,10 @@ public static class Assets
             return cached;
         }
 
-        Sprite?[]? frames = Gui.EmptyButtons.Build(fileName);
+        Sprite?[]? frames = Gui.EmptyButtons.Build(fileName)
+                             ?? Gui.SmallOkayCancelButtons.Build(fileName)
+                             ?? Gui.ExitButtons.Build(fileName)
+                             ?? Gui.ScenarioInfoIcons.Build(fileName);
         SyntheticFiles[fileName] = frames;
 
         return frames;

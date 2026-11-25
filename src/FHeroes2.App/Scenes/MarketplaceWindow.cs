@@ -69,13 +69,18 @@ public sealed class MarketplaceWindow
     /// <param name="kingdom">The kingdom whose resources are traded.</param>
     /// <param name="activePlayers">How many players are still in the game; two or more enable the gift button.</param>
     /// <param name="fonts">The game fonts: the small face, the white normal face and the yellow one.</param>
+    /// <param name="fromTradingPost">
+    /// Whether the window stands for a trading post on the map rather than a town's marketplace, which fixes the
+    /// exchange rate at <see cref="MarketplaceDialog.TradingPostMarketplaces"/> whatever the kingdom owns.
+    /// </param>
     /// <returns>The window, or <see langword="null"/> when an archive is missing frames.</returns>
     /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
     public static MarketplaceWindow? TryCreate(
         AssetBundle assets,
         GameKingdom kingdom,
         int activePlayers,
-        GameFonts fonts)
+        GameFonts fonts,
+        bool fromTradingPost = false)
     {
         ArgumentNullException.ThrowIfNull(assets);
         ArgumentNullException.ThrowIfNull(kingdom);
@@ -115,7 +120,7 @@ public sealed class MarketplaceWindow
             return null;
         }
 
-        MarketplaceDialog dialog = MarketplaceDialog.Create(kingdom, isFromTradingPost: false, activePlayers);
+        MarketplaceDialog dialog = MarketplaceDialog.Create(kingdom, fromTradingPost, activePlayers);
 
         MarketplaceView? view = MarketplaceView.TryCreate(
             dialog,

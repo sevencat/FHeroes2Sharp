@@ -34,6 +34,12 @@ internal sealed class ProbeArguments
     public string? DiffDirectory { get; private set; }
 
     /// <summary>
+    /// Object type a <c>map</c> run lists the positions of, e.g. <c>Sphinx</c>. Matched against
+    /// <see cref="object.ToString"/> case-insensitively; <see langword="null"/> lists the counts only.
+    /// </summary>
+    public string? ObjectType { get; private set; }
+
+    /// <summary>
     /// Areas that <c>compare</c> skips, in pixels of the compared image. Screenshots contain
     /// values that change from run to run (the FPS counter of the status bar), so a pixel baseline
     /// has to exclude them instead of pinning them.
@@ -95,6 +101,10 @@ internal sealed class ProbeArguments
 
                 case "--diff":
                     parsed.DiffDirectory = NextValue(args, ref i, "--diff");
+                    break;
+
+                case "--type":
+                    parsed.ObjectType = NextValue(args, ref i, "--type");
                     break;
 
                 case "--ignore":

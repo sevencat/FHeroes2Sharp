@@ -154,6 +154,17 @@ public sealed partial class Players
     }
 
     /// <summary>
+    /// Appends a slot that was built outside, <c>players.push_back( player )</c> in <c>Game::LoadPlayers()</c>
+    /// (<c>game.cpp:118</c>).
+    /// </summary>
+    /// <param name="player">The slot to append, already carrying its colour.</param>
+    public void Append(Player player)
+    {
+        players.Add(player);
+        PlayersByColor[PlayerColors.IndexOf(player.Color)] = player;
+    }
+
+    /// <summary>
     /// Prepares the slots for the first turn, <c>Players::SetStartGame()</c> (<c>players.cpp:487-508</c>).
     /// </summary>
     /// <remarks>
