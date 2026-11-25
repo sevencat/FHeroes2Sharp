@@ -402,7 +402,7 @@ public sealed class GameHost : IDisposable
                     townScreen.SetLeftButton(true);
                     townScreen.SetLeftButton(false);
                 }
-                else if (_menu is not null)
+                else if (_menu is not null && _battle is null)
                 {
                     _menu.SetCursor(click.Point);
                     _menu.SetLeftButton(true);

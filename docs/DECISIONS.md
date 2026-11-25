@@ -7979,8 +7979,8 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 3. **上一行是动作、下一行是提示**：`SetStatus(message, top)` 与参考同构——上行写入并压进日志、同时清掉下行；
    下行内容不变时不重算（`_lastStatusLower`）。提示文案先用参考的英文串（`Move` / `Flying` / `Attack`），
    本地化随 `.mo` 一起做。
-4. **日志只有缓冲，没有窗口**：`AddLogMessage` 按参考的「最后一个放得下的空格」断行、长词用
-   `FitToOneRow` 截断，存进 `LogMessages`；6 行窗口、滚动条与「点状态栏展开」还没做（PROGRESS §7.6）。
+4. **日志只有缓冲，没有窗口**（窗口已由 ADR-217 补上）：`AddLogMessage` 按参考的「最后一个放得下的空格」断行、长词用
+   `FitToOneRow` 截断，存进 `LogMessages`；6 行窗口、滚动条与「点状态栏展开」当时还没做。
 5. **命令文字必须在执行前取好**：`BattleArena` 应用命令时会消耗命令的参数（参考的 `Command` 继承
    `std::vector` 并从尾部弹出），所以一旦 `PlayCurrentUnitTurn(commands)` 跑过，`commands[0]` 的
    `[0]` 就可能越界。冒烟里确实踩到过一次 `ArgumentOutOfRangeException`；现在先把文字算成局部变量再执行。
@@ -7990,3 +7990,94 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 
 **验证**：构建 0 错误 0 警告；`GlyphTextFitTests` 6 条；全量 5 572 绿（Assets 428 → 434）；四张相关基线
 `identical`；截图里上行 `Move to 24`、下行 `Flying`；临时日志确认日志缓冲收进同一句（补丁已撤）。
+
+## ADR-217：战斗日志窗口复用 `ListBox<string>`，断行随窗口走；点状态栏展开，窗口先吃点击
+
+**背景**：ADR-216 只做了日志缓冲。参考的 `Battle::StatusListBox`（`battle_interface.cpp:803-980`）是
+`Interface::ListBox<std::string>` 的子类：6 行 × 17 像素、`TEXTBAK2` 拉伸成框、右侧 `DROPLISL` 的滚动条
+（6/7 上行、8/9 下行、10/11/12 装饰、13 滑块），点击状态栏 `SetOpenLog()` 切换。
+
+**决定**：
+1. **`BattleStatusLog : ListBox<string>`** 放在 `FHeroes2.UI/Battle/`，几何逐项对齐参考：
+   `totalElementHeight = 6*17 - 4 = 98`，框再加 16 像素边，所以 `SetPosition(px, py)` 把窗口底边压到 `py`
+   （状态栏上沿）；行区高 `98 + 4 = 102`，最后一行故意压住边框。
+2. **断行留在窗口里**：`AddMessage()` 照搬参考「只切一次」的算法——找最长的、放得下的、以空格结尾的前缀进
+   第一行，剩下的整段做第二行；单词本身超宽时用 `FitToOneRow` 截断。`BattleFieldPainter` 里原来那份
+   「一直切到放得下」的实现删掉：它多切了几行，和参考的六行窗口对不上。
+3. **滑块按需重做**：`ScrollSlider.Create` 用 `DROPLISL` 13 号、上下限 `(0,0,w,4)`/`(0,4,w,8)`；日志合上时
+   `SetScrollBarImage(null)`，打开时按当前行数重做（参考是 `_scrollbar.hide()` + `SetOpenLog()`）。
+4. **输入先给日志**：`BattleScene.UpdateBattleLog()` 用 `BattleFieldPainter.StatusBarArea` 接左键切换；展开时
+   先跑 `QueueEventProcessing()`（行与滚动条），再补一发 `MouseClickLeft(Frame)` 兜住外框与滚动条列。
+   `LocalEvent` 的区域点击查询会吃掉这次 release，战场因此收不到——不会「点一下日志，单位走出去」。
+5. **状态栏提示**：指针停在状态栏上时，下行给「Show logs」/「Hide logs」，对应参考在同一分支里设的
+   `msg`（`battle_interface.cpp:3511`）；离开状态栏且不在战场上时清空下行，避免提示黏住。
+
+**后果**：日志能开、能滚、能读；`--battle` 下点状态栏即可看到。代价是行文本仍是英文（本地化随 `.mo`），
+窗口位置固定在状态栏正上方（参考也是硬编码）。
+
+**验证**：构建 0 错误 0 警告；`BattleStatusLogTests` 12 条（几何、`DROPLISL` 滚动条、断行、长词截断、
+最新行可见、有/无资源两种重绘）；全量 5 584 绿（UI 1 541 → 1 553）；`battle.png`、`battle-siege.png`、
+`adventure-map.png` 三张基线 `identical`；截图 `tools-output/battle-log.png` 是点击状态栏后的展开态，
+下行同时显示「Hide logs」。
+
+
+## ADR-218：状态栏三个按钮单独成 `BattleStatusButtons`，Auto 落到 `TOGGLE_AUTO_COMBAT`；顺带修掉脚本点击漏进主菜单
+
+**背景**：状态栏的三块底图（`TEXTBAR` 4/6/0）早就在画，但它们是硬编码的两个坐标画上去的：没有点击区、
+没有悬停提示、没有按下态，`AUTO`/`SETTINGS`/`SKIP` 点了没反应。参考把它们做成 `Button`
+（`battle_interface.cpp:1467-1490`），每帧按 `isMouseLeftButtonPressedAndHeldInArea()` 决定画
+4/5、6/7、0/1 哪一帧，点击分支在 `MouseCursorArea…`（`:3317-3361`）。
+
+**决定**：
+1. **几何单独一层**：新增 `FHeroes2.UI/Battle/BattleStatusButtons.cs`，按参考的三个 `setPosition` 算框——
+   设置贴左下角（`480 - 高`）、Auto 压在设置上面、Skip 贴右下角（`640 - 宽`），并且**把精灵自己的
+   `OffsetX/OffsetY` 算进框里**：参考的 `Button::area()` 就是这么来的，`TEXTBAR` 0 号实测是 49×37，
+   与旧代码里写死的 49×18 不同。缺资源时退回同一组常量，无数据的构建也能点。
+2. **状态与绘制分开**：`BattleFieldPainter.PressedButton` 只回答「画哪一帧」，按键判断留在场景里
+   （参考也是每帧先 `drawOnState()`，再在鼠标分支里处理点击）。
+3. **Auto 与 Quick 落到引擎已有的命令**：这一层不做策略，场景发
+   `BattleCommand.ToggleAutoCombat(color)`（`ApplyActionToggleAutoCombat` 已经在了），`Q` 键发
+   `BattleCommand.QuickCombat()`。参考的两档选择窗（`OpenAutoModeDialog`）留给 `ukw.25`，设置窗
+   （`_openBattleSettingsDialog`）留给 `ukw.24`——本步只把设置按钮的入口接上并记一条日志。
+4. **宿主修正**：`--left-click-at` 的脚本点击原来无条件喂给主菜单（`GameHost` 的 replay 分支只挡了
+   城镇屏），于是「在战斗里点 Auto」会顺手把客户端点成 `Quit`。补上 `_battle is null` 判断后，战斗期间的
+   脚本点击只进 `LocalEvent`。
+
+**后果**：三个按钮能悬停、能按下、能点；`SKIP` 直接跳过、`AUTO` 立刻托管（再点收回）、`Q` 快速战斗、
+设置按钮先记日志。空格跳过改为走 `HotKeyEvent::BattleSkip`（默认仍是空格），与 `SKIP` 按钮共用同一条命令路径
+`PlayCommands()`。
+
+**验证**：构建 0 错误 0 警告；`BattleStatusButtonsTests` 6 条（三块几何、命中测试、按下帧、缺图退化）；
+全量 5 590 绿（UI 1 553 → 1 559）；`battle.png`、`battle-siege.png`、`adventure-map.png` 均 `identical`；
+冒烟：`--left-click-at 6:600,460;20:…` 打出三次 `acts: Skip.`，`8:10,450` 打出
+`Auto combat for Blue is now on.` 并跑到战斗结束，`6:10,470` 打出设置窗未移植的日志；截图
+`tools-output/battle-buttons.png` 是悬停 `SKIP` 时的 `Skip this unit` 提示。
+
+
+## ADR-219：战斗设置窗复用 `StandardWindow` + `OptionItem`，七档开关就地写回 `Settings`
+
+**背景**：`SETTINGS` 按钮在 ADR-218 里只接了入口。参考的窗口在 `battle_interface_settings.cpp`：
+`StandardWindow( 289, optionsStepY * 3 + 52 )` 里摆两行三列加第三行中间一个图标——回合顺序 / 网格 /
+伤害数字、移动阴影 / 鼠标阴影 / 移动范围、血量条；每个图标是 `CSPANEL` 的一对帧（移动范围与血量条是
+合成图），点一下就地切一个 `Settings` 标志，右击给说明，OK/Esc 关闭。
+
+**决定**：
+1. **窗口自己管**：`BattleSettingsWindow` 建在 UI 层，`TryCreate` 拿不到 `CSPANEL` 与 OK 按钮就返回
+   `null`；几何用 `OptionItem` 的常量（`threeOptionsOffsetX = 20`、`stepX = 92`、`optionsOffsetY = 31`、
+   `stepY = 110`、图标 65），三列两行加中间一格全部对得上参考。
+2. **输入逐帧**：`ProcessEvents(LocalEvent)` 读七个框与 OK，Esc 走 `HotKeyEvent::DefaultCancel`；
+   场景在 `_settings is not null` 时把整帧交给它、战场不再推进——参考那边是个阻塞对话框。
+3. **开关直接写 `Settings`**：网格与血量条本来就是 `Settings` 的位，画战场的 `BattleFieldPainter` 每帧读
+   `IsBattleShowGrid`，所以点完立刻生效；`Changed` 只留给调用方知道「有改动」。
+4. **数据缺口两处**：这套数据里没有 `ICN::BUTTON_SMALL_OKAY_GOOD`，OK 按钮与系统选项窗一样取
+   `SYSTEM.ICN` 的 1/2 号（`SettingsArtwork` 的同一做法）；`EMPTY_OPTION_ICON_BACKGROUND` 也没有，
+   两个合成图标退回一块空底板（黑底上的生物图），布局与文字不变。
+
+**后果**：`SETTINGS` 能开、七个开关能点、网格之类立刻反映到战场上；右击说明框与血量条图标里示意用的
+血量条（依赖 `ukw.21` 的 `drawHitPointsBar`）还没做。
+
+**验证**：构建 0 错误 0 警告；`BattleSettingsWindowTests` 3 条（窗口尺寸、第一行三格、血量条居中）；
+全量 5 593 绿（UI 1 559 → 1 562）；`battle.png`、`battle-siege.png`、`adventure-map.png` 均 `identical`；
+截图 `tools-output/battle-settings.png` 是窗口本身，`battle-settings-off.png` 是「点 Grid 关掉 + OKAY 关闭」
+之后的战场（网格消失、提示回到 `Flying`）。
+

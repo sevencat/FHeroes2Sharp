@@ -101,14 +101,17 @@ Enter 确认、Escape 关闭，Esc 现在会先关模态窗口而不是直接退
 （`CASTBKG*`/`MOATWHOL`/`CASTLE*`/`CATAPULT`）、60 格六角网格（`CMBTMISC`）、鼠标悬停阴影、
 双方单位的待机首帧（防守方镜像）与每队的兵力计数条（`TEXTBAR` 10–14 号 + `smallWhite` 缩写数字）、
 待机动画（`BATTLE_IDLE_DELAY`，`.BIN` 里 9 000 毫秒一次），以及**人类输入**：点空格子走、点敌人格打、
-空格跳过，光标在可走/可打/其余三种主题间切换。底部 37 行是状态栏（`TEXTBAR` 8/9 底图 + 两行 `normalWhite`
-文字：悬停提示 `Move`/`Flying`/`Attack`，动作结果 `Move to 24`/`Attack`/`Skip`，并按参考规则记进战斗日志缓冲）
-与 Auto/设置/Skip 三个按钮的底图。`--battle` 让焦点英雄打地图上第一只游荡怪（人类那一栈会停下来等你点），
+空格或右下角 `SKIP` 按钮跳过，`AUTO` 按钮把当前这一方交给电脑（`A` 键同效，再按一次收回），
+`Q` 是快速战斗，`SETTINGS` 打开战斗设置窗（回合顺序 / 网格 / 伤害数字 / 两种阴影 / 移动范围 / 血量条七档开关，
+改了立刻作用于战场），光标在可走/可打/其余三种主题间切换。底部 37 行是状态栏（`TEXTBAR` 8/9 底图 + 两行 `normalWhite`
+文字：悬停提示 `Move`/`Flying`/`Attack`，动作结果 `Move to 24`/`Attack`/`Skip`，并按参考规则记进战斗日志）；
+点状态栏会弹出 6 行战斗日志窗口（`TEXTBAK2` 框 + `DROPLISL` 滚动条，可以滚、可以再点收起）。
+`--battle` 让焦点英雄打地图上第一只游荡怪（人类那一栈会停下来等你点），
 `--battle-auto` 把两边都交给电脑（冒烟与脚本用），`--battle-siege` 改为攻打第一座别的颜色的城；场景
 **一帧推进一个单位**（引擎的 `BeginRound`/`SelectNextUnit`/`PlayCastleActions`/`PlayCurrentUnitTurn`/`EndRound`
 五步，ADR-214），`--freeze-animation` 时停在部署那一刻（战斗与待机动画都不推进）。仍未做：施法、等待/防御、
-撤退/投降、Auto/设置/Skip 按钮、路径预览、战斗日志窗口、顺序条、英雄立绘与所有动画特效
-（`bd list`、ADR-212–216）。
+撤退/投降、AUTO/QUICK 两档选择窗、路径预览、顺序条、血量条绘制、状态与日志文案的本地化、英雄立绘与所有动画特效
+（`bd list`、ADR-212–219）。
 两张像素基线是 `tests/baselines/battle.png` 与 `battle-siege.png`（`VerifyBattleBaseline.ps1`）。
 
 **世界视图（View World）**：冒险地图上按 `V` 打开参考的全图窗口（`view_world.cpp`）——整张图按 18×18 格

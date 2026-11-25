@@ -19,8 +19,9 @@ namespace FHeroes2.UI.Battle;
 /// <remarks>
 /// <para>
 /// <b>范围</b>：这一步只画「不会自己动」的东西——地形底图与边框杂物、地表装饰、地图带进来的障碍、
-/// 攻城时的城堡地面/护城河/城墙/塔/投石车，以及双方摆好阵形的单位（各取待机动画的第一帧）。
-/// 单位动画、行动交互、顺序条、状态栏文字与所有法术特效都还没有，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6。
+/// 攻城时的城堡地面/护城河/城墙/塔/投石车，以及双方摆好阵形的单位（各取待机动画的第一帧）；此外还有
+/// 状态栏的两行文字与可展开的 6 行战斗日志窗（<see cref="BattleStatusLog"/>）。
+/// 行动交互的其余部分、顺序条与所有法术特效都还没有，见 <c>bd list</c>。
 /// </para>
 /// <para>
 /// <b>坐标系</b>：参考把战场画进 640x443 的 <c>_mainSurface</c>，底下的 37 行留给状态栏
@@ -34,9 +35,9 @@ namespace FHeroes2.UI.Battle;
 /// 地表障碍 → 城堡顶墙；然后逐行画高障碍、城墙与单位；最后把战场贴到屏幕上，再画状态栏与三个按钮的底。
 /// </para>
 /// <para>
-/// <b>与参考的偏差</b>：六角网格（<c>Settings::BattleShowGrid</c>）不画——端口还没有
-/// <c>DrawHexagon</c> 的移植；坟场（<c>RedrawKilled</c>）不画，开战时本来就没有尸体；单位的兵力计数条
-/// （<c>RedrawTroopCount</c>）要字体与血量条，随第二步补。
+/// <b>与参考的偏差</b>：坟场（<c>RedrawKilled</c>）不画，开战时本来就没有尸体；单位的血量条
+/// （<c>drawHitPointsBar</c>）与顺序条还没画，见 <c>bd list</c> 的 <c>ukw.21</c> 与 <c>ukw.22</c>；
+/// 六角网格照 <c>Settings::BattleShowGrid</c> 开关（战斗设置窗里的 Grid 一档）。
 /// </para>
 /// </remarks>
 public sealed class BattleFieldPainter
@@ -68,14 +69,6 @@ public sealed class BattleFieldPainter
     /// <summary>Width of <c>TEXTBAR</c> frame 8, the status bar both lines are centred in.</summary>
     private const int StatusWidth = 543;
 
-    /// <summary>Width of one battle log line, <c>battleLogElementWidth</c> (<c>battle_interface.cpp:114</c>).</summary>
-    private const int LogElementWidth = ScreenBuffer.DefaultWidth - 32 - 16;
-
-    /// <summary>Height of the auto combat button, <c>TEXTBAR</c> frame 4.</summary>
-    private const int AutoButtonHeight = 18;
-
-    private const int AutoButtonWidth = 49;
-
     private readonly BattleArena _arena;
     private readonly IViewWorldSpriteSource _sprites;
     private readonly MonsterAnimInfoCache _monsterInfo;
@@ -84,7 +77,8 @@ public sealed class BattleFieldPainter
     private readonly BattleFieldStyle _style;
     private readonly Palette? _palette;
     private readonly Dictionary<uint, UnitAnimation> _animations = [];
-    private readonly List<string> _logMessages = [];
+    private readonly BattleStatusLog _statusLog;
+    private readonly BattleStatusButtons _buttons;
     private readonly PixelBuffer _ground = new(Width, Height);
     private readonly PixelBuffer _surface = new(Width, Height);
 
@@ -152,6 +146,13 @@ public sealed class BattleFieldPainter
         _palette = palette;
         _statusFont = statusFont;
 
+        _statusLog = new BattleStatusLog(_sprites, statusFont);
+
+        // 参考在 Interface 的构造函数里把日志窗放在战场底边（area.y + battlefieldHeight），也就是状态栏上沿。
+        _statusLog.SetPosition(0, Height);
+
+        _buttons = new BattleStatusButtons(_sprites, ScreenBuffer.DefaultWidth, ScreenBuffer.DefaultHeight);
+
         _arena.Board.SetArea(new Rect(0, 0, ScreenBuffer.DefaultWidth, ScreenBuffer.DefaultHeight));
     }
 
@@ -162,9 +163,26 @@ public sealed class BattleFieldPainter
     /// <param name="cellIndex">The cell, or <see langword="null"/> when the pointer is off the board.</param>
     public void SetHoveredCell(int? cellIndex) => _hoveredCell = cellIndex;
 
+    /// <summary>The battle log window, <c>Interface::listlog</c> (<c>battle_interface.cpp:803-980</c>).</summary>
+    public BattleStatusLog StatusLog => _statusLog;
+
+    /// <summary>The three status bar buttons, <c>Interface::_buttonAuto</c> and friends.</summary>
+    public BattleStatusButtons Buttons => _buttons;
+
+    /// <summary>
+    /// The button held down this frame, <c>_buttonAuto.drawOnState()</c> and friends
+    /// (<c>battle_interface.cpp:3222-3224</c>).
+    /// </summary>
+    public BattleStatusButton PressedButton { get; set; }
+
     /// <summary>The lines the battle log holds so far, <c>StatusListBox::_messages</c>.</summary>
-    /// <remarks>参考的日志窗口还没画出来（bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.6）；这一层先按参考的换行规则把消息切好存着。</remarks>
-    public IReadOnlyList<string> LogMessages => _logMessages;
+    public IReadOnlyList<string> LogMessages => _statusLog.Messages;
+
+    /// <summary>
+    /// The bar the two status lines are painted in, the click target that expands the log
+    /// (<c>battle_interface.cpp:3506-3522</c>).
+    /// </summary>
+    public static Rect StatusBarArea => new(StatusLeft, Height, StatusWidth, StatusHeight);
 
     /// <summary>
     /// Writes one of the two status lines, <c>Status::setMessage()</c> (<c>battle_interface.cpp:1146-1164</c>).
@@ -210,63 +228,15 @@ public sealed class BattleFieldPainter
     }
 
     /// <summary>
-    /// Adds a message to the battle log, wrapped into lines that fit the log's width,
-    /// <c>StatusListBox::AddMessage()</c> (<c>battle_interface.cpp:847-...</c>).
+    /// Adds a message to the battle log, <c>StatusListBox::AddMessage()</c> (<c>battle_interface.cpp:847-905</c>).
     /// </summary>
-    /// <param name="message">The message to append.</param>
-    /// <remarks>
-    /// 参考按「最后一个放得下的空格」断行，单个长词放不下时用 <c>fitToOneRow</c> 截断并补省略号。
-    /// 端口照这个顺序切；日志窗口本身（6 行、滚动条、点击状态栏展开）还没做。
-    /// </remarks>
+    /// <param name="message">The message to append; it is wrapped into rows by the log itself.</param>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public void AddLogMessage(string message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        if (message.Length == 0)
-        {
-            return;
-        }
-
-        if (_statusFont is null)
-        {
-            _logMessages.Add(message);
-
-            return;
-        }
-
-        string rest = message;
-
-        while (GlyphText.Measure(_statusFont, rest) > LogElementWidth)
-        {
-            int cut = FittingPrefix(rest);
-
-            if (cut <= 0)
-            {
-                // One word wider than the log: cut it and stop.
-                _logMessages.Add(GlyphText.FitToOneRow(_statusFont, rest, LogElementWidth));
-
-                return;
-            }
-
-            int space = rest.LastIndexOf(GlyphText.SpaceCharacter, cut - 1, cut);
-
-            if (space > 0)
-            {
-                _logMessages.Add(rest[..space]);
-                rest = rest[(space + 1)..];
-            }
-            else
-            {
-                _logMessages.Add(rest[..cut]);
-                rest = rest[cut..];
-            }
-        }
-
-        if (rest.Length > 0)
-        {
-            _logMessages.Add(rest);
-        }
+        _statusLog.AddMessage(message);
     }
 
     /// <summary>The arena this painter draws.</summary>
@@ -292,9 +262,14 @@ public sealed class BattleFieldPainter
         RedrawHoverShadow();
         RedrawArmies();
 
-        // redrawPreRender(): 战场贴到屏幕，然后画状态栏与按钮（RedrawInterface() 的底）。
+        // redrawPreRender(): 战场贴到屏幕，然后画状态栏与按钮（RedrawInterface() 的底），最后是展开的日志窗。
         ImageOps.Blit(output, Point.Zero, _surface, _surface.Bounds);
         RedrawStatusBar(output);
+
+        if (_statusLog.IsOpen)
+        {
+            _statusLog.Redraw(output);
+        }
     }
 
     /// <summary>
@@ -927,48 +902,6 @@ public sealed class BattleFieldPainter
             ? message
             : GlyphText.FitToOneRow(_statusFont, message, StatusWidth - (StatusTextInset * 2));
 
-    /// <summary>
-    /// Length of the longest prefix of <paramref name="text"/> that fits one log line, stopping on a
-    /// character boundary (a surrogate pair is never split).
-    /// </summary>
-    /// <param name="text">The text to measure.</param>
-    /// <returns>The prefix length, 0 when not even the first character fits.</returns>
-    private int FittingPrefix(string text)
-    {
-        int width = 0;
-        int count = 0;
-
-        while (count < text.Length)
-        {
-            char character = text[count];
-
-            if (character == GlyphText.LineSeparator)
-            {
-                ++count;
-
-                continue;
-            }
-
-            int step = char.IsHighSurrogate(character) && count + 1 < text.Length && char.IsLowSurrogate(text[count + 1])
-                ? 2
-                : 1;
-
-            int advance = step == 2
-                ? _statusFont!.GetAdvance(character) + _statusFont.GetAdvance(text[count + 1])
-                : _statusFont!.GetAdvance(character);
-
-            if (width + advance > LogElementWidth)
-            {
-                break;
-            }
-
-            width += advance;
-            count += step;
-        }
-
-        return count;
-    }
-
     /// <summary>Draws the two status lines over the bar, <c>Status::redraw()</c> (<c>battle_interface.cpp:1166-1178</c>).</summary>
     /// <param name="output">The frame to paint into.</param>
     private void RedrawStatusText(PixelBuffer output)
@@ -1009,11 +942,9 @@ public sealed class BattleFieldPainter
     /// </remarks>
     private void RedrawStatusBar(PixelBuffer output)
     {
-        DrawFrame(IcnType.Textbar, 4, output, new Point(0, Height));
-        DrawFrame(IcnType.Textbar, 6, output, new Point(0, Height + AutoButtonHeight));
         DrawFrame(IcnType.Textbar, 8, output, new Point(StatusLeft, Height));
         DrawFrame(IcnType.Textbar, 9, output, new Point(StatusLeft, Height + StatusUpperHeight));
-        DrawFrame(IcnType.Textbar, 0, output, new Point(Width - AutoButtonWidth, Height));
+        _buttons.Draw(output, PressedButton);
 
         RedrawStatusText(output);
     }

@@ -27,10 +27,10 @@ namespace FHeroes2.App.Scenes;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>范围</b>：这一屏只做「看得见」的第一层——建一场真打（界面在 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6 记的
-/// 缺口中排第一的那块），逐帧把战斗推进一格回合、把战场画出来。人类的手动出招、动画、状态栏文字、
-/// 顺序条与法术特效都还没有，所以两边都由 AI 打；它等价于参考在没有界面时的自动战斗，
-/// 只是这一次有画面。
+/// <b>范围</b>：把一场真打逐帧推出来并接上人类输入——点格子走/打、空格或 <c>SKIP</c> 跳过、
+/// <c>AUTO</c>/<c>Q</c> 交给电脑、点状态栏展开 6 行战斗日志、状态栏两行文字与三个按钮的悬停/按下。
+/// 施法、等待/防御、撤退/投降、战斗设置窗、路径预览、顺序条与所有动画特效还没有（`bd list`）；
+/// 缺什么都可以从 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6 的缺口清单对回去。
 /// </para>
 /// <para>
 /// <b>谁来打</b>：攻击方是冒险地图上的焦点英雄（<see cref="AdventureSession.FocusHero"/> 的军队），
@@ -50,22 +50,41 @@ namespace FHeroes2.App.Scenes;
 /// </remarks>
 public sealed class BattleScene : IScene
 {
+    /// <summary>Archive the battle settings OK button comes from, <see cref="SettingsArtwork.OkayAssetName"/>.</summary>
+    private const string BattleSettingsAssetName = "SYSTEM.ICN";
+
+    /// <summary>Frame of the released OK button in <see cref="BattleSettingsAssetName"/>.</summary>
+    private const int BattleSettingsOkayReleasedFrame = 1;
+
+    /// <summary>Frame of the pressed OK button in <see cref="BattleSettingsAssetName"/>.</summary>
+    private const int BattleSettingsOkayPressedFrame = 2;
+
     private readonly ScreenBuffer _frame;
     private readonly BattleArena _arena;
     private readonly BattleFieldPainter? _painter;
+    private readonly IViewWorldSpriteSource? _sprites;
+    private readonly Sprite? _settingsOkay;
+    private readonly Sprite? _settingsOkayPressed;
     private readonly bool _frozen;
 
     private bool _closed;
     private bool _roundStarted;
 
+    /// <summary>The battle settings window while it is open, <c>DialogBattleSettings</c> of the reference.</summary>
+    private BattleSettingsWindow? _settings;
+
     /// <summary>The cell the cursor theme was last computed for, so the reachability query runs on changes only.</summary>
     private int? _lastHoverCell;
 
-    private BattleScene(ScreenBuffer frame, BattleArena arena, BattleFieldPainter? painter, bool frozen)
+    private BattleScene(ScreenBuffer frame, BattleArena arena, BattleFieldPainter? painter,
+        IViewWorldSpriteSource? sprites, Sprite? settingsOkay, Sprite? settingsOkayPressed, bool frozen)
     {
         _frame = frame;
         _arena = arena;
         _painter = painter;
+        _sprites = sprites;
+        _settingsOkay = settingsOkay;
+        _settingsOkayPressed = settingsOkayPressed;
         _frozen = frozen;
     }
 
@@ -178,10 +197,22 @@ public sealed class BattleScene : IScene
         }
 
         BattleFieldPainter? painter = null;
+        IViewWorldSpriteSource? spriteSource = null;
+        Sprite? settingsOkay = null;
+        Sprite? settingsOkayPressed = null;
         CastleTown? castle = arena.Castle;
 
         if (assets is not null)
         {
+            // 参考用 ICN::BUTTON_SMALL_OKAY_GOOD，这套数据里没有那个归档，端口与系统选项窗一样从
+            // SYSTEM.ICN 的 1/2 号取（SettingsArtwork 的做法）。
+            if (assets.TryReadIcn(BattleSettingsAssetName) is { } systemIcn &&
+                systemIcn.Count > BattleSettingsOkayPressedFrame)
+            {
+                settingsOkay = systemIcn.Sprites[BattleSettingsOkayReleasedFrame];
+                settingsOkayPressed = systemIcn.Sprites[BattleSettingsOkayPressedFrame];
+            }
+
             Tile tile = world.GetTile(tileIndex);
             bool trees = HasNearbyTrees(world, tileIndex);
 
@@ -189,9 +220,11 @@ public sealed class BattleScene : IScene
                 ? BattleFieldStyle.ForGround(tile.Ground, trees)
                 : BattleFieldStyle.ForCastle(tile.Ground, trees, castle.Race);
 
+            spriteSource = new IcnViewWorldSpriteSource(assets);
+
             painter = new BattleFieldPainter(
                 arena,
-                new IcnViewWorldSpriteSource(assets),
+                spriteSource,
                 new MonsterAnimInfoCache(assets),
                 style,
                 counterFont,
@@ -210,7 +243,8 @@ public sealed class BattleScene : IScene
 
         CursorState.Current?.SetThemes(CursorTheme.CombatPointer);
 
-        return new BattleScene(frame, arena, painter, freezeAnimation);
+        return new BattleScene(frame, arena, painter, spriteSource, settingsOkay, settingsOkayPressed,
+            freezeAnimation);
     }
 
     /// <summary>
@@ -235,7 +269,27 @@ public sealed class BattleScene : IScene
 
         LocalEvent events = LocalEvent.Current;
 
+        // 战斗设置窗是模态的：打开期间它吃掉输入，战场不再推进（参考里它是一个阻塞的对话框）。
+        if (_settings is not null)
+        {
+            if (_settings.ProcessEvents(events))
+            {
+                _settings = null;
+            }
+
+            return;
+        }
+
         UpdateHover(events);
+
+        // 状态栏点击展开/收起日志；日志展开时先吃掉落在自己身上的点击，战场就收不到。
+        UpdateBattleLog(events);
+
+        // 状态栏三个按钮与两个自动战斗快捷键：吃掉点击的这一帧不再推进回合。
+        if (UpdateStatusBarCommands(events))
+        {
+            return;
+        }
 
         if (_frozen)
         {
@@ -303,6 +357,224 @@ public sealed class BattleScene : IScene
     }
 
     /// <summary>
+    /// Expands or collapses the battle log on a click on the status bar and lets the open window take the
+    /// input that lands on it, the status bar branch of <c>Interface::MouseCursorArea()</c>
+    /// (<c>battle_interface.cpp:3506-3522</c>).
+    /// </summary>
+    /// <param name="events">Input state of this frame.</param>
+    /// <returns>
+    /// <see langword="true"/> when the input belonged to the log; the click has then already been consumed,
+    /// so the battlefield does not react to it.
+    /// </returns>
+    /// <remarks>
+    /// 参考的日志窗打开时盖在战场上，行与滚动条的输入由 <c>ListBox::QueueEventProcessing()</c> 处理，
+    /// 而窗口外框与滚动条两列不归列表管——这里补一刀 <see cref="BattleStatusLog.Frame"/>，
+    /// 否则点外框会顺带把单位走出去。
+    /// </remarks>
+    private bool UpdateBattleLog(LocalEvent events)
+    {
+        if (_painter?.StatusLog is not { } log)
+        {
+            return false;
+        }
+
+        if (events.MouseClickLeft(BattleFieldPainter.StatusBarArea))
+        {
+            log.SetOpen(!log.IsOpen);
+
+            return true;
+        }
+
+        if (!log.IsOpen)
+        {
+            return false;
+        }
+
+        log.QueueEventProcessing(events);
+
+        return events.MouseClickLeft(log.Frame);
+    }
+
+    /// <summary>
+    /// The Auto, Settings and Skip buttons under the battlefield plus the two auto combat hot keys, the
+    /// button branches of <c>Interface::MouseCursorArea()</c> (<c>battle_interface.cpp:3317-3361</c>).
+    /// </summary>
+    /// <param name="events">Input state of this frame.</param>
+    /// <returns>
+    /// <see langword="true"/> when a button or a hot key did something; the frame must then not advance the
+    /// round again, the command has already played.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// 悬停时把下行写成参考的提示串（<c>Automatic combat modes</c> 等）并把光标切成战场指针；按住不放就画按下态的帧，
+    /// 判断与绘制分开在 <see cref="BattleStatusButtons"/> 与 <see cref="BattleFieldPainter.PressedButton"/> 两侧。
+    /// </para>
+    /// <para>
+    /// 参考点 Auto 打开一个「AUTO COMBAT / QUICK COMBAT」小窗（<c>OpenAutoModeDialog</c>），端口直接把
+    /// Auto 按钮接到 <c>TOGGLE_AUTO_COMBAT</c>（小窗的一半语义），QUICK COMBAT 接到 <c>Q</c> 快捷键；
+    /// 两档选择窗留给 <c>bd list</c> 里的战斗对话框（<c>ukw.25</c>）。
+    /// </para>
+    /// </remarks>
+    private bool UpdateStatusBarCommands(LocalEvent events)
+    {
+        if (_painter is null)
+        {
+            return false;
+        }
+
+        BattleStatusButtons buttons = _painter.Buttons;
+        BattleStatusButton hovered = buttons.HitTest(events.CursorPosition);
+
+        _painter.PressedButton = hovered != BattleStatusButton.None
+            && events.IsMouseLeftButtonPressedAndHeldInArea(buttons.AreaOf(hovered))
+                ? hovered
+                : BattleStatusButton.None;
+
+        if (hovered != BattleStatusButton.None)
+        {
+            CursorState.Current?.SetThemes(CursorTheme.CombatPointer);
+            _painter.SetStatus(HintOf(hovered), top: false);
+
+            if (!_frozen && events.MouseClickLeft(buttons.AreaOf(hovered)))
+            {
+                return hovered switch
+                {
+                    BattleStatusButton.Auto => ApplyAutoCombatToggle(),
+                    BattleStatusButton.Settings => OpenBattleSettings(),
+                    BattleStatusButton.Skip => SkipCurrentUnit(),
+                    _ => false,
+                };
+            }
+        }
+
+        if (_frozen)
+        {
+            // A frozen frame shows the hint and the pressed look but plays nothing.
+            return false;
+        }
+
+        // 参考把两个自动战斗的快捷键与按钮放在同一分支里（battle_interface.cpp:3707-3721）。
+        if (GameHotKeys.HotKeyPressEvent(HotKeyEvent.BattleToggleAutoCombat))
+        {
+            return ApplyAutoCombatToggle();
+        }
+
+        return GameHotKeys.HotKeyPressEvent(HotKeyEvent.BattleQuickCombat) && ApplyQuickCombat();
+    }
+
+    /// <summary>The lower line hint of a button, the <c>msg</c> of the reference (<c>battle_interface.cpp:3320-3347</c>).</summary>
+    /// <param name="button">The button under the pointer.</param>
+    /// <returns>The hint, or an empty string for <see cref="BattleStatusButton.None"/>.</returns>
+    private static string HintOf(BattleStatusButton button) => button switch
+    {
+        BattleStatusButton.Auto => "Automatic combat modes",
+        BattleStatusButton.Settings => "Customize system options",
+        BattleStatusButton.Skip => "Skip this unit",
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// Hands the current unit over to the computer (or takes it back), the <c>AUTO COMBAT</c> half of
+    /// <c>Interface::_startAutoCombat()</c> (<c>battle_interface.cpp:3645-3654</c>).
+    /// </summary>
+    /// <returns><see langword="true"/> when the command was played.</returns>
+    private bool ApplyAutoCombatToggle()
+    {
+        if (_arena.CurrentUnit is not { } unit || !_arena.CanToggleAutoCombat)
+        {
+            return false;
+        }
+
+        PlayerColor color = unit.GetCurrentColor();
+        bool enabled = !_arena.IsAutoCombat(color);
+
+        GameLog.Info($"Auto combat for {color} is now {(enabled ? "on" : "off")}.");
+
+        _arena.PlayCurrentUnitTurn([BattleCommand.ToggleAutoCombat((int)color)]);
+
+        _lastHoverCell = null;
+
+        if (!_arena.BattleValid())
+        {
+            Finish();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Hands the rest of the fight to the computer, <c>Interface::_quickCombat()</c>
+    /// (<c>battle_interface.cpp:3656-3662</c>).
+    /// </summary>
+    /// <returns><see langword="true"/> when the command was played.</returns>
+    private bool ApplyQuickCombat()
+    {
+        if (_arena.CurrentUnit is null)
+        {
+            return false;
+        }
+
+        GameLog.Info("Quick combat: the computer finishes the battle.");
+
+        _arena.PlayCurrentUnitTurn([BattleCommand.QuickCombat()]);
+
+        _lastHoverCell = null;
+
+        if (!_arena.BattleValid())
+        {
+            Finish();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Skips the unit whose turn it is, the <c>SKIP</c> button's command
+    /// (<c>battle_interface.cpp:3349-3355</c>).
+    /// </summary>
+    /// <returns><see langword="true"/> when the command was played.</returns>
+    private bool SkipCurrentUnit()
+    {
+        if (_arena.CurrentUnit is not { } unit || !IsHumanUnit(unit))
+        {
+            return false;
+        }
+
+        PlayCommands(unit, [BattleCommand.Skip((int)unit.Uid)]);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Opens the battle settings window, <c>Interface::_openBattleSettingsDialog()</c>
+    /// (<c>battle_interface.cpp:3623-3635</c>).
+    /// </summary>
+    /// <returns><see langword="true"/> when the window is open; nothing was played in that case.</returns>
+    private bool OpenBattleSettings()
+    {
+        if (_settings is not null)
+        {
+            return false;
+        }
+
+        _settings = _sprites is null || _settingsOkay is null || _settingsOkayPressed is null
+            ? null
+            : BattleSettingsWindow.TryCreate(_sprites, _settingsOkay, _settingsOkayPressed,
+                new Size(ScreenBuffer.DefaultWidth, ScreenBuffer.DefaultHeight), turnOrderInsideWindow: true);
+
+        if (_settings is null)
+        {
+            GameLog.Warn("The battle settings window has no artwork.");
+
+            return false;
+        }
+
+        GameLog.Info("The battle settings window opened.");
+
+        return true;
+    }
+
+    /// <summary>
     /// Picks the unit that acts first so a frozen frame can show the hover shadow, without playing anything.
     /// </summary>
     private void EnsureCurrentUnit()
@@ -329,14 +601,15 @@ public sealed class BattleScene : IScene
     /// <param name="events">Input state of this frame.</param>
     /// <returns><see langword="true"/> when a turn was played.</returns>
     /// <remarks>
-    /// 这一批只接两种输入：左键点格子（空格子走、敌人格打）与空格跳过。等待/防御、施法、撤退/投降、
-    /// 自动战斗与设置按钮都还没有，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.6。
+    /// 这一批接三种输入：左键点格子（空格子走、敌人格打）、<c>HotKeyEvent::BattleSkip</c>（默认空格）跳过，
+    /// 以及状态栏那三个按钮（见 <see cref="UpdateStatusBarCommands"/>）。等待/防御、施法、撤退/投降仍然没有，
+    /// 见 <c>bd list</c>。
     /// </remarks>
     private bool TryPlayHumanCommand(BattleUnit unit, LocalEvent events)
     {
         List<BattleCommand>? commands = null;
 
-        if (events.IsKeyPressed(Key.Space))
+        if (GameHotKeys.HotKeyPressEvent(HotKeyEvent.BattleSkip))
         {
             // 参考的 HotKeyEvent::BattleSkip 默认就是空格。
             commands = [BattleCommand.Skip((int)unit.Uid)];
@@ -364,6 +637,19 @@ public sealed class BattleScene : IScene
             return false;
         }
 
+        PlayCommands(unit, commands);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Plays the commands a player picked, <c>Interface::ApplyAction()</c>'s caller side: the status line is
+    /// written first because the arena consumes a command's parameters as it applies them.
+    /// </summary>
+    /// <param name="unit">The unit whose turn it is.</param>
+    /// <param name="commands">What it does.</param>
+    private void PlayCommands(BattleUnit unit, List<BattleCommand> commands)
+    {
         // The arena consumes a command's parameters as it applies them, so the text is taken first.
         string status = StatusOf(commands[0]);
 
@@ -381,8 +667,6 @@ public sealed class BattleScene : IScene
         {
             Finish();
         }
-
-        return true;
     }
 
     /// <summary>
@@ -419,13 +703,23 @@ public sealed class BattleScene : IScene
         int? hovered = BattleBoard.IsValidIndex(cell) ? cell : null;
         _painter.SetHoveredCell(hovered);
 
-        if (hovered == _lastHoverCell)
+        if (hovered != _lastHoverCell)
+        {
+            _lastHoverCell = hovered;
+            UpdateCursorTheme(hovered);
+        }
+
+        if (hovered is not null)
         {
             return;
         }
 
-        _lastHoverCell = hovered;
-        UpdateCursorTheme(hovered);
+        // Off the board the lower line carries the status bar hint, the reference's
+        // «Show logs»/«Hide logs» (<c>battle_interface.cpp:3511</c>).
+        bool overStatusBar = BattleFieldPainter.StatusBarArea.Contains(cursor);
+
+        _painter.SetStatus(overStatusBar ? (_painter.StatusLog.IsOpen ? "Hide logs" : "Show logs") : string.Empty,
+            top: false);
     }
 
     /// <summary>
@@ -520,6 +814,9 @@ public sealed class BattleScene : IScene
         {
             _painter.Redraw(_frame.Pixels);
         }
+
+        // 设置窗画在战场之上（参考里它自己的 StandardWindow 直接画到屏幕上）。
+        _settings?.Draw(_frame.Pixels);
 
         // The battle is painted straight into the indexed pixels, which cannot report the change.
         _frame.InvalidateAll();
