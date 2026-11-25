@@ -26,6 +26,21 @@ namespace FHeroes2.Game.Battle;
 public interface IBattlePresenter
 {
     /// <summary>
+    /// Opens the battle screen over a prepared arena, the <c>Battle::Interface</c> constructor the reference runs
+    /// from <c>Battle::Loader</c> (<c>battle_main.cpp:371-385</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考在竞技场建好之后、第一回合之前就把界面立起来，于是<b>第一个电脑单位的动作也有人看</b>。端口照这个位置调用：
+    /// 实现方在这里拿到 <see cref="BattleArena.TileIndex"/> 去取战场外观，并把 <see cref="BattleArena.Animator"/>
+    /// 装成自己，之后每一个动作（人打的、AI 打的）都会先走动画再结算。
+    /// </remarks>
+    /// <param name="arena">The arena that is about to be played.</param>
+    void BattleStarted(BattleArena arena)
+    {
+        // 默认没有人看：与 showBattle == false 同样的表现。
+    }
+
+    /// <summary>
     /// Lets the arena fade out after the fight, <c>Arena::FadeArena()</c> (<c>battle_main.cpp:408</c>).
     /// </summary>
     /// <param name="clearMessageLog">Whether the battle log is wiped, which the reference does after a retreat.</param>
@@ -117,6 +132,88 @@ public sealed class BattleLoadRequest
 }
 
 /// <summary>
+/// One battle set up but not yet played or settled, the two halves of <c>Battle::Loader()</c> split apart so a
+/// frame-driven interface can drive the fight itself.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="BattleLoader.Load"/> 把它两半一次跑完，是参考的直译；战斗画面要走自己的帧循环时，
+/// 用 <see cref="BattleLoader.TryPrepare"/> 拿到一个 session，自己跑 <see cref="BattleLoader.RunToEnd"/>
+/// 或逐帧驱动 <see cref="Arena"/>，打完再交给 <see cref="BattleLoader.Settle"/>，最后
+/// <see cref="BattleLoader.CloseSession"/>。
+/// </para>
+/// <para>
+/// 里面装的是两半之间必须传递的东西：请求、竞技场、种子、两军指挥官与「重打成手动」要回滚的四个快照。
+/// 它不持任何资源，丢掉就等于放弃这场战斗。
+/// </para>
+/// </remarks>
+public sealed class BattleSession
+{
+    internal BattleSession(
+        BattleLoadRequest request,
+        BattleArena arena,
+        bool showBattle,
+        uint battleSeed,
+        IArmyCommander? attackingCommander,
+        IArmyCommander? defendingCommander,
+        uint attackingInitialSpellPoints,
+        uint defendingInitialSpellPoints,
+        Funds attackingInitialFunds,
+        Funds defendingInitialFunds)
+    {
+        Request = request;
+        Arena = arena;
+        ShowBattle = showBattle;
+        BattleSeed = battleSeed;
+        IsHumanBattle = request.AttackingArmy.GetControl() == PlayerControl.Human
+            || request.DefendingArmy.GetControl() == PlayerControl.Human;
+        AttackingCommander = attackingCommander;
+        DefendingCommander = defendingCommander;
+        AttackingInitialSpellPoints = attackingInitialSpellPoints;
+        DefendingInitialSpellPoints = defendingInitialSpellPoints;
+        AttackingInitialFunds = attackingInitialFunds;
+        DefendingInitialFunds = defendingInitialFunds;
+    }
+
+    /// <summary>The request the battle was set up from.</summary>
+    public BattleLoadRequest Request { get; }
+
+    /// <summary>The arena to play, rebuilt by <see cref="Restart"/>.</summary>
+    public BattleArena Arena { get; private set; }
+
+    /// <summary>Whether the fight is shown to a human, <c>show_battle</c>.</summary>
+    public bool ShowBattle { get; private set; }
+
+    /// <summary>Whether either side is played by a human, <c>isHumanBattle</c>.</summary>
+    public bool IsHumanBattle { get; }
+
+    /// <summary>The seed both the arena and a replay use.</summary>
+    internal uint BattleSeed { get; }
+
+    internal IArmyCommander? AttackingCommander { get; }
+
+    internal IArmyCommander? DefendingCommander { get; }
+
+    internal uint AttackingInitialSpellPoints { get; }
+
+    internal uint DefendingInitialSpellPoints { get; }
+
+    internal Funds AttackingInitialFunds { get; }
+
+    internal Funds DefendingInitialFunds { get; }
+
+    /// <summary>
+    /// Rebuilds the arena over the same armies and seed for the player's replay, the <c>continue</c> of
+    /// <c>battle_main.cpp:387-500</c>.
+    /// </summary>
+    internal void Restart()
+    {
+        Arena = BattleLoader.BuildArena(Request, BattleSeed);
+        ShowBattle = true;
+    }
+}
+
+/// <summary>
 /// Starts a battle and settles its consequences, <c>Battle::Loader()</c> (<c>battle.h:68</c>,
 /// <c>battle_main.cpp:291-535</c>).
 /// </summary>
@@ -153,25 +250,71 @@ public static class BattleLoader
     /// <exception cref="ArgumentException">One of the armies has no commander at all.</exception>
     public static BattleResult Load(BattleLoadRequest request)
     {
+        BattleSession? session = TryPrepare(request, out BattleResult immediateResult);
+
+        if (session is null)
+        {
+            return immediateResult;
+        }
+
+        while (true)
+        {
+            BattleResult result = RunToEnd(session.Arena, session.ShowBattle ? session.Request.Presenter : null);
+
+            if (!Settle(session, result, out bool restart))
+            {
+                return CloseSession(session, result);
+            }
+
+            // The player asked to fight the shown battle by hand once more: a fresh arena over the same armies
+            // and the same seed, the `continue` of the reference's loop (battle_main.cpp:387-500).
+            session.Restart();
+        }
+    }
+
+    /// <summary>
+    /// Sets a battle up without playing it, the front half of <c>Battle::Loader()</c>:
+    /// the pre-battle hooks, the undo snapshots and the arena itself.
+    /// </summary>
+    /// <param name="request">The two armies and everything else the loader needs.</param>
+    /// <param name="immediateResult">
+    /// The result when the fight never happens because one side has nothing to fight with; otherwise the default.
+    /// </param>
+    /// <returns>The prepared battle, or <see langword="null"/> when <paramref name="immediateResult"/> answers.</returns>
+    /// <remarks>
+    /// <para>
+    /// 这是「把战斗交给别人跑」的那一半：参考的 <c>Battle::Loader</c> 是阻塞的，人类回合在
+    /// <c>Arena::Turns()</c> 里自带事件循环；端口没有界面线程，于是把前半段（战前钩子、回滚快照、竞技场）与
+    /// 后半段（结算、宝物、鹰眼、招魂）拆开——调用方拿到 <see cref="BattleSession"/> 后用
+    /// <see cref="RunToEnd"/> 或自己的帧循环把它跑完，再交给 <see cref="Settle"/>。
+    /// </para>
+    /// <para>
+    /// <see cref="Load"/> 就是这两半的一个循环封装，语义与参考一字不差；<paramref name="immediateResult"/> 对应
+    /// 参考开头那段「一方没有兵，直接判负」（<c>battle_main.cpp:296-307</c>）。
+    /// </para>
+    /// </remarks>
+    public static BattleSession? TryPrepare(BattleLoadRequest request, out BattleResult immediateResult)
+    {
         ArgumentNullException.ThrowIfNull(request);
+
+        immediateResult = default;
 
         GameArmy attackingArmy = request.AttackingArmy;
         GameArmy defendingArmy = request.DefendingArmy;
-        BattleResult result = default;
 
         if (!attackingArmy.IsValid || !defendingArmy.IsValid)
         {
             // A side with nothing to fight with loses without a battle taking place.
             if (!defendingArmy.IsValid)
             {
-                result.Attacker = BattleOutcome.Wins;
+                immediateResult.Attacker = BattleOutcome.Wins;
             }
             else
             {
-                result.Defender = BattleOutcome.Wins;
+                immediateResult.Defender = BattleOutcome.Wins;
             }
 
-            return result;
+            return null;
         }
 
         IArmyCommander? attackingCommander = attackingArmy.Commander;
@@ -202,109 +345,158 @@ public static class BattleLoader
 
         uint battleSeed = ComputeBattleSeed(request.TileIndex, request.World.MapSeed, attackingArmy, defendingArmy);
 
-        while (true)
+        BattleArena arena = BuildArena(request, battleSeed);
+
+        // 不放映就等于没有界面：人类那一方也交给电脑（参考在竞技场构造函数里做，
+        // battle_arena.cpp:372-380）。
+        if (!showBattle)
         {
-            BattleArena arena = BuildArena(request, battleSeed);
-
-            // 不放映就等于没有界面：人类那一方也交给电脑（参考在竞技场构造函数里做，
-            // battle_arena.cpp:372-380）。
-            if (!showBattle)
-            {
-                arena.EnableAutoCombatForHumanSides();
-            }
-
-            result = RunToEnd(arena, showBattle ? request.Presenter : null);
-
-            IArmyCommander? winnerCommander = result.IsAttackerWin
-                ? attackingCommander
-                : result.IsDefenderWin
-                    ? defendingCommander
-                    : null;
-
-            BattleOutcome loserOutcome = result.IsAttackerWin
-                ? result.Defender
-                : result.IsDefenderWin
-                    ? result.Attacker
-                    : BattleOutcome.None;
-
-            IArmyCommander? loserCommander = result.IsAttackerWin ? defendingCommander : attackingCommander;
-
-            // A side that ran away or bought itself out is not wiped out, so nothing is taken from it.
-            bool isLoserAbandoned = (loserOutcome & (BattleOutcome.Retreat | BattleOutcome.Surrender)) == 0;
-            bool canTransferArtifacts = isLoserAbandoned && winnerCommander is Hero && loserCommander is Hero;
-
-            if (showBattle)
-            {
-                bool clearMessageLog = (result.Attacker & (BattleOutcome.Retreat | BattleOutcome.Surrender)) != 0
-                    || (result.Defender & (BattleOutcome.Retreat | BattleOutcome.Surrender)) != 0;
-
-                request.Presenter?.FadeArena(clearMessageLog);
-            }
-
-            if (isHumanBattle && request.Presenter != null
-                && request.Presenter.ShowSummary(
-                    result,
-                    canTransferArtifacts
-                        ? GetArtifactsToTransfer(((Hero)winnerCommander!).BagArtifacts, ((Hero)loserCommander!).BagArtifacts)
-                        : [],
-                    !showBattle))
-            {
-                // The player asked to fight this one by hand: put the spell points and the treasuries back and replay.
-                showBattle = true;
-
-                if (attackingCommander != null)
-                {
-                    attackingCommander.SetSpellPoints(attackingInitialSpellPoints);
-                    RestoreKingdomFunds(request.World, attackingCommander, attackingInitialFunds);
-                }
-
-                if (defendingCommander != null)
-                {
-                    defendingCommander.SetSpellPoints(defendingInitialSpellPoints);
-                    RestoreKingdomFunds(request.World, defendingCommander, defendingInitialFunds);
-                }
-
-                continue;
-            }
-
-            if (canTransferArtifacts && loserCommander is Hero loserHero)
-            {
-                Hero winnerHero = (Hero)winnerCommander!;
-
-                TransferArtifacts(winnerHero.BagArtifacts, loserHero.BagArtifacts);
-
-                if (winnerHero.IsControlHuman)
-                {
-                    foreach (ArtifactSet set in winnerHero.BagArtifacts.AssembleArtifactSets())
-                    {
-                        request.Presenter?.ShowArtifactSetAssembled(set.Assembled);
-                    }
-                }
-            }
-
-            // No campaign reward: the campaign system is not ported yet (battle_main.cpp:447-459).
-
-            arena.AttackingForce.SyncOriginalArmy();
-            arena.DefendingForce.SyncOriginalArmy();
-
-            attackingCommander?.ActionAfterBattle();
-            defendingCommander?.ActionAfterBattle();
-
-            if (winnerCommander is Hero eagleEyeOwner && loserCommander is Hero)
-            {
-                EagleEyeSkillAction(eagleEyeOwner, arena.UsedSpells, arena.RandomGenerator, request.Presenter);
-            }
-
-            if (winnerCommander is Hero necromancer)
-            {
-                NecromancySkillAction(necromancer, result.NumOfDeadUnitsForNecromancy, request.World, request.Presenter);
-            }
-
-            break;
+            arena.EnableAutoCombatForHumanSides();
+        }
+        else
+        {
+            // 参考在竞技场构造完之后立刻建界面（battle_main.cpp:371-385）：第一个电脑单位的动作也要有人看。
+            request.Presenter?.BattleStarted(arena);
         }
 
-        attackingArmy.ResetInvalidMonsters();
-        defendingArmy.ResetInvalidMonsters();
+        return new BattleSession(
+            request,
+            arena,
+            showBattle,
+            battleSeed,
+            attackingCommander,
+            defendingCommander,
+            attackingInitialSpellPoints,
+            defendingInitialSpellPoints,
+            attackingInitialFunds,
+            defendingInitialFunds);
+    }
+
+    /// <summary>
+    /// Settles a played battle, the back half of <c>Battle::Loader()</c>: the result dialog, the artifacts, the
+    /// post-battle hooks, Eagle Eye and necromancy (<c>battle_main.cpp:398-500</c>).
+    /// </summary>
+    /// <param name="session">The battle that was played.</param>
+    /// <param name="result">What its arena settled on.</param>
+    /// <param name="restart">Whether the player asked to fight the shown battle by hand once more.</param>
+    /// <returns>Whether the battle has to be replayed before anything is settled.</returns>
+    /// <remarks>
+    /// 返回 <see langword="true"/> 时<b>什么都没写回</b>：法术点与金库已经被调用方（或 <see cref="Load"/>）回滚，
+    /// 两军原封不动，重打用同一批兵与同一个种子再开一次即可。
+    /// </remarks>
+    public static bool Settle(BattleSession session, BattleResult result, out bool restart)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        World world = session.Request.World;
+        IArmyCommander? attackingCommander = session.AttackingCommander;
+        IArmyCommander? defendingCommander = session.DefendingCommander;
+        bool showBattle = session.ShowBattle;
+
+        restart = false;
+
+        IArmyCommander? winnerCommander = result.IsAttackerWin
+            ? attackingCommander
+            : result.IsDefenderWin
+                ? defendingCommander
+                : null;
+
+        BattleOutcome loserOutcome = result.IsAttackerWin
+            ? result.Defender
+            : result.IsDefenderWin
+                ? result.Attacker
+                : BattleOutcome.None;
+
+        IArmyCommander? loserCommander = result.IsAttackerWin ? defendingCommander : attackingCommander;
+
+        // A side that ran away or bought itself out is not wiped out, so nothing is taken from it.
+        bool isLoserAbandoned = (loserOutcome & (BattleOutcome.Retreat | BattleOutcome.Surrender)) == 0;
+        bool canTransferArtifacts = isLoserAbandoned && winnerCommander is Hero && loserCommander is Hero;
+
+        if (showBattle)
+        {
+            bool clearMessageLog = (result.Attacker & (BattleOutcome.Retreat | BattleOutcome.Surrender)) != 0
+                || (result.Defender & (BattleOutcome.Retreat | BattleOutcome.Surrender)) != 0;
+
+            session.Request.Presenter?.FadeArena(clearMessageLog);
+        }
+
+        if (session.IsHumanBattle && session.Request.Presenter != null
+            && session.Request.Presenter.ShowSummary(
+                result,
+                canTransferArtifacts
+                    ? GetArtifactsToTransfer(((Hero)winnerCommander!).BagArtifacts, ((Hero)loserCommander!).BagArtifacts)
+                    : [],
+                !showBattle))
+        {
+            // The player asked to fight this one by hand: put the spell points and the treasuries back and replay.
+            restart = true;
+
+            if (attackingCommander != null)
+            {
+                attackingCommander.SetSpellPoints(session.AttackingInitialSpellPoints);
+                RestoreKingdomFunds(world, attackingCommander, session.AttackingInitialFunds);
+            }
+
+            if (defendingCommander != null)
+            {
+                defendingCommander.SetSpellPoints(session.DefendingInitialSpellPoints);
+                RestoreKingdomFunds(world, defendingCommander, session.DefendingInitialFunds);
+            }
+
+            return true;
+        }
+
+        if (canTransferArtifacts && loserCommander is Hero loserHero)
+        {
+            Hero winnerHero = (Hero)winnerCommander!;
+
+            TransferArtifacts(winnerHero.BagArtifacts, loserHero.BagArtifacts);
+
+            if (winnerHero.IsControlHuman)
+            {
+                foreach (ArtifactSet set in winnerHero.BagArtifacts.AssembleArtifactSets())
+                {
+                    session.Request.Presenter?.ShowArtifactSetAssembled(set.Assembled);
+                }
+            }
+        }
+
+        // No campaign reward: the campaign system is not ported yet (battle_main.cpp:447-459).
+
+        session.Arena.AttackingForce.SyncOriginalArmy();
+        session.Arena.DefendingForce.SyncOriginalArmy();
+
+        attackingCommander?.ActionAfterBattle();
+        defendingCommander?.ActionAfterBattle();
+
+        if (winnerCommander is Hero eagleEyeOwner && loserCommander is Hero)
+        {
+            EagleEyeSkillAction(eagleEyeOwner, session.Arena.UsedSpells, session.Arena.RandomGenerator,
+                session.Request.Presenter);
+        }
+
+        if (winnerCommander is Hero necromancer)
+        {
+            NecromancySkillAction(necromancer, result.NumOfDeadUnitsForNecromancy, world, session.Request.Presenter);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Puts a settled battle away, the tail of <c>Battle::Loader()</c>: <c>resetInvalidMonsters()</c>
+    /// (<c>battle_main.cpp:505-506</c>).
+    /// </summary>
+    /// <param name="session">The battle that is over.</param>
+    /// <param name="result">What it settled on.</param>
+    /// <returns>The result, handed back for the caller to return.</returns>
+    public static BattleResult CloseSession(BattleSession session, BattleResult result)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        session.Request.AttackingArmy.ResetInvalidMonsters();
+        session.Request.DefendingArmy.ResetInvalidMonsters();
 
         return result;
     }
@@ -373,7 +565,7 @@ public static class BattleLoader
         return seed;
     }
 
-    private static BattleArena BuildArena(BattleLoadRequest request, uint battleSeed)
+    internal static BattleArena BuildArena(BattleLoadRequest request, uint battleSeed)
     {
         BattleArena arena = BattleArena.FromTile(request.World, request.AttackingArmy, request.DefendingArmy,
             request.TileIndex, new Pcg32(battleSeed));

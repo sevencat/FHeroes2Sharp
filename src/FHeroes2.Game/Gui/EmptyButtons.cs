@@ -638,8 +638,9 @@ public static class EmptyButtons
     /// <remarks>
     /// 参考直接按扁平下标 <c>transform[i]</c> 写九段连续区间，跨行是常态；这里把它们拆成行列明确的矩形，
     /// 行列由「下标 / 宽度」推出来——左上 4/3/2/1、右上 2/1、右下 1/2/3/4 的阶梯。
+    /// 战斗里的投降窗按下态 DECLINE 也用它（参考的 <c>BUTTON_SMALL_DECLINE_GOOD</c> 生成路径），所以是公开的。
     /// </remarks>
-    private static void MakeButtonCornersTransparent(Sprite button)
+    public static void MakeButtonCornersTransparent(Sprite button)
     {
         int width = button.Width;
         int height = button.Height;

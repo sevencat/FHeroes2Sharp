@@ -183,61 +183,126 @@ public static class MiniMonsters
                 continue;
             }
 
-            string countText;
+            int posX = rightToLeft ? cx + (int)(chunk * (count - 1)) : cx - (int)(chunk * count);
 
-            if (detailedView || !garrisonView)
+            DrawStack(troop, posX, cy, chunk, compact, detailedView, garrisonView, thievesGuildCount, output, sprites);
+
+            --count;
+        }
+    }
+
+    /// <summary>
+    /// Draws a list of stacks right to left in one line, <c>drawMiniMonsters()</c> over a <c>Troops</c> vector.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>Troops</c> 是不限长的 <c>std::vector</c>，<c>Army</c> 从它继承；端口的 <see cref="Army"/> 固定
+    /// 七槽，所以「阵亡部队」这种可能超过七条的列表走这个重载。摆放规则与「无窗口、从右往左」的军队行一致：
+    /// 第一项在最右，最后一项在最左。
+    /// </remarks>
+    /// <param name="troops">The stacks to draw.</param>
+    /// <param name="cx">Left edge of the line.</param>
+    /// <param name="cy">Top edge of the line.</param>
+    /// <param name="width">Width the line may use.</param>
+    /// <param name="output">The image to draw into.</param>
+    /// <param name="sprites">Where the portraits come from.</param>
+    public static void Draw(IReadOnlyList<Troop> troops, int cx, int cy, int width, PixelBuffer output,
+        IMiniMonsterSprites sprites)
+    {
+        ArgumentNullException.ThrowIfNull(troops);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(sprites);
+
+        int count = 0;
+
+        foreach (Troop troop in troops)
+        {
+            if (troop.IsValid)
             {
-                countText = Army.FormatMonsterCount(troop.Count, detailedView, compact);
+                ++count;
             }
-            else
+        }
+
+        if (count == 0)
+        {
+            return;
+        }
+
+        double chunk = width / (double)count;
+        int remaining = count;
+
+        cx += (int)(chunk / 2);
+
+        foreach (Troop troop in troops)
+        {
+            if (!troop.IsValid)
             {
-                Debug.Assert(thievesGuildCount > 0, "a hidden garrison count needs a thieves' guild");
-
-                countText = thievesGuildCount == 1 ? "???" : Army.SizeString(troop.Count);
-            }
-
-            Sprite? monster = sprites.GetMiniMonster(troop.Monster);
-
-            if (monster is null)
-            {
-                // The reference asserts here; a port has no business stopping the game for a missing picture.
-                GameLog.Warn($"No small portrait for {troop.Monster}, the stack is not drawn.");
                 continue;
             }
 
-            Text text = new(countText, FontType.SmallWhite());
+            int posX = cx + (int)(chunk * (remaining - 1));
 
-            int posX = rightToLeft ? cx + (int)(chunk * (count - 1)) : cx - (int)(chunk * count);
+            DrawStack(troop, posX, cy, chunk, compact: false, detailedView: true, garrisonView: false,
+                thievesGuildCount: 0, output, sprites);
 
-            if (compact)
+            --remaining;
+        }
+    }
+
+    /// <summary>Draws one stack whose chunk's reference point is <paramref name="posX"/>, the body of the line loops.</summary>
+    private static void DrawStack(Troop troop, int posX, int cy, double chunk, bool compact, bool detailedView,
+        bool garrisonView, uint thievesGuildCount, PixelBuffer output, IMiniMonsterSprites sprites)
+    {
+        string countText;
+
+        if (detailedView || !garrisonView)
+        {
+            countText = Army.FormatMonsterCount(troop.Count, detailedView, compact);
+        }
+        else
+        {
+            Debug.Assert(thievesGuildCount > 0, "a hidden garrison count needs a thieves' guild");
+
+            countText = thievesGuildCount == 1 ? "???" : Army.SizeString(troop.Count);
+        }
+
+        Sprite? monster = sprites.GetMiniMonster(troop.Monster);
+
+        if (monster is null)
+        {
+            // The reference asserts here; a port has no business stopping the game for a missing picture.
+            GameLog.Warn($"No small portrait for {troop.Monster}, the stack is not drawn.");
+
+            return;
+        }
+
+        Text text = new(countText, FontType.SmallWhite());
+
+        if (compact)
+        {
+            // The short form: the portrait and the count share one chunk, the portrait as high as the row.
+            int offsetY = monster.Height < 37 ? 37 - monster.Height : 0;
+            int offset = ((int)chunk - monster.Width - text.Width()) / 2;
+
+            if (offset < 0)
             {
-                // The short form: the portrait and the count share one chunk, the portrait as high as the row.
-                int offsetY = monster.Height < 37 ? 37 - monster.Height : 0;
-                int offset = ((int)chunk - monster.Width - text.Width()) / 2;
-
-                if (offset < 0)
-                {
-                    offset = 0;
-                }
-
-                ImageOps.BlitSprite(output, new Point(posX + offset, cy + offsetY + monster.OffsetY), monster, monster.Image.Bounds);
-                text.Draw(posX - text.Width() - offset + (int)chunk, cy + 23, output);
-            }
-            else
-            {
-                // The full form: every portrait sits on the line's baseline and its count is centred under it.
-                int offsetY = 28 - monster.Height + monster.OffsetY;
-
-                ImageOps.BlitSprite(
-                    output,
-                    new Point(posX - (monster.Width / 2) + monster.OffsetX + 2, cy + offsetY),
-                    monster,
-                    monster.Image.Bounds);
-
-                text.Draw(posX - (text.Width() / 2), cy + 29, output);
+                offset = 0;
             }
 
-            --count;
+            ImageOps.BlitSprite(output, new Point(posX + offset, cy + offsetY + monster.OffsetY), monster, monster.Image.Bounds);
+            text.Draw(posX - text.Width() - offset + (int)chunk, cy + 23, output);
+        }
+        else
+        {
+            // The full form: every portrait sits on the line's baseline and its count is centred under it.
+            int offsetY = 28 - monster.Height + monster.OffsetY;
+
+            ImageOps.BlitSprite(
+                output,
+                new Point(posX - (monster.Width / 2) + monster.OffsetX + 2, cy + offsetY),
+                monster,
+                monster.Image.Bounds);
+
+            text.Draw(posX - (text.Width() / 2), cy + 29, output);
         }
     }
 

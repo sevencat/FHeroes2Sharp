@@ -1,8 +1,13 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
+using FHeroes2.Game.Army;
+using FHeroes2.Game.Battle;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Monsters;
 using FHeroes2.Game.System;
+using CastleType = FHeroes2.Game.Castle.Castle;
+using KingdomType = FHeroes2.Game.Kingdom.Kingdom;
 
 namespace FHeroes2.Game.Tests;
 
@@ -317,5 +322,63 @@ public sealed class AdventureSessionTests
         // A map only meant for the computer (or for the editor) opens as a viewer: no day, no turn.
         Assert.Null(AdventureSession.Start(world, info));
         Assert.Equal(0u, world.DayCount);
+    }
+
+    /// <summary>No interface host means nobody to answer the human hero, so he only uncovers fog.</summary>
+    [Fact]
+    public void WithoutAHostTheHumanHeroOnlyScouts()
+    {
+        (World world, Mp2FileInfo info) = Load(PlayerColor.Blue, PlayerColor.Green | PlayerColor.Red);
+
+        AdventureSession session = AdventureSession.Start(world, info)!;
+        Hero hero = session.FocusHero!;
+
+        Assert.IsType<NullHeroActionHost>(world.HeroActionHost);
+        Assert.IsType<FogHeroMovementHandler>(hero.MovementHandler);
+    }
+
+    /// <summary>A host turns the human hero into the full action table; the computer keeps its own handler.</summary>
+    [Fact]
+    public void AHostGivesTheHumanHeroTheFullActionTable()
+    {
+        (World world, Mp2FileInfo info) = Load(PlayerColor.Blue, PlayerColor.Green | PlayerColor.Red);
+        StubHeroActionHost host = new();
+
+        AdventureSession session = AdventureSession.Start(world, info, host)!;
+
+        Assert.Same(host, world.HeroActionHost);
+        Assert.IsType<HumanHeroMovementHandler>(session.FocusHero!.MovementHandler);
+
+        Hero green = world.Kingdoms.GetKingdom(PlayerColor.Green).Heroes[0];
+
+        Assert.IsType<AiHeroMovementHandler>(green.MovementHandler);
+    }
+
+    /// <summary>
+    /// Answers every question the same way and opens nothing — enough to tell the human handler from the fog one.
+    /// </summary>
+    private sealed class StubHeroActionHost : IHeroActionHost
+    {
+        public IBattlePresenter? BattlePresenter => null;
+
+        public bool Ask(HeroActionQuestion question, Troop troop, uint gold = 0) => false;
+
+        public bool Ask(HeroActionQuestion question, uint gold = 0) => false;
+
+        public uint AskRecruitCount(MonsterType monster, uint available, KingdomType kingdom) => 0;
+
+        public string AskRiddle(string riddle) => string.Empty;
+
+        public void OpenCastle(CastleType castle)
+        {
+        }
+
+        public void OpenMarketplace(KingdomType kingdom, bool fromTradingPost)
+        {
+        }
+
+        public void OpenThievesGuild(KingdomType kingdom)
+        {
+        }
     }
 }

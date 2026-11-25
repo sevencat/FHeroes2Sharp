@@ -1,6 +1,8 @@
 using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Battle;
+using FHeroes2.Game.Gui;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
@@ -25,9 +27,8 @@ namespace FHeroes2.UI.Battle;
 /// 所以场景只要下一帧按新设置画战场即可（网格开关在 <see cref="BattleFieldPainter"/> 里读）。
 /// </para>
 /// <para>
-/// <b>偏差</b>：右击图标的说明框（<c>showStandardTextMessage</c>）没接；「移动范围」图标里的六角阴影与
-/// 「血量条」图标里示意用的血量条也没画（后者依赖 <c>drawHitPointsBar</c>，见 <c>bd list</c> 的
-/// <c>ukw.21</c>），两个图标先用背景 + 生物图 + 计数条拼出来。
+/// <b>偏差</b>：右击图标的说明框（<c>showStandardTextMessage</c>）没接；「移动范围」图标里的六角阴影也
+/// 没画，那个图标先用背景 + 生物图 + 计数条拼出来。
 /// </para>
 /// </remarks>
 public sealed class BattleSettingsWindow
@@ -53,6 +54,12 @@ public sealed class BattleSettingsWindow
     private readonly Rect _shadowCursorArea;
     private readonly Rect _movementArea;
     private readonly Rect _hitPointsBarArea;
+
+    /// <summary>The green of the illustrative hit point bar, resolved from <c>KB.PAL</c> on first use.</summary>
+    private byte? _remainingHitPointsColor;
+
+    /// <summary>The red of the illustrative hit point bar, resolved from <c>KB.PAL</c> on first use.</summary>
+    private byte? _missingHitPointsColor;
 
     /// <summary>
     /// Builds the window, or returns <see langword="null"/> when the icons or the OK button are missing.
@@ -235,7 +242,7 @@ public sealed class BattleSettingsWindow
     {
         bool enabled = Settings.Get().IsBattleShowHitPointsBar;
 
-        if (ComposeHitPointsIcon() is { } icon)
+        if (ComposeHitPointsIcon(enabled) is { } icon)
         {
             OptionItem.Draw(target, _hitPointsBarArea, icon, "Hit Points", enabled ? "On" : "Off",
                 OptionItem.ThreeElementsRowWidth);
@@ -269,12 +276,17 @@ public sealed class BattleSettingsWindow
     /// Builds the hit points bar icon: an empty option background with a creature and the troop count bar
     /// under it.
     /// </summary>
+    /// <param name="enabled">
+    /// Whether the option is on; the reference then also draws an illustrative bar showing two thirds of the
+    /// hit points left.
+    /// </param>
     /// <returns>The icon, or <see langword="null"/> when the background is missing.</returns>
     /// <remarks>
-    /// 参考还会在计数条上画一条示意用的血量条（<c>drawHitPointsBar</c>），那是 <c>bd list</c> 的 <c>ukw.21</c>；
-    /// 这里只画计数条。
+    /// 计数条贴着图标下沿（<c>drawHitPointsBarOption()</c>, <c>battle_interface_settings.cpp:178-190</c>）：
+    /// <c>y = height - barHeight - 4 - 5</c>，那 <c>4</c> 就是留给血量条的位置。参考在血量条开关打开时把它
+    /// 画出来示意（剩 2/3 的血），这里照做；绿红两色仍按 <c>GetColorId</c> 从 <c>KB.PAL</c> 里找。
     /// </remarks>
-    private Sprite? ComposeHitPointsIcon()
+    private Sprite? ComposeHitPointsIcon(bool enabled)
     {
         PixelBuffer image = ComposeOptionBackground();
 
@@ -283,13 +295,38 @@ public sealed class BattleSettingsWindow
             BlitCentered(image, creature, 0, -6);
         }
 
-        if (_sprites.GetSprite(IcnType.Textbar, 10) is { } countBar)
+        if (_sprites.GetSprite(IcnType.Textbar, 10) is not { } countBar)
         {
-            BlitCentered(image, countBar, 0, (image.Height - countBar.Image.Height) / 2);
+            return new Sprite(image);
+        }
+
+        Point barPosition = new(
+            (image.Width - countBar.Image.Width) / 2,
+            image.Height - countBar.Image.Height - BattleHitPointsBar.Height - 5);
+
+        ImageOps.Blit(image, barPosition, countBar.Image, countBar.Image.Bounds);
+
+        if (enabled)
+        {
+            // An illustrative creature with two thirds of its hit points left (battle_interface_settings.cpp:189).
+            BattleHitPointsBarPainter.Draw(image, barPosition, new Size(countBar.Image.Width, countBar.Image.Height),
+                2, 3, GetRemainingHitPointsColor(), GetMissingHitPointsColor());
         }
 
         return new Sprite(image);
     }
+
+    /// <summary>The green of the illustrative bar, <c>GetColorId( 0, 200, 0 )</c>.</summary>
+    /// <returns>The palette index, resolved once and kept.</returns>
+    private byte GetRemainingHitPointsColor() =>
+        _remainingHitPointsColor ??= EmptyButtons.GetColorId(
+            BattleHitPointsBar.RemainingRed, BattleHitPointsBar.RemainingGreen, BattleHitPointsBar.RemainingBlue);
+
+    /// <summary>The red of the illustrative bar, <c>GetColorId( 200, 0, 0 )</c>.</summary>
+    /// <returns>The palette index, resolved once and kept.</returns>
+    private byte GetMissingHitPointsColor() =>
+        _missingHitPointsColor ??= EmptyButtons.GetColorId(
+            BattleHitPointsBar.MissingRed, BattleHitPointsBar.MissingGreen, BattleHitPointsBar.MissingBlue);
 
     /// <summary>Copies <c>EMPTY_OPTION_ICON_BACKGROUND</c> into a new buffer the size of the option icon.</summary>
     /// <returns>The buffer, or <see langword="null"/> when the artwork is missing.</returns>

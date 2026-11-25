@@ -40,6 +40,48 @@ public sealed class BattleDamageTarget
 }
 
 /// <summary>
+/// One blow of an attack command and what it hit, the data <c>RedrawActionAttack()</c> needs
+/// (<c>battle_interface.cpp:4088-4256</c>).
+/// </summary>
+/// <remarks>
+/// 参考的界面在 <c>BattleProcess()</c> 里被直接调用，所以「谁打谁、射的还是砍的、打到了谁」当场就知道。
+/// 端口是一次性结算的，界面事后只能从这份记录里回放，因此这一击必先把这三件事记下来。
+/// 反击与双击各是<b>一条</b>记录：参考也是每个 <c>BattleProcess()</c> 各播一遍攻击动画。
+/// </remarks>
+public sealed class BattleAttackBlow
+{
+    /// <summary>Records one blow.</summary>
+    /// <param name="attacker">The unit that strikes.</param>
+    /// <param name="defender">The unit it strikes.</param>
+    /// <param name="isShooting">Whether the blow was a shot rather than a melee swing.</param>
+    /// <param name="targets">Every unit the blow hit, with the damage and the losses already filled in.</param>
+    public BattleAttackBlow(
+        BattleUnit attacker, BattleUnit defender, bool isShooting, IReadOnlyList<BattleDamageTarget> targets)
+    {
+        ArgumentNullException.ThrowIfNull(attacker);
+        ArgumentNullException.ThrowIfNull(defender);
+        ArgumentNullException.ThrowIfNull(targets);
+
+        Attacker = attacker;
+        Defender = defender;
+        IsShooting = isShooting;
+        Targets = targets;
+    }
+
+    /// <summary>The unit that strikes, <c>RedrawActionAttackPart1()</c>'s <c>attacker</c>.</summary>
+    public BattleUnit Attacker { get; }
+
+    /// <summary>The unit it strikes, <c>RedrawActionAttackPart1()</c>'s <c>defender</c>.</summary>
+    public BattleUnit Defender { get; }
+
+    /// <summary>Whether the blow was a shot rather than a melee swing.</summary>
+    public bool IsShooting { get; }
+
+    /// <summary>Every unit the blow hit, the reference's <c>TargetsInfo</c>.</summary>
+    public IReadOnlyList<BattleDamageTarget> Targets { get; }
+}
+
+/// <summary>
 /// 近战与射击：攻击命令的校验、一次打击的完整流程、以及伤害落到多个目标上，
 /// <c>battle_action.cpp</c> 的 <c>ApplyActionAttack()</c>（<c>:481-627</c>）、
 /// <c>BattleProcess()</c>（<c>:143-276</c>）与 <c>GetTargetsForDamage()</c>/<c>TargetsApplyDamage()</c>
@@ -80,6 +122,8 @@ public sealed partial class BattleArena
     public void ApplyActionAttack(BattleCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
+
+        _attackBlows.Clear();
 
         uint attackerUid = (uint)command.GetNextValue();
         uint defenderUid = (uint)command.GetNextValue();
@@ -141,6 +185,16 @@ public sealed partial class BattleArena
 
         attacker.SetModes(BattleMonsterState.Moved);
     }
+
+    /// <summary>
+    /// The blows the last <see cref="ApplyActionAttack"/> landed, in order: the blow itself, then the
+    /// retaliation and the second blow of a double attack, if any.
+    /// </summary>
+    /// <remarks>
+    /// 参考的界面在结算过程中被调用，因而不需要这份记录；端口结算一次做完，界面只能事后照它回放。
+    /// 记录在每次攻击开头清空，所以它只描述最近一次攻击，不是整场战斗的账。
+    /// </remarks>
+    public IReadOnlyList<BattleAttackBlow> LastAttackBlows => _attackBlows;
 
     /// <summary>
     /// Whether an attack command is legal, the <c>checkParameters</c> lambda of <c>ApplyActionAttack()</c>
@@ -332,6 +386,10 @@ public sealed partial class BattleArena
         List<BattleDamageTarget> attackTargets = GetTargetsForDamage(attacker, defender, target, cellDirection);
 
         TargetsApplyDamage(attacker, attackTargets);
+
+        // 参考在这一拍就调界面画攻击与受击（battle_action.cpp:198-210）；端口先记账，界面事后回放。
+        _attackBlows.Add(
+            new BattleAttackBlow(attacker, defender, cellDirection == CellDirection.Unknown, attackTargets));
 
         // 兵种自带的法术在伤害结算之后：参考先让这一击打死人，再让幸存者吃法术。
         Spell spell = attacker.GetSpellMagic(_randomGenerator);

@@ -1318,6 +1318,10 @@ public sealed partial class World
 
         // And the regions, which are tile ids in a tile table that is about to be emptied.
         ClearRegions();
+
+        // The interface host belongs to the session that was playing this map: the next map gets a new one from
+        // AdventureSession.Start, and until then nobody should answer a human hero's actions (World.HeroActionHost).
+        HeroActionHost = NullHeroActionHost.Instance;
     }
 
     /// <summary>

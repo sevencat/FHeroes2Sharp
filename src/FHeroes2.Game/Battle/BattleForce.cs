@@ -280,6 +280,41 @@ public sealed class BattleForce : BattleUnits
     }
 
     /// <summary>
+    /// The stacks this side lost, one entry per stack with casualties, <c>Force::GetKilledTroops()</c>.
+    /// </summary>
+    /// <returns>
+    /// A list in unit order — army slots first, then stacks summoned during the battle — each entry carrying the
+    /// stack's monster and how many of it died.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// 参考：<c>battle_army.cpp:219-230</c>。遍历的是<b>场上每一个单位</b>（含召唤出来的），每个取
+    /// <c>min(初始人数, 阵亡数)</c> 推成一条，0 条自然被 <c>Troops::PushBack</c> 丢掉。结果窗口把它们画成
+    /// 「双方各一行小图标」。
+    /// </para>
+    /// <para>
+    /// 差异：参考的 <c>Troops</c> 是不限长的 <c>std::vector</c>，端口的 <see cref="GameArmy"/> 是固定七槽，
+    /// 所以这里返回列表而不是 <see cref="GameArmy"/>——召唤物阵亡后条目会超过七条，塞进军队会丢数据。
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<Troop> GetKilledTroops()
+    {
+        List<Troop> result = new();
+
+        foreach (BattleUnit unit in this)
+        {
+            uint killed = Math.Min(unit.InitialCount, unit.Dead);
+
+            if (killed > 0 && unit.Monster != MonsterType.Unknown)
+            {
+                result.Add(new Troop(unit.Monster, killed));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Writes the survivors back into the army, <c>Force::syncOriginalArmy()</c>.
     /// </summary>
     /// <remarks>

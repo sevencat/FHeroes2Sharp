@@ -11,8 +11,9 @@ namespace FHeroes2.Game.Heroes;
 /// (fog), <c>ScoutRadar()</c> (minimap), <c>Action()</c> (the object under the hero) and
 /// <c>ActionNewPosition()</c> (monster guards, artifact pickup, AI planner). Which of them does real work depends
 /// on who drives the hero: <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/> does all four for a computer
-/// player, <see cref="FogHeroMovementHandler"/> only uncovers fog for a human one (the other three need the
-/// interface, see <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4).
+/// player, <see cref="HumanHeroMovementHandler"/> does them for a human one (the questions go through
+/// <see cref="World.HeroActionHost"/>), and <see cref="FogHeroMovementHandler"/> is the fog-only stand-in a test
+/// can install when it wants a hero to walk without any of the other three.
 /// </para>
 /// <para>
 /// The default handler does nothing, which keeps the movement state machine honest and testable: a test can walk
@@ -90,10 +91,10 @@ public sealed class NullHeroMovementHandler : IHeroMovementHandler
 /// </summary>
 /// <remarks>
 /// <para>
-/// 这是<b>人类英雄</b>装的那一个：它只开图。<see cref="Action"/> 这一支在参考里要找界面层问「要不要开战、
-/// 拿钱还是拿经验」，端口的 <c>IHeroActionHost</c> 还没有界面实现（<c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4），
-/// 装上去只会得到一串「否」，所以人类的对象动作目前仍靠玩家按默认动作键显式触发；
-/// 电脑英雄装的是 <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/>，四件事齐备。
+/// 这是「只开图」的处理器：另外三件事都留空。装了界面宿主的人类英雄装的是
+/// <see cref="HumanHeroMovementHandler"/>（四件事齐备，要问玩家的点交给 <see cref="World.HeroActionHost"/>），
+/// 电脑英雄装的是 <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/>。没有宿主的运行（命令行、测试）里人类
+/// 英雄仍退回这一个：没有玩家在点，自动触发对象既没画面也没提示。
 /// </para>
 /// <para>
 /// 与 <see cref="NullHeroMovementHandler"/> 不同，它<b>持有世界</b>：迷雾是世界的状态，

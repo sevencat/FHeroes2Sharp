@@ -80,6 +80,16 @@ public sealed class AdventureMapScene : IScene
     private IQuickInfoPanel? _quickInfo;
 
     /// <summary>
+    /// What a human hero's action asks of the interface, <c>IHeroActionHost</c>'s human branch; <see langword="null"/>
+    /// on a map without a human player.
+    /// </summary>
+    /// <remarks>
+    /// 没有它的话人类英雄走不动（<see cref="AdventureSession"/> 会装上只揭雾的处理器），所以它和会话一起建。
+    /// 战斗那一半由 <see cref="BattlePresenter"/> 在这个宿主里提供；问句与城堡屏还没接（<c>0lm.12</c>）。
+    /// </remarks>
+    private AdventureHeroActionHost? _heroActionHost;
+
+    /// <summary>
     /// Whether the hourglass of a computer turn has been put up, so the next frame runs the turn itself.
     /// </summary>
     /// <remarks>
@@ -136,6 +146,15 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>The hero the movement and the next-hero button act on, <c>Interface::AdventureMap::GetFocus()</c>.</summary>
     public Hero? FocusHero => _session?.FocusHero;
+
+    /// <summary>
+    /// What a human hero's action asks of the interface, or <see langword="null"/> on a map without a human player.
+    /// </summary>
+    /// <remarks>
+    /// <c>GameHost</c> 在造好场景之后把帧循环接到它身上（<see cref="AdventureHeroActionHost.RunModal"/>），
+    /// 就像接 <see cref="ExitEvent"/> 一样；战斗界面的人类回合与动画都要借那段循环。
+    /// </remarks>
+    internal AdventureHeroActionHost? HeroActionHost => _heroActionHost;
 
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => _view.Map.Info.Name;
@@ -198,10 +217,15 @@ public sealed class AdventureMapScene : IScene
             MapFog? fog = observers == PlayerColor.None ? null : world.Fog;
             FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
 
+            // The hero actions of a human player go through the interface layer: the battle screen has to be opened
+            // from inside the action (the reference blocks there, heroes_action.cpp), and the questions of the
+            // wandering monsters cannot be answered by the rules.
+            AdventureHeroActionHost actionHost = new(frame, assets, fonts, world);
+
             // The turn loop of the reference's StartGame(): day one, kingdoms' income, the focus hero. A map
             // without a human player returns null and stays a viewer, which is what the scene was until the
             // session existed.
-            AdventureSession? session = AdventureSession.Start(world, map.Info);
+            AdventureSession? session = AdventureSession.Start(world, map.Info, actionHost);
 
             // Both sets share one decoder cache, so keeping them apart is only about what they map. The world
             // goes in last: from now on the adventurers are drawn from the world's heroes (position, facing,
@@ -269,7 +293,11 @@ public sealed class AdventureMapScene : IScene
                 screen,
                 AdventureOptionsArtwork.TryCreate(assets),
                 assets is null ? null : new IcnViewWorldSpriteSource(assets),
-                observers);
+                observers)
+            {
+                // 只有有人类玩家时才有英雄动作可做：会话为 null 的观光地图留着空宿主。
+                _heroActionHost = session is null ? null : actionHost,
+            };
 
             // 城堡屏由宿主换场景（参考里是阻塞的 Game::OpenCastleDialog），屏幕点开城堡时先问场景。
             screen.OpenCastleScreen = scene.RequestCastleScreen;
@@ -910,7 +938,8 @@ public sealed class AdventureMapScene : IScene
         }
 
         BattleScene? scene = BattleScene.TryCreate(
-            _frame, _assets, _world, hero, freezeAnimation, siege, autoPlay, _fonts?.SmallWhite, _fonts?.White, out string? error);
+            _frame, _assets, _world, hero, freezeAnimation, siege, autoPlay, _fonts?.SmallWhite, _fonts?.White,
+            _fonts?.Small, _fonts, out string? error);
 
         if (scene is null)
         {

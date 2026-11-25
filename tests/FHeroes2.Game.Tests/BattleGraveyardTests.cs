@@ -137,6 +137,36 @@ public class BattleGraveyardTests
     }
 
     [Fact]
+    public void ANarrowBodyIsDrawnOnce()
+    {
+        BattleGraveyard graveyard = new();
+        BattleUnit peasant = Spawn(MonsterType.Peasant, 1, 40, 1);
+
+        graveyard.AddUnit(peasant);
+
+        Assert.Equal([peasant], graveyard.GetUnitsForRedraw(40));
+    }
+
+    [Fact]
+    public void AWideBodyIsDrawnOnItsHeadCellOnly()
+    {
+        BattleGraveyard graveyard = new();
+        BattleUnit cavalry = Spawn(MonsterType.Cavalry, 1, 45, 1, wide: true);
+
+        graveyard.AddUnit(cavalry);
+
+        // 尾巴格（44）再画一次就成了两个身体（battle_interface.cpp:2914-2919）。
+        Assert.Equal([cavalry], graveyard.GetUnitsForRedraw(45));
+        Assert.Empty(graveyard.GetUnitsForRedraw(44));
+    }
+
+    [Fact]
+    public void AnEmptyCellHasNothingToRedraw()
+    {
+        Assert.Empty(new BattleGraveyard().GetUnitsForRedraw(40));
+    }
+
+    [Fact]
     public void MirrorImagesAndElementalsDoNotFillTheGraveyard()
     {
         BattleGraveyard graveyard = new();

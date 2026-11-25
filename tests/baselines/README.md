@@ -18,8 +18,8 @@
 | `adventure-options.png` | 冒险选项对话框（M4，`--adventure-options`）：同一张 `Alteris.mp2` 上盖一层 `StandardWindow` 石头窗口，窗口由按钮组反推尺寸（`APANEL.ICN` 四个 59×27 按钮排成两列，active area `(221,167,198,146)`），四按钮是 `APANEL.ICN` 的 8 帧（世界/谜题/信息/挖掘，各一对 released/pressed），底部居中是 `SYSTEM.ICN` 第 3/4 帧的 CANCEL（`{0,11}` 上抬 11 像素）。对话框不透明，把地图中间整块盖住，四周的边框、雷达、按钮面板与状态面板都不受影响 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -AdventureOptions -Update` |
 | `quick-info.png` | 冒险地图的右键提示框（M4，`--quick-info --right-button --cursor 250,190`）：光标停在一座矿上，`QWIKINFO.ICN` 的 158×94 木框挂在该 tile 的右下角，框内是 `smallWhite` 居中的对象名「Ore Mine」（`MineText.GetMineName`，ADR-207）。框只在地形上出现，`-QuickInfo` 把默认光标从 `620,100`（图标条上）挪到 `250,190`；框只活在右键按住期间，所以脚本同时带 `--right-button`，否则场景下一帧就把它收掉（ADR-208）。文本来自地图数据，框位置来自光标，所以帧是稳定的 | 640×480 | `pwsh tools/scripts/VerifyAdventureMapBaseline.ps1 -QuickInfo -Update` |
 | `editor.png` | 地图编辑器（E1/E2）：`Alteris.mp2` 居中到地图中心（编辑器没有焦点英雄，`EditorScene` 用 `CenterOn(width/2, height/2)`），`ADVBORD` 框架外壳（448×448 视口、右上角雷达、雷达下方的 `EditorPanel`）、光标双线高亮、tile 网格，以及一次脚本化笔刷（`46,52,6,4,Snow`）刷出的雪地——雪块四周是真正的雪/草/水过渡，不是硬边。面板按参考的 `EditorPanel::setPos` 排布：三行九宫格工具按钮（`EDITBTNS` 前 35 帧 + 运行时拼装的冒险/王国/怪物三个图标）、140px 高的拾取区（`EDITPANL` 的九个 27×27 地面格子，草压在 `TERRAINS` 第 9 帧的黄框里）、四个 24×18 笔刷尺寸按钮（1×1 那个是按下的）与底部两行系统按钮（放大镜/撤销/重做、`SPECS`/存盘/系统），拾取区底纹是 `STONEBAK` 加六层内凹斜面 | 640×480 | `pwsh tools/scripts/VerifyEditorBaseline.ps1 -Update` |
-| `battle.png` | 战斗屏幕（P3，`--battle --freeze-animation`）：`Alteris.mp2` 上焦点英雄与第一只游荡怪物（兽人 29 只）的野战部署。沙漠底图（`CBKGDSRT`）+ 边框仙人掌（`FRNG0004`）+ 地表装饰（`COVR*`）+ 地图障碍（`COBJ*`）+ 60 格六角网格（`CMBTMISC` 第 0 帧，色 `GetColorId(0x68,0x8C,0x04)`）+ 双方单位的待机首帧（防守方镜像向右）+ 每队的兵力计数条（`TEXTBAR` 10–14 号与 `smallWhite` 缩写数字），底部 37 行是状态栏与 Auto/设置/Skip 三个按钮的底图 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Update` |
-| `battle-siege.png` | 战斗屏幕的攻城画面（P3，`--battle-siege`）：同一张图上攻击另一色的城（野蛮人 Visimir，守军 150 哥布林），多出城堡地面（`CASTBKGB` 第 1 帧）、护城河（`MOATWHOL`）、顶墙（`CASTBKGB` 第 3 帧）、城墙/塔/吊桥（`CASTLEB` 的 4/5–8/17–19/20 帧）与攻城车（`CATAPULT`），网格与计数条与野战相同 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update` |
+| `battle.png` | 战斗屏幕（P3，`--battle --freeze-animation`）：`Alteris.mp2` 上焦点英雄与第一只游荡怪物（兽人 29 只）的野战部署。沙漠底图（`CBKGDSRT`）+ 边框仙人掌（`FRNG0004`）+ 地表装饰（`COVR*`）+ 地图障碍（`COBJ*`）+ 60 格六角网格（`CMBTMISC` 第 0 帧，色 `GetColorId(0x68,0x8C,0x04)`）+ 当前人类单位的可走范围阴影（`IsBattleShowMoveShadow`，ADR-224）+ 双方单位的待机首帧（防守方镜像向右）+ 每队的兵力计数条（`TEXTBAR` 10–14 号与 `smallWhite` 缩写数字）+ 攻击方英雄的立绘（`CMBTHROS` 站立帧 `5,74 55×109`）与头顶的旗帜（`HEROFL*` 第 0 帧），底部 37 行是状态栏与 Auto/设置/Skip 三个按钮的底图。守军没有英雄，所以右侧没有立绘 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Update` |
+| `battle-siege.png` | 战斗屏幕的攻城画面（P3，`--battle-siege`）：同一张图上攻击另一色的城（野蛮人 Visimir，守军 150 哥布林），多出城堡地面（`CASTBKGB` 第 1 帧）、护城河（`MOATWHOL`）、顶墙（`CASTBKGB` 第 3 帧）、城墙/塔/吊桥（`CASTLEB` 的 4/5–8/17–19/20 帧）与攻城车（`CATAPULT`），网格与计数条与野战相同；两侧都有英雄（左 `CMBTHROS`，右守城英雄 `CMBTHROB` 在 `581,39`、水平翻转），各带一面旗 | 640×480 | `pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update` |
 
 ## 怎么用
 
@@ -151,7 +151,11 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 ## 战斗屏幕基线也是逐字节稳定的
 
 * 战斗画面只画静态层、待机动画与网格：底图、边框杂物、地表装饰、地图障碍、城堡地面/护城河/城墙/塔/攻城车、
-  60 格六角网格、双方单位的待机首帧与兵力计数条。没有指针（默认光标落在战场外的格间）、没有状态栏文字、没有法术特效。
+  60 格六角网格、移动范围阴影、双方单位的待机首帧与兵力计数条。没有指针（默认光标落在战场外的格间）、没有状态栏文字、没有法术特效。
+* 移动范围阴影（ADR-224）也不带时钟：`--freeze-animation` 下没有指针，光标停在战场外的格间，所以
+  `BattleCoverHighlight` 不会给出高亮格；画面上只有**当前人类单位**按 `IsBattleShowMoveShadow` 铺出的可达格
+  （`BattlePosition.GetReachable` 的头/尾两格，宽单位两格都算），阴影由 `BuildHexagonShadow(4, 网格 ? 1 : 2)`
+  一次性生成，颜色与透明度都是常量。攻城画面同理，只是人类单位是攻城方。
 * `--freeze-animation` 让场景**一帧都不推进战斗、也不推进待机动画**：不加它时 `BattleScene.Update` 每帧
   跑一个单位、`BattleFieldPainter.Update` 按 `BATTLE_IDLE_DELAY`（速度 4 约 160 毫秒）推进待机帧，
   截图停在第几帧就等于打到第几手、动画到第几帧，帧数一变基线就变。**注意**：`--battle` 现在等人类点击，
@@ -213,6 +217,26 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 一个真问题：提示框只活在右键按住期间，而脚本并没有按住，于是框在第一帧就被场景收掉、基线退化成「没有框的
 地图」——`--right-button` 现在会为冒险地图按住右键，脚本也带上了它（ADR-208）。`editor.png` 没有动。
 
+## 2026-11-25 的战斗基线重建
+
+`battle.png` 重建了一次（`battle-siege.png` 也重写但字节不变）：P3 的路径预览（ADR-224）把参考里
+「当前单位能走哪儿」的半透明阴影补上了。改动是**新增绘制**，不是画错：差异 157,666 / 307,200 个像素、
+最大 delta 40、首个差异像素在 `109,64`，全部落在人类单位周围的可达格上；截图时 `current=22`、
+`showMove=True`、`human=True`，与「非人类回合不画」无关。人类单位的可达格数由 `--seed 1` 与地图文件
+唯一决定，所以新像素同样是逐字节稳定的，重跑不带 `-Update` 的校验即为 `identical`。
+
+同一轮还改了悬停高亮（`BattleCoverHighlight`）：普通光标只亮鼠标格，剑光标亮**人真正站的那格**
+（`BattleBoard.CalculateAttackPosition`），宽单位走两步亮头/尾两格，双击攻击与全域攻击追加背后/相邻格。
+这些只在有指针时出现，基线里没有指针，所以不体现在这两张图上，而是由 `BattleCoverHighlightTests` 钉住。
+
+## 2026-11-25 的英雄立绘与旗帜重建
+
+同一天的第二轮重建（ADR-232）：战斗界面补上了两侧对手英雄/队长的立绘（`OpponentSprite`）与头顶的旗帜。
+`battle.png` 只在左侧多出 `CMBTHROS` 的站立帧（`5,74 55×109`，`HEROFL*` 第 0 帧的旗子）——守军没有英雄，
+右侧仍然干净；`battle-siege.png` 两侧都有：左 `CMBTHROS`，右守城英雄 `CMBTHROB`（水平翻转，`581,39`），
+各带一面旗。改动同样是**新增绘制**，没有挪动既有内容；立绘与旗帜都由种族、英雄/队长身份与战场位置唯一决定，
+没有随机量，所以重跑不带 `-Update` 的校验即为 `identical`。
+
 ## 基线的数据版本
 
 当前十二张基线都用**资料片（PoL）数据**渲染：`F:\game\fh2\Data` 里同时存在 `heroes2.agg` 与
@@ -234,8 +258,8 @@ pwsh tools/scripts/VerifyMenuBaseline.ps1 -Tolerance 16     # 容忍少量像素
 | `adventure-options.png` | 130,860 | `961E657BA1B4C2CFE5A5FB42A3810C39AE7D5A34D35296A198DFD2894A48507D` |
 | `quick-info.png` | 121,856 | `012B298143C38E786ED8834E85ABAA163BFA16BDED372BB35485C199A59F672F` |
 | `editor.png` | 132,506 | `27484497727C145CF3BEFE82CE341B4ACBDB2B6439524752B6E0C881C04AC523` |
-| `battle.png` | 171,260 | `F308168B13156E68EECDE9AB39A9E0A480FF32B08613E8EF9902D51274ABAF9F` |
-| `battle-siege.png` | 207,113 | `4507B6DF6385EE333B1ED5FE5F8E34C5AA3399BD8124A4BDE945E898918FB247` |
+| `battle.png` | 172,852 | `A2F4133C902BFF3CC4B9B2CBEDCAFBD9E0EBEF4753CC02312073364CEFCE1B79` |
+| `battle-siege.png` | 210,501 | `95E0B235975A836D1C85A831F3370A9940E5FB33FE4D36628918DC28214013EA` |
 
 ## 更新基线的规矩
 

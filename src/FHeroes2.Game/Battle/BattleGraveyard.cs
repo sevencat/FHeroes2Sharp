@@ -130,6 +130,21 @@ public sealed class BattleGraveyard
     /// <summary>How many cells carry at least one stack, which is not the number of dead stacks.</summary>
     public int Count => GetOccupiedCells().Count;
 
+    /// <summary>
+    /// What to draw on a cell, <c>getUnits()</c> minus a wide stack's tail side
+    /// (<c>battle_interface.cpp:2914-2919</c>: the tail cell of a wide body would draw it twice).
+    /// </summary>
+    /// <param name="index">The cell.</param>
+    /// <returns>The stacks to draw there, bottom first; empty when nothing lies.</returns>
+    public List<BattleUnit> GetUnitsForRedraw(int index)
+    {
+        List<BattleUnit> units = GetUnits(index);
+
+        units.RemoveAll(unit => index == unit.TailIndex);
+
+        return units;
+    }
+
     private List<BattleUnit> GetOrCreate(int index)
     {
         if (!_cells.TryGetValue(index, out List<BattleUnit>? units))

@@ -14,8 +14,8 @@ namespace FHeroes2.Game.Ai;
 /// <b>为什么是单独一个类。</b> 参考里 <c>Heroes::Action()</c> 自己按 <c>GetKingdom().isControlAI()</c> 分岔：
 /// 人类的走 <c>heroes_action.cpp</c> 那一大张表，AI 的直接转给 <c>AI::HeroesAction()</c>。端口没有把分岔塞进
 /// 英雄里，而是留在 <see cref="IHeroMovementHandler"/> 这个接缝上——走路的人装哪个处理器，就是哪一支出力。
-/// AI 英雄装这一个，人类英雄暂时还装 <see cref="FogHeroMovementHandler"/>（只有开图，因为人类那一支要问
-/// 界面层，见 <c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4）。
+/// AI 英雄装这一个，人类英雄装 <see cref="HumanHeroMovementHandler"/>（同一张表的人类那一支，要问玩家的点
+/// 交给 <see cref="World.HeroActionHost"/>）。
 /// </para>
 /// <para>
 /// <b>它只属于 AI 英雄。</b> 参考的那两个函数对 <c>isControlAI()</c> 的假设在这里变成了安装时的约定，

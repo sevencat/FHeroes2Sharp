@@ -1,3 +1,4 @@
+using FHeroes2.Assets;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Spells;
@@ -45,6 +46,52 @@ public sealed class SpellBookArtwork
 
     /// <summary>Every frame of <c>ICN::SPELLS</c>, indexed by <c>Spell::IndexSprite()</c>.</summary>
     public required IReadOnlyList<Sprite> SpellIcons { get; init; }
+
+    /// <summary>Archive entry of the spell book pages, <c>ICN::BOOK</c>.</summary>
+    public const string BookAssetName = "BOOK.ICN";
+
+    /// <summary>Archive entry of the spell icons, <c>ICN::SPELLS</c>.</summary>
+    public const string SpellsAssetName = "SPELLS.ICN";
+
+    /// <summary>Frame of the straight corner in <see cref="BookAssetName"/>, <c>spell_book.cpp:155-166</c>.</summary>
+    public const int StraightCornerFrame = 7;
+
+    /// <summary>
+    /// Reads the <c>BOOK</c> and <c>SPELLS</c> frames, <c>SpellBook::open()</c>'s artwork half.
+    /// </summary>
+    /// <param name="assets">Where the archives come from; <see langword="null"/> means no data.</param>
+    /// <returns>The artwork, or <see langword="null"/> when either archive is missing or too short.</returns>
+    /// <remarks>
+    /// 参考每次打开魔法书都去取图；端口把「读哪几帧」收在这里，冒险地图与战斗两边共用同一套索引。
+    /// </remarks>
+    public static SpellBookArtwork? TryCreate(AssetBundle? assets)
+    {
+        if (assets is null)
+        {
+            return null;
+        }
+
+        if (assets.TryReadIcn(BookAssetName) is not { } book || book.Count <= StraightCornerFrame)
+        {
+            return null;
+        }
+
+        if (assets.TryReadIcn(SpellsAssetName) is not { Count: > 0 } spells)
+        {
+            return null;
+        }
+
+        return new SpellBookArtwork
+        {
+            Page = book.Sprites[0],
+            AdventureBookmark = book.Sprites[3],
+            CombatBookmark = book.Sprites[4],
+            CloseBookmark = book.Sprites[5],
+            SpellPointsBookmark = book.Sprites[6],
+            StraightCorner = book.Sprites[StraightCornerFrame],
+            SpellIcons = spells.Sprites,
+        };
+    }
 
     /// <summary>
     /// The size of the composed book, <c>getSpellBookSize()</c> (<c>spell_book.cpp:61-84</c>).

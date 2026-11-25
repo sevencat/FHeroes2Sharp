@@ -1,5 +1,6 @@
 using System.Diagnostics;
 
+using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Ai;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Kingdom;
@@ -32,9 +33,8 @@ public delegate void BattleUnitTurnHandler(BattleArena arena, BattleUnit unit, L
 /// 回合开始（两军 <c>NewTurn()</c>）、逐单位行动（<see cref="UnitTurn"/>）、收尾结算（<see cref="SettleResult"/>）。
 /// </para>
 /// <para>
-/// <b>本轮未接的分支</b>，都在参考的同一个函数体内、且都要先有伤害结算：投石车（<c>CatapultAction()</c>）、
-/// 城堡塔（<c>TowerAction()</c>）、以及 <c>_orderOfUnits</c> 那条给界面用的顺序条。它们不影响「谁先动」「什么时候
-/// 结束」这三段的语义，但攻城时守方的塔暂时不会开火——这是已知缺口，等攻击结算落地后接。
+/// <b>轮内分支</b>：投石车（<c>CatapultAction()</c>）与城堡塔（<c>TowerAction()</c>）各有一个「本轮已开火」的旗子，
+/// 开火时机与参考一致；顺序条要的 <c>_orderOfUnits</c> 也在这一层维护（见 <see cref="OrderOfUnits"/>），界面只负责画。
 /// </para>
 /// </remarks>
 public sealed partial class BattleArena
@@ -44,6 +44,22 @@ public sealed partial class BattleArena
 
     /// <summary>Whether the towers already fired in this round, <c>towersActed</c> of <c>Turns()</c>.</summary>
     private bool _roundTowersActed;
+
+    /// <summary>The stacks that already acted this round, <c>orderHistory</c> of <c>Turns()</c>.</summary>
+    private readonly BattleUnits _orderHistory = new();
+
+    /// <summary>The order the bar draws, <c>_orderOfUnits</c> of <c>Interface</c>.</summary>
+    private readonly BattleUnits _orderOfUnits = new();
+
+    /// <summary>
+    /// The predicted order of the remaining stacks, the <c>_orderOfUnits</c> the turn order bar draws
+    /// (<c>battle_interface.cpp:1650</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与参考的一处差别：参考只在界面要的时候（<c>_orderOfUnits</c> 非空）才维护这份列表，端口没有那面旗子，
+    /// 一律维护。代价是每次动作多排一遍最多二十个单位，好处是没有界面时也能在测试里断言顺序。
+    /// </remarks>
+    public IReadOnlyList<BattleUnit> OrderOfUnits => _orderOfUnits;
 
     /// <summary>
     /// Runs one whole round, <c>Battle::Arena::Turns()</c> (<c>battle_arena.cpp:552-682</c>).
@@ -98,6 +114,11 @@ public sealed partial class BattleArena
 
         _roundCatapultActed = false;
         _roundTowersActed = false;
+
+        // 新一轮从空历史开始：此时还没有人行动，先手看上一轮最后行动的是谁（battle_arena.cpp:565-573）。
+        _orderHistory.Clear();
+
+        UpdateOrderOfUnits(GetOppositeColor(_lastActiveUnitArmyColor));
     }
 
     /// <summary>
@@ -107,6 +128,14 @@ public sealed partial class BattleArena
     public BattleUnit? SelectNextUnit()
     {
         _currentUnit = GetCurrentUnit();
+
+        // 选中的单位进入本轮历史，顺序条把它画成「已行动」（battle_arena.cpp:583-592）。
+        if (_currentUnit != null)
+        {
+            _orderHistory.Add(_currentUnit);
+        }
+
+        UpdateOrderOfUnits(GetOppositeColor(_currentUnit is null ? _lastActiveUnitArmyColor : _currentUnit.Color));
 
         return _currentUnit;
     }
@@ -135,11 +164,48 @@ public sealed partial class BattleArena
 
         if (!_roundTowersActed && (_currentUnit == null || _currentUnit.GetCurrentColor() == _defendingForce.Color))
         {
-            TowerAction(_towers[1]);
-            TowerAction(_towers[0]);
-            TowerAction(_towers[2]);
+            FireTower(_towers[1]);
+            FireTower(_towers[0]);
+            FireTower(_towers[2]);
 
             _roundTowersActed = true;
+        }
+    }
+
+    /// <summary>
+    /// Lets one tower fire and refreshes the order afterwards, the <c>towerAction</c> lambda of
+    /// <c>Turns()</c> (<c>battle_arena.cpp:606-621</c>).
+    /// </summary>
+    /// <param name="tower">The tower, or <see langword="null"/> when that turret was never built.</param>
+    /// <remarks>
+    /// 参考只在塔还站着的时候才重排顺序——一座早就塌了的塔不会开火，也不会改变谁在下一位。
+    /// </remarks>
+    private void FireTower(BattleTower? tower)
+    {
+        if (tower == null || !tower.IsValid)
+        {
+            return;
+        }
+
+        TowerAction(tower);
+
+        UpdateOrderOfUnits(GetOppositeColor(_currentUnit is null ? _lastActiveUnitArmyColor : _currentUnit.Color));
+    }
+
+    /// <summary>
+    /// Rebuilds the predicted order, <c>UpdateOrderOfUnits()</c>.
+    /// </summary>
+    /// <param name="preferredColor">Whose side breaks a speed tie.</param>
+    private void UpdateOrderOfUnits(PlayerColor preferredColor)
+    {
+        BattleUnits order = BattleOrderOfUnits.Predict(
+            _attackingForce, _defendingForce, _currentUnit, preferredColor, _orderHistory);
+
+        _orderOfUnits.Clear();
+
+        foreach (BattleUnit unit in order)
+        {
+            _orderOfUnits.Add(unit);
         }
     }
 
@@ -180,7 +246,7 @@ public sealed partial class BattleArena
     /// <see cref="_lastActiveUnitArmyColor"/> 必须一直在 <see cref="UnitTurn"/> 里更新。
     /// </para>
     /// <para>
-    /// 参考这里还会维护一份按最快顺序排好的快照给界面画顺序条；端口没有界面，那部分不搬。
+    /// 参考这里还会顺手把快照交给界面画顺序条；端口把那份快照做成 <see cref="OrderOfUnits"/>，由界面层取用。
     /// </para>
     /// </remarks>
     /// <returns>The next unit, or <see langword="null"/> when nobody can act any more.</returns>
@@ -304,10 +370,22 @@ public sealed partial class BattleArena
 
             while (actions.Count > 0)
             {
-                ApplyAction(actions[0]);
+                BattleCommand command = actions[0];
+                bool isAttack = command.Type == BattleCommandType.Attack;
+
+                // 行军与挥击要在结算之前播完，受击与死亡在结算之后——参考把这两段夹在 ApplyAction*() 两侧
+                // （battle_action.cpp:198-210）。实现方在这里阻塞到动画结束，所以不会影响规则。
+                Animator?.BeforeAction(unit, command);
+
+                ApplyAction(command);
                 actions.RemoveAt(0);
 
                 RemoveDeadUnits();
+
+                // 这条动作可能打死人或改别人的速度，顺序条要跟着变（battle_arena.cpp:527-530）。
+                UpdateOrderOfUnits(GetOppositeColor(unit.Color));
+
+                Animator?.AfterAction(isAttack ? LastAttackBlows : Array.Empty<BattleAttackBlow>());
 
                 if (!BattleValid())
                 {

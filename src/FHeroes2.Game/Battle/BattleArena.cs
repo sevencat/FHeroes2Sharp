@@ -69,6 +69,32 @@ public sealed partial class BattleArena : IBattleField
     /// <summary>The bottom gate tower, <c>Arena::CASTLE_BOTTOM_GATE_TOWER_POS</c>.</summary>
     public const int CastleBottomGateTowerPos = 62;
 
+    /// <summary>
+    /// Why every spell is refused while the Sphere of Negation is on the field, the first sentence of
+    /// <c>Arena::isDisableCastSpell()</c> (<c>battle_arena.cpp:931</c>).
+    /// </summary>
+    public const string SphereOfNegationMessage =
+        "The Sphere of Negation artifact is in effect for this battle, disabling all combat spells.";
+
+    /// <summary>Why spells are refused when the acting unit has no hero or captain behind it, <c>:941</c>.</summary>
+    public const string NoCommanderMessage = "You cannot cast spells without a commanding hero.";
+
+    /// <summary>Why a second spell in the same round is refused, <c>:948</c>.</summary>
+    public const string AlreadyCastMessage = "You have already cast a spell this round.";
+
+    /// <summary>
+    /// Why a spell that would change nothing is refused, <c>:961</c> and <c>:1006</c>: <c>Earthquake</c> without a
+    /// castle, and any spell that no unit on the board takes and no grave answers.
+    /// </summary>
+    public const string NoEffectMessage = "That spell will have no effect!";
+
+    /// <summary>Why a second kind of elemental is refused, <c>:976</c>.</summary>
+    public const string OneElementalTypeMessage = "You may only summon one type of elemental per combat.";
+
+    /// <summary>Why a summoning spell is refused when the hero has no free neighbouring cell, <c>:983</c>.</summary>
+    public const string NoSpaceForElementalMessage =
+        "There is no open space adjacent to your hero where you can summon an Elemental to.";
+
     private readonly BattleBoardCells _board = new();
     private readonly BattleForce _attackingForce;
     private readonly BattleForce _defendingForce;
@@ -83,6 +109,9 @@ public sealed partial class BattleArena : IBattleField
     private readonly SpellStorage _usedSpells = new();
 
     private BattleResult _battleResult;
+
+    /// <summary>The blows of the last attack command, in the order they landed.</summary>
+    private readonly List<BattleAttackBlow> _attackBlows = [];
 
     /// <summary>Sides whose units the AI plays for, <c>Arena::_autoCombatColors</c>.</summary>
     private PlayerColor _autoCombatColors;
@@ -230,7 +259,10 @@ public sealed partial class BattleArena : IBattleField
     {
         ArgumentNullException.ThrowIfNull(world);
 
-        BattleArena arena = new(attackingArmy, defendingArmy, world.GetCastleEntrance(tileIndex), randomGenerator);
+        BattleArena arena = new(attackingArmy, defendingArmy, world.GetCastleEntrance(tileIndex), randomGenerator)
+        {
+            TileIndex = tileIndex,
+        };
 
         if (arena.Castle == null)
         {
@@ -251,6 +283,24 @@ public sealed partial class BattleArena : IBattleField
     /// 与 <see cref="Castle"/> 不是一回事：没有建城堡的村庄也算「攻城」，但棋盘上没有墙，所以 <see cref="Castle"/> 为空。
     /// </remarks>
     public bool IsTown { get; }
+
+    /// <summary>
+    /// The map tile the fight happens on, <c>Arena::GetTileIndex()</c>; <c>-1</c> when the arena was built without one.
+    /// </summary>
+    /// <remarks>
+    /// 画面要按这一格取战场外观（<c>BattleFieldStyle</c> 的地面与天空），参考同样从竞技场问格子号。
+    /// 「没有格子」的那条路只出现在直接 new 出来的野战（测试与自动战斗）。
+    /// </remarks>
+    public int TileIndex { get; private set; } = -1;
+
+    /// <summary>
+    /// Who draws the animations of the commands the arena applies, or <see langword="null"/> for nobody.
+    /// </summary>
+    /// <remarks>
+    /// 见 <see cref="IBattleActionAnimator"/>：这两个回调夹在结算两侧，只负责画，且是阻塞的。
+    /// 无界面时保持 <see langword="null"/>，动作立即生效——参考在 <c>showBattle == false</c> 时也没有界面可调。
+    /// </remarks>
+    public IBattleActionAnimator? Animator { get; set; }
 
     /// <summary>The drawbridge of a siege, <c>Arena::GetBridge()</c>.</summary>
     public BattleBridge? Bridge => _bridge;
@@ -636,32 +686,56 @@ public sealed partial class BattleArena : IBattleField
         commander != null && commander.BagArtifacts.IsBonusPresent(ArtifactBonusType.DisableAllSpellCombatCasting);
 
     /// <summary>
-    /// Whether casting this spell right now would be refused, <c>Arena::isDisableCastSpell()</c>
+    /// Whether casting this spell right now would be refused, <c>Arena::isDisableCastSpell( spell )</c>
     /// (<c>battle_arena.cpp:927-1008</c>).
     /// </summary>
+    /// <param name="spell">The spell about to be cast.</param>
+    /// <returns>Whether the cast would be refused.</returns>
+    public bool IsDisableCastSpell(Spell spell) => IsDisableCastSpell(spell, out _);
+
+    /// <summary>
+    /// Whether casting this spell right now would be refused and, if so, the sentence that says why,
+    /// <c>Arena::isDisableCastSpell( spell, msg )</c> (<c>battle_arena.cpp:927-1008</c>).
+    /// </summary>
     /// <remarks>
+    /// <para>
     /// 依次排除：整场禁魔、没有指挥官、本回合已经施过法、空法术（空法术用来「探一探能不能施法」，
     /// 所以不算被禁）、地震在没有城堡时、召唤已有另一种元素时、召唤时英雄旁边没有空格，
     /// 最后是「场上有单位吃这个法术，或坟场里有能复活的尸体」。
+    /// </para>
+    /// <para>
+    /// 文案逐字照抄参考：地震没有城堡与「没人吃这个法术」共用最后一句；可以施法时参考不动 <c>msg</c>，
+    /// 这里给 <see langword="null"/>。调用方把它原样交给消息框的正文（<c>battle_interface.cpp:1255-1263</c>、
+    /// <c>:7317-7323</c>）。
+    /// </para>
     /// </remarks>
     /// <param name="spell">The spell about to be cast.</param>
+    /// <param name="reason">Why the cast would be refused, or <see langword="null"/> when it would not.</param>
     /// <returns>Whether the cast would be refused.</returns>
-    public bool IsDisableCastSpell(Spell spell)
+    public bool IsDisableCastSpell(Spell spell, out string? reason)
     {
+        reason = null;
+
         if (IsSpellcastDisabled)
         {
+            reason = SphereOfNegationMessage;
+
             return true;
         }
 
-        IArmyCommander? commander = GetCurrentCommander();
+        IArmyCommander? commander = _currentUnit?.GetCurrentOrArmyCommander();
 
         if (commander == null)
         {
+            reason = NoCommanderMessage;
+
             return true;
         }
 
         if ((commander.Modes & HeroModes.Spellcasted) != 0)
         {
+            reason = AlreadyCastMessage;
+
             return true;
         }
 
@@ -673,7 +747,14 @@ public sealed partial class BattleArena : IBattleField
 
         if (spell.Type == SpellType.Earthquake)
         {
-            return Castle == null;
+            if (Castle == null)
+            {
+                reason = NoEffectMessage;
+
+                return true;
+            }
+
+            return false;
         }
 
         if (spell.IsSummon())
@@ -685,11 +766,15 @@ public sealed partial class BattleArena : IBattleField
 
             if (elemental != null && elemental.Monster != summoned)
             {
+                reason = OneElementalTypeMessage;
+
                 return true;
             }
 
             if (GetFreePositionNearHero(GetCurrentColor()) < 0)
             {
+                reason = NoSpaceForElementalMessage;
+
                 return true;
             }
 
@@ -715,6 +800,8 @@ public sealed partial class BattleArena : IBattleField
                 return false;
             }
         }
+
+        reason = NoEffectMessage;
 
         return true;
     }

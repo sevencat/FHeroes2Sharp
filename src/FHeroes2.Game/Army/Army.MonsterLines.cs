@@ -39,6 +39,28 @@ public sealed partial class Army
         IMiniMonsterSprites sprites) => MiniMonsters.Draw(troops, cx, cy, width, 0, 0, false, true, false, 0, output, sprites);
 
     /// <summary>
+    /// Draws an arbitrary list of stacks as one full detail line, <c>Army::drawSingleDetailedMonsterLine()</c> over a
+    /// <c>Troops</c> vector (<c>army.cpp:1605</c>).
+    /// </summary>
+    /// <remarks>
+    /// 战斗结果窗画「阵亡部队」时传的就是参考的 <c>Troops</c>（不限长），而端口的 <see cref="Army"/> 固定七槽，
+    /// 所以这条重载直接吃列表。摆放与军队行相同：从右往左，第一项在最右。
+    /// </remarks>
+    /// <param name="troops">The stacks to draw.</param>
+    /// <param name="cx">Left edge of the room the line may use.</param>
+    /// <param name="cy">Top edge of the line.</param>
+    /// <param name="width">Width of the room the line may use.</param>
+    /// <param name="output">The image to draw into.</param>
+    /// <param name="sprites">Where the portraits come from.</param>
+    public static void DrawSingleDetailedMonsterLine(
+        IReadOnlyList<Troop> troops,
+        int cx,
+        int cy,
+        int width,
+        PixelBuffer output,
+        IMiniMonsterSprites sprites) => MiniMonsters.Draw(troops, cx, cy, width, output, sprites);
+
+    /// <summary>
     /// Draws an army as one or two lines of portraits, <c>Army::drawMultipleMonsterLines()</c>
     /// (<c>army.cpp:1610</c>).
     /// </summary>

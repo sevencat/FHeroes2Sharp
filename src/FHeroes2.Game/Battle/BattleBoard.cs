@@ -462,6 +462,111 @@ public static class BattleBoard
     }
 
     /// <summary>
+    /// Where a unit would stand to strike a cell from one side, <c>calculateAttackPosition()</c>
+    /// (<c>battle_interface.cpp:689-798</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把这个函数写在 battle_interface.cpp 的匿名命名空间里，但它只问棋盘、站位与单位朝向，与界面无关，
+    /// 端口放在棋盘上。两步：先按攻击方向换成移动方向（正上/正下要按朝向摊成左上/右上或左下/右下），
+    /// 再从目标格的邻格出发问 <see cref="BattlePosition.GetReachable"/>。
+    /// </para>
+    /// <para>
+    /// 宽单位从**尾巴**那一侧下手时（朝右时的右上/右下，朝左时的左上/左下）还要多试一步：那个邻格若只能
+    /// 由头站上去，就把站位再朝尾巴的方向挪一格。参考的注释解释了为什么挪一格后仍要回头核对尾巴的格子——
+    /// 地形或别的单位可能让「挪一格」跳过一格，例如只能站 [1,2] 或 [3,4] 而站不了 [2,3]。
+    /// </para>
+    /// </remarks>
+    /// <param name="arena">The arena, for the passability rules <see cref="BattlePosition.GetReachable"/> asks.</param>
+    /// <param name="unit">The unit that would strike.</param>
+    /// <param name="attackedCellIndex">The cell the blow lands on.</param>
+    /// <param name="attackDirection">The side the blow comes from.</param>
+    /// <returns>The position, empty when the unit cannot get there.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public static BattlePosition CalculateAttackPosition(
+        BattleArena arena,
+        BattleUnit unit,
+        int attackedCellIndex,
+        AttackDirection attackDirection)
+    {
+        ArgumentNullException.ThrowIfNull(arena);
+        ArgumentNullException.ThrowIfNull(unit);
+
+        CellDirection attackingCellDirection = GetAttackingCellDirection(unit, attackDirection);
+
+        Debug.Assert(
+            IsValidDirection(attackedCellIndex, attackingCellDirection),
+            "The attacked cell has no neighbour on that side.");
+
+        int attackingCellIndex = GetIndexDirection(attackedCellIndex, attackingCellDirection);
+        BattlePosition position = BattlePosition.GetReachable(arena, unit, attackingCellIndex);
+
+        if (!unit.IsWide)
+        {
+            return position;
+        }
+
+        // Only the tail-side blows need the extra shift; the head already covers everything else.
+        bool isTailAttack = unit.IsReflect
+            ? attackDirection is AttackDirection.TopLeft or AttackDirection.BottomLeft
+            : attackDirection is AttackDirection.TopRight or AttackDirection.BottomRight;
+
+        if (!isTailAttack || position.TailIndex == attackingCellIndex)
+        {
+            return position;
+        }
+
+        CellDirection adjustment = unit.IsReflect ? CellDirection.Left : CellDirection.Right;
+
+        if (!IsValidDirection(attackingCellIndex, adjustment))
+        {
+            return position;
+        }
+
+        BattlePosition adjusted = BattlePosition.GetReachable(
+            arena,
+            unit,
+            GetIndexDirection(attackingCellIndex, adjustment));
+
+        return adjusted.TailIndex == attackingCellIndex && adjusted.IsValidForUnit(unit)
+            ? adjusted
+            : position;
+    }
+
+    /// <summary>
+    /// The movement direction a blow from one side comes in from,
+    /// <c>getAttackingCellDirectionForAttackDirection()</c> (<c>battle_interface.cpp:689-720</c>).
+    /// </summary>
+    /// <param name="unit">The unit that would strike; its facing resolves the straight top and bottom.</param>
+    /// <param name="attackDirection">The side the blow comes from.</param>
+    /// <returns>The direction a unit has to come from to strike that side.</returns>
+    /// <remarks>正上与正下不在移动环上，只能按单位的朝向摊到斜后方：朝右打右上、朝左打左上（下同理）。</remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="unit"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="attackDirection"/> is not one of the ten.</exception>
+    public static CellDirection GetAttackingCellDirection(BattleUnit unit, AttackDirection attackDirection)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+
+        return AttackingCellDirection(attackDirection, unit.IsReflect);
+    }
+
+    /// <summary>The look-up behind <see cref="GetAttackingCellDirection"/>.</summary>
+    private static CellDirection AttackingCellDirection(AttackDirection attackDirection, bool isReflect) => attackDirection switch
+    {
+        AttackDirection.Top => isReflect ? CellDirection.TopLeft : CellDirection.TopRight,
+        AttackDirection.Bottom => isReflect ? CellDirection.BottomLeft : CellDirection.BottomRight,
+        AttackDirection.Unknown => CellDirection.Unknown,
+        AttackDirection.TopLeft => CellDirection.TopLeft,
+        AttackDirection.TopRight => CellDirection.TopRight,
+        AttackDirection.Right => CellDirection.Right,
+        AttackDirection.BottomRight => CellDirection.BottomRight,
+        AttackDirection.BottomLeft => CellDirection.BottomLeft,
+        AttackDirection.Left => CellDirection.Left,
+        AttackDirection.Center => CellDirection.Center,
+        _ => throw new ArgumentOutOfRangeException(nameof(attackDirection), attackDirection, "Not an attack direction."),
+    };
+
+    /// <summary>
     /// Whether a unit could actually reach its target from a given cell,
     /// <c>Board::CanAttackTargetFromPosition()</c> (<c>battle_board.cpp:1009-1036</c>).
     /// </summary>

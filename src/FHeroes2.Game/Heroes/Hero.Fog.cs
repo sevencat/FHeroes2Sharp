@@ -56,8 +56,8 @@ public sealed partial class Hero
     /// <para>
     /// 参考：<c>heroes.cpp:1749-1766</c>。真正的工作是 <c>Maps::ClearFog( tileIndex, GetScoutingDistance(),
     /// GetColor() )</c>（端口 <see cref="World.ClearFog(int, int, PlayerColor)"/>），所以「英雄走一步就揭开
-    /// 周围」靠的就是这个方法——<see cref="IHeroMovementHandler.Scout"/> 的
-    /// <see cref="FogHeroMovementHandler"/> 实现只是把它接到移动上去。
+    /// 周围」靠的就是这个方法——<see cref="IHeroMovementHandler.Scout"/> 的实现（<see cref="HumanHeroMovementHandler"/>、
+    /// <see cref="FHeroes2.Game.Ai.AiHeroMovementHandler"/> 与 <see cref="FogHeroMovementHandler"/> 都是）只是把它接到移动上去。
     /// </para>
     /// <para>
     /// <b>瓦片号由调用方给</b>：走路时给的是英雄「即将踏入」的那一格（参考 <c>_moveStep()</c> 就这么传），

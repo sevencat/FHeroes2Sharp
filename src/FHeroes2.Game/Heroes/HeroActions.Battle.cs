@@ -207,7 +207,7 @@ public sealed partial class HeroActions
             ArmyStack defenders = new();
             defenders.SetFromTile(world, tile);
 
-            BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null);
+            BattleResult result = Fight(world, _hero, defenders, tileIndex, castle: null, presenter: _host.BattlePresenter);
 
             if (result.IsAttackerWin)
             {
@@ -329,7 +329,7 @@ public sealed partial class HeroActions
 
             castle.ActionPreBattle(defender, _hero.GetControl() == PlayerControl.Ai);
 
-            BattleResult result = Fight(world, _hero, garrison, tileIndex, castle);
+            BattleResult result = Fight(world, _hero, garrison, tileIndex, castle, presenter: _host.BattlePresenter);
 
             castle.ActionAfterBattle(result.IsAttackerWin);
 
@@ -410,7 +410,7 @@ public sealed partial class HeroActions
                 : HeroMeetingOutcome.Won;
         }
 
-        BattleResult result = Fight(world, _hero, otherHero.Army, tileIndex, castle: null);
+        BattleResult result = Fight(world, _hero, otherHero.Army, tileIndex, castle: null, presenter: _host.BattlePresenter);
 
         if (!result.IsDefenderWin)
         {

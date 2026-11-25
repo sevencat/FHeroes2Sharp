@@ -105,4 +105,12 @@ public abstract class TextBase
     /// over its line count evenly instead of using the full width of the last line.
     /// </summary>
     protected bool IsUniformedVerticalAlignment { get; set; } = true;
+
+    /// <summary>Switches the rebalancing of wrapped text on or off, <c>setUniformVerticalAlignment()</c>.</summary>
+    /// <param name="enabled">
+    /// <see langword="true"/> to balance a wrapped text over its lines (the default), <see langword="false"/> to
+    /// fill each line greedily — the battle summary title needs the latter.
+    /// </param>
+    /// <remarks>参考：<c>src/fheroes2/gui/ui_text.h:244</c> <c>setUniformVerticalAlignment</c>。</remarks>
+    public void SetUniformVerticalAlignment(bool enabled) => IsUniformedVerticalAlignment = enabled;
 }

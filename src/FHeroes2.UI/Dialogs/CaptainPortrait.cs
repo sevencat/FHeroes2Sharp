@@ -4,6 +4,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Castle;
+using FHeroes2.Game.Kingdom;
 
 namespace FHeroes2.UI.Dialogs;
 
@@ -104,6 +105,35 @@ public static class CaptainPortrait
         if (assets.TryReadIcn(IcnCatalog.GetFileName(flagIcn)) is { } flags && flags.Count > 0)
         {
             ImageOps.BlitSprite(image, GetFlagOffset(captain.Race), flags.Sprites[0]);
+        }
+
+        return new Sprite(image);
+    }
+
+    /// <summary>
+    /// Builds the captain's big portrait through a sprite source instead of the archives, the same portrait as
+    /// <see cref="TryCreateBig(AssetBundle, Captain)"/> for the windows that receive their artwork as a
+    /// <see cref="IViewWorldSpriteSource"/>.
+    /// </summary>
+    /// <param name="sprites">The source of the race portrait and the <c>HEROFL</c> flag.</param>
+    /// <param name="captain">The captain whose race and color the portrait shows.</param>
+    /// <returns>The portrait, or <see langword="null"/> when the race's portrait is not in the source.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public static Sprite? TryCreateBig(IViewWorldSpriteSource sprites, Captain captain)
+    {
+        ArgumentNullException.ThrowIfNull(sprites);
+        ArgumentNullException.ThrowIfNull(captain);
+
+        if (GetBigIcn(captain.Race) is not { } icn || sprites.GetSprite(icn, 0) is not { } portrait)
+        {
+            return null;
+        }
+
+        PixelBuffer image = portrait.Image.Clone();
+
+        if (sprites.GetSprite(IcnCatalog.GetFlagIcnId(captain.Color), 0) is { } flag)
+        {
+            ImageOps.BlitSprite(image, GetFlagOffset(captain.Race), flag);
         }
 
         return new Sprite(image);

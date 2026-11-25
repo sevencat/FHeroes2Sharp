@@ -1,11 +1,15 @@
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Icn;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Core.Random;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Battle;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 
 using ArmyText = FHeroes2.Game.Army.Army;
@@ -19,9 +23,10 @@ namespace FHeroes2.UI.Battle;
 /// <remarks>
 /// <para>
 /// <b>范围</b>：这一步只画「不会自己动」的东西——地形底图与边框杂物、地表装饰、地图带进来的障碍、
-/// 攻城时的城堡地面/护城河/城墙/塔/投石车，以及双方摆好阵形的单位（各取待机动画的第一帧）；此外还有
-/// 状态栏的两行文字与可展开的 6 行战斗日志窗（<see cref="BattleStatusLog"/>）。
-/// 行动交互的其余部分、顺序条与所有法术特效都还没有，见 <c>bd list</c>。
+/// 攻城时的城堡地面/护城河/城墙/塔/投石车，以及双方摆好阵形的单位（各取待机动画的第一帧）、单位的血量条；
+/// 此外还有战场顶上的行动顺序条（<see cref="BattleTurnOrderLayout"/>）、状态栏的两行文字与可展开的
+/// 6 行战斗日志窗（<see cref="BattleStatusLog"/>）。
+/// 行动交互的其余部分与所有法术特效都还没有，见 <c>bd list</c>。
 /// </para>
 /// <para>
 /// <b>坐标系</b>：参考把战场画进 640x443 的 <c>_mainSurface</c>，底下的 37 行留给状态栏
@@ -35,9 +40,9 @@ namespace FHeroes2.UI.Battle;
 /// 地表障碍 → 城堡顶墙；然后逐行画高障碍、城墙与单位；最后把战场贴到屏幕上，再画状态栏与三个按钮的底。
 /// </para>
 /// <para>
-/// <b>与参考的偏差</b>：坟场（<c>RedrawKilled</c>）不画，开战时本来就没有尸体；单位的血量条
-/// （<c>drawHitPointsBar</c>）与顺序条还没画，见 <c>bd list</c> 的 <c>ukw.21</c> 与 <c>ukw.22</c>；
-/// 六角网格照 <c>Settings::BattleShowGrid</c> 开关（战斗设置窗里的 Grid 一档）。
+/// <b>与参考的偏差</b>：顺序条只画「战场窗口内、顶边」这一档（<c>BattleTurnOrderState.Bottom</c> 等同不画），
+/// 且当前/悬停单位用固定的 110 号色而不是 110→126 的循环闪光；六角网格照 <c>Settings::BattleShowGrid</c>
+/// 开关（战斗设置窗里的 Grid 一档）。
 /// </para>
 /// </remarks>
 public sealed class BattleFieldPainter
@@ -58,7 +63,7 @@ public sealed class BattleFieldPainter
     private const int StatusLeft = 49;
 
     /// <summary>Vertical shift of every board anchored sprite, <c>cellYOffset</c> (<c>battle_interface.cpp:91</c>).</summary>
-    private const int CellYOffset = -9;
+    private const int CellYOffset = BattleTroopSprite.CellYOffset;
 
     /// <summary>Height of <c>TEXTBAR</c> frame 8, the upper half of the status bar.</summary>
     private const int StatusUpperHeight = 20;
@@ -77,10 +82,38 @@ public sealed class BattleFieldPainter
     private readonly BattleFieldStyle _style;
     private readonly Palette? _palette;
     private readonly Dictionary<uint, UnitAnimation> _animations = [];
+
+    /// <summary>The green of the hit point bars, resolved from the palette on first use.</summary>
+    private byte? _remainingHitPointsColor;
+
+    /// <summary>The red of the hit point bars, resolved from the palette on first use.</summary>
+    private byte? _missingHitPointsColor;
+
+    /// <summary>
+    /// The frame colour of the stack acting right now, <c>_contourColor</c>'s first value
+    /// (<c>battle_interface.cpp:4568</c>).
+    /// </summary>
+    private const byte TurnOrderContourColor = 110;
+
+    /// <summary><c>MONS32</c> icons of the turn order bar, keyed by creature, mirror image and facing.</summary>
+    private readonly Dictionary<int, Sprite> _turnOrderIcons = [];
+
     private readonly BattleStatusLog _statusLog;
     private readonly BattleStatusButtons _buttons;
     private readonly PixelBuffer _ground = new(Width, Height);
     private readonly PixelBuffer _surface = new(Width, Height);
+
+    /// <summary>The hero or captain of the attacking side, <c>Interface::_attackingOpponent</c>.</summary>
+    private readonly BattleOpponentSprite? _attackingOpponent;
+
+    /// <summary>The hero or captain of the defending side, <c>Interface::_defendingOpponent</c>.</summary>
+    private readonly BattleOpponentSprite? _defendingOpponent;
+
+    /// <summary>Counter of the waving flags, <c>Interface::_flagAnimationFrameIndex</c>.</summary>
+    private uint _flagAnimationFrameIndex;
+
+    /// <summary>Mirrored flag frames, keyed by archive and frame, so a side is flipped once.</summary>
+    private readonly Dictionary<(IcnType Icn, int Frame), Sprite> _flippedFlags = [];
 
     /// <summary>The upper status line, <c>Status::_upperText</c>.</summary>
     private string _statusUpper = string.Empty;
@@ -97,8 +130,46 @@ public sealed class BattleFieldPainter
     /// <summary>The shadow under the cell the cursor is on, <c>Interface::_hexagonCursorShadow</c>.</summary>
     private Sprite? _hexagonCursorShadow;
 
+    /// <summary>The shadow under every cell the current unit may walk to, <c>Interface::_hexagonShadow</c>.</summary>
+    private Sprite? _hexagonShadow;
+
+    /// <summary>That same shadow with the grid inside it, <c>Interface::_hexagonGridShadow</c>.</summary>
+    private Sprite? _hexagonGridShadow;
+
+    /// <summary>The doubled shadow of a unit the mouse rests on, <c>Interface::_hexagonHighlightShadow</c>.</summary>
+    private Sprite? _hexagonHighlightShadow;
+
     /// <summary>The cell the pointer is over, or <see langword="null"/> when it is off the board.</summary>
     private int? _hoveredCell;
+
+    /// <summary>
+    /// The unit under the pointer whose walking range is shown, <c>Interface::_highlightUnitMovementArea</c>.
+    /// </summary>
+    private BattleUnit? _movementAreaUnit;
+
+    /// <summary>
+    /// The march being drawn right now, the frame-by-frame form of <c>Interface::_movingUnit</c>,
+    /// <c>_movingPos</c>, <c>_flyingUnit</c> and <c>_flyingPos</c>.
+    /// </summary>
+    private MovePlayback? _move;
+
+    /// <summary>
+    /// The attack being drawn right now, <c>RedrawActionAttackPart1()</c>/<c>_redrawActionWincesKills()</c>
+    /// (<c>battle_interface.cpp:4088-4439</c>).
+    /// </summary>
+    private AttackPlayback? _attack;
+
+    /// <summary>
+    /// The shot on its way, <c>Interface::_currentTroopRangedAttack</c>'s route walked one frame at a time
+    /// (<c>battle_interface.cpp:1062-1136</c>).
+    /// </summary>
+    private MissilePlayback? _missile;
+
+    /// <summary>
+    /// The shot that belongs to the swing being drawn: it leaves only once the swing is over
+    /// (<c>RedrawActionAttackPart1()</c> fires it after <c>AnimateUnitWithDelay( attacker, true )</c>, <c>:4148</c>).
+    /// </summary>
+    private MissilePlayback? _pendingMissile;
 
     /// <summary>
     /// Builds the painter of one arena, <c>Battle::Interface::Interface()</c>
@@ -112,8 +183,8 @@ public sealed class BattleFieldPainter
     /// The font of the troop counters, <c>FontType::smallWhite()</c>; <see langword="null"/> leaves the numbers out.
     /// </param>
     /// <param name="palette">
-    /// The game palette in video values, for the two colours the screen derives from it (the grid and, later,
-    /// the hit point bar); <see langword="null"/> leaves the grid out.
+    /// The game palette in video values, for the two colours the screen derives from it (the grid and the
+    /// hit point bar); <see langword="null"/> leaves both out.
     /// </param>
     /// <param name="statusFont">
     /// The font of the two status lines and the battle log, <c>FontType::normalWhite()</c>;
@@ -153,6 +224,20 @@ public sealed class BattleFieldPainter
 
         _buttons = new BattleStatusButtons(_sprites, ScreenBuffer.DefaultWidth, ScreenBuffer.DefaultHeight);
 
+        // 参考按 `getAttackingArmyCommander()` 建两个 OpponentSprite，没有英雄/队长的一方就没有立绘。
+        // 偏移取 `_interfacePosition`：屏幕 640x480 时它是 (0,0)，战场画布因此从 0 开始量。
+        Point position = new((ScreenBuffer.DefaultWidth - Width) / 2, (ScreenBuffer.DefaultHeight - 480) / 2);
+
+        if (_arena.AttackingArmyCommander is { } attacker)
+        {
+            _attackingOpponent = new BattleOpponentSprite(position, attacker, isFlipped: false, _sprites);
+        }
+
+        if (_arena.DefendingArmyCommander is { } defender)
+        {
+            _defendingOpponent = new BattleOpponentSprite(position, defender, isFlipped: true, _sprites);
+        }
+
         _arena.Board.SetArea(new Rect(0, 0, ScreenBuffer.DefaultWidth, ScreenBuffer.DefaultHeight));
     }
 
@@ -162,6 +247,193 @@ public sealed class BattleFieldPainter
     /// </summary>
     /// <param name="cellIndex">The cell, or <see langword="null"/> when the pointer is off the board.</param>
     public void SetHoveredCell(int? cellIndex) => _hoveredCell = cellIndex;
+
+    /// <summary>
+    /// Sets the unit whose walking range is highlighted, <c>Interface::_highlightUnitMovementArea</c>
+    /// (<c>battle_interface.cpp:2940</c>, cleared every frame at <c>:3219</c>).
+    /// </summary>
+    /// <param name="unit">The unit under the pointer, or <see langword="null"/> when there is none.</param>
+    /// <remarks>
+    /// 参考把它设成**鼠标下的兵**，不分敌我；真正决定画不画的是设置项「highlight movement area」。
+    /// 场景每帧先清空再设，与参考的 `_highlightUnitMovementArea = nullptr` 同拍。
+    /// </remarks>
+    public void SetMovementAreaUnit(BattleUnit? unit) => _movementAreaUnit = unit;
+
+    /// <summary>Whether a march is being drawn right now, <c>Interface::_movingUnit || _flyingUnit</c>.</summary>
+    public bool IsMoving => _move is not null;
+
+    /// <summary>
+    /// Starts drawing the unit's march to a cell; the arena is untouched, the caller applies the command
+    /// once <see cref="IsMoving"/> turns <see langword="false"/>.
+    /// </summary>
+    /// <param name="unit">The unit that would move.</param>
+    /// <param name="destination">The head cell it would stop on.</param>
+    /// <returns>
+    /// <see langword="false"/> when there is nothing to draw (already there, no path), so the caller should
+    /// apply the command right away.
+    /// </returns>
+    /// <remarks>
+    /// 参考在 <c>Arena::ApplyActionMove()</c> 里阻塞着画完再改位置；端口反过来：先播，播完场景才把命令交给竞技场，
+    /// 这样「已经站在终点」的画面与「还没动过」的模型能对上。
+    /// </remarks>
+    public bool StartMovement(BattleUnit unit, int destination)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+
+        AnimationState state = GetAnimation(unit).State;
+        BattleMoveAnimation? plan = BattleMoveAnimation.Create(_arena, unit, destination, state.FlightSpeed);
+
+        if (plan is null)
+        {
+            return false;
+        }
+
+        _move = new MovePlayback(plan, state, _arena);
+
+        if (!_move.IsFinished)
+        {
+            return true;
+        }
+
+        _move = null;
+
+        return false;
+    }
+
+    /// <summary>Stops the march without finishing it, for a scene that is torn down mid-step.</summary>
+    public void CancelMovement() => _move = null;
+
+    /// <summary>Whether a march, an attack or a shot is being drawn right now.</summary>
+    public bool IsAnimating => _move is not null || _attack is not null || _missile is not null;
+
+    /// <summary>
+    /// Starts drawing the attacker's swing, <c>RedrawActionAttackPart1()</c> (<c>battle_interface.cpp:4088-4175</c>).
+    /// </summary>
+    /// <param name="attacker">The unit that strikes.</param>
+    /// <param name="defender">The unit it strikes.</param>
+    /// <returns><see langword="false"/> when the creature has no attack sequence, so nothing is drawn.</returns>
+    /// <remarks>
+    /// 参考在结算伤害**之前**播这一段（<c>battle_action.cpp:198-203</c>），所以调用方先播、再把命令交给竞技场，
+    /// 受击与死亡由 <see cref="StartAttackReactions"/> 在结算之后补上。
+    /// </remarks>
+    public bool StartAttackSwing(BattleUnit attacker, BattleUnit defender)
+    {
+        ArgumentNullException.ThrowIfNull(attacker);
+        ArgumentNullException.ThrowIfNull(defender);
+
+        bool isShooting = attacker.IsArchers && !BattleUnit.IsHandFighting(attacker, defender);
+
+        // 参考只有在双击真的扫到两格时才改用 RANG_FRONT；那一格在结算前还定不下来，这里按「是双击」猜，
+        // 画面上只影响前一半的姿势。
+        MonsterAnimationType swing = BattleAttackAnimation.SelectSwing(
+            attacker, defender, isShooting, attacker.IsDoubleAttack);
+
+        AnimationState state = GetAnimation(attacker).State;
+
+        if (!state.SwitchAnimation(swing))
+        {
+            return false;
+        }
+
+        _pendingMissile = isShooting ? CreateMissile(attacker, defender) : null;
+
+        _attack = new AttackPlayback(
+            [new BattleAttackStep(attacker, swing, isShooting), new BattleAttackStep(attacker, BattleAttackAnimation.SelectSwingEnd(swing), isShooting)],
+            this,
+            state);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Draws what is left of an attack once the arena has applied it: the later blows' swings and every
+    /// reaction (<c>RedrawActionAttackPart2()</c> and <c>_redrawActionWincesKills()</c>).
+    /// </summary>
+    /// <param name="blows">The blow list of the attack, <see cref="BattleArena.LastAttackBlows"/>.</param>
+    public void StartAttackReactions(IReadOnlyList<BattleAttackBlow> blows)
+    {
+        ArgumentNullException.ThrowIfNull(blows);
+
+        // 参考在受击与死亡动画之前先让双方英雄表态（:4331）；端口一次回放整段攻击，
+        // 所以取最后一个死光的单位，等价于参考循环里最后一次赋值。
+        SetHeroAnimationReactionToTroopDeath(SelectDeathColor(blows));
+
+        IReadOnlyList<BattleAttackStep> steps = BattleAttackAnimation.CreateReplay(blows);
+
+        if (steps.Count == 0)
+        {
+            return;
+        }
+
+        _attack = new AttackPlayback(steps, this, null);
+    }
+
+    /// <summary>The colour of the last army that lost a whole stack, <c>deathColor</c> of <c>_redrawActionWincesKills()</c>.</summary>
+    /// <param name="blows">The blows of the attack.</param>
+    /// <returns>That colour, or <see cref="PlayerColor.Unused"/> when nothing died.</returns>
+    private static PlayerColor SelectDeathColor(IReadOnlyList<BattleAttackBlow> blows)
+    {
+        PlayerColor deathColor = PlayerColor.Unused;
+
+        foreach (BattleAttackBlow blow in blows)
+        {
+            foreach (BattleDamageTarget target in blow.Targets)
+            {
+                if (!target.Defender.IsValid)
+                {
+                    deathColor = target.Defender.Color;
+                }
+            }
+        }
+
+        return deathColor;
+    }
+
+    /// <summary>Stops the attack drawing without finishing it, for a scene that is torn down mid-swing.</summary>
+    public void CancelAttack()
+    {
+        _attack = null;
+        _missile = null;
+        _pendingMissile = null;
+    }
+
+    /// <summary>
+    /// Lays out the shot of a shooting attack, <c>RedrawActionAttackPart1()</c>'s missile block
+    /// (<c>battle_interface.cpp:4112-4156</c>).
+    /// </summary>
+    /// <param name="attacker">The shooter, whose swing is being drawn.</param>
+    /// <param name="defender">The unit aimed at.</param>
+    /// <returns>The shot to walk, or <see langword="null"/> when the sprites it needs are missing.</returns>
+    private MissilePlayback? CreateMissile(BattleUnit attacker, BattleUnit defender)
+    {
+        AnimationState animation = GetAnimation(attacker).State;
+
+        Sprite? attackerSprite = _sprites.GetSprite(MonsterIcnIds.GetSpriteIcn(attacker.Monster), animation.Frame);
+        Sprite? defenderSprite = _sprites.GetSprite(
+            MonsterIcnIds.GetSpriteIcn(defender.Monster), GetAnimation(defender).State.Frame);
+
+        if (attackerSprite is null || defenderSprite is null)
+        {
+            return null;
+        }
+
+        // 同排算平射，参考比的是两边的行号（:4126-4128）。
+        bool isSameRow = (attacker.HeadIndex / BattleBoard.WidthInCells) == (defender.HeadIndex / BattleBoard.WidthInCells);
+
+        Point target = BattleTroopSprite.GetCenterPoint(defender, defenderSprite);
+        BattleMissile.Aim aim = BattleMissile.AimShot(attacker, target, attackerSprite, animation, isSameRow);
+
+        Sprite? projectile = _sprites.GetSprite(
+            MonsterIcnIds.GetMissileIcn(attacker.Monster), animation.GetProjectileFrame(aim.Angle));
+
+        // 法师的「弹道」是闪电，没有弹体：几何照样算，画的时候没有 sprite 可贴（见 ADR-227）。
+        int width = projectile?.Width ?? 0;
+        int height = projectile?.Height ?? 0;
+
+        return new MissilePlayback(
+            new BattleMissile(aim.Start, aim.Target, aim.Angle, attacker.Monster, width, height, projectile?.OffsetX ?? 0, projectile?.OffsetY ?? 0),
+            projectile);
+    }
 
     /// <summary>The battle log window, <c>Interface::listlog</c> (<c>battle_interface.cpp:803-980</c>).</summary>
     public BattleStatusLog StatusLog => _statusLog;
@@ -174,6 +446,24 @@ public sealed class BattleFieldPainter
     /// (<c>battle_interface.cpp:3222-3224</c>).
     /// </summary>
     public BattleStatusButton PressedButton { get; set; }
+
+    /// <summary>
+    /// The spell being aimed, <c>Interface::humanturn_spell</c>; <see cref="SpellType.None"/> when no human is
+    /// aiming a spell right now.
+    /// </summary>
+    public Spell PendingSpell { get; set; } = new(SpellType.None);
+
+    /// <summary>
+    /// The source cell picked for a teleport, <c>Interface::_teleportSpellSrcIdx</c>; <c>-1</c> while no source has
+    /// been picked.
+    /// </summary>
+    public int TeleportSourceCell { get; set; } = BattleSpellHighlight.NoCell;
+
+    /// <summary>
+    /// The cursor theme shown right now, <c>Cursor::Get().Themes()</c>; the teleport highlight reads it to tell
+    /// "picking the source" from "picking the destination".
+    /// </summary>
+    public CursorTheme CursorTheme { get; set; } = CursorTheme.CombatNone;
 
     /// <summary>The lines the battle log holds so far, <c>StatusListBox::_messages</c>.</summary>
     public IReadOnlyList<string> LogMessages => _statusLog.Messages;
@@ -259,8 +549,10 @@ public sealed class BattleFieldPainter
 
         // RedrawCover() 的静态那半：底图原样铺到工作面上，随后的逐行动作直接画在工作面上。
         ImageOps.Blit(_surface, Point.Zero, _ground, _ground.Bounds);
+        RedrawMovementArea();
         RedrawHoverShadow();
         RedrawArmies();
+        RedrawTurnOrderBar();
 
         // redrawPreRender(): 战场贴到屏幕，然后画状态栏与按钮（RedrawInterface() 的底），最后是展开的日志窗。
         ImageOps.Blit(output, Point.Zero, _surface, _surface.Bounds);
@@ -289,6 +581,36 @@ public sealed class BattleFieldPainter
     /// </remarks>
     public void Update()
     {
+        // 两侧英雄与旗帜也各有自己的节拍（battle_interface.cpp:3940-3945），与待机动画互不相干。
+        UpdateOpponents();
+
+        // The march has its own clock (CUSTOM_BATTLE_UNIT_MOVEMENT_DELAY), not the idle one
+        // (battle_interface.cpp:4725-4728).
+        if (_move is { } move && !move.Advance())
+        {
+            _move = null;
+        }
+
+        // The attack has its own clock too (custom delay), so it is not gated by the idle one.
+        if (_attack is { } attack && !attack.Advance())
+        {
+            _attack = null;
+
+            // 起手播完才放箭（RedrawActionAttackPart1() 在 :4148 才调 RedrawMissileAnimation）。
+            if (_pendingMissile is { } pending)
+            {
+                _pendingMissile = null;
+                pending.Restart();
+                _missile = pending;
+            }
+        }
+
+        // The shot walks BATTLE_MISSILE_DELAY per point (:1071-1076).
+        if (_missile is { } shot && !shot.Advance())
+        {
+            _missile = null;
+        }
+
         if (!GameDelays.ValidateAnimationDelay(DelayType.BattleIdleDelay))
         {
             return;
@@ -309,7 +631,21 @@ public sealed class BattleFieldPainter
                 continue;
             }
 
+            // The unit on its way, or in the middle of an attack, is driven by that playback, not by the idle loop.
+            if (_move?.Unit == unit || _attack?.Units.Contains(unit) == true)
+            {
+                continue;
+            }
+
             UnitAnimation animation = GetAnimation(unit);
+
+            // 被复活的单位还带着死亡序列；活人不该躺着（复活流程不碰动画状态，ADR-229）。
+            if (animation.State.CurrentState == MonsterAnimationType.Kill)
+            {
+                animation.State.SwitchAnimation(MonsterAnimationType.Static);
+
+                continue;
+            }
 
             if (animation.State.CurrentState == MonsterAnimationType.Idle)
             {
@@ -426,13 +762,22 @@ public sealed class BattleFieldPainter
     /// <c>Interface::RedrawArmies()</c> (<c>battle_interface.cpp:1689-1978</c>).
     /// </summary>
     /// <remarks>
-    /// 参考的循环里还夹着「正在移动的单位」「飞行单位」「坟场」「法术覆盖层」四组列表；这一步一个都没有，
-    /// 所以每行只剩两件事：先画这一行的九个高障碍与城墙，再把站在这一行的单位（只认头部格）画出来。
-    /// 兵力计数条（`RedrawTroopCount`）跟着单位画、但在整行之后，要字体层，随第二步补。
+    /// 参考的循环里夹着「正在移动的单位」「飞行单位」「坟场」「法术覆盖层」四组列表；端口把移动与飞行单独处理，
+    /// 坟场按参考的两条路走：野外战在整轮之前一次画完（<c>battle_interface.cpp:1703-1705</c>），城战则在每行里
+    /// 分城墙前后两批插进单位之前画（<c>:1758-1766</c>）。法术覆盖层仍未搬。
     /// </remarks>
     private void RedrawArmies()
     {
         Castle? castle = _arena.Castle;
+
+        // Read once for the whole pass, the reference's local at battle_interface.cpp:1694.
+        bool hitPointsBarEnabled = Settings.Get().IsBattleShowHitPointsBar;
+
+        // 野外战没有城墙要遮挡，尸体铺在整轮最底下（:1703-1705）。
+        if (castle is null)
+        {
+            RedrawKilled();
+        }
 
         int[] wallCells =
         [
@@ -456,6 +801,8 @@ public sealed class BattleFieldPainter
 
             List<BattleUnit> beforeWall = [];
             List<BattleUnit> afterWall = [];
+            List<BattleUnit> deadBeforeWall = [];
+            List<BattleUnit> deadAfterWall = [];
 
             if (castle is not null)
             {
@@ -473,7 +820,11 @@ public sealed class BattleFieldPainter
 
                 for (int column = 0; column < BattleBoard.WidthInCells; ++column)
                 {
-                    CollectRowUnit((row * BattleBoard.WidthInCells) + column, IsCellBeforeWall(row, column, wallCell), beforeWall, afterWall);
+                    int cellId = (row * BattleBoard.WidthInCells) + column;
+                    bool isBeforeWall = IsCellBeforeWall(row, column, wallCell);
+
+                    CollectRowDead(cellId, isBeforeWall, deadBeforeWall, deadAfterWall);
+                    CollectRowUnit(cellId, isBeforeWall, beforeWall, afterWall);
                 }
             }
             else
@@ -484,6 +835,12 @@ public sealed class BattleFieldPainter
                 }
             }
 
+            // 尸体垫在活人下面：城墙前的先画（:1749-1752）。
+            foreach (BattleUnit dead in deadBeforeWall)
+            {
+                RedrawCorpse(dead);
+            }
+
             foreach (BattleUnit unit in beforeWall)
             {
                 RedrawTroopSprite(unit);
@@ -491,7 +848,7 @@ public sealed class BattleFieldPainter
 
             foreach (BattleUnit unit in beforeWall)
             {
-                RedrawTroopCount(unit);
+                RedrawTroopCount(unit, hitPointsBarEnabled);
             }
 
             // The wall goes between the troops in front of it and the ones behind it.
@@ -500,6 +857,11 @@ public sealed class BattleFieldPainter
                 RedrawCastle(castle, wallCells[row]);
             }
 
+            foreach (BattleUnit dead in deadAfterWall)
+            {
+                RedrawCorpse(dead);
+            }
+
             foreach (BattleUnit unit in afterWall)
             {
                 RedrawTroopSprite(unit);
@@ -507,9 +869,172 @@ public sealed class BattleFieldPainter
 
             foreach (BattleUnit unit in afterWall)
             {
-                RedrawTroopCount(unit);
+                RedrawTroopCount(unit, hitPointsBarEnabled);
+            }
+
+            // 英雄站在战场两侧，参考在中排（cellRowId == 2）画完单位之后画它们（:1972-1977）。
+            if (row == 2)
+            {
+                RedrawOpponents();
             }
         }
+
+        // The flyer in the air goes over everything (battle_interface.cpp:1972-1975).
+        if (_move is { IsAirborne: true } flight)
+        {
+            RedrawTroopSprite(flight.Unit);
+        }
+
+        // A unit that fell to the attack being drawn is already off the board, so the painter stands it back
+        // on its last cells itself: it has to be visible for its fall, not vanish when the blow lands.
+        if (_attack is { } attack)
+        {
+            // 正在播的这一轮里死亡序列还在走，别把它推到末帧。
+            foreach (BattleUnit dying in attack.DyingUnits)
+            {
+                RedrawTroopSprite(dying);
+            }
+        }
+
+        // The shot flies over everything already drawn (battle_interface.cpp:1119-1131).
+        RedrawMissile();
+    }
+
+    /// <summary>
+    /// Draws both heroes beside the battlefield, <c>Interface::RedrawOpponents()</c>
+    /// (<c>battle_interface.cpp:1982-1988</c>).
+    /// </summary>
+    private void RedrawOpponents()
+    {
+        _attackingOpponent?.Redraw(_surface);
+        _defendingOpponent?.Redraw(_surface);
+
+        RedrawOpponentsFlags();
+    }
+
+    /// <summary>
+    /// Draws the waving flag above each hero, <c>Interface::RedrawOpponentsFlags()</c>
+    /// (<c>battle_interface.cpp:1990-2026</c>).
+    /// </summary>
+    private void RedrawOpponentsFlags()
+    {
+        // 左边那面从英雄左上角往外量；右边那面整体水平翻转，x 从屏幕右沿往回量。
+        if (_attackingOpponent is { } attacker)
+        {
+            IcnType icn = IcnCatalog.GetFlagIcnId(_arena.AttackingArmyColor);
+
+            if (GetFlag(icn) is { } flag)
+            {
+                Point position = new(
+                    attacker.Offset.X + BattleHeroSprites.LeftHeroXOffset + flag.OffsetX,
+                    attacker.Offset.Y + BattleHeroSprites.LeftHeroYOffset + flag.OffsetY);
+
+                ImageOps.BlitSprite(_surface, position, flag);
+            }
+        }
+
+        if (_defendingOpponent is { } defender)
+        {
+            IcnType icn = IcnCatalog.GetFlagIcnId(_arena.DefendingArmyColor);
+
+            if (GetFlag(icn) is { } flag)
+            {
+                Point position = new(
+                    defender.Offset.X + ScreenBuffer.DefaultWidth - BattleHeroSprites.RightHeroXOffset
+                        - (flag.OffsetX + flag.Width),
+                    defender.Offset.Y + BattleHeroSprites.RightHeroYOffset + flag.OffsetY);
+
+                BlitFlipped(icn, flag, position);
+            }
+        }
+    }
+
+    /// <summary>The flag frame of the current animation step, <c>Assets::getImage( icn, getAnimatedIcnIndex() )</c>.</summary>
+    /// <param name="icn">The flag archive of a colour.</param>
+    /// <returns>The frame, or <see langword="null"/> if the archive is missing.</returns>
+    private Sprite? GetFlag(IcnType icn) =>
+        _sprites.GetSprite(icn, (int)IcnCatalog.GetAnimatedIndex(icn, 0, _flagAnimationFrameIndex));
+
+    /// <summary>Blits a frame horizontally mirrored, flipping it once and caching the result.</summary>
+    /// <param name="icn">The archive the frame belongs to.</param>
+    /// <param name="sprite">The frame.</param>
+    /// <param name="position">Where its left edge goes.</param>
+    private void BlitFlipped(IcnType icn, Sprite sprite, Point position)
+    {
+        (IcnType, int) key = (icn, (int)IcnCatalog.GetAnimatedIndex(icn, 0, _flagAnimationFrameIndex));
+
+        // 与英雄一样：透明像素记在 transform 层，翻转时不能只翻图像。
+        if (!_flippedFlags.TryGetValue(key, out Sprite? flipped))
+        {
+            flipped = sprite.Flip(horizontal: true, vertical: false);
+            _flippedFlags[key] = flipped;
+        }
+
+        ImageOps.BlitSprite(_surface, position, flipped);
+    }
+
+    /// <summary>
+    /// Makes the surviving side cheer and the losing side sigh when a stack dies,
+    /// <c>Interface::SetHeroAnimationReactionToTroopDeath()</c> (<c>battle_interface.cpp:4441-4456</c>).
+    /// </summary>
+    /// <param name="deathColor">The colour of the army that lost the whole stack, <c>PlayerColor.Unused</c> for none.</param>
+    public void SetHeroAnimationReactionToTroopDeath(PlayerColor deathColor)
+    {
+        if (deathColor == PlayerColor.Unused)
+        {
+            return;
+        }
+
+        // 死的是守方就是攻方在打：攻方英雄欢呼，守方英雄叹气。
+        bool attackersTurn = deathColor == _arena.DefendingArmyColor;
+        BattleOpponentSprite? attackingHero = attackersTurn ? _attackingOpponent : _defendingOpponent;
+        BattleOpponentSprite? defendingHero = attackersTurn ? _defendingOpponent : _attackingOpponent;
+
+        // 60%: `Rand::Get( 1, 5 ) < 4`；否则 80%: `Rand::Get( 1, 5 ) < 5`。
+        if (attackingHero is not null && Rand.Get(1, 5) < 4)
+        {
+            attackingHero.Animation.SetAnimation(BattleHeroAnimation.Joy);
+        }
+        else if (defendingHero is not null && Rand.Get(1, 5) < 5)
+        {
+            defendingHero.Animation.SetAnimation(BattleHeroAnimation.Sorrow);
+        }
+    }
+
+    /// <summary>
+    /// Steps the flags and the two hero poses, the time-driven half of <c>Interface::Events()</c>
+    /// (<c>battle_interface.cpp:3940-3945</c>).
+    /// </summary>
+    private void UpdateOpponents()
+    {
+        if (GameDelays.ValidateAnimationDelay(DelayType.BattleFlagsDelay))
+        {
+            // 参考的计数器是无符号的、只增不减，取模交给 ICN::getAnimatedIcnIndex。
+            ++_flagAnimationFrameIndex;
+        }
+
+        if (GameDelays.ValidateAnimationDelay(DelayType.BattleOpponentsDelay))
+        {
+            _attackingOpponent?.Animation.UpdateAnimationState();
+            _defendingOpponent?.Animation.UpdateAnimationState();
+        }
+    }
+
+    /// <summary>
+    /// Draws the projectile where the walk has got to, the loop body of <c>RedrawMissileAnimation()</c>
+    /// (<c>battle_interface.cpp:1119-1131</c>).
+    /// </summary>
+    private void RedrawMissile()
+    {
+        if (_missile is not { Position: { } position } flight || flight.Projectile is not { } projectile)
+        {
+            return;
+        }
+
+        // 参考在 blit 时按 reverse 镜像（:1121-1125）；镜像过的 sprite 占同一片位置。
+        Sprite drawn = flight.IsMirrored ? projectile.Flip(horizontal: true, vertical: false) : projectile;
+
+        ImageOps.BlitSprite(_surface, position + flight.BlitOffset, drawn);
     }
 
     /// <summary>
@@ -556,7 +1081,68 @@ public sealed class BattleFieldPainter
             return;
         }
 
+        // A flyer in the air is drawn above the whole battlefield instead of in its row
+        // (battle_interface.cpp:1955-1975).
+        if (_move?.IsAirborne == true && _move.Unit == unit)
+        {
+            return;
+        }
+
         (isBeforeWall ? beforeWall : afterWall).Add(unit);
+    }
+
+    /// <summary>
+    /// Adds the dead lying on <paramref name="cellIndex"/> to the list of its side of the wall,
+    /// <c>Interface::RedrawArmies()</c>'s <c>deadTroopBeforeWall</c> / <c>deadTroopAfterWall</c>
+    /// (<c>battle_interface.cpp:1758-1766</c>).
+    /// </summary>
+    /// <param name="cellIndex">The cell to look at.</param>
+    /// <param name="isBeforeWall">Whether the cell is drawn before the wall.</param>
+    /// <param name="beforeWall">List of bodies to draw before the wall.</param>
+    /// <param name="afterWall">List of bodies to draw after the wall.</param>
+    private void CollectRowDead(int cellIndex, bool isBeforeWall, List<BattleUnit> beforeWall, List<BattleUnit> afterWall)
+    {
+        foreach (BattleUnit dead in _arena.Graveyard.GetUnitsForRedraw(cellIndex))
+        {
+            (isBeforeWall ? beforeWall : afterWall).Add(dead);
+        }
+    }
+
+    /// <summary>
+    /// Draws every body on the field, <c>Interface::RedrawKilled()</c> (<c>battle_interface.cpp:2910-2920</c>).
+    /// </summary>
+    /// <remarks>野外战没有城墙，尸体一次性铺在最底下；城战里它们跟着行与城墙前后分批画。</remarks>
+    private void RedrawKilled()
+    {
+        foreach (int cell in _arena.Graveyard.GetOccupiedCells())
+        {
+            foreach (BattleUnit unit in _arena.Graveyard.GetUnitsForRedraw(cell))
+            {
+                RedrawCorpse(unit);
+            }
+        }
+    }
+
+    /// <summary>Draws a body, making sure its death sequence sits on the last frame first.</summary>
+    /// <param name="unit">A unit that is already off the board.</param>
+    private void RedrawCorpse(BattleUnit unit)
+    {
+        AnimationState state = GetAnimation(unit).State;
+
+        // 参考总是把死亡序列播到末帧；端口在 AI 回合即时结算，没播过，这里补上，
+        // 免得尸体以站姿躺在场上（ADR-229）。
+        if (state.CurrentState != MonsterAnimationType.Kill || !state.IsLastFrame)
+        {
+            if (state.SwitchAnimation(MonsterAnimationType.Kill))
+            {
+                while (!state.IsLastFrame)
+                {
+                    state.PlayAnimation();
+                }
+            }
+        }
+
+        RedrawTroopSprite(unit);
     }
 
     /// <summary>
@@ -615,8 +1201,8 @@ public sealed class BattleFieldPainter
     }
 
     /// <summary>
-    /// Draws one unit at rest, <c>Interface::RedrawTroopSprite()</c> plus <c>_drawTroopSprite()</c>
-    /// (<c>battle_interface.cpp:2028-2119</c>) without the moving, flying and moat-mask branches.
+    /// Draws one unit, <c>Interface::RedrawTroopSprite()</c> plus <c>_drawTroopSprite()</c>
+    /// (<c>battle_interface.cpp:2028-2119</c>) without the moat-mask branch.
     /// </summary>
     /// <param name="unit">The unit to draw.</param>
     private void RedrawTroopSprite(BattleUnit unit)
@@ -632,54 +1218,98 @@ public sealed class BattleFieldPainter
         // The reference mirrors at blit time (isReflect); mirroring the sprite keeps the same bounds.
         Sprite drawn = unit.IsReflect ? sprite.Flip(horizontal: true, vertical: false) : sprite;
 
-        ImageOps.BlitSprite(_surface, GetTroopPosition(unit, sprite), drawn);
+        Point position = BattleTroopSprite.GetPosition(unit, sprite);
+
+        Point movementDelta = Point.Zero;
+        CellDirection movementDirection = CellDirection.Center;
+        bool isFlyingInMotion = false;
+
+        // The unit on its way is drawn between two cells (battle_interface.cpp:2069-2110).
+        if (_move?.Unit == unit)
+        {
+            position += BattleTroopDisplacement.GetOffset(
+                unit.Position.GetRect(),
+                unit.IsFlying,
+                animation.AnimationLength,
+                animation.MovementProgress,
+                animation.GetCurrentFrameXOffset(),
+                _move.MovingPosition,
+                _move.FlyingPosition);
+
+            BattleTroopDisplacement.Movement movement = BattleTroopDisplacement.GetMovement(
+                unit.Position.GetRect(),
+                unit.IsFlying,
+                animation.AnimationLength,
+                animation.MovementProgress,
+                animation.GetCurrentFrameXOffset(),
+                _move.MovingPosition);
+
+            movementDelta = movement.Delta;
+            movementDirection = movement.Direction;
+            isFlyingInMotion = _move.FlyingPosition is not null;
+        }
+
+        Rect spriteArea = new(position.X, position.Y, drawn.Width, drawn.Height);
+
+        // 踩在护城河里时，水面盖住 sprite 的下沿（battle_interface.cpp:2121-2200）。
+        if (BattleMoatMasking.GetMask(
+                _arena.Board, unit, _arena.Bridge, HasBuiltMoat(), isFlyingInMotion, movementDirection, movementDelta,
+                spriteArea) is Rect water)
+        {
+            RedrawTroopSpriteWithMoatMask(drawn, position, spriteArea, water);
+
+            return;
+        }
+
+        ImageOps.BlitSprite(_surface, position, drawn);
     }
 
     /// <summary>
-    /// Where the sprite of a unit goes, <c>GetTroopPosition()</c> (<c>battle_interface.cpp:502-527</c>).
+    /// Draws a sprite with the moat's water band cut out,
+    /// <c>_drawTroopSpriteWithMoatMask()</c> (<c>battle_interface.cpp:2188-2200</c>).
     /// </summary>
-    /// <param name="unit">The unit that owns the sprite.</param>
-    /// <param name="sprite">The sprite itself, whose own offsets take part in the arithmetic.</param>
-    private static Point GetTroopPosition(BattleUnit unit, Sprite sprite)
+    /// <param name="sprite">The sprite to draw, already mirrored when the unit faces left.</param>
+    /// <param name="position">Where its top left corner goes.</param>
+    /// <param name="spriteArea">Its rectangle, the same as <paramref name="position"/> plus its size.</param>
+    /// <param name="water">The band to leave out, clipped to <paramref name="spriteArea"/>.</param>
+    /// <remarks>
+    /// 参考把 sprite 切成三块画：水面之上整幅、水带左侧、水带右侧。水面之下不画，脚就「泡」在水里了。
+    /// 源矩形用 sprite 自己的坐标（左上角为原点），目标点始终是 sprite 的左上角。
+    /// </remarks>
+    private void RedrawTroopSpriteWithMoatMask(Sprite sprite, Point position, Rect spriteArea, Rect water)
     {
-        Rect area = unit.Position.GetRect();
+        BattleMoatMasking.SpritePieces pieces = BattleMoatMasking.GetVisiblePieces(spriteArea, water);
 
-        int offsetX;
-
-        if (unit.IsReflect)
-        {
-            offsetX = unit.IsWide
-                ? area.X + (area.Width / 2) + (area.Width / 4) - sprite.Width - sprite.OffsetX + 1
-                : area.X + (area.Width / 2) - sprite.Width - sprite.OffsetX + 1;
-        }
-        else
-        {
-            offsetX = unit.IsWide
-                ? area.X + (area.Width / 4) + sprite.OffsetX
-                : area.X + (area.Width / 2) + sprite.OffsetX;
-        }
-
-        int offsetY = area.Y + area.Height + sprite.OffsetY + CellYOffset;
-
-        return new Point(offsetX, offsetY);
+        ImageOps.BlitSprite(_surface, position, sprite, pieces.Top);
+        ImageOps.BlitSprite(_surface, position, sprite, pieces.Left);
+        ImageOps.BlitSprite(_surface, position, sprite, pieces.Right);
     }
+
+    /// <summary>Whether the defending castle built its moat, <c>Arena::GetCastle()</c>'s <c>BUILD_MOAT</c>.</summary>
+    /// <returns><see langword="true"/> when a moat exists to be drawn.</returns>
+    private bool HasBuiltMoat() =>
+        _arena.Castle is { } castle && castle.IsBuild(FHeroes2.Game.Castle.BuildingType.Moat);
 
     /// <summary>
     /// The troop counter of a unit, <c>Interface::RedrawTroopCount()</c> (<c>battle_interface.cpp:2230-2267</c>).
     /// </summary>
     /// <param name="unit">The unit whose counter to draw.</param>
+    /// <param name="hitPointsBarEnabled">
+    /// Whether the hit point bar is drawn under the counter, the reference's argument of the same name.
+    /// </param>
     /// <remarks>
     /// <para>
     /// 计数条是 <c>TEXTBAR</c> 的 10–14 号（10 紫、12 绿、13 黄、14 红，按单位身上的法术位挑），
     /// 数字是 <c>smallWhite</c> 的缩写形式（<c>Army::AbbreviateNumber</c>），压在条子正中偏下两像素。
     /// </para>
     /// <para>
-    /// <b>未做</b>：血量条（<c>drawHitPointsBar</c>）。它要按游戏调色板取「绿 0,200,0 / 红 200,0,0」两个索引
-    /// （<c>fheroes2::GetColorId</c>），而绘制器还没有调色板注入；这一项在设置里默认关闭
-    /// （<c>Settings</c> 的默认选项不含 <c>BattleShowHitPointsBar</c>），等战斗设置窗那一步一起补。
+    /// 打开「血量条」时，计数条先上移四像素（镜像的单位上移八像素，免得压住对面队伍的计数条），再把
+    /// 血量条挂在它的下方（<c>:2250-2261</c>）。条子的绿红两色要按调色板取
+    /// （<c>GetColorId( 0, 200, 0 )</c> 与 <c>GetColorId( 200, 0, 0 )</c>）：没有注入调色板时这一档退化为
+    /// 不画，与网格的降级一致。
     /// </para>
     /// </remarks>
-    private void RedrawTroopCount(BattleUnit unit)
+    private void RedrawTroopCount(BattleUnit unit, bool hitPointsBarEnabled)
     {
         Sprite? bar = _sprites.GetSprite(IcnType.Textbar, GetIndexIndicator(unit));
 
@@ -711,7 +1341,29 @@ public sealed class BattleFieldPainter
 
         x += reflected ? -xOffset : xOffset;
 
-        ImageOps.BlitSprite(_surface, new Point(x + bar.OffsetX, y + bar.OffsetY), bar);
+        bool showHitPointsBar = hitPointsBarEnabled && _palette is not null;
+
+        if (showHitPointsBar)
+        {
+            y -= BattleHitPointsBar.Height;
+
+            if (reflected)
+            {
+                y -= BattleHitPointsBar.Height;
+            }
+        }
+
+        Point barPosition = new(x + bar.OffsetX, y + bar.OffsetY);
+
+        if (showHitPointsBar)
+        {
+            uint monsterHitPoints = (uint)MonsterStatistics.GetBattleStats(unit.Monster).HitPoints;
+
+            BattleHitPointsBarPainter.Draw(_surface, barPosition, new Size(bar.Width, bar.Height),
+                unit.HitPoints, monsterHitPoints, GetRemainingHitPointsColor(), GetMissingHitPointsColor());
+        }
+
+        ImageOps.BlitSprite(_surface, barPosition, bar);
 
         if (_counterFont is null)
         {
@@ -722,6 +1374,178 @@ public sealed class BattleFieldPainter
         int width = GlyphText.Measure(_counterFont, count);
 
         GlyphText.DrawLine(_counterFont, _surface, new Point(x + ((bar.Width - width) / 2), y + 2), count);
+    }
+
+    /// <summary>
+    /// The green of the hit point bar, <c>GetColorId( 0, 200, 0 )</c>.
+    /// </summary>
+    /// <returns>The palette index, resolved once and kept.</returns>
+    private byte GetRemainingHitPointsColor() =>
+        _remainingHitPointsColor ??= PALColorId.Get(
+            SixBit(BattleHitPointsBar.RemainingRed),
+            SixBit(BattleHitPointsBar.RemainingGreen),
+            SixBit(BattleHitPointsBar.RemainingBlue),
+            _palette!);
+
+    /// <summary>
+    /// The red of the hit point bar, <c>GetColorId( 200, 0, 0 )</c>.
+    /// </summary>
+    /// <returns>The palette index, resolved once and kept.</returns>
+    private byte GetMissingHitPointsColor() =>
+        _missingHitPointsColor ??= PALColorId.Get(
+            SixBit(BattleHitPointsBar.MissingRed),
+            SixBit(BattleHitPointsBar.MissingGreen),
+            SixBit(BattleHitPointsBar.MissingBlue),
+            _palette!);
+
+    /// <summary>An eight bit channel of <c>fheroes2::GetColorId()</c> in the six bit form the port takes.</summary>
+    /// <param name="channel">The channel, 0 to 255.</param>
+    /// <returns>The channel divided by four, as <c>GetColorId()</c> does internally.</returns>
+    private static byte SixBit(byte channel) => (byte)(channel >> 2);
+
+    /// <summary>
+    /// The turn order bar over the top of the battlefield, <c>Battle::TurnOrder</c>
+    /// (<c>battle_interface.cpp:1120-1420</c>, drawn from <c>redrawPreRender()</c> at <c>:1641-1656</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只画「战场窗口内、顶边」这一档：屏幕固定 640x480，窗口外没有第二块地方可放，所以
+    /// <see cref="BattleTurnOrderState.Bottom"/> 在这里等同于不画（战斗设置窗因此也不会让玩家选到它）。
+    /// </para>
+    /// <para>
+    /// <b>偏差</b>：正在行动的单位、以及鼠标所指的单位，都用固定的 110 号色描边。参考让前者在
+    /// 110/114/118/122/126 之间按 <c>BATTLE_SELECTED_UNIT_DELAY</c> 循环闪光，因为那套节奏跟着单位的描边
+    /// 动画走，而端口还没画描边。
+    /// </para>
+    /// </remarks>
+    private void RedrawTurnOrderBar()
+    {
+        if (Settings.Get().BattleTurnOrder != BattleTurnOrderState.Top)
+        {
+            return;
+        }
+
+        IReadOnlyList<BattleUnit> order = _arena.OrderOfUnits;
+        int validUnitCount = 0;
+
+        foreach (BattleUnit unit in order)
+        {
+            if (unit.IsValid)
+            {
+                validUnitCount++;
+            }
+        }
+
+        int slots = BattleTurnOrderLayout.GetSlotCount(_surface.Width, validUnitCount);
+
+        if (slots == 0)
+        {
+            return;
+        }
+
+        Rect area = BattleTurnOrderLayout.GetArea(new Rect(0, 0, _surface.Width, _surface.Height), validUnitCount);
+        IReadOnlyList<int> indices = BattleTurnOrderLayout.SelectSlots(order, slots);
+
+        BattleUnit? hoveredUnit = _hoveredCell is { } cell ? _arena.Board.GetCell(cell)?.Unit : null;
+        BattleUnit? currentUnit = _arena.CurrentUnit;
+
+        for (int slot = 0; slot < indices.Count; slot++)
+        {
+            BattleUnit unit = order[indices[slot]];
+
+            byte borderColor = ReferenceEquals(unit, currentUnit) || ReferenceEquals(unit, hoveredUnit)
+                ? TurnOrderContourColor
+                : BattleArmyColor.GetPaletteIndex(unit.GetCurrentColor());
+
+            Rect icon = new(area.X + (slot * BattleTurnOrderLayout.IconSize), area.Y,
+                BattleTurnOrderLayout.IconSize, BattleTurnOrderLayout.IconSize);
+
+            // 参考按「原始军队色」决定图标朝哪边：攻方朝右，守方（`_opponentColor`）镜像朝左。
+            RedrawTurnOrderIcon(icon, unit, unit.Color == _arena.DefendingForce.Color, borderColor);
+        }
+    }
+
+    /// <summary>
+    /// One icon of the turn order bar, <c>Battle::TurnOrder::_redrawUnit()</c> (<c>battle_interface.cpp:1219-1260</c>).
+    /// </summary>
+    /// <param name="pos">The 43x43 slot, <c>pos</c>.</param>
+    /// <param name="unit">The stack the slot stands for.</param>
+    /// <param name="revert">Whether the creature icon faces left, <c>revert</c>.</param>
+    /// <param name="borderColor">The one pixel frame, already picked by the caller.</param>
+    private void RedrawTurnOrderIcon(Rect pos, BattleUnit unit, bool revert, byte borderColor)
+    {
+        // 面板取自 SWAPWIN 第 0 帧的 (37,268)，往里缩一像素；参考用的是 Copy，不带变换层。
+        if (_sprites.GetSprite(IcnType.Swapwin, 0) is { } background)
+        {
+            ImageOps.Blit(_surface, new Point(pos.X + 1, pos.Y + 1), background.Image,
+                new Rect(37, 268, pos.Width - 2, pos.Height - 2));
+        }
+
+        if (GetTurnOrderIcon(unit, revert) is { } icon)
+        {
+            int x = pos.X + ((pos.Width - icon.Width) / 2);
+            int y = pos.Y + pos.Height - icon.Height - ((icon.Height + 3) < pos.Height ? 3 : 0);
+
+            ImageOps.BlitSprite(_surface, new Point(x, y), icon);
+        }
+
+        if (_counterFont is { } font)
+        {
+            GlyphText.DrawLine(font, _surface, new Point(pos.X + 2, pos.Y + 4),
+                ArmyText.AbbreviateNumber(unit.Count), pos);
+        }
+
+        // 描边在压暗之前：参考连着边框一起压暗，所以已行动单位的边框也是灰的。
+        ImageOps.DrawRect(_surface, pos, borderColor);
+
+        // 已经行动过的压暗：先套 GRAY 再套 GRAY_FONT（参考这里直接写 3），与参考的两道 ApplyPalette 一致。
+        if (unit.HasModes(BattleMonsterState.Moved))
+        {
+            ImageOps.ApplyPalette(_surface, pos, PaletteTable.Get(PaletteId.Gray));
+            ImageOps.ApplyPalette(_surface, pos, PaletteTable.Get(PaletteId.GrayFont));
+        }
+    }
+
+    /// <summary>
+    /// The <c>MONS32</c> icon of a stack, as the turn order bar needs it.
+    /// </summary>
+    /// <param name="unit">The stack.</param>
+    /// <param name="revert">Whether the icon is mirrored horizontally.</param>
+    /// <returns>The sprite, or <see langword="null"/> when the icon archive is missing.</returns>
+    /// <remarks>
+    /// 镜像只改调色板（<c>CAP_MIRRORIMAGE</c> 的单位在战场上也是半透明的蓝紫），翻转则重画像素；两者都只做一次，
+    /// 之后按（兵种，镜像，翻转）三元组缓存，免得每帧重新翻一遍二十来个精灵。
+    /// </remarks>
+    private Sprite? GetTurnOrderIcon(BattleUnit unit, bool revert)
+    {
+        bool mirror = unit.HasModes(BattleMonsterState.CapMirrorImage);
+        int key = (((int)unit.Monster - (int)MonsterType.Peasant) * 4) + (mirror ? 2 : 0) + (revert ? 1 : 0);
+
+        if (_turnOrderIcons.TryGetValue(key, out Sprite? cached))
+        {
+            return cached;
+        }
+
+        if (_sprites.GetSprite(IcnType.Mons32, (int)unit.Monster - (int)MonsterType.Peasant) is not { } source)
+        {
+            return null;
+        }
+
+        Sprite icon = source.Clone();
+
+        if (mirror)
+        {
+            ImageOps.ApplyPalette(icon.Image, icon.Image.Bounds, PaletteTable.Get(PaletteId.MirrorImage));
+        }
+
+        if (revert)
+        {
+            icon = icon.Flip(horizontal: true, vertical: false);
+        }
+
+        _turnOrderIcons[key] = icon;
+
+        return icon;
     }
 
     /// <summary>
@@ -950,12 +1774,107 @@ public sealed class BattleFieldPainter
     }
 
     /// <summary>
+    /// Draws the walking range of the current unit and of the unit under the pointer, the static half of
+    /// <c>Interface::_redrawCoverStatic()</c> (<c>battle_interface.cpp:2558-2641</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只对<b>人类</b>的当前单位画（`_currentUnit->GetCurrentControl() & CONTROL_AI` 时直接返回），
+    /// 免得把 AI 的打算摊在玩家眼前。两个开关各管一段：「highlight movement area」管鼠标下的兵
+    /// （双份阴影，画出来比当前单位的范围更亮），`BattleShowMoveShadow` 管当前单位自己的可走范围。
+    /// </para>
+    /// <para>
+    /// 已经出手的单位速度会被 <c>TR_MOVED</c> 归零，参考为了显示它真实的行动范围临时清掉模式、画完再放回，
+    /// 这里照办。移动动画期间的跳过（参考的 `_movingUnit`）等动画层做出来再补。
+    /// </para>
+    /// </remarks>
+    private void RedrawMovementArea()
+    {
+        if (_arena.CurrentUnit is not { } currentUnit)
+        {
+            return;
+        }
+
+        bool showMoveShadow = Settings.Get().IsBattleShowMoveShadow;
+
+        if (!showMoveShadow && _movementAreaUnit is null)
+        {
+            return;
+        }
+
+        if (!currentUnit.GetCurrentControl().IsHuman())
+        {
+            return;
+        }
+
+        bool[] processed = new bool[BattleBoard.SizeInCells];
+
+        if (_movementAreaUnit is { IsValid: true } highlighted && EnsureHexagonHighlightShadow() is { } areaShadow)
+        {
+            bool isMoved = highlighted.HasModes(BattleMonsterState.Moved);
+
+            if (isMoved)
+            {
+                highlighted.ResetModes(BattleMonsterState.Moved);
+            }
+
+            for (int index = 0; index < BattleBoard.SizeInCells; ++index)
+            {
+                if (_arena.Board.GetCell(index) is not { } cell
+                    || BattlePosition.GetReachable(_arena, highlighted, index).IsEmpty)
+                {
+                    continue;
+                }
+
+                // 两份叠着画，参考用它把「鼠标下的兵」与当前单位自己的范围区分开。
+                DrawFrame(areaShadow, _surface, cell.Position);
+                DrawFrame(areaShadow, _surface, cell.Position);
+
+                processed[index] = true;
+            }
+
+            if (isMoved)
+            {
+                highlighted.SetModes(BattleMonsterState.Moved);
+            }
+        }
+
+        if (!showMoveShadow)
+        {
+            return;
+        }
+
+        Sprite? shadow = Settings.Get().IsBattleShowGrid ? EnsureHexagonGridShadow() : EnsureHexagonShadow();
+
+        if (shadow is null)
+        {
+            return;
+        }
+
+        for (int index = 0; index < BattleBoard.SizeInCells; ++index)
+        {
+            if (processed[index] || _arena.Board.GetCell(index) is not { } cell)
+            {
+                continue;
+            }
+
+            if (!BattlePosition.GetReachable(_arena, currentUnit, index).IsEmpty)
+            {
+                // 开着格子网格时用带网格的阴影，否则网格会被阴影盖掉（参考 :2632 的注释）。
+                DrawFrame(shadow, _surface, cell.Position);
+            }
+        }
+    }
+
+    /// <summary>
     /// Draws the shadow under the cell the pointer is on, the static half of
     /// <c>Interface::RedrawCover()</c> (<c>battle_interface.cpp:2285-2474</c>) for the current unit.
     /// </summary>
     /// <remarks>
     /// 参考只在「有当前单位、设置里开着鼠标阴影」时画，且画在单位之下（`RedrawCover` 先于 `RedrawArmies`）。
-    /// 高亮集合的其他分支（施法范围、攻击格、宽单位的两格）要行动交互的整套光标，随那一步补。
+    /// 没有施法时按 <see cref="BattleCoverHighlight.GetCells"/> 给出的格子画（攻击落点、宽单位的两格、目标格本身）；
+    /// 正在瞄准法术时按 <see cref="BattleSpellHighlight"/> 给出的格子逐个过滤后画，过滤条件是参考的原话：
+    /// 格子能过、格子上的兵吃这个法术。
     /// </remarks>
     private void RedrawHoverShadow()
     {
@@ -964,17 +1883,87 @@ public sealed class BattleFieldPainter
             return;
         }
 
-        if (_arena.CurrentUnit is null || _arena.Board.GetCell(index) is not { } cell)
+        if (_arena.CurrentUnit is not { } currentUnit || _arena.Board.GetCell(index) is not { } cell)
         {
             return;
         }
 
         Sprite? shadow = EnsureHexagonCursorShadow();
 
-        if (shadow is not null)
+        if (shadow is null)
         {
-            DrawFrame(shadow, _surface, cell.Position);
+            return;
         }
+
+        if (PendingSpell.Type == SpellType.None)
+        {
+            foreach (int highlighted in BattleCoverHighlight.GetCells(_arena, currentUnit, cell.Index, CursorTheme))
+            {
+                if (_arena.Board.GetCell(highlighted) is { } highlightedCell)
+                {
+                    DrawFrame(shadow, _surface, highlightedCell.Position);
+                }
+            }
+
+            return;
+        }
+
+        BattleUnit? teleportingUnit = TeleportSourceCell >= 0 ? _arena.GetTroopBoard(TeleportSourceCell) : null;
+        IArmyCommander? commander = _arena.GetCurrentCommander();
+
+        foreach (int highlighted in BattleSpellHighlight.GetCells(PendingSpell.Type, index, CursorTheme, teleportingUnit))
+        {
+            if (_arena.Board.GetCell(highlighted) is not { } highlightedCell)
+            {
+                continue;
+            }
+
+            bool isApplicable = highlightedCell.IsPassable(false);
+
+            if (isApplicable)
+            {
+                BattleUnit? unit = highlightedCell.Unit;
+                isApplicable = unit is null || unit.AllowApplySpell(PendingSpell, commander);
+            }
+
+            if (isApplicable)
+            {
+                DrawFrame(shadow, _surface, highlightedCell.Position);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The shadow of every walkable cell, <c>DrawHexagonShadow( 4, 2 )</c> (<c>battle_interface.cpp:478-500</c>).
+    /// </summary>
+    /// <returns>The sprite, built once.</returns>
+    private Sprite? EnsureHexagonShadow()
+    {
+        _hexagonShadow ??= BuildHexagonShadow(alpha: 4, horizontalSpace: 2);
+
+        return _hexagonShadow;
+    }
+
+    /// <summary>
+    /// That shadow with the grid baked in, <c>DrawHexagonShadow( 4, 1 )</c>, used while the grid is shown.
+    /// </summary>
+    /// <returns>The sprite, built once.</returns>
+    private Sprite? EnsureHexagonGridShadow()
+    {
+        _hexagonGridShadow ??= BuildHexagonShadow(alpha: 4, horizontalSpace: 1);
+
+        return _hexagonGridShadow;
+    }
+
+    /// <summary>
+    /// The doubled shadow of the unit under the pointer, <c>DrawHexagonShadow( 2, 2 )</c>.
+    /// </summary>
+    /// <returns>The sprite, built once.</returns>
+    private Sprite? EnsureHexagonHighlightShadow()
+    {
+        _hexagonHighlightShadow ??= BuildHexagonShadow(alpha: 2, horizontalSpace: 2);
+
+        return _hexagonHighlightShadow;
     }
 
     /// <summary>
@@ -1148,6 +2137,403 @@ public sealed class BattleFieldPainter
     }
 
     /// <summary>
+    /// Plays a <see cref="BattleMoveAnimation"/> one frame at a time, the per-cell loop of
+    /// <c>RedrawActionMove()</c>/<c>RedrawActionFly()</c> (<c>battle_interface.cpp:4524-4830</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考每格都阻塞一轮事件循环；这里把「等节拍 → 推一帧 → 一序列播完就换下一步」变成
+    /// <see cref="Advance"/> 的一次调用。位置在这一层改，和参考在每格播完后 <c>SetPosition( *dst )</c> 一致，
+    /// 否则下一格的水平偏移会从起点算起，画面上就会越走越落后。
+    /// </remarks>
+    private sealed class MovePlayback
+    {
+        private readonly BattleMoveAnimation _plan;
+        private readonly BattleArena _arena;
+        private readonly AnimationState _state;
+        private readonly ulong _frameDelay;
+        private int _stepIndex;
+
+        /// <summary>Starts the march: sets the shared movement clock and switches to the first step.</summary>
+        /// <param name="plan">The steps to play.</param>
+        /// <param name="state">The unit's animation machine, owned by the painter.</param>
+        /// <param name="arena">The arena, for the rectangles the facing follows.</param>
+        public MovePlayback(BattleMoveAnimation plan, AnimationState state, BattleArena arena)
+        {
+            _plan = plan;
+            _state = state;
+            _arena = arena;
+            _stepIndex = -1;
+
+            uint delay = GameDelays.ApplyBattleSpeed(state.MoveSpeed);
+
+            if (plan.Unit.HasModes(BattleMonsterState.SpellHaste) && delay > 1)
+            {
+                delay = delay * 8 / 10;
+            }
+            else if (plan.Unit.HasModes(BattleMonsterState.SpellSlow))
+            {
+                delay = delay * 12 / 10;
+            }
+
+            // One delay for every movement frame, taken from the MOVING sequence itself
+            // (battle_interface.cpp:4754-4756).
+            int frames = Math.Max(1, state.GetAnimationVector(MonsterAnimationType.Moving).Length);
+            _frameDelay = Math.Max(1, delay / (uint)frames);
+
+            GameDelays.SetCustomUnitMovementDelay(_frameDelay);
+            GameDelays.AnimateResetDelay(DelayType.CustomDelay);
+
+            BeginStep();
+        }
+
+        /// <summary>The unit on its way.</summary>
+        public BattleUnit Unit => _plan.Unit;
+
+        /// <summary>Whether every step has finished playing.</summary>
+        public bool IsFinished { get; private set; }
+
+        /// <summary>The point the current step heads for, <c>_movingPos</c>.</summary>
+        public Point? MovingPosition => IsFinished ? null : Current.MovingPosition;
+
+        /// <summary>The point the current stretch of air left from, <c>_flyingPos</c>.</summary>
+        public Point? FlyingPosition => IsFinished ? null : Current.FlyingPosition;
+
+        /// <summary>Whether the unit is in the air right now.</summary>
+        public bool IsAirborne => FlyingPosition is not null;
+
+        /// <summary>The step being played.</summary>
+        private BattleMoveStep Current => _plan.Steps[_stepIndex];
+
+        /// <summary>Advances one frame if the movement clock allows it.</summary>
+        /// <returns><see langword="true"/> while the march still has something to draw.</returns>
+        public bool Advance()
+        {
+            if (IsFinished)
+            {
+                return false;
+            }
+
+            if (!GameDelays.ValidateCustomAnimationDelay(_frameDelay))
+            {
+                return true;
+            }
+
+            if (_state.IsLastFrame)
+            {
+                NextStep();
+            }
+            else
+            {
+                _state.PlayAnimation();
+            }
+
+            return !IsFinished;
+        }
+
+        /// <summary>Ends the current step: the unit now stands on its cell, then the next step starts.</summary>
+        private void NextStep()
+        {
+            if (!_plan.IsFlight && !Current.IsTurnOnly)
+            {
+                _plan.Unit.SetPosition(Current.CellIndex);
+            }
+
+            ++_stepIndex;
+            BeginStep();
+        }
+
+        /// <summary>Switches to the next step that has frames, turning and reflecting on the way.</summary>
+        private void BeginStep()
+        {
+            while (_stepIndex < _plan.Steps.Count)
+            {
+                BattleMoveStep step = Current;
+
+                if (step.IsTurnOnly)
+                {
+                    // A wide unit swaps its two cells on the spot (battle_interface.cpp:4612-4617).
+                    _plan.Unit.SetReflection(!_plan.Unit.IsReflect);
+                    ++_stepIndex;
+                    continue;
+                }
+
+                if (_plan.IsFlight)
+                {
+                    if (step.Animation == MonsterAnimationType.FlyLand)
+                    {
+                        // The unit is already on its cell when it lands, so the landing frames correct
+                        // against it rather than sliding in from the start (battle_interface.cpp:4816).
+                        _plan.Unit.SetPosition(_plan.Destination);
+
+                        if (_arena.Board.GetCell(_plan.Destination) is { } landing)
+                        {
+                            _plan.Unit.UpdateDirection(landing.Position);
+                        }
+                    }
+                }
+                else if (!_plan.Unit.IsWide && _arena.Board.GetCell(step.CellIndex) is { } cell)
+                {
+                    _plan.Unit.UpdateDirection(cell.Position);
+                }
+
+                if (_state.SwitchAnimation(step.Animation))
+                {
+                    return;
+                }
+
+                // The creature has no such animation: the step is over before it starts.
+                if (!_plan.IsFlight)
+                {
+                    _plan.Unit.SetPosition(step.CellIndex);
+                }
+
+                ++_stepIndex;
+            }
+
+            Finish();
+        }
+
+        /// <summary>Puts the unit back on its rest pose once the whole march is played.</summary>
+        private void Finish()
+        {
+            if (_plan.IsFlight)
+            {
+                _plan.Unit.SetPosition(_plan.Destination);
+            }
+
+            IsFinished = true;
+            _state.SwitchAnimation(MonsterAnimationType.Static);
+        }
+    }
+
+    /// <summary>
+    /// The attack being drawn, one sequence at a time: the sequential form of <c>RedrawActionAttackPart1()</c>,
+    /// <c>RedrawActionAttackPart2()</c> and <c>_redrawActionWincesKills()</c>
+    /// (<c>battle_interface.cpp:4088-4439</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把攻方与受击方放在<b>同一个</b>循环里推进，端口一次只推进一个单位：结果是「砍完再挨打」，
+    /// 而不是「砍到一半对方已经在抖」。这是有意的取舍，见 ADR-226。
+    /// </remarks>
+    private sealed class AttackPlayback
+    {
+        private readonly IReadOnlyList<BattleAttackStep> _steps;
+        private readonly BattleFieldPainter _painter;
+        private readonly HashSet<BattleUnit> _units = [];
+        private readonly List<BattleUnit> _dying = [];
+        private int _step;
+        private AnimationState? _state;
+        private ulong _frameDelay = 1;
+
+        /// <summary>
+        /// Whether the step being drawn is a death sequence, which stays on its last frame: a body keeps lying
+        /// where it fell (<c>battle_interface.cpp:4298-4323</c> — the reference never resets a killed unit).
+        /// </summary>
+        private bool _isDyingStep;
+
+        /// <summary>Starts the playback.</summary>
+        /// <param name="steps">The sequences to play, in order.</param>
+        /// <param name="painter">The painter that owns the animation states.</param>
+        /// <param name="current">
+        /// The state already showing the first step, <c>RedrawActionAttackPart1()</c>'s switch that happened
+        /// before the playback was made; <see langword="null"/> when the first step still has to be switched to.
+        /// </param>
+        public AttackPlayback(
+            IReadOnlyList<BattleAttackStep> steps, BattleFieldPainter painter, AnimationState? current)
+        {
+            _steps = steps;
+            _painter = painter;
+
+            foreach (BattleAttackStep step in steps)
+            {
+                _units.Add(step.Unit);
+
+                if (step.Animation == MonsterAnimationType.Kill && !_dying.Contains(step.Unit))
+                {
+                    _dying.Add(step.Unit);
+                }
+            }
+
+            GameDelays.AnimateResetDelay(DelayType.CustomDelay);
+
+            if (current is null)
+            {
+                BeginStep();
+            }
+            else
+            {
+                _state = current;
+                _isDyingStep = steps[0].Animation == MonsterAnimationType.Kill;
+                SetFrameDelay(steps[0]);
+            }
+        }
+
+        /// <summary>Whether every step has finished playing.</summary>
+        public bool IsFinished { get; private set; }
+
+        /// <summary>The units whose own idle animation must not run while the attack is drawn.</summary>
+        public IReadOnlyCollection<BattleUnit> Units => _units;
+
+        /// <summary>
+        /// The units that fell to this attack. They are already off the board, so the painter draws them
+        /// on its own for the whole playback (<c>_redrawActionWincesKills()</c> draws the same unit anyway).
+        /// </summary>
+        public IReadOnlyList<BattleUnit> DyingUnits => _dying;
+
+        /// <summary>Advances one frame if the attack clock allows it.</summary>
+        /// <returns><see langword="true"/> while the attack still has something to draw.</returns>
+        public bool Advance()
+        {
+            if (IsFinished)
+            {
+                return false;
+            }
+
+            if (!GameDelays.ValidateCustomAnimationDelay(_frameDelay))
+            {
+                return true;
+            }
+
+            if (_state!.IsLastFrame)
+            {
+                NextStep();
+            }
+            else
+            {
+                _state.PlayAnimation();
+            }
+
+            return !IsFinished;
+        }
+
+        /// <summary>Returns the current unit to its rest pose and moves on; a body stays where it fell.</summary>
+        private void NextStep()
+        {
+            if (!_isDyingStep)
+            {
+                _state!.SwitchAnimation(MonsterAnimationType.Static);
+            }
+
+            ++_step;
+            BeginStep();
+        }
+
+        /// <summary>Switches to the next step the creature actually has frames for.</summary>
+        private void BeginStep()
+        {
+            while (_step < _steps.Count)
+            {
+                BattleAttackStep step = _steps[_step];
+                AnimationState state = _painter.GetAnimation(step.Unit).State;
+
+                if (state.SwitchAnimation(step.Animation))
+                {
+                    _state = state;
+                    _isDyingStep = step.Animation == MonsterAnimationType.Kill;
+                    SetFrameDelay(step);
+
+                    return;
+                }
+
+                // The creature has no such sequence: the step is over before it starts.
+                ++_step;
+            }
+
+            Finish();
+        }
+
+        /// <summary>
+        /// How long one frame of the current step lasts: a shot spreads its shooting speed over the whole
+        /// sequence (<c>battle_interface.cpp:4112-4119</c>), everything else runs on the battle frame delay.
+        /// </summary>
+        private void SetFrameDelay(BattleAttackStep step)
+        {
+            uint delay = step.IsShooting
+                ? Math.Max(1u, GameDelays.ApplyBattleSpeed(_state!.ShootSpeed) / (uint)Math.Max(1, _state.AnimationLength))
+                : GameDelays.ApplyBattleSpeed(120u);
+
+            _frameDelay = Math.Max(1u, delay);
+        }
+
+        /// <summary>Puts the last unit back on its rest pose once the whole attack is played.</summary>
+        private void Finish()
+        {
+            IsFinished = true;
+
+            if (!_isDyingStep)
+            {
+                _state?.SwitchAnimation(MonsterAnimationType.Static);
+            }
+        }
+    }
+
+    /// <summary>
+    /// One shot's walk over its route, the loop of <c>RedrawMissileAnimation()</c>
+    /// (<c>battle_interface.cpp:1062-1136</c>): one point per <c>BATTLE_MISSILE_DELAY</c>.
+    /// </summary>
+    private sealed class MissilePlayback
+    {
+        private readonly BattleMissile _missile;
+        private int _index;
+        private bool _isFinished;
+
+        /// <summary>Takes a route over; the clock is reset by <see cref="Restart"/> when it actually leaves.</summary>
+        /// <param name="missile">The route.</param>
+        /// <param name="projectile">The projectile frame to blit, <see langword="null"/> for a mage's lightning.</param>
+        public MissilePlayback(BattleMissile missile, Sprite? projectile)
+        {
+            _missile = missile;
+            Projectile = projectile;
+        }
+
+        /// <summary>The projectile frame, once the sprite has been picked.</summary>
+        public Sprite? Projectile { get; }
+
+        /// <summary>Where the projectile sprite goes relative to the point it stands on.</summary>
+        public Point BlitOffset => _missile.BlitOffset;
+
+        /// <summary>Whether the shot flies to the left.</summary>
+        public bool IsMirrored => _missile.IsMirrored;
+
+        /// <summary>The point the shot stands on right now, <see langword="null"/> once it has landed.</summary>
+        public Point? Position => _isFinished || _index >= _missile.Points.Count ? null : _missile.Points[_index];
+
+        /// <summary>Starts the shot clock, <c>AnimateResetDelay( BATTLE_MISSILE_DELAY )</c> before the loop.</summary>
+        public void Restart()
+        {
+            _index = 0;
+            _isFinished = false;
+            GameDelays.AnimateResetDelay(DelayType.BattleMissileDelay);
+        }
+
+        /// <summary>Walks one point if the shot clock allows it.</summary>
+        /// <returns><see langword="true"/> while the shot still has somewhere to go.</returns>
+        public bool Advance()
+        {
+            if (_isFinished)
+            {
+                return false;
+            }
+
+            if (!GameDelays.ValidateAnimationDelay(DelayType.BattleMissileDelay))
+            {
+                return true;
+            }
+
+            ++_index;
+
+            if (_index >= _missile.Points.Count)
+            {
+                _isFinished = true;
+
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
     /// One unit's animation state with the idle timer of <c>Battle::Unit::_idleTimer</c>
     /// (<c>battle_troop.h:383</c>), created from the creature's <c>.BIN</c> record.
     /// </summary>
@@ -1168,6 +2554,3 @@ public sealed class BattleFieldPainter
         public RandomizedDelay IdleTimer { get; }
     }
 }
-
-
-

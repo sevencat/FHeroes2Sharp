@@ -82,14 +82,21 @@ public sealed class AdventureSession
     /// </remarks>
     /// <param name="world">已经载入地图、建好王国与英雄的世界。</param>
     /// <param name="info">该地图的文件头，用来建玩家槽位。</param>
+    /// <param name="host">
+    /// The interface layer that answers the human hero's actions, or <see langword="null"/> for
+    /// <see cref="NullHeroActionHost"/> — the state a headless run wants.
+    /// </param>
     /// <returns>The session, or <see langword="null"/> when the map has no human player.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="world"/> or <paramref name="info"/> is <see langword="null"/>.
     /// </exception>
-    public static AdventureSession? Start(World world, Mp2FileInfo info)
+    public static AdventureSession? Start(World world, Mp2FileInfo info, IHeroActionHost? host = null)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(info);
+
+        // 界面宿主挂在世界上，人类英雄的走路处理器每做一次动作都读它（见 World.HeroActionHost）。
+        world.HeroActionHost = host ?? NullHeroActionHost.Instance;
 
         // 参考里这一步属于剧本选择（players.cpp:487 的 SetStartGame()），紧挨着 World::LoadMap。端口把它放在
         // 「开一局」这里：槽位表是进程级的静态表，Hero.GetControl() 与以后的 AI 都问它，但地图本身不该因为
@@ -131,8 +138,8 @@ public sealed class AdventureSession
 
         // 参考在 world_loadmap.cpp 里给每位英雄装上侦察回调（开图），而「走到对象上之后做什么」的分岔在
         // Heroes::Action() 里按 GetKingdom().isControlAI() 做（heroes_action.cpp:3778-3785）。端口把这道分岔
-        // 放到安装时：人类英雄只要开图（另外三件事都要问界面层，见 bd 归档（PROGRESS.md，FHeroes2Sharp-jwk） §7.4），电脑英雄装 AI 版，
-        // 走一步就把脚下的对象处理掉。
+        // 放到安装时：装了界面宿主的人类英雄装 HumanHeroMovementHandler（动作表照抄 heroes_action.cpp，要问
+        // 玩家的点交给 World.HeroActionHost），没有宿主的仍只开图，电脑英雄装 AI 版。
         foreach (Hero hero in world.Heroes)
         {
             AttachMovementHandler(world, hero);
@@ -162,13 +169,20 @@ public sealed class AdventureSession
     /// </remarks>
     /// <param name="world">The world the hero lives in.</param>
     /// <param name="hero">The hero that just joined a kingdom.</param>
+    /// <remarks>
+    /// 人类英雄只有在<b>装了界面宿主</b>（<see cref="World.HeroActionHost"/> 不是 <see cref="NullHeroActionHost"/>）
+    /// 时才装动作版：没有宿主的运行（命令行、测试、无人值守）里根本没有玩家在点，走到怪物格上直接开打既没有画面
+    /// 也没有提示，不如保持「只开图」。装了宿主之后四件事全开，要问玩家的点交回界面层。
+    /// </remarks>
     internal static void AttachMovementHandler(World world, Hero hero)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(hero);
 
         hero.MovementHandler = world.Kingdoms.GetKingdom(hero.Color).IsControlHuman
-            ? new FogHeroMovementHandler(world)
+            ? world.HeroActionHost is NullHeroActionHost
+                ? new FogHeroMovementHandler(world)
+                : new HumanHeroMovementHandler(world)
             : new AiHeroMovementHandler(world);
     }
 

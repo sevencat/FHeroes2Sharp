@@ -339,6 +339,14 @@ public class AnimationReference
             ? _monsterInfo.ProjectileOffset[direction]
             : default;
 
+    /// <summary>
+    /// Which frame of the projectile to draw for a shot at this angle,
+    /// <c>Monster_Animation_Info::getProjectileId()</c> (<c>monster_animation_info.cpp:270-289</c>).
+    /// </summary>
+    /// <param name="angle">The angle in degrees, up being positive.</param>
+    /// <returns>The sprite index within the missile ICN.</returns>
+    public int GetProjectileFrame(double angle) => _monsterInfo.GetProjectileId(angle);
+
     /// <summary>The frames of one animation state, empty when the creature has none.</summary>
     /// <remarks>参考：<c>battle_animation.cpp:202-269</c>；待机态在这里按权重掷一支。</remarks>
     public int[] GetAnimationVector(MonsterAnimationType animState) => animState switch

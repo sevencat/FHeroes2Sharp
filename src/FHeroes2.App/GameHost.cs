@@ -17,6 +17,7 @@ using FHeroes2.Core.Timing;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
 using FHeroes2.Game.Castle;
+using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
 using FHeroes2.Game.Kingdom;
@@ -114,6 +115,17 @@ public sealed class GameHost : IDisposable
     private readonly IReadOnlyList<ScriptedClick> _clicks;
 
     /// <summary>
+    /// The scripted key presses of <c>--key-at</c>, in increasing frame order.
+    /// </summary>
+    private readonly IReadOnlyList<ScriptedKey> _keys;
+
+    /// <summary>
+    /// The key of a scripted press that went down into <see cref="FHeroes2.UI.Input.LocalEvent"/> and still
+    /// needs its release on the next frame.
+    /// </summary>
+    private FHeroes2.UI.Input.Key? _pendingKeyRelease;
+
+    /// <summary>
     /// The point of a scripted click whose press went into <see cref="FHeroes2.UI.Input.LocalEvent"/> and
     /// still needs its release on the next frame.
     /// </summary>
@@ -128,6 +140,7 @@ public sealed class GameHost : IDisposable
             : options.LeftClick && options.Cursor is { } clickPoint
                 ? [new ScriptedClick(LeftClickFrame, clickPoint)]
                 : [];
+        _keys = options.ScriptedKeys;
 
         if (options.ScreenshotPath is not null)
         {
@@ -195,6 +208,10 @@ public sealed class GameHost : IDisposable
             // the host does it as soon as the frame it presents exists.
             _le.Engine = new SdlEventEngine(PumpEvents, _ => _presenter?.Upload(_frame), _frame.Bounds,
                 new SdlDisplayControl(_presenter));
+
+            // 光标主题是冒险地图的输入分类（点空地 = 走路、点怪物 = 交战），没有它地图上的左键什么都不做；
+            // 指针图的绘制归窗口系统，这里只把位置与可见性接进来。
+            CursorState.Current = new CursorState(new WindowCursorRenderer());
 
             if (_options.SystemInfo)
             {
@@ -382,6 +399,15 @@ public sealed class GameHost : IDisposable
                 _pendingClickRelease = null;
             }
 
+            // A scripted key press releases on the frame after its press, for the same reason: a real press
+            // spans two frames, and the one-shot key state of LocalEvent is what the battle hot keys read.
+            if (_pendingKeyRelease is { } releaseKey)
+            {
+                _le.OnKeyboard(releaseKey, FHeroes2.UI.Input.KeyModifier.None,
+                    FHeroes2.UI.Input.KeyboardEventState.Up);
+                _pendingKeyRelease = null;
+            }
+
             // --left-click replays one click at frame 10 on --cursor; --left-click-at replays a whole script
             // of them, because the first run needs three in one run (the language OKAY, the greeting OKAY,
             // then a row of the resolution chooser). The clicks are replayed from inside the loop, i.e.
@@ -401,6 +427,15 @@ public sealed class GameHost : IDisposable
                     townScreen.SetCursor(click.Point);
                     townScreen.SetLeftButton(true);
                     townScreen.SetLeftButton(false);
+                }
+                else if (ReferenceEquals(_scene, _adventure) && _adventure is not null)
+                {
+                    // 冒险地图与战场一样从 LocalEvent 里读指针与点击，所以脚本点击要推进去；按下与抬起
+                    // 得落在同一帧（与真实点击一致），它按<b>点击</b>找瓦片：GameArea 先按光标位置取格，
+                    // 再看这次的按下与抬起是否都在这一格里（MouseClickLeft）。
+                    _le.OnMouseMotion(click.Point);
+                    _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                    _le.OnMouseButton(isPressed: false, MouseButtonType.Left, click.Point);
                 }
                 else if (_menu is not null && _battle is null)
                 {
@@ -432,6 +467,20 @@ public sealed class GameHost : IDisposable
                     _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
                     _pendingClickRelease = click.Point;
                 }
+            }
+
+            // --key-at is the keyboard twin of the script: the battle's R, S, C and Space are hot keys read
+            // out of LocalEvent, so a smoke run can only reach the retreat and surrender dialogs this way.
+            foreach (ScriptedKey key in _keys)
+            {
+                if (_timer.FrameCount != key.Frame)
+                {
+                    continue;
+                }
+
+                _le.OnKeyboard(key.Key, FHeroes2.UI.Input.KeyModifier.None,
+                    FHeroes2.UI.Input.KeyboardEventState.Down);
+                _pendingKeyRelease = key.Key;
             }
 
             // The menu does not know about scenes: a confirmed scenario surfaces here as soon as the
@@ -1730,6 +1779,13 @@ public sealed class GameHost : IDisposable
         }
 
         scene.ExitEvent = LeaveAdventureMap;
+
+        // 人类英雄打起来的仗要借主循环的一段帧（参考在这里是阻塞的，heroes_action.cpp）：把宿主的帧泵接上。
+        if (scene.HeroActionHost is { } host)
+        {
+            host.RunModal = RunModal;
+        }
+
         _adventure = scene;
         _scene = scene;
     }
@@ -1788,6 +1844,13 @@ public sealed class GameHost : IDisposable
         _scene = _adventure ?? (IScene?)_menu ?? _diagnostics;
 
         GameLog.Info("The battle is over; the adventure map is back.");
+
+        // --battle-only 是一场打完就收工：无人值守跑一趟、结果留在日志里，不必再靠 --smoke-frames 掐停。
+        if (_options.BattleOnly)
+        {
+            GameLog.Info("--battle-only: the single battle is finished, closing the client.");
+            _running = false;
+        }
     }
 
     /// <summary>
@@ -1816,6 +1879,12 @@ public sealed class GameHost : IDisposable
         }
 
         scene.ExitEvent = LeaveAdventureMap;
+
+        if (scene.HeroActionHost is { } host)
+        {
+            host.RunModal = RunModal;
+        }
+
         _adventure = scene;
         _scene = scene;
     }

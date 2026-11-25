@@ -8081,3 +8081,656 @@ battle 里读 `IsMouseEventFromTouchpad`）；手持设备的问候/分辨率差
 截图 `tools-output/battle-settings.png` 是窗口本身，`battle-settings-off.png` 是「点 Grid 关掉 + OKAY 关闭」
 之后的战场（网格消失、提示回到 `Flying`）。
 
+
+## ADR-220：战斗施法——魔法书复用 `SpellBookWindow`，瞄准光标与目标高亮各自成一层
+
+**背景**：战斗里按 `C`（`HotKeyEvent::BattleCastSpell`）到 `Interface::HumanBattleTurn` 的 `cast` 分支
+（`battle_interface.cpp:7295-7345`）打开魔法书，选完法术进入 `humanturn_spell` 瞄准态；瞄准时光标换成
+`SPELCO` 的对应帧、下行写提示（`GetBattleSpellCursor()`，`:3066-3117`），阴影圈出法术覆盖的格子
+（`RedrawCover()` 的施法分支，`:2288-2474`），左键落子、右键/Esc 取消（`HumanCastSpellTurn()`，`:3531-3630`）。
+端口里 `SpellBookWindow`、`Spell`、`BattleCommand.SpellCast`、`IsDisableCastSpell`、`AllowApplySpell`、
+墓地复活判定都已经在了，缺的只是界面这一层。
+
+**决定**：
+1. **魔法书直接复用**：`SpellBookWindow.TryOpen( owner, book, artwork, fonts, CMBT, canCastSpell: true,
+   restorePreviousState: true, 640x480 )`。战斗场景自己拿着一个 `SpellBook` 页状态（参考把页与过滤器存在
+   英雄身上，端口存在场景里，战斗一结束就丢）；`BOOK`/`SPELLS` 的取图收进
+   `SpellBookArtwork.TryCreate( assets )`，冒险地图与战斗共用同一套帧索引。
+2. **书是模态但有帧循环**：`_spellBook` 非空时 `Update` 把整帧交给 `ProcessEvents`，战场不推进、光标固定箭头；
+   `Draw` 在战场之上、设置窗之下。书里的 `statusCallback` 写到战斗下行状态栏。
+3. **光标与提示做成纯函数**：`FHeroes2.UI/Battle/BattleSpellCursor.cs` 搬 `getCursorForSpell()` 与
+   `GetBattleSpellCursor()`，只收竞技场、当前单位、法术、鼠标格与传送起点，不碰图片，直接对着竞技场测试。
+   `ThemeFor` 不补参考表里没有的群体法术（它们本来就不进瞄准态）。
+4. **高亮只算格子**：`BattleSpellHighlight.GetCells()` 搬参考的 `std::set<const Cell*>` 攒格子那一段，
+   `BattleFieldPainter.RedrawHoverShadow()` 负责「格子能过、格子上的兵吃这个法术」的过滤与贴图；画的时候
+   `PendingSpell`/`TeleportSourceCell`/`CursorTheme` 三个属性由场景每帧写入。
+5. **落子规则照参考**：只有光标不是 `CombatNone` 的点击才落子；传送要点两次（第一击选起点、不消耗回合）；
+   不需要目标的法术（群体、地震、招元素…）在选完的那一刻直接发 `SpellCast(spell, -1)`。
+   书里选中后还要过 `IsDisableCastSpell` 与 `CanCastSpell` 两道门，拒绝时文案取 `SpellBookWindow.DescribeCantCast`。
+
+**后果**：有魔法书的英雄在战斗里能开书、选法术、看光标和范围、落下命令；交回电脑（`AUTO`）会取消瞄准。
+两处与参考不同、都已记在代码注释里：竞技场的 `IsDisableCastSpell` 只回布尔，带原因的提示统一写成
+「You are not able to cast spells right now.」；参考用文本对话框弹「没有魔法书」「没有可施放的法术」，
+端口写到上位状态行与日志（战斗场景还没有消息框）。
+
+**验证**：构建 0 错误 0 警告；`BattleSpellCursorTests` 16 条（`SPELCO` 映射、友军/空地/传送起点与终点、
+无家可归的群体法术）、`BattleSpellHighlightTests` 9 条（单体、火球/流星雨 7 格、冷环不含中心、火焰爆裂
+13 格、传送落点、界外）；全量 5 619 绿（UI 1 562 → 1 588）；`battle.png`、`battle-siege.png` 两张基线
+`identical`（施法分支只在瞄准态出现，静止帧不变）。
+
+
+## ADR-221：等待与防御在参考里不存在，补的是跳过的那句状态文案
+
+**背景**：`bd` 里的 `ukw.13` 怀疑战斗界面还有「等待」「防御」两个动作没接。核对参考后答案是否定的：
+
+1. `Battle::CommandType`（`battle_command.h:38-51`）只有 `MOVE / ATTACK / SPELLCAST / MORALE / CATAPULT /
+   TOWER / RETREAT / SURRENDER / SKIP / TOGGLE_AUTO_COMBAT / QUICK_COMBAT`，没有 `WAIT`、没有 `DEFEND`。
+2. 热键表（`game_hotkeys.h:160-165`、`game_hotkeys.cpp:298-304`）只有 `BATTLE_SKIP`（空格）、
+   `BATTLE_CAST_SPELL`（C）等，没有等待/防御的键位——端口的 `HotKeyEvent` 逐项一致。
+3. 界面只有一个 `_buttonSkip`（`battle_interface.h:509-511`，与 `_buttonAuto`、`_buttonSettings` 并列），
+   没有等待/防御按钮；本地化表里也没有对应的模板，只有 `"The %{name} skips their turn."`。
+4. `ApplyActionSkip()`（`battle_action.cpp:668-705`）打 `TR_SKIP | TR_MOVED`，就是「本回合不再动」，
+   端口的 `ApplyActionSkip` 已经逐行对齐。
+
+原版《英雄无敌 II》本来也没有等待（那是三代的东西），站在原地的单位就是靠不移动来保防御。
+
+**决定**：
+1. **不新增命令**：等待/防御不建模，`BattleCommandType` 与竞技场保持一致；`ukw.13` 以「参考无此动作」结案。
+2. **补上跳过的那句文案**：参考的 `Interface::RedrawActionSkipStatus()`（`battle_interface.cpp:4005-4011`）
+   把 `_n( "The %{name} skips their turn.", "The %{name} skip their turn.", count )` 写进上位状态行；端口原来
+   只写短标签 `Skip`。新增 `FHeroes2.UI/Battle/BattleActionText.Skip(unit)`：按数量挑单/复句模板，
+   名字走 `MonsterNames.GetPluralName()`，再交给 `Army.StringReplaceWithLowercase()` 改成句中小写
+   （「The peasants skip their turn.」），与参考的输出逐字一致。
+3. **只改跳过的显示**：`BattleScene.PlayCommands` 仍用 `StatusOf()` 记日志（`acts: Skip.` 保持不变，
+   冒烟脚本还在用），只有状态行换成整句。
+
+**后果**：无人控制的「等待/防御」不再被当成欠账；跳过的提示从 `Skip` 变成参考的句子。电脑那一侧跳过时
+界面仍然没有反馈——端口的 AI 回合不经过界面（见 `ukw.19` 的动作动画），不是这一条的事。
+
+**验证**：构建 0 错误 0 警告；`BattleActionTextTests` 2 条（十人队 → 「The peasants skip their turn.」、
+单人 → 「The peasant skips their turn.」）；全量 5 621 绿（UI 1 588 → 1 590）；`battle.png`、
+`battle-siege.png` 两张基线 `identical`；冒烟 `--battle --left-click-at 6:600,460` 点击 `SKIP` 后截图
+`tools-output/battle-skip.png`，状态栏显示「The sprites skip their turn.」。
+
+
+## ADR-222：撤退/投降走热键 + 模态窗，三个按钮按 `useOriginalResources()` 现拼；冒烟加 `--key-at`
+
+**背景**：`bd` 里 `ukw.14` 要补战斗界面的「撤退」与「投降」。参考分布在三处：
+
+1. 热键分发在 `battle_interface.cpp`：`HotKeyEvent::BATTLE_RETREAT` → `Dialog::Message( "", _( "Are you sure you want to retreat?" ), Font::BIG, Dialog::YES | Dialog::NO )`，
+   `HotKeyEvent::BATTLE_SURRENDER` → 先 `arena.CanSurrenderOpponent()` 判「敌我都是英雄」，不成立就
+   `Dialog::Message( "", _( "Surrender is disabled" ), ... )`，成立才开 `DialogBattleSurrender()`（`battle_dialogs.cpp:1087-1220`）。
+2. 报价来自 `arena.GetCurrentForce().GetSurrenderCost()`——敌方按自己部队市价折算、要价受`Hero::GetLevelSkill()` 打折，
+   端口 `GetSurrenderCost()` 已逐行对齐。
+3. 三个按钮（ACCEPT / DECLINE / MARKET）在原版里都**不是归档条目**：`icn.h` 的 `BUTTON_SMALL_ACCEPT_GOOD`、
+   `BUTTON_SMALL_DECLINE_GOOD`、`GOOD_MARKET_BUTTON` 属「自定义 ICN」，`useOriginalResources()` 分支用
+   `SURRENDR` 的 0/1、2/3 与 `ADVBTNS` 的 4/5 现拼，还要 `ReplaceColorId( ..., 28, 56 )` 修字色、
+   `copyTransformLayer()` 对齐透明层、`setButtonCornersTransparent()` 切角、`addTransparency( 36/61 )` 抠黑底。
+
+**决定**：
+
+1. **窗口**：新增 `FHeroes2.UI/Battle/BattleSurrenderWindow.cs`，逐项对齐 `DialogBattleSurrender()`——底图
+   `SURDRBKG`、头像框 `SURRENDR` 4、`PORT_BIG` 大头像、`pos_rt = ( ( 640 - w + 16 ) / 2, ( 480 - h + 16 ) / 2 )`
+   的居中偏置、标题/报价/金币警告的字位与 `Font::BIG` 折行宽度 275。市场返回后调 `Refresh()` 重算可否支付。
+2. **按钮现拼**：`TryCreate()` 只用真实存在的归档帧（`SURRENDR` 0-3、`ADVBTNS` 4/5）在本地拼出三个按钮，
+   克隆后再改，绝不动 `IcnSpriteCache` 里的共享帧。第一版按归档名读这三个 id，读到的是不存在的 `CUSTOM`，
+   整个窗口建不起来——这是本轮修掉的真错误。
+3. **YES/NO 同理**：`SystemButtonArtwork` 的 YES/NO 也从归档名改成 `SYSTEM.ICN` 的 5/6 与 7/8；第一版读到
+   `CUSTOM` 后静默退回 OKAY，冒烟里撤退确认框两个按钮都写着 OKAY。
+4. **模态但不开循环**：窗口不开自己的事件循环，场景每帧把 `LocalEvent` 喂给 `ProcessEvents()`，参考的
+   `while ( le.HandleEvents() && !result )` 由帧循环顶替——与设置窗、魔法书一致。消息框同样处理，
+   顺序是「消息框 → 市场 → 投降窗 → 设置窗」。
+5. **冒烟加 `--key-at <frame:Key[;…]>`**：`R`/`S`/`C`/空格只走 `Game::HotKeyPressEvent()` 读 `LocalEvent`
+   按键状态，没有可点的入口。新开关按帧把键按下、下一帧抬起（与 `--left-click-at` 的按下/松开同构），
+   `--key-at 12:R;40:S` 就能在冒烟里打开这两个窗口。
+
+**后果**：人类侧撤退/投降完整可用（确认 → 命令 → 竞技场结算 → 回冒险地图）；参考的 EVIL 版按钮与
+`makeButtonWithShadow()` 的阴影仍是差异（端口无全局好坏界面开关，阴影由底图自带）。投降窗对**英雄对英雄**才有意义，
+而端口目前只能开「英雄打野怪」与「英雄攻城」两种战斗，`CanSurrenderOpponent()` 在这两种里都为假，
+所以投降窗只有单测覆盖、没有真机截图；`S` 在冒烟里得到的是参考的 `"Surrender is disabled"`。
+
+**验证**：构建 0 错误 0 警告；`BattleSurrenderWindowTests` 7 条（新增「按钮由原版帧拼装」「无底图不建窗」两条，
+证明不再走 `CUSTOM` 归档查找）；全量 5 628 绿（UI 1 597）；`battle.png`、`battle-siege.png` 两张基线 `identical`；
+冒烟 `--battle --key-at 12:R --screenshot-frame 20` 截到 YES/NO 版确认框（`tools-output/smoke/retreat2.png`），
+追加 `--left-click-at 18:267,258` 后日志依次是 `Are you sure you want to retreat?` →
+`The player's Sprite acts: Retreat.` → `attacker 'Loss, Retreat'` → `the adventure map is back`；
+`--key-at 12:S` 得到 `Surrender disabled`。
+
+## ADR-223：八向剑光标按「花瓣 + 可打方向集合」挑，`GetBattleCursor()` 整段搬成纯函数
+
+**背景**：`bd` 里 `ukw.16` 要补战斗的八向剑光标。参考的 `Interface::GetBattleCursor()`
+（`battle_interface.cpp:2922-3064`）与 `getSwordCursorForAttackDirection()`（`:637-661`）合起来是这么一件事：
+鼠标落在目标格八个花瓣的哪一片决定「刀从哪边来」，但八片里只有真的打得着的那几片算数，所以要先把
+「这一格可打的方向集合」算出来，再把鼠标方向吸附到其中最近的一个，最后换成对应的那把剑。
+
+三处细节在位：
+
+1. 集合问的是**目标格**的六个邻格（`Board::GetIndexDirection( _currentCellIndex, dir )`），不是攻方的邻格；
+   判据是 `Board::CanAttackFromCell`——攻方能不能站到那个邻格上出手（含护城河规则）。
+2. 宽单位多两支「正上/正下」：条件是目标格的两个斜邻都在盘上，且攻方的头正好能落在那个邻格上
+   （`Position::GetReachable( unit, dst ).GetHead()->GetIndex() == dst`，尾巴塞过去的那一刀已被六邻格覆盖）。
+   身体朝右时走右上、朝左时走左上（`unit->isReflect()`）。
+3. 吸附顺序：鼠标方向若可用就原样用；只有一个候选就取它；否则从鼠标方向出发**每一步先顺时针再逆时针**，
+   两边同时有解时取顺时针。
+
+**决定**：
+
+1. **搬成纯函数**：新增 `src/FHeroes2.UI/Battle/BattleCursor.cs`，`Describe( arena, currentUnit, hoveredCell, cursor )`
+   返回 `BattleHover( theme, status )`，与 `BattleSpellCursor` 同一套写法。它只问竞技场、单位和鼠标，不碰一张图，
+   于是能在 `tests/FHeroes2.UI.Tests` 里对着真竞技场断言。
+2. **整段而不是只补剑**：`GetBattleCursor()` 顺带补上了此前缺的三支——`WAR_INFO`（自己格/同阵营格，
+   `«View %{monster} info»`）、`WAR_ARROW` / `WAR_BROKENARROW`（弓手未被贴身时 `«Shoot %{monster}»` 加弹药句，
+   `isShootingPenalty` 决定是否断箭）、以及兜底的 `WAR_NONE` + `«Turn %{turn}»`。移动/飞行提示也从
+   原来的 `"Move"` / `"Flying"` 改成参考的 `«Move %{monster} here»` / `«Fly %{monster} here»`。
+3. **场景侧只递参数**：`BattleScene.UpdateCursorTheme( cell, cursor )` 调 `BattleCursor.Describe` 并把结果交给
+   `CursorState` 与状态行；指针离开战场、或当下不是人类单位时仍留 `CombatPointer`。
+4. **鼠标在格内移动也算变化**：八把剑取决于落在哪个花瓣，所以 `UpdateHover` 的缓存从「悬停格变化」扩成
+   「悬停格或指针位置变化」，与参考「每次鼠标移动重算」等价。
+5. **点击路径不动**：参考用剑的方向去算 `calculateAttackPosition`，端口仍走 `CreateAttackCommand` 的
+   「最便宜的邻格 + 最优攻击向量」。两条路在多数站位给出同一个向量，但玩家没法靠瞄准指定宽单位从上半还是
+   下半下手——这是本轮保留的差异，记在这里而不是悄悄改掉。
+
+**后果**：八向剑、信息、射击、断箭四种光标都能出了；提示文案与参考一致（不翻译）。冒烟截图里看不到光标本身
+（端口不把软件光标画进画布），状态行文案在烟雾里也没截到——`--cursor` 悬停期间要么是人类回合尚未开始、
+要么确认框把状态行清空，所以这一条只有单测覆盖。
+
+**验证**：构建 0 错误 0 警告；`BattleCursorTests` 20 条（8 向剑映射、中心/未知无剑、吸附的顺时针优先与
+逆时针兜底、单候选、无候选、自家格 → `View peasants info`、可走格 → `Move peasant here`、相邻敌人 →
+按邻格方向出剑且提示 `Attack peasant`、够不着 → `CombatNone` + `Turn N`、真实竞技场的方向集合包含攻方那一侧）；
+全量 5 648 绿（UI 1 617）；`battle.png`、`battle-siege.png` 两张基线 `identical`。
+
+## ADR-224：战斗路径预览——可走范围阴影与悬停高亮按「人站哪、还打到谁」摊开
+
+**背景**：`bd` 里 `ukw.17` 要把参考 `Interface::RedrawCover()` 的静态那半补上。它其实是三件事：
+
+1. **当前单位的可走范围**（`_redrawCoverStatic()`，`battle_interface.cpp:2558-2641`）：只对**人类**的当前单位画，
+   受 `BattleShowMoveShadow` 控制；开着格子网格时用「带网格镂空」的阴影，否则网格会被阴影整块盖掉
+   （参考 `:2632` 的注释）。鼠标下的那只兵另有一段，受 `BattleMovementAreaHighlight` 控制，阴影叠画两份所以更亮；
+   已经出手的单位速度被 `TR_MOVED` 归零，参考临时清掉模式、画完再放回，才显示得出它真实的行动范围。
+2. **悬停高亮**（`RedrawCover()` 的 `:2360-2453`）：光标除了说「按下去会发生什么」，还要摊开「发生在哪儿」。
+   普通光标只亮鼠标格；剑光标亮的是**人真正站上去的邻格**，不是鼠标指的格子
+   （`Board::CalculateAttackPosition`）；宽单位走两步时头尾两格都占；双击攻击再亮出背对侧的第二个被攻格；
+   全域攻击把攻方站位周围的敌兵全圈起来。
+3. `_highlightUnitMovementArea` 每帧先清空、再由鼠标处设成鼠标下的兵（`battle_interface.cpp:2940`、`:3219`）。
+
+**决定**：
+
+1. **「亮哪些格」搬成纯静态类**：新增 `src/FHeroes2.UI/Battle/BattleCoverHighlight.cs`，
+   `GetCells( arena, currentUnit, cellIndex, cursorTheme )` 返回格子列表，与 `BattleSpellHighlight` 同一套写法。
+   分支次序照参考：宽单位 + `CombatMove/CombatFly` → 头尾；`AttackDirection.Unknown` → 只有鼠标格；
+   剑 → `CalculateAttackPosition` 的头/尾，`IsDoubleCellAttack` 追加
+   `GetIndexDirection( cellIndex, GetReflectDirection( attackingCellDirection ) )`，
+   `IsAllAdjacentCellsAttack` 追加 `GetAroundIndexes( attackPosition )` 里不同阵营的兵；空则回退鼠标格。
+   `BattleFieldPainter.RedrawHoverShadow` 只剩「拿格子贴阴影」。
+2. **`BattleBoard` 公开一个方向查表**：原私有 `AttackingCellDirection( unit, dir )` 提成
+   `public static CellDirection GetAttackingCellDirection( BattleUnit, AttackDirection )`，带 null 检查；
+   `Top`/`Bottom` 两支按单位朝向（`isReflect`）摊到斜后方，其余七支原样映射，`Center` 原样返回 `Center`。
+3. **剑 → 攻击方向的反表**：`BattleCursor.AttackDirectionOf( theme )` 是 `SwordFor` 的逆表
+   （`SwordTopLeft→BottomRight`、`SwordTop→Bottom`、`SwordLeft→Right`、`SwordBottomRight→TopLeft`…），
+   非剑一律 `AttackDirection.Unknown`。反向写一份而不是从 `SwordFor` 反查，是为了让「光标 → 方向」也能被单测钉住。
+4. **画布只贴图**：painter 新增 `SetMovementAreaUnit( BattleUnit? )`（场景每帧先清空再设，与参考同拍）与
+   `RedrawMovementArea()`，插在 `RedrawHoverShadow()` 之前、`RedrawArmies()` 之前（阴影必须压在单位下面）。
+   三张阴影一次生成后缓存：普通 `BuildHexagonShadow( 4, 2 )`、带网格 `( 4, 1 )`、高亮双份 `( 2, 2 )`；
+   鼠标格沿用已有的 `( 2, 1 )`。格子开关 `IsBattleShowGrid` 决定用哪一张。
+5. **场景侧只递参数**：`BattleScene.UpdateHover` 在 `SetHoveredCell` 之后按
+   `IsBattleMovementAreaHighlight` 把鼠标格上的兵交给 `SetMovementAreaUnit`，指针离开战场即为 `null`。
+
+**后果**：野战与攻城基线多了当前人类单位的可走范围阴影，所以两张都按新像素重建
+（`battle.png` 变了，`battle-siege.png` 重写但字节相同——攻城方的人类单位周围恰好没有可走格）。
+悬停高亮只在有指针时出现，基线里没有指针，因此不体现在基线上，由单测钉住。
+
+**验证**：构建 0 错误 0 警告；`BattleCoverHighlightTests` 8 条（普通光标只亮鼠标格 3 例、剑亮站位格、
+宽单位走两步亮头尾、双击攻击亮背后第二格、全域攻击亮相邻敌人、农民可达格数在 1..40 之间防退化）；
+`BattleAttackPositionTests` 11 条（正上/正下按朝向摊斜、环上六支原样、单格单位站在邻格、`Center` 原样、
+宽单位尾侧、够不着给空）；`BattleCursorTests` 增 12 条（`AttackDirectionOf` 是 `SwordFor` 的逆，8 向；
+四个非剑光标为 `Unknown`）；全量 **5 679** 绿（Core 292 / Assets 434 / Game 3 316 / UI 1 637）；
+`battle.png`（170,009 字节，`438AAB4E…`）与 `battle-siege.png` 两张基线不带 `-Update` 重跑均 `identical`。
+
+## ADR-225：移动动画——先播后交命令，位置按格改，偏移单独算
+
+**背景**：`ukw.19` 要补 ADR-213 后果里记的那处接缝：参考在 `Arena::ApplyActionMove()` 里
+`_interface->RedrawActionMove()` 一路阻塞着画完、每格画完才 `unit.SetPosition( *dst )`
+（`battle_interface.cpp:4524-4704`），飞兵走 `RedrawActionFly()`（`:4715-4830`）。端口没有能阻塞的事件循环：
+`BattleScene.Update()` 每帧推进，竞技场一旦 `ApplyAction` 就当场改完状态。若先改再画，兵已经站在终点，
+偏移公式没有起点可用；若只画不改，下一格的水平偏移又会从起点算起，画面上越走越落后。
+
+**决定**：
+
+1. **顺序反过来：先播，播完再交命令**。`BattleScene.PlayCommands()` 遇到单条 `Move` 命令且
+   `BattleFieldPainter.StartMovement()` 能开播时，把命令与状态行存进 `_pendingAction` 直接返回；
+   `Update()` 在输入与回合推进之前先推进这场行军，播完才调 `ApplyTurn()` 把命令交给竞技场。
+   行军期间指针不更新、按钮不响应，与参考阻塞时的表现一致。应用命令这一拍把位置从起点跳到终点，
+   而视觉上最后一帧已经贴着终点，所以看不到跳变。
+2. **按格改位置，和参考同拍**。`MovePlayback` 每格序列播完就 `unit.SetPosition( cell )`，宽单位的转身格
+   只翻面（`SetReflection`）；非宽单位每格开局 `UpdateDirection( cell.Rect )`。
+3. **计划与绘制分开**：`BattleMoveAnimation.Create()` 只算「播哪几步」——步行取
+   `GetPath( unit, BattlePosition.GetReachable() )` 的格子，`isOneStepPath` 用 `MoveQuick`，其余首格
+   `MoveStart`、末格 `MoveEnd`、中间 `Moving`；飞行按 `getLinePoints()`（`math_tools.cpp:47-74`）把直线切成
+   `FlightSpeed` 一段，`FlyUp` + 每段一个 `Moving` + `FlyLand`。`BattleMoveStep` 带上这一步的 `_movingPos`
+   与 `_flyingPos`，绘制层不必回头查棋盘。
+4. **偏移抽成纯函数**：`BattleTroopDisplacement.GetOffset()` 是 `_drawTroopSprite()` 的
+   `:2069-2110` 那几十行——飞兵在空中时按 `_flyingPos → _movingPos` 插值；飞兵在地面移动时两向滑行；
+   走兵横向那一步交给帧本身、纵向按 `movementProgress`、对角再叠 `-sign( moveX ) * frameXOffset / 2`。
+5. **节拍共用一条自定义延迟**：每帧延迟 = `ApplyBattleSpeed( MoveSpeed )`（急速 ×0.8、迟缓 ×1.2）除以
+   `MOVING` 序列帧数，写进 `GameDelays.SetCustomUnitMovementDelay`，行军期间由它而不是待机延迟推进。
+6. **空中的兵最后画**：行内收集时跳过 `FlyingPosition != null` 的兵，铺完两军再单独画一次
+   （`battle_interface.cpp:1955-1975`），免得被前排大只的兵挡住。
+
+**偏差（记在 `ukw.19` 的子任务里）**：AI 与自动战斗仍即时结算，只有玩家的单条 `Move` 会播；攻击、受击、
+死亡与弹道还没画（`ukw.19` 剩余子任务）；护城河裁剪 `_drawTroopSpriteWithMoatMask` 未搬；飞行途中不翻面
+（参考也不在 `RedrawActionFly` 里翻，落点由竞技场应用命令时定）。
+
+**验证**：构建 0 错误 0 警告；`BattleMoveAnimationTests` 8 条（原地不动为空、一格是 `MoveQuick`、
+三格是 `MoveStart`/`Moving`/`MoveEnd`、每步瞄自己格子、规划不动棋盘、飞兵 `FlyUp`→`Moving`→`FlyLand`、
+线段切段数与两端）；`BattleTroopDisplacementTests` 7 条（静止/水平无偏移、右下与左上对角漂移、
+飞兵滑行、空中插值、零帧无偏移）；全量 **5 694** 绿（Core 292 / Assets 434 / Game 3 316 / UI 1 652）；
+两张战斗基线不带动画、不带指针，重跑仍 `identical`。
+
+## ADR-226：攻击动画——先记一笔，事后回放，起手仍赶在结算前
+
+**背景**：ADR-225 只补了位移。参考的攻击在 `BattleProcess()` 里分两拍调界面：先 `RedrawActionAttackPart1()`
+（起手帧，`battle_interface.cpp:4088-4175`），伤害落完再 `RedrawActionAttackPart2()` 起受击/死亡循环
+（`:4185-4439`）；`battle_action.cpp:198-210` 的顺序也是「画起手 → TargetsApplyDamage → 画受击」。
+端口一次 `ApplyActionAttack` 就把伤害、反击、双击全结算完，界面手上什么都没有。
+
+**决定**：
+
+1. **竞技场记账**：新增 `BattleAttackBlow`（攻方、受方、是否射击、这一击的所有 `BattleDamageTarget`），
+   每次 `ApplyActionAttack` 开头清空、`BattleProcess` 里落完伤害追加一条——主击、反击、双击各一条，
+   和参考「每个 `BattleProcess()` 播一遍」一一对应。对外只暴露 `LastAttackBlows`。
+2. **起手赶在结算前播**：`BattleScene` 对单条 `Attack` 命令先 `StartAttackSwing()`（此时还不知道掉多少血、
+   死没死），用 `_pendingAction` 挡住输入；播完 `ApplyTurn` 结算，再从 `LastAttackBlows` 建回放脚本
+   `StartAttackReactions()`，用 `_pendingReactions` 挡住第二轮输入。
+3. **序列选择照抄行算术**：近战基 `MeleeFront`、双击打两格改 `RangFront`，目标在画面上更高时 -2、更低时 +2；
+   射击基 `RangFront` 同样按行 ±2。`MonsterAnimationType` 的排列与参考 `MELEE_TOP..RANG_BOT` 一致
+   （每支占两个号），所以加减二就是上/下两支。后半段是 `+1`（`End`），播完回 `Static`。
+4. **受击只分三种**：`!isValid()` → `Kill`，`Damage > 0` → `Wnce`，否则不播（抗魔/免疫）。掉几个兵但部队
+   还在是抖一下，不是倒下——参考也是先看整支部队是否还在。
+5. **倒地的那支自己画**：`ApplyActionAttack` 之后死掉的部队已被 `RemoveDeadUnits()` 摘离棋盘，按格子找不到了，
+   所以 `AttackPlayback` 把 `Kill` 步骤涉及的部队记成 `DyingUnits`，`RedrawArmies` 铺完两军后再照着它最后的
+   位置单独画一次——这样它在起手期间仍然站着，到自己的 `Kill` 步骤才倒。
+6. **节拍**：射击按 `ApplyBattleSpeed(ShootSpeed) / 动画帧数`（`:4112-4119`），其余按 `ApplyBattleSpeed(120)`
+   一帧；都用 `CUSTOM` 时钟，与行军共用但不会同时跑。
+
+**偏差**：
+- 一次只推进一个单位（参考把攻方与受方放同一循环），所以是「砍完再挨打」而不是「砍到一半对方在抖」。
+- 双击是否真的扫到两格要结算后才知道，起手先按 `IsDoubleAttack` 猜，只影响前一半姿势。
+- 射击的上/中/下用行比较代替参考那道 25° 发射角，宽目标时略粗。
+- AI 与自动战斗仍即时结算；远程没有箭矢（`ukw.19.2`）；护城河裁剪未搬（`ukw.19.3`）。
+
+**验证**：构建 0 错误 0 警告；`BattleAttackBlowTests` 5 条（近战记账、射击标记、反击各一条、射击不引反击、
+下一次攻击清空）；`BattleAttackAnimationTests` 9 条（同排/下方/上方近战、双击改宽序列、射击三支、后半段 +1
+与非攻击序列原样、击杀与受击、单击只剩受击、反击回放「起手+收势+受击」）；全量 **5 708** 绿
+（Core 292 / Assets 434 / Game 3 321 / UI 1 661）；两张战斗基线仍 `identical`。
+
+## ADR-227：远程弹道——几何一次算完，画面一格一格走
+
+**背景**：ADR-226 补上了射击的起手序列与受击，但箭本身不飞。参考把它拆成两头：`RedrawActionAttackPart1()`
+算路线（`battle_interface.cpp:4120-4156`），`RedrawMissileAnimation()` 按 `BATTLE_MISSILE_DELAY` 一格一格
+blit（`:1062-1136`）。
+
+**决定**：
+
+1. **单位位置算术抽出来**：新建 `BattleTroopSprite`，把原先 `BattleFieldPainter` 私有的 `GetTroopPosition()`
+   与 `GetCenterPoint()` 搬进去，绘制与弹道共用；`cellYOffset` 也一并挪过去。
+2. **`BattleMissile` 只算几何**：`GetAngle()` 照 `math_tools.cpp:20-33`（`dx < 0` 的那支归一化），
+   `GetDirection()` 用参考的 25° 阈值分上/平/下；`AimShot()` 先按正面偏移求角度、同排强制平射
+   （`:4126-4128`），再按实际方向的 `projectileOffset` 定起点，宽单位镜像时从 `width*3/4` 出手。
+   路线 = `LinePoints.GetLinePoints(起点, 终点 ± 半个弹体, max(弹体宽, 25))`，除法师与巨魔外丢掉第一个采样点
+   （`:1080-1096`）；blit 偏移按 `reverse` 让出整个弹体宽、按角度正负让出整个弹体高（`:1121-1135`）。
+3. **画面按帧推进**：`BattleFieldPainter.MissilePlayback` 每个 `BATTLE_MISSILE_DELAY` 前进一个采样点，
+   `RedrawMissile()` 在所有单位之后贴图（镜像用 `Sprite.Flip`）；起手播放完才放箭（`_pendingMissile`），
+   `IsAnimating` 把弹道也算进去，场景据此继续挡住输入。
+
+**偏差**：
+- 法师（Mage/Archmage）的「弹道」是没有 sprite 的闪电线，端口这段不画，只算几何后跳过；其余射手正常。
+- 参考在弹道循环里先 `WaitForAllActionDelays()`，端口没有统一延迟队列，起手已经播完才放箭，效果等价。
+- 飞行途中的 `redrawTroopSprite` 累积去重（同一帧内多次落点覆盖）未搬，采样点密度已经覆盖。
+
+**验证**：`BattleMissileTests` 11 条（角度四向、25° 阈值六点、平射路线与跳首点、下射终点半格、左射镜像与
+偏移、上射垂偏移、法师到中心不跳点、巨魔保留首点、同排平射、下一行向下射）；构建 0 错误 0 警告；全量
+**5 719** 绿（Core 292 / Assets 434 / Game 3 321 / UI 1 672）；两张战斗基线仍 `identical`。
+
+## ADR-228：护城河裁剪——水面带走一格，sprite 切三块
+
+**背景**：单位走进护城河时，参考把水面从 sprite 里挖掉（`_drawTroopSpriteWithMoatMask()`，`battle_interface.cpp:2121-2200`），
+让脚「泡」在水下；端口此前整块 blit，单位像站在水面上。
+
+**决定**：
+
+1. **判定放游戏层**：新增 `BattleMoatMasking`。`GetMask()` 依次判：没建护城河 / 这只正在天上飞 / 前后都不是河格 → 不裁；
+   斜向出河、或从右上（`TopRight`）斜向进河 → 不裁；进河看 `next` 格、其余看脚下；`GetMoatCellMask()` 拿到水面矩形后，
+   「在河里」或「非斜向」时按 `movementDelta` 平移（`x -= delta.x`、`y += delta.y`）；与 sprite 求交，空则不裁；
+   `sprite.height - mask.height < 10` 的矮 sprite 放弃。返回的是**已裁剪到 sprite 的水面矩形**。
+2. **切块也放游戏层**：`GetVisiblePieces()` 返回 `Top`/`Left`/`Right` 三个 sprite 局部矩形，绘制器只管依次 blit；
+   水面之下不画，正好是「脚在水里」。
+3. **位移的方向与漂移补齐**：`BattleTroopDisplacement.GetMovement()` 给出参考的 `movementDirection`（`GetDirectionFromDelta`）
+   与 `movementDelta`（只有对角步漂移；水平步与飞行都不漂）。ADR-225 当初只算了位移本身。
+4. **绘制器接入**：`RedrawTroopSprite()` 在位移之后求 `spriteArea`，`HasBuiltMoat()` 查 `Arena.Castle.IsBuild(BuildingType.Moat)`，
+   `isFlyingInMotion` 取 `_move.FlyingPosition != null`；命中掩码就走 `RedrawTroopSpriteWithMoatMask()`。
+
+**偏差**：
+- 参考用 `AlphaBlit(..., unit.GetCustomAlpha())`；端口没有「自定义 alpha」概念，直接 blit。
+- 参考三块 blit 每块自带 `reflect`；端口先 `Sprite.Flip` 整幅再切块，坐标等价（`Flip` 保持尺寸与偏移）。
+- 对角的 `movementDelta` 只在「正在走的单位」上非零，与参考一致；静止单位水面不随镜头动（镜头本就不动）。
+
+**验证**：`BattleMoatMaskingTests` 12 条（无河、飞行、陆地、河里水带、对角漂移、矮 sprite、sprite 够不着水面、
+斜向出河、斜向右下进河被裁、斜向右上进河不裁、三块切分与面积、水带与 sprite 同宽），
+`BattleTroopDisplacementTests` 新增 4 条（对角漂移与方向、水平只报方向、飞行不漂、静止无方向）；
+构建 0 错误 0 警告；全量 **5 735** 绿（Core 292 / Assets 434 / Game 3 333 / UI 1 676）；两张战斗基线仍 `identical`
+（部署阶段没有单位站在河里，裁剪未触发，属预期）。
+
+## ADR-229：尸体留在场上——坟场重画与死亡末帧
+
+**背景**：结算后 `RemoveDeadUnits()` 把阵亡单位摘盘，此前端口只在本轮攻击回放期间自绘离场单位（ADR-226），
+回放一结束尸体就消失。参考把尸体留在 `Battle::Graveyard` 里，并在每次重画战场时补画
+（`RedrawKilled()`，`battle_interface.cpp:2910-2920`）。
+
+**决定**：
+
+1. **去重规则入游戏层**：`BattleGraveyard.GetUnitsForRedraw(cell)` 返回该格要画的尸体，排除宽单位的**尾巴格**
+   （`:2914-2919`，否则一个身体会被画两次）。
+2. **两条重画路径**：野外战在 `RedrawArmies()` 开头一次性铺底（`:1703-1705`）；城战在行循环里按城墙前后
+   `CollectRowDead()` 分成两批，垫在该侧单位之前画（`:1758-1766`）。
+3. **死亡序列停在末帧**：`AttackPlayback` 新增 `_isDyingStep`，死亡步骤播完后不再切回 `Static`，
+   这与参考一致（被杀的单位从不被重置）。
+4. **没播过动画的尸体补帧**：AI 回合即时结算时没人播死亡序列，`RedrawCorpse()` 首次绘制时把它切到 `Kill`
+   并推进到末帧，免得尸体以站姿躺在地上。
+5. **复活兜底**：`AnimateIdleUnits()` 若发现**活着的**单位还停在 `Kill` 状态（刚被复活），切回 `Static`。
+
+**偏差**：
+- 参考城战把尸体、移动单位、飞行单位一起在行内排序；端口移动单位仍由 `_move` 单独处理（ADR-225 的既有简化）。
+- 法术覆盖层（`_redrawActionSpellCast*`）仍未搬，与尸体无关。
+- 尸体不带 `GetCustomAlpha()` 的淡出，端口没有自定义 alpha。
+
+**验证**：`BattleGraveyardTests` 新增 3 条（窄单位画一次、宽单位只在头格画、空格无内容）；构建 0 错误 0 警告；
+全量 **5 738** 绿（Core 292 / Assets 434 / Game 3 336 / UI 1 676）；两张战斗基线仍 `identical`
+（部署阶段没有尸体）。
+
+## ADR-230：血量条——几何入游戏层、填色入界面层
+
+**背景**：`drawHitPointsBar()`（`battle_interface.cpp:2202-2228`）一直没搬：它要按调色板取
+`GetColorId( 0, 200, 0 )` / `GetColorId( 200, 0, 0 )` 两个索引，而绘制器此前没有调色板。调色板随 ADR-228 的
+网格注入之后（`BattleFieldPainter` 的 `palette` 参数），这一档就能补了。开关默认关闭
+（`Settings` 的默认选项不含 `BattleShowHitPointsBar`），所以两张基线不受影响。
+
+**决定**：
+
+1. **几何入游戏层**：`BattleHitPointsBar` 放 `Height = 4`、`Frame = 1`、`OutlineColor = 117`、绿红两组 8 位分量，
+   `GetInnerWidth()` 与 `GetRemainingWidth()` 复刻参考的 `uint64` 乘法与 `clamp( 1, innerWidth )`。
+2. **填色入界面层**：`BattleHitPointsBarPainter.Draw()` 拿计数条的位置与尺寸当锚，`y` 取计数条底边，
+   三层 `FillRect`（117 外框、红内层、绿内层），不碰资产，可以单测。
+3. **绘制器接入**：`RedrawArmies()` 每帧读一次 `Settings.Get().IsBattleShowHitPointsBar`（对应参考的
+   `:1694` 局部量），传进 `RedrawTroopCount( unit, hitPointsBarEnabled )`；开关打开时计数条先上移四像素
+   （镜像上移八像素），血量条挂在它下方（`:2250-2261`）。绿红两色由注入的调色板经 `PALColorId.Get()` 解析，
+   按实例缓存；没有调色板时整档退化为不画，与网格的降级一致。
+4. **设置窗示意条**：`ComposeHitPointsIcon( enabled )` 按参考把计数条贴底
+   （`image.Height - barHeight - 4 - 5`，那四像素就是留给血量条的位置），开关打开时以「三分之二血」画一条示意；
+   颜色走 `EmptyButtons.GetColorId()`（读 `KB.PAL`）。
+
+**偏差**：
+
+- 参考用 `assert` 要求剩余血量与单体血量大于零且剩余不超过最大；端口在剩余为零或单体血量为零时返回宽度 0，
+  因为死掉的队伍也会走到这段绘制，发布版里不该变成除零。
+- 参考的两个颜色是函数内 `static` 索引，首次调用时算；端口按实例缓存（绘制器用注入调色板、设置窗用 `KB.PAL`），
+  取值相同。
+- 设置窗图标的计数条原来摆在图标垂直居中，现改为参考的贴底位置——原来那里是没接血量条时的临时摆法。
+
+**验证**：`BattleHitPointsBarTests` 9 条（常量、内宽、满血、三分之二、最后一点血、超出上限、无容身之处、
+零剩余/零上限、颜色值）；`BattleHitPointsBarPainterTests` 5 条（外框包围内层、绿占三分之二、满血无红、
+空血只有红与框、两像素宽的条只剩框）；构建 0 错误 0 警告；全量 **5 752** 绿
+（Core 292 / Assets 434 / Game 3 345 / UI 1 681）；两张战斗基线仍 `identical`（开关默认关闭）。
+
+## ADR-231：行动顺序条——预测入游戏层、布局与图标入界面层
+
+**背景**：`Battle::TurnOrder`（`battle_interface.cpp:1187-1379`）画的是「这一轮谁先谁后」：一串 43 像素的
+`MONS32` 头像，每人一个，按行动先后从左排到右，已行动的被压成灰。它依赖两份数据——界面私有的快照
+`_orderOfUnits`，和 `Turns()` 里维护的 `orderHistory`——而端口此前两者都没有，只有「谁在行动」。开关
+`Settings::BattleTurnOrder` 三档（off/top/bottom），默认 off，所以两张基线不受影响。
+
+**决定**：
+
+1. **预测入游戏层**：`BattleOrderOfUnits.Predict()` 复刻 `UpdateOrderOfUnits()`（`battle_arena.cpp:223-250`）：
+   先把 `orderHistory` 整段抄到前面，再把两军按速度降序（`BattleUnits.SortFastest`，稳定排序）各取第一个
+   「速度大于 `Speed.Standing`」的比一下，取中的只从自己那一边删掉，同速看 `preferredColor != 守方色`；
+   取到的如果是当前单位就跳过（它已进历史），每排进一个就把先手判给对面。`TakeNext()` 对应
+   `GetCurrentUnit( ..., ordersMode = true )`（`:169-203`）。
+2. **数据归竞技场**：`BattleArena` 加 `_orderHistory` / `_orderOfUnits` 与只读属性 `OrderOfUnits`，在四个
+   与参考一致的位置刷新：新一轮开始前（`orderHistory` 清空 + `UpdateOrderOfUnits( 对面色 )`）、选中下一个
+   单位后（入历史 + 重排）、每座塔开火后、每条动作结算并清完尸体后。
+3. **布局入界面层**：`BattleTurnOrderLayout` 只算几何与索引——`IconSize = 43`、
+   `GetSlotCount() = min( 战场宽度 / 43, 有效单位数 )`、`GetArea()` 把整条居中于战场顶边、
+   `SelectSlots()` 复刻 `:1349-1375` 的挑选（跳过阵亡；已行动者只在「位置有富余」时保留，
+   判据里的计数用参考的 `unitsProcessed`，跳过时也加一）。
+4. **图标入绘制器**：`RedrawTurnOrderBar()` 读设置档位，悬停/当前单位用 110 号描边色，其余取
+   `BattleArmyColor.GetPaletteIndex( unit.GetCurrentColor() )`；`RedrawTurnOrderIcon()` 铺 `SWAPWIN` 第 0 帧
+   `(37,268)` 内缩一像素的底、居中偏下三像素贴头像、左上 `(2,4)` 画缩略数量、描边、最后按 `TR_MOVED`
+   两道 `ApplyPalette`（`GRAY` 再 `GRAY_FONT`，参考直接写 3，正好是同一档）。头像按（兵种，镜像，翻转）
+   三元组缓存：`CAP_MIRRORIMAGE` 走 `MIRROR_IMAGE` 调色板，守方（`unit.Color == 守方军队色`）水平翻转。
+5. **颜色表入游戏层**：`BattleArmyColor` 放八个 `ARMY_COLOR_*` 常量与
+   `GetPaletteIndex()`（`battle_interface.cpp:723-750`）：六个玩家色各归各档，`UNUSED`（狂暴）→ 黑，
+   `None` → 灰，其它 → 灰。
+
+**偏差**：
+
+- 参考只在界面要的时候（`_orderOfUnits` 非空）才维护顺序表，端口一律维护：每次动作多排一遍最多二十个单位，
+  换来「没有界面也能在测试里断言顺序」。
+- 只实现「战场窗口内、顶边」一档：屏幕固定 640x480，窗口外没有第二块地方可放，`Bottom` 等同不画
+  （战斗设置窗因此也不会让玩家选到它）。
+- 当前/悬停单位的描边固定 110，参考在 110/114/118/122/126 之间按 `BATTLE_SELECTED_UNIT_DELAY` 循环——
+  那套节奏跟着单位描边动画走，而描边动画还没搬。
+- 图标的鼠标处理（左键开兵种信息、右键同样）与条自身的 `ImageRestorer` 还没搬：这一档只画，不响应。
+
+**验证**：`BattleOrderOfUnitsTests` 6 条（快者先、同速按先手色、先手逐位交替、当前单位不进列表、历史在最前、
+空场为空）；`BattleArmyColorTests` 4 条（八个常量值、六个玩家色、`None`/`Unused` 两个特例、未知色落灰）；
+`BattleTurnOrderLayoutTests` 8 条（图标 43、槽数取小、整条居中、随战场顶边、无位置、位置够全画、
+已行动者先让位、阵亡者跳过）；构建 0 错误 0 警告；全量 **5 770** 绿
+（Core 292 / Assets 434 / Game 3 355 / UI 1 689）；两张战斗基线仍 `identical`（开关默认关闭）。
+
+## ADR-232：英雄立绘与旗帜——帧表与状态机入游戏层、贴图与翻转入界面层
+
+**背景**：`Battle::OpponentSprite`（`battle_interface.cpp:987-1140`）一直没搬，战斗画面两侧因此是空的。
+它要三样东西：从种族与「英雄还是队长」推出用哪个 `CMBTHRO*` / `CMBTCAP*` 图档、每个姿势（欢呼/施法/待机/
+叹气）的帧序列、以及立绘与施法手位的几何；再加上 `RedrawOpponents()`（`:1982-1988`）、`RedrawOpponentsFlags()`
+（`:1990-2026`）和阵亡时的表情反应（`:4441-4456`）。这一档不新增开关，画面直接多出立绘与旗帜，所以两张
+战斗基线都要重建。
+
+**决定**：
+
+1. **纯查表入游戏层**：`BattleHeroSprites` 放 `GetIcn()`（12 组种族×队长 → 图档，`matchHeroType`）、
+   `GetFrames()`（`heroTypeAnim[7][9]` 全表 + `STATIC = { 1 }`、`SORROW = { 2,3,4,5,4,5,4,3,2 }` 两个常量，
+   队长叹气退化为站立）、`GetCastOffset()`、`GetPosition()` 与 `GetCastPosition()`。姿势枚举是
+   `BattleHeroAnimation`（顺序即 `heroTypeAnim` 的列序）。
+2. **状态机入游戏层**：`BattleOpponentAnimation` 复刻 `updateAnimationState()`——站立播放完等
+   `RandomizedDelay(8000)` 到点，再按 `Rand::Get( 1, 3 ) < 2` 挑 `IDLE2` 或 `IDLE`；非站立姿势播完回站立，
+   但施法的「去」阶段（`CastMass`/`CastUp`/`CastDown`）停在最后一帧，等外部切到「回」阶段。时钟与随机源
+   可注入，测试不需要等待也不需要真随机。
+3. **几何与贴图入界面层**：`BattleOpponentSprite` 只留 `Area`、`Offset`、`IsFlipped` 与 `Redraw()`。面积在
+   构造时用站立帧算（左侧 x 取 `LeftHeroXOffset + frame.OffsetX`，右侧从屏幕右沿量
+   `640 - 29 - (frame.OffsetX + frame.Width)`），队长先整体偏 `(-6, -13)`、右侧偏 `(+6, -13)`。
+4. **翻转必须连 transform 层**：ICN 的透明不是 alpha，而是 transform 字节；只翻图像会把透明像素画成
+   0 号色（黑）。所以守方立绘与右旗都走 `Sprite.Flip(horizontal: true, vertical: false)`，结果按帧号
+   （旗子再带上图档号）缓存，绘制统一用 `ImageOps.BlitSprite`。
+5. **绘制器接入**：构造时按 `_arena.AttackingArmyCommander` / `DefendingArmyCommander` 各建一个（没有英雄
+   或队长的一侧就没有立绘，例如只有游荡怪物的守军）；在中排（`cellRowId == 2`）画完单位之后画立绘与旗，
+   与参考的 `:1972-1977` 同序。旗帜颜色取自 `IcnCatalog.GetFlagIcnId( armyColor )`，帧号走
+   `IcnCatalog.GetAnimatedIndex` 的计数器。
+6. **时基归 `Update()`**：`UpdateOpponents()` 每 tick 检查 `BattleFlagsDelay`（推旗子一帧）与
+   `BattleOpponentsDelay`（推两侧姿势一步），对应 `Interface::Events()` 的 `:3940-3945`。
+7. **死亡反应**：`SetHeroAnimationReactionToTroopDeath()` 在 `StartAttackReactions()` 开头调用；死的是守方就是
+   攻方在打，攻方 60%（`Rand::Get( 1, 5 ) < 4`）欢呼，否则守方 80%（`< 5`）叹气。一次回放整段攻击，所以用
+   `SelectDeathColor()` 取最后一个被全歼的单位的颜色，等价于参考循环里最后一次赋值。
+
+**偏差**：
+
+- 参考一个类里既放状态又放绘制；端口拆成游戏层状态机 + 界面层贴图，为的是没有资产也能断言帧序列。
+- 参考对不认识的种族 `assert( 0 )`；端口回 `IcnType.Unknown`，帧表按骑士算，发布版不断言。
+- 施法姿势的驱动（谁在什么时候切到 `CastUp` 再退回）与鼠标停在立绘上显示英雄名的处理还没接：这一档
+  只把姿势机与死亡反应接上，跳过与悬停留到法术/提示框那一档。
+- 缺图档时立绘与旗帜静默跳过，不抛异常。
+
+**验证**：`BattleHeroSpritesTests` 22 条（12 组种族×队长 → 图档、未知种族、STATIC/JOY/SORROW/CastUp 帧序列、
+队长叹气退化、四组施法偏移与未知种族、左/右/队长/带界面偏移的定位、施法点镜像）；`BattleOpponentAnimationTests`
+15 条（初始站立、待机计时到点、`IDLE`/`IDLE2` 按随机数挑、`Joy` 从 6 起播、逐帧推进、播完回站立、
+`CastDown` 停在第 14 帧等外部、叹气播完回站立、队长不叹气）；构建 0 错误 0 警告；全量 **5 807** 绿
+（Core 292 / Assets 434 / Game 3 392 / UI 1 689）；两张战斗基线以 `-Update` 重建后复跑 `identical`
+（`battle.png` 172,852 字节、`battle-siege.png` 210,501 字节，属新增绘制，见 `tests/baselines/README.md`）。
+
+## ADR-233：战斗三窗——动画与文案入游戏层、窗口入界面层
+
+**背景**：`battle_dialogs.cpp` 里战斗自己弹的三个窗一直没搬：战后结果窗（`DialogBattleSummary`，含战利品交接）、
+招魂提示窗（`DialogBattleNecromancy`）、英雄/队长选项窗（`DialogBattleHero`，`:855-1085`）。它们都要「循环帧动画
++ 一段只等右键松开的只读走法」，且结果窗的阵亡名单长度不受七条限制。
+
+**决定**：
+
+1. **动画与文案入游戏层**：`BattleDialogAnimation` 复刻循环帧动画与 `push( icn, loop )` 队列，`Advance()` 一步推进、
+   播完整段丢弃；`BattleSummaryText` 复刻 `GetSummaryParams`（标题、投降赔款、战功、高亮标题的判断与动画表），
+   只产出数据，不碰画面。
+2. **阵亡名单用列表，不用军队**：参考的 `Troops` 是不限长容器，端口 `GameArmy` 固定七槽，召唤物阵亡后条目会溢出。
+   于是 `Force.GetKilledTroops()` 返回 `IReadOnlyList<Troop>`（`min( InitialCount, Dead )`、跳过 0 与未知兵种），
+   并给 `MiniMonsters.Draw` 与 `Army.DrawSingleDetailedMonsterLine` 各加一个列表重载（无窗口、右起、`detailedView`）。
+3. **结果窗拆成两段**：参考一个模态循环里先「摘要 + OK/重开」再「战利品 + OK」，端口按既有惯例拆成
+   `ProcessEvents`（摘要段，返回 `BattleSummaryWindowAction`）与 `ProcessArtifactEvents`（战利品段，含
+   `AdvanceArtifact`），由调用方驱动；神器段的规则照抄——AI 胜者只显示终极神器、同一件连续出现只补音效、
+   普通神器标题只写一次、进入战利品段时把 OK 从 `BottomLeft` 挪到 `BottomCenter`。
+4. **选项窗只信场合给的开关**：`TryCreate` 收 `canRetreat` / `canSurrender` / `currentColor` 三个由竞技场算出的值，
+   窗口不自己判断「队长不能撤退」——参考也是靠 `CanRetreatOpponent()`（`battle_arena.cpp:899-910`）回答 false。
+   `readonly` 就是参考的 `currentColor != hero.GetColor() || !buttons`；`buttons = false` 时四钮全暗、只等右键松开。
+5. **队长头像复用城堡屏**：`CaptainPortrait.TryCreateBig( IViewWorldSpriteSource, Captain )` 与既有的 `AssetBundle`
+   版本同法——种族大头像克隆后把旗帜贴到 `GetFlagOffset()`；英雄走 `HeroPortraitIcn.Get( PortraitId )`。
+6. **补开 `TextBase.SetUniformVerticalAlignment`**：参考在士气一行关掉行均衡，并让幸运、法力继承同一个 `Text` 对象的
+   状态，端口没有这个开关就没法照抄折行高度。
+
+**偏差**：
+
+- 音效（`AudioManager::PlaySound`）没有接；音效只在「同一件神器连出」时有可观察效果，端口以跳过重绘代替。
+- 右键四钮与立绘的帮助说明、立绘点头像打开英雄屏都没有接：端口还没有战斗里的通用消息框与英雄屏入口，
+  `BattleHeroOptionsWindow` 把这一帧的点击暴露成 `PortraitClicked` 交给调用方。
+- 参考的 `ImageRestorer` 不需要：端口每帧从底图重画整块窗口。
+- 缺图档时窗口返回 `null`（招魂窗与选项窗）或静默跳过该帧（结果窗的神器图标），不抛异常。
+
+**验证**：新增 `BattleHeroOptionsWindowTests` 17 条（居中与左影偏移、四钮几何、标题两种写法、色块帧号、缺底图/
+缺按钮帧、法力书与 `SPELLCASTED` 的施法禁用、撤退/投降开关、队长、敌方只读、无按钮等右键、关闭/施法与立绘点击、
+三条状态栏文案、真实档案贴底图）；构建 0 错误 0 警告；全量 **5 824** 绿（Core 292 / Assets 434 / Game 3 392 /
+UI 1 706）。三个窗口尚未接进战斗场景，没有画面变化，两张像素基线不需要重建
+（`InterfaceSettingsDialogTests.ClickingTheScrollSpeedCyclesItInPlace` 偶发失败一次，单跑与整项目复跑均通过，
+与本次改动无关）。
+
+## ADR-234：拒施理由入竞技场、两句提示与法术说明走消息框
+
+**背景**：战斗里的「不能施法」一直只说一句笼统的话，因为 `Arena::isDisableCastSpell()` 只回答真假；参考则在
+`msg` 里带一句话，每个原因一句（`battle_arena.cpp:927-1008`），由界面丢进 `Dialog::Message`。法术书的两类提示
+（法力值/页签/翻页、法术太贵）与法术说明（`SpellDialogElement::showPopup`）同样被写在状态行或只写日志，
+玩家看不到。
+
+**决定**：
+
+1. **理由由竞技场给**：`IsDisableCastSpell( spell, out string? reason )` 逐条赋值，六句话作为
+   `BattleArena` 的公开常量（`SphereOfNegationMessage`、`NoCommanderMessage`、`AlreadyCastMessage`、
+   `NoEffectMessage`、`OneElementalTypeMessage`、`NoSpaceForElementalMessage`），逐字照抄参考；原来的
+   `IsDisableCastSpell( spell )` 保留为 `out _` 的简写。可以施法时 `reason` 为 `null`（参考不动 `msg`）。
+2. **指挥官检查改用当前单位**：参考先判 `_currentUnit == nullptr` 再问指挥官，端口原来走
+   `GetCurrentCommander()`（内部 `GetCurrentColor()` 在没有行动单位时会断言）。改成
+   `_currentUnit?.GetCurrentOrArmyCommander()`，与参考同序，也让「战斗还没开打」这一态安全地答「没有指挥官」。
+3. **状态行换成消息框**：战斗场景的 `ShowMessage` 删除，改成三个口子——
+   `ShowMessageBox( header, body, answer, elements )`（参考 `Dialog::OK` / `YES|NO`）、
+   `ShowHeldMessageBox( header, body, elements )`（参考 `Dialog::ZERO`：没有按钮，按住右键期间显示、松开收起，
+   与 `CastleScene` 的 `_messageHeldByRightButton` 同一套写法）、以及按 `ByRightClick` 二选一的
+   `ShowTextMessage`。所有开框的地方仍保留「没有按钮美术时退回状态行」的兜底。
+4. **法术说明照参考拼**：正文是既有的 `SpellInfo.GetDescription( spell, owner, world )`（与
+   `getSpellDescription` 同源），元素是 `SpellDialogElement( icon, spell, points, font )`，图标取
+   `SpellBookArtwork.SpellIcons[ spell.IndexSprite() ]`、花费取 `spell.SpellPoints( owner.BagArtifacts )`，
+   标题照参考用法术名。施法者从竞技场当前行动单位取——书只能替它打开。
+5. **提示的标题分两种**：参考只有「法术太贵」那句用法术名做标题（`spell_book.cpp:326`），法力值/页签/翻页与
+   右键提示都是空标题（`spell_book.cpp:592-604`）；端口按 `SpellBookFrame.Spell` 是否为空区分。
+
+**偏差**：
+
+- 参考消息框的标题用 `FontType::normalYellow()`，端口沿用战斗已有的 `_whiteFont`（场景拿不到黄色常规字体）。
+- 参考 `Dialog::ZERO` 的框在松开右键的同一帧还可能重入法术书循环，端口在松开那一帧直接收起并跳过本帧，
+  下一帧才回到书（不可见差别）。
+- 召唤的两句理由（已有另一种元素、英雄旁边没有空格）没有测试：要摆出相应战场，留给召唤的测试。
+
+**验证**：新增 `BattleArenaSpellRefusalTests` 6 条（无指挥官、本轮已施法、否定之球优先级、无城堡的地震、
+空法术只是探路、简写与 `out` 形式一致）；构建 0 错误 0 警告；全量 **5 830** 绿（Core 292 / Assets 434 /
+Game 3 398 / UI 1 706）；两张战斗像素基线复跑 identical（消息框只在交互时出现，逐帧基线不变）。
+
+## ADR-235：战后结果窗接进战斗场景、`--battle-only` 无人值守入口
+
+**背景**：`DialogBattleSummary()` 在 ADR-233 里已移植成 `BattleSummaryWindow`，但没接进战斗场景——
+`BattleScene.Finish()` 只写一行日志就 `Close()` 回地图，玩家看不到「谁赢、损失多少、拿了多少经验」。
+另外 `--battle-auto` 只是把两边交给 AI，跑完仍然没有结果，也没有「打完一场就收工」的入口（参考的
+`TYPE_BATTLEONLY` 会话）。
+
+**决定**：
+
+1. **结果窗由场景收尾**：`Finish()` 结算之后调 `TryOpenSummary( result )`，按参考 `Battle::Loader`
+   的做法（`battle_main.cpp:390-401`）开窗；`_summary` 非空时 `Update()` 先喂它、逐帧推进，`DrawFrame`
+   把它画在最上面（先于投降报价与消息框）。
+2. **视角固定攻方**：战斗场景的攻方永远是玩家英雄，所以 `BattleSummaryText.Create` 的 `own` 传
+   `result.Attacker`，标题高亮就是「攻方赢」，赔款取守军 `GetSurrenderCost()`（攻方输时传 0）——正是参考
+   `attackerIsHuman` 那一支（`battle_dialogs.cpp:508-527`）。
+3. **重开按钮不给**：参考 `allowToRestart = !showBattle`，而这个窗本身就是显示出来的战斗，所以传假；
+   `Restart` 分支只留注释（真重开要重建竞技场，属冒险→战斗那条链）。
+4. **神器段走空表**：守方是游荡怪或城镇守军，没有英雄也就没有神器可交接，`BeginArtifacts( [] )` 立刻答假，
+   窗口就此关掉；段本身照参考实现留着，等敌方英雄参战时自然生效。
+5. **无人值守不开窗**：`--battle-auto` 与新增的 `--battle-only` 都不开窗（参考 `isHumanBattle` 为假时同样
+   不开），结果只进日志。`--battle-only` 隐含 `--battle` + `--battle-auto`，并在战斗结束后直接把客户端关掉
+   （`GameHost.CloseBattleWhenDone`），一条命令跑完一场并留下结果。
+
+**偏差**：
+
+- 招魂提示窗（`BattleNecromancyWindow`）在场景路径上接不上：招魂结算在 `BattleLoader` 里，而场景是自己
+  驱动竞技场的；等冒险地图→战斗那条链（ukw.27）把战后写回接上再补。
+- 结果窗的按钮美术沿用场景已有的 `SYSTEM.ICN` 帧；参考的 `<okay>`/`<restart>` 两套字用端口现有字体兜住。
+- 交互路径（真人对局打到结束）没有自动化：战斗打完需要真实操作，本轮只验证了窗口本身与无人值守整链。
+
+**验证**：新增 `BattleSummaryWindowTests` 8 条（动画/摘要偏移、OK 居中、重开缺图返回空、双钮左右分布、
+无输入不动作、点 OK 关闭、空神器表立刻结束、缺底图仍建窗）与 `BattleSummaryTextTests` 9 条（全胜/敌逃/敌降
+赔款、队长无战功、撤退三段、投降循环、全灭两段加循环、无名字退化、输了不给经验）；构建 0 错误 0 警告；
+全量 **5 847** 绿（Core 292 / Assets 434 / Game 3 407 / UI 1 714）；两张战斗像素基线 identical；
+`--battle-only` 实机跑通（攻击方 Ariel 战败、退出码 0，日志留 `The battle is over: attacker 'Loss',
+defender 'Wins', the defender won.` 与 `--battle-only: the single battle is finished, closing the client.`）。
+
+## ADR-236：人类英雄的动作接缝（`HumanHeroMovementHandler` + `World.HeroActionHost`）
+
+**背景**：动作表（`HeroActions` 的 `ActionTo*` / 战斗）早就照 `heroes_action.cpp` 写完了，`BattleLoader.Load` 也
+能结算军队、瓦片、城堡与经验，但**人类英雄走的不是这条路**：`AdventureSession.AttachMovementHandler` 给人类装的是
+`FogHeroMovementHandler`——只开图，走到怪物、资源、城堡上都什么也不发生。另外 `HeroActions.Fight` 的三处调用都
+把 presenter 留空，`IHeroActionHost.BattlePresenter` 没有任何消费者，人类战斗即使打起来也没有画面。
+
+**决定**：
+
+1. **界面宿主挂在世界上**：`World.HeroActionHost`（`IHeroActionHost`，缺省 `NullHeroActionHost.Instance`）。
+   参考里这些点直接调全局的 `Interface::AdventureMap::Get()`；端口没有那个全局，而世界本来就是这一局运行时的家
+   （雾、被占领对象、每日事件都挂在这里）。换图时 `World.Reset()` 把它复位，存档不写它。
+2. **人类四件事一个处理器**：`HumanHeroMovementHandler`——`Scout` 开图、`Action` 转给
+   `new HeroActions(hero, world.Kingdoms, world.HeroActionHost).Action(...)`、`ActionNewPosition` 照抄
+   `heroes.cpp:2019-2046` 的人类那一半（守卫扫描 → 先打路线终点那格，没有才打第一组邻格）、`ScoutRadar` 留给
+   界面层的小地图。
+3. **装配按「有没有界面」三选一**：`AdventureSession.Start( world, info, host )` 把 `host` 放上世界；
+   `AttachMovementHandler` 随后按下表装处理器：
+
+   | 谁 | 有宿主 | 没宿主 |
+   |---|---|---|
+   | 人类 | `HumanHeroMovementHandler` | `FogHeroMovementHandler` |
+   | 电脑 | `AiHeroMovementHandler` | `AiHeroMovementHandler` |
+
+   没宿主时人类仍只开图：命令行与测试里没有玩家在点，走到怪物格上直接开打既没画面也没提示，等于参考里
+   `isHumanBattle == false` 的状态。
+4. **presenter 接上了但还没有消费者**：`Fight` 的三处调用（打野怪、攻城、英雄对战）都传 `_host.BattlePresenter`。
+   App 层还没有 `IBattlePresenter` 的实现（见 `ukw.29`），所以 App 眼下仍不装宿主，行为与之前完全一致。
+
+**偏差**：
+
+- 人类动作里要问玩家的点（宝箱拿钱/拿经验、怪物加入、招募所、谜语、市场、盗贼公会、开城堡）全部走
+  `IHeroActionHost`，App 层的实现排在 `0lm.12`（已依赖 `ukw.29`）。
+- 人类战斗的画面与「走到怪物格自动开战」要等 `ukw.29` 把 `BattleArena` 的动作执行与界面动画解耦之后才谈得上；
+  在那之前 App 不装宿主，人类英雄不会自己开战。
+- `ActionNewPosition` 的人类版没有 AI 那半段规划，与参考一致。
+
+**验证**：新增 `HumanHeroMovementHandlerTests` 4 条（走到资源拿走、传送不开战、终点格守卫真的打起来且给经验、
+无守卫不动）与 `AdventureSessionTests` 2 条（无宿主 → `NullHeroActionHost` + `FogHeroMovementHandler`；有宿主 →
+同一个 host + `HumanHeroMovementHandler`，电脑英雄仍是 `AiHeroMovementHandler`）；全量 **5 853** 绿
+（Core 292 / Assets 434 / Game 3 413 / UI 1 714）；两张战斗像素基线 identical；`--map` 冒烟 120 帧正常退出。

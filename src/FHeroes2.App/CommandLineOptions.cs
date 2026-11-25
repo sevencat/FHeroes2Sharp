@@ -14,10 +14,11 @@ namespace FHeroes2.App;
 ///                 [--lang &lt;culture&gt;] [--difficulty &lt;level&gt;]
 ///                 [--scale &lt;1..4&gt;] [--fullscreen] [--smoke-frames &lt;n&gt;] [--seed &lt;n&gt;] [--list-assets]
 ///                 [--cursor &lt;x,y&gt;] [--right-button] [--left-click] [--left-click-at &lt;frame:x,y[;...]&gt;]
+///                 [--key-at &lt;frame:Key[;...]&gt;]
 ///                 [--freeze-animation]
 ///                 [--system-info]
 ///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--skip-turns &lt;n&gt;] [--view-world] [--battle|--battle-siege|--battle-auto] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--skip-turns &lt;n&gt;] [--view-world] [--battle|--battle-siege|--battle-auto|--battle-only] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
@@ -34,6 +35,7 @@ public sealed class CommandLineOptions
     public const int MaximumScale = 4;
 
     private readonly List<ScriptedClick> _scriptedClicks = [];
+    private readonly List<ScriptedKey> _scriptedKeys = [];
 
     private CommandLineOptions()
     {
@@ -121,6 +123,23 @@ public sealed class CommandLineOptions
     /// </para>
     /// </remarks>
     public IReadOnlyList<ScriptedClick> ScriptedClicks => _scriptedClicks;
+
+    /// <summary>
+    /// Key presses of <c>--key-at &lt;frame:Key[;frame:Key…]&gt;</c>, in strictly increasing frame order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="ScriptedClicks"/> 同一个来由，只是走键盘：战斗界面的撤退（<c>R</c>）、投降（<c>S</c>）、
+    /// 施法（<c>C</c>）与跳过（空格）都只走 <c>Game::HotKeyPressEvent()</c>，也就是读
+    /// <see cref="FHeroes2.UI.Input.LocalEvent"/> 的按键状态，没有可以「点」的入口，所以冒烟必须能把键按进去。
+    /// </para>
+    /// <para>
+    /// 每一键都是「这一帧按下、下一帧抬起」，与真实按键跨两帧一致；按下那一帧场景就会看见
+    /// <c>KeyPressed</c>。键名用 <see cref="FHeroes2.UI.Input.Key"/> 的名字（不分大小写，也可以是数字），
+    /// 冒烟里写 <c>--key-at 12:R;40:S</c> 就够。
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<ScriptedKey> ScriptedKeys => _scriptedKeys;
 
     /// <summary>
     /// Window scale factor applied to the 640x480 logical resolution, or <see langword="null"/> when
@@ -257,6 +276,13 @@ public sealed class CommandLineOptions
     /// smoke run needs this flag; the pixel baselines do not, they freeze the battle.
     /// </summary>
     public bool BattleAuto { get; private set; }
+
+    /// <summary>
+    /// Fights exactly one battle unattended and closes the client afterwards (<c>--battle-only</c>), the port of
+    /// the reference's <c>TYPE_BATTLEONLY</c> session: both sides run by the computer, the result window is
+    /// skipped, and the settled result is left in the log. Implies <c>--battle</c> and <c>--battle-auto</c>.
+    /// </summary>
+    public bool BattleOnly { get; private set; }
 
     /// <summary>
     /// Opens one of the town screen's windows right after <c>--enter-town</c> (<c>--town-window
@@ -458,6 +484,10 @@ public sealed class CommandLineOptions
                     options.AddScriptedClicks(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--key-at":
+                    options.AddScriptedKeys(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--scale":
                     string rawScale = RequireValue(arguments, ref i, argument);
                     if (!int.TryParse(rawScale, out int scale) || scale < MinimumScale || scale > MaximumScale)
@@ -583,6 +613,12 @@ public sealed class CommandLineOptions
                     options.BattleAuto = true;
                     break;
 
+                case "--battle-only":
+                    options.Battle = true;
+                    options.BattleAuto = true;
+                    options.BattleOnly = true;
+                    break;
+
                 case "--town-window":
                     options.TownWindow = RequireValue(arguments, ref i, argument);
                     break;
@@ -705,6 +741,10 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --left-click-at <frame:x,y[;...]>");
         Console.WriteLine("                      Clicks at the given frames and points, e.g. to walk the first run's");
         Console.WriteLine("                      language picker, greeting and resolution chooser in one run (ADR-209).");
+        Console.WriteLine("  --key-at <frame:Key[;...]>");
+        Console.WriteLine("                      Presses keys at the given frames, e.g. '--key-at 12:R;40:S' for the");
+        Console.WriteLine("                      retreat and surrender dialogs of a battle. Each press spans two");
+        Console.WriteLine("                      frames (down, then up) and is read through LocalEvent's key state.");
         Console.WriteLine("  --right-button      Holds the right mouse button at --cursor, which shows the tooltip");
         Console.WriteLine("                      of the sign under it and keeps the map's quick info box up (the");
         Console.WriteLine("                      original shows both only while the button is pressed).");
@@ -728,6 +768,8 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --battle            Starts the battle of the focus hero and the first wandering monster.");
         Console.WriteLine("  --battle-siege      Same, but against the first town of another colour (implies --battle).");
         Console.WriteLine("  --battle-auto       Hand both sides of the battle to the computer (implies --battle).");
+    Console.WriteLine("  --battle-only       Fight one battle unattended and quit; the result goes to the log.");
+    Console.WriteLine("                      Implies --battle-auto.");
         Console.WriteLine("  --town-window <name>  Opens one of its windows, e.g. 'mageguild' or 'market', after --enter-town.");
         Console.WriteLine("  --town-select <n>   Opens the n-th town of the kingdom (0 based) instead of the first.");
         Console.WriteLine("  --town-build <name>  Adds one BuildingType to the entered town, e.g. 'MageGuild1'.");
@@ -793,6 +835,38 @@ public sealed class CommandLineOptions
             }
 
             _scriptedClicks.Add(new ScriptedClick(frame, ParsePoint(parts[1], option)));
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>--key-at</c>'s <c>frame:Key[;frame:Key…]</c> value and appends the presses.
+    /// </summary>
+    private void AddScriptedKeys(string value, string option)
+    {
+        foreach (string entry in value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = entry.Split(':', StringSplitOptions.TrimEntries);
+            if (parts.Length != 2 || !int.TryParse(parts[0], out int frame) || frame < 1)
+            {
+                throw new ArgumentException(
+                    $"'{option}' expects '<frame>:<key>[;<frame>:<key>...]' with a frame of at least 1, got '{entry}'.");
+            }
+
+            int previous = _scriptedKeys.Count > 0 ? _scriptedKeys[^1].Frame : 0;
+            if (frame <= previous)
+            {
+                throw new ArgumentException(
+                    $"'{option}' expects strictly increasing frames, got {frame} after {previous}.");
+            }
+
+            if (!Enum.TryParse(parts[1], ignoreCase: true, out FHeroes2.UI.Input.Key key)
+                || key == FHeroes2.UI.Input.Key.None)
+            {
+                throw new ArgumentException(
+                    $"'{option}' expects a key name such as 'R', 'S', 'Space' or 'F1', got '{parts[1]}'.");
+            }
+
+            _scriptedKeys.Add(new ScriptedKey(frame, key));
         }
     }
 
@@ -984,3 +1058,10 @@ public readonly record struct EditorDataRequest(Point Tile, int Value);
 /// <param name="Frame">Frame of the main loop, counted from the first one, like <c>--smoke-frames</c>.</param>
 /// <param name="Point">Cursor position of the click, in 640x480 logical pixels.</param>
 public readonly record struct ScriptedClick(int Frame, Point Point);
+
+/// <summary>
+/// One key of <c>--key-at</c>: the loop frame it goes down on and the key itself.
+/// </summary>
+/// <param name="Frame">Frame of the main loop, counted from the first one, like <c>--smoke-frames</c>.</param>
+/// <param name="Key">Key that goes down; it goes up on the frame after.</param>
+public readonly record struct ScriptedKey(int Frame, FHeroes2.UI.Input.Key Key);
