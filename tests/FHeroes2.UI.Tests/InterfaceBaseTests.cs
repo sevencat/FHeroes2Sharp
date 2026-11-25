@@ -1,6 +1,10 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+
+using FHeroes2.Game.System;
+
 using FHeroes2.UI.Interface;
+using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -98,6 +102,35 @@ public sealed class InterfaceBaseTests
     }
 
     [Fact]
+    public void BlitOnTile_AnchorsTheSpriteByItsOffsets()
+    {
+        TestInterface @interface = new();
+        GameArea area = @interface.GetGameArea();
+
+        area.SetAreaPosition(16, 16, 608, 448);
+
+        // A tile well inside the viewport, so nothing of the sprite is clipped away.
+        Point tile = area.VisibleTileRoi.Position + new Point(2, 2);
+        Point screen = area.GetRelativeTilePosition(tile);
+
+        Sprite sprite = new(4, 4, offsetX: 5, offsetY: 3);
+        sprite.Image.Fill(42);
+
+        PixelBuffer destination = @interface.Display;
+        destination.Fill(0);
+
+        area.BlitOnTile(destination, sprite, sprite.OffsetX, sprite.OffsetY, tile, false, 255);
+
+        // Interface::GameArea::BlitOnTile() moves the whole image by the offsets: the sprite origin lands on
+        // tileOffset + ( ox, oy ) and nothing is cut off, which is what anchors multi-tile objects to their tile.
+        Assert.Equal(42, destination[screen.X + 5, screen.Y + 3]);
+        Assert.Equal(42, destination[screen.X + 8, screen.Y + 6]);
+        Assert.Equal(0, destination[screen.X, screen.Y]);
+        Assert.Equal(0, destination[screen.X + 4, screen.Y + 3]);
+        Assert.Equal(0, destination[screen.X + 9, screen.Y + 3]);
+    }
+
+    [Fact]
     public void IsEditor_AndDragMovement_AreReported()
     {
         TestInterface game = new();
@@ -110,11 +143,65 @@ public sealed class InterfaceBaseTests
     }
 
     [Fact]
-    public void RenderWithFadeInOrPlanRender_IsNotPorted()
+    public void RenderWithFadeInOrPlanRender_WithoutAPendingFade_OnlyQueuesTheParts()
     {
         TestInterface @interface = new();
 
-        Assert.Throws<NotImplementedException>(() => @interface.RenderWithFadeInOrPlanRender(Redraw.All));
+        @interface.RenderWithFadeInOrPlanRender(Redraw.Radar | Redraw.Border);
+
+        // interface_base.cpp:35-37: nothing to fade in, so the parts only join the queue of the frame loop.
+        Assert.Equal(Redraw.Radar | Redraw.Border, @interface.GetRedrawMask());
+        Assert.Equal(Redraw.None, @interface.Painted);
+        Assert.Null(@interface.TakePendingFadeIn());
+    }
+
+    [Fact]
+    public void RenderWithFadeInOrPlanRender_WithAPendingFade_PaintsAndPublishesTheFade()
+    {
+        TestInterface @interface = new();
+        GameDisplayFadeIn.SetDisplayFadeIn();
+
+        @interface.RenderWithFadeInOrPlanRender(Redraw.Status);
+
+        // interface_base.cpp:30-34: the frame is painted right away, because the fade-in brightens the new frame.
+        Assert.Equal(Redraw.Status, @interface.Painted);
+        Assert.Equal(Redraw.None, @interface.GetRedrawMask());
+        Assert.False(GameDisplayFadeIn.IsFadeInNeeded);
+
+        DisplayFade fade = Assert.IsType<DisplayFade>(@interface.TakePendingFadeIn());
+
+        Assert.Equal(DisplayFade.ScreenFadeFrameCount, fade.FrameCount);
+        Assert.Equal(DisplayFade.FullBrightAlpha, fade.EndAlpha);
+        Assert.Equal(new Rect(0, 0, 640, 480), fade.Roi);
+
+        // One request belongs to one frame.
+        Assert.Null(@interface.TakePendingFadeIn());
+    }
+
+    [Fact]
+    public void ValidateFadeInAndRender_WithAPendingFade_QueuesTheMapArea()
+    {
+        TestInterface @interface = new();
+        GameDisplayFadeIn.SetDisplayFadeIn();
+
+        @interface.ValidateFadeIn();
+
+        // interface_base.cpp:42-46: the whole screen fades in and the map area is queued for a repaint afterwards.
+        Assert.NotNull(@interface.TakePendingFadeIn());
+        Assert.Equal(Redraw.GameArea, @interface.GetRedrawMask());
+        Assert.False(GameDisplayFadeIn.IsFadeInNeeded);
+    }
+
+    [Fact]
+    public void ValidateFadeInAndRender_WithoutAPendingFade_LeavesTheQueueAlone()
+    {
+        TestInterface @interface = new();
+
+        @interface.ValidateFadeIn();
+
+        // interface_base.cpp:47-49 only presents the frame; presenting is the host's job, so nothing happens here.
+        Assert.Null(@interface.TakePendingFadeIn());
+        Assert.Equal(Redraw.None, @interface.GetRedrawMask());
     }
 
     [Fact]
@@ -170,11 +257,24 @@ public sealed class InterfaceBaseTests
     private sealed class TestInterface : BaseInterface
     {
         public TestInterface(bool isEditor = false)
-            : base(isEditor, new PixelBuffer(640, 480))
+            : this(isEditor, new PixelBuffer(640, 480))
         {
         }
 
-        public override void RedrawInterface(Redraw force) => SetRedraw(force);
+        private TestInterface(bool isEditor, PixelBuffer display)
+            : base(isEditor, display)
+            => Display = display;
+
+        /// <summary>The frame buffer of the interface, the target of the map blits of the tests.</summary>
+        public PixelBuffer Display { get; }
+
+        /// <summary>Parts painted on the frame, the calls the frame loop would make.</summary>
+        public Redraw Painted { get; private set; }
+
+        public override void RedrawInterface(Redraw force) => Painted |= force;
+
+        /// <summary>The protected <c>validateFadeInAndRender()</c> of the reference.</summary>
+        public void ValidateFadeIn() => ValidateFadeInAndRender();
 
         public override void MouseCursorAreaClickLeft(int tileIndex)
         {

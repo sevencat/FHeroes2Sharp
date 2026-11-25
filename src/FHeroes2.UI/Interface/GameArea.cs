@@ -544,16 +544,16 @@ public sealed partial class GameArea
     /// <param name="flip">Whether the image is mirrored.</param>
     /// <param name="alpha">Opacity of the blit.</param>
     /// <remarks>
-    /// The sprite is anchored by the source rectangle, not by its top-left corner: the reference shifts
-    /// <paramref name="srcRoi"/> by the offsets and then blits that area to the tile position, which is what makes
-    /// a multi-tile object line up with its own tile.
+    /// The offsets move the whole image, they do not cut it: the reference clips
+    /// <c>{ tileOffset + ( ox, oy ), srcRoi.size }</c> against the viewport and blits the corresponding part of
+    /// <paramref name="srcRoi"/> there, so the sprite keeps the anchor the ICN header gives it - a multi-tile
+    /// object whose part hangs over the tiles above and to the left lands there, and the part is not truncated.
     /// </remarks>
     public void BlitOnTile(PixelBuffer dst, Sprite src, Rect srcRoi, int ox, int oy, Point mp, bool flip, byte alpha)
     {
         ArgumentNullException.ThrowIfNull(dst);
 
-        Rect shifted = new(srcRoi.X + ox, srcRoi.Y + oy, srcRoi.Width, srcRoi.Height);
-        Point dstPos = GetRelativeTilePosition(mp);
+        Point dstPos = GetRelativeTilePosition(mp) + new Point(ox, oy);
 
         if (alpha < 255 && MapSprites.GamePalette is not { } gamePalette)
         {
@@ -566,7 +566,7 @@ public sealed partial class GameArea
             dst,
             dstPos,
             src,
-            shifted,
+            srcRoi,
             _windowRoi,
             alpha,
             flip,

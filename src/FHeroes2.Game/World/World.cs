@@ -132,8 +132,8 @@ public sealed partial class World
     private readonly List<int> _allEyeOfMagi = [];
 
     /// <summary>
-    /// The fog of war, made on first use and dropped by <see cref="Reset"/>; <c>Maps::Tile::_fogColors</c>
-    /// gathered into one table.
+    /// The cached view over the fog kept by the tiles, made on first use and dropped by <see cref="Reset"/>.
+    /// It owns no fog itself: <see cref="Tile.FogColors"/> is the storage (ADR-238).
     /// </summary>
     private MapFog? _fog;
 
@@ -271,18 +271,20 @@ public sealed partial class World
     public MapSphinx? GetMapSphinx(int tileIndex) => _mapObjects.Get<MapSphinx>(tileIndex);
 
     /// <summary>
-    /// The fog of war of the map.
+    /// The fog of war of the map, as a view over the tiles that store it.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 参考把迷雾<b>存在每一块瓦片的元数据里</b>（<c>Maps::Tile::_fogColors</c>，一个颜色位掩码），
-    /// <c>Maps::ClearFog</c> 直接改瓦片。端口把这层状态收在 <see cref="MapFog"/> 里：
-    /// 「每块瓦片对哪些颜色还没被发现」加一份由此算出的方向掩码，供渲染器使用。
+    /// 参考把迷雾<b>存在每一块瓦片的元数据里</b>（<c>Maps::Tile::_fogColors</c>，一个颜色位掩码；
+    /// 方向掩码在 <c>_fogDirection</c>），<c>Maps::ClearFog</c> 直接改瓦片。端口照做：
+    /// <see cref="Tile.FogColors"/> 与 <see cref="Tile.FogDirection"/> 是<b>唯一</b>的存储，
+    /// <see cref="MapFog"/> 只是读它的门面，自己不存一份字节表（ADR-238）。
     /// </para>
     /// <para>
-    /// <b>按需创建</b>：没有地图时返回 <see langword="null"/>，有尺寸时按 <see cref="Width"/>×
-    /// <see cref="Height"/> 建一张全黑的表。这样两个加载器（<see cref="GenerateUninitializedMap"/> 与
-    /// <see cref="LoadMap"/>）都不必记得同时建迷雾，<see cref="Reset"/> 只管把它丢掉。
+    /// <b>按需创建</b>：没有地图、或瓦片还没铺满 <see cref="Width"/>×<see cref="Height"/> 时返回
+    /// <see langword="null"/>（参考此时 <c>vec_tiles</c> 也是空的）。这样两个加载器
+    /// （<see cref="GenerateUninitializedMap"/> 与 <see cref="LoadMap"/>）都不必记得同时建迷雾，
+    /// <see cref="Reset"/> 只管把它丢掉。
     /// </para>
     /// <para>
     /// <b>开局侦察要自己调</b>：地图一加载就是全黑的，参考在 <c>game_startgame.cpp:769</c> 里紧接着调
@@ -295,14 +297,20 @@ public sealed partial class World
     {
         get
         {
-            if (Width <= 0 || Height <= 0)
+            if (!HasFullTileGrid)
             {
                 return null;
             }
 
-            return _fog ??= new MapFog(Width, Height);
+            return _fog ??= new MapFog(_tiles, Width, Height);
         }
     }
+
+    /// <summary>
+    /// Whether <see cref="_tiles"/> holds one tile per map position; guards <see cref="Fog"/> while a loader is
+    /// still filling the grid.
+    /// </summary>
+    private bool HasFullTileGrid => Width > 0 && Height > 0 && _tiles.Count >= Width * Height;
 
     /// <summary>
     /// Reveals the disc around a tile, <c>Maps::ClearFog()</c> (<c>maps.cpp:464</c>).
@@ -343,40 +351,7 @@ public sealed partial class World
         int revealed = fog.Reveal(tileIndex % Width, tileIndex / Width, distance, color);
         fog.UpdateDirections(color);
 
-        int column = tileIndex % Width;
-        int row = tileIndex / Width;
-        SyncTilesFog(column - distance, row - distance, column + distance, row + distance);
-
         return revealed;
-    }
-
-    /// <summary>
-    /// 把 <see cref="Fog"/> 的迷雾按矩形抄进瓦片自己那份，<see cref="Tile.SetFogColors"/>。
-    /// </summary>
-    /// <remarks>
-    /// 迷雾在端口里有两份账：<see cref="Fog"/> 给 <c>AdventureMapView</c> 与雷达用，
-    /// <see cref="Tile"/> 的 <see cref="Tile.FogColors"/> 是参考里瓦片自己那份——<c>GameArea</c> 的画图与
-    /// <see cref="TileFog"/> 的方向缓存读的都是它。两份账合并之前，谁动了其中一份就得同步另一份。
-    /// </remarks>
-    private void SyncTilesFog(int minColumn, int minRow, int maxColumn, int maxRow)
-    {
-        if (Fog is not { } fog)
-        {
-            return;
-        }
-
-        int firstColumn = Math.Max(minColumn, 0);
-        int firstRow = Math.Max(minRow, 0);
-        int lastColumn = Math.Min(maxColumn, Width - 1);
-        int lastRow = Math.Min(maxRow, Height - 1);
-
-        for (int row = firstRow; row <= lastRow; ++row)
-        {
-            for (int column = firstColumn; column <= lastColumn; ++column)
-            {
-                _tiles[(row * Width) + column].SetFogColors(fog.GetFogColors(column, row));
-            }
-        }
     }
 
     /// <summary>
@@ -464,13 +439,9 @@ public sealed partial class World
         revealed += _heroes.Scout(this, color);
 
         // Every reveal already recomputes the masks of its colors, but a call that reveals nothing — a map
-        // whose human color has no hero and no town — still has to leave the table ready to be drawn: the
-        // renderer walks the direction masks, not the fog bytes, and a fresh table has none yet.
+        // whose human color has no hero and no town — still has to leave the masks ready to be drawn: the
+        // renderer walks the direction masks, not the fog bytes, and a fresh tile has none yet.
         Fog?.UpdateDirections(color);
-
-        // 迷雾有两份账：MapFog（AdventureMapView 与雷达按它画）与 Tile._fogColors（参考里 Tile 自己那份，
-        // GameArea 的渲染与 TileFog 的方向缓存读的是它）。这里把 Tile 那份同步过来，否则地图层会按「全雾」画。
-        SyncTilesFog(0, 0, Width - 1, Height - 1);
 
         return revealed;
     }
@@ -1833,16 +1804,35 @@ public sealed partial class World
             return;
         }
 
-        Hero? hero = SelectMapHero(info, sprite.Race);
+        // A sprite of no fixed race belongs to the kingdom that owns it: the hero is hired from that race
+        // (world_loadmap.cpp:593-595). A neutral one keeps the random race and the reference finds no hero
+        // for it, so the port leaves it to SelectMapHero as well.
+        MapRace race = sprite.Race;
+
+        if (race == MapRace.Random && sprite.Color != PlayerColor.None)
+        {
+            race = GetKingdom(sprite.Color).GetRace();
+
+            // The port opens the game after the map is loaded, so Players::SetStartGame() has not turned a
+            // random kingdom race into a concrete one yet (AdventureSession.Start), while the reference
+            // starts the game first and loads the map afterwards (game_campaign.cpp:1646-1652). Roll the
+            // race here instead of leaving an unknown one on the hero.
+            if (race is MapRace.Random or MapRace.None)
+            {
+                race = MapRaces.Random();
+            }
+        }
+
+        Hero? hero = SelectMapHero(info, race);
 
         if (hero is null)
         {
-            GameLog.Warn($"Map hero block {block.ObjectId} at tile {tileIndex}: no hero of race {sprite.Race} is left, skipped.");
+            GameLog.Warn($"Map hero block {block.ObjectId} at tile {tileIndex}: no hero of race {race} is left, skipped.");
 
             return;
         }
 
-        hero.LoadFromMP2(tileIndex, sprite.Color, sprite.Race, false, info);
+        hero.LoadFromMP2(tileIndex, sprite.Color, race, false, info);
     }
 
     /// <summary>

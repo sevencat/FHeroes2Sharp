@@ -28,7 +28,7 @@ public sealed class MapFogTests
     [Fact]
     public void Reveal_ClearsTheDiscAroundTheTile()
     {
-        MapFog fog = new(11, 11);
+        MapFog fog = FogTestGrid.Create(11, 11);
 
         fog.Reveal(5, 5, MapFog.HeroRevealDistance, PlayerColor.Blue);
 
@@ -45,7 +45,7 @@ public sealed class MapFogTests
     [Fact]
     public void Reveal_WithZeroDistanceRevealsOnlyTheTile()
     {
-        MapFog fog = new(3, 3);
+        MapFog fog = FogTestGrid.Create(3, 3);
 
         fog.Reveal(1, 1, 0, PlayerColor.Blue);
 
@@ -57,7 +57,7 @@ public sealed class MapFogTests
     [Fact]
     public void IsFogged_RequiresEveryColorToKnowTheTile()
     {
-        MapFog fog = new(3, 3);
+        MapFog fog = FogTestGrid.Create(3, 3);
 
         fog.Reveal(1, 1, 0, PlayerColor.Blue);
 
@@ -75,7 +75,7 @@ public sealed class MapFogTests
     [Fact]
     public void UpdateDirections_KeepsAFullyFoggedMapUnderTheFog()
     {
-        MapFog fog = new(4, 4);
+        MapFog fog = FogTestGrid.Create(4, 4);
 
         fog.UpdateDirections(PlayerColor.Blue);
 
@@ -93,7 +93,7 @@ public sealed class MapFogTests
     [Fact]
     public void UpdateDirections_MarksTheTilesAroundAHole()
     {
-        MapFog fog = new(5, 5);
+        MapFog fog = FogTestGrid.Create(5, 5);
         fog.Reveal(2, 2, 0, PlayerColor.Blue);
 
         fog.UpdateDirections(PlayerColor.Blue);
@@ -119,7 +119,7 @@ public sealed class MapFogTests
     {
         // The reveal covers the whole map, so no tile keeps a bit set even though the tiles of the
         // edge have neighbours outside the map.
-        MapFog fog = new(3, 3);
+        MapFog fog = FogTestGrid.Create(3, 3);
         fog.Reveal(1, 1, 2, PlayerColor.Blue);
 
         fog.UpdateDirections(PlayerColor.Blue);
@@ -131,11 +131,31 @@ public sealed class MapFogTests
     [Fact]
     public void UpdateDirections_WithoutColorsLeavesTheMapFogFree()
     {
-        MapFog fog = new(3, 3);
+        MapFog fog = FogTestGrid.Create(3, 3);
 
         fog.UpdateDirections(PlayerColor.None);
 
         Assert.Equal(0, fog.CountFogged());
         Assert.Equal(Direction.Unknown, fog.GetDirection(1, 1));
+    }
+
+    [Fact]
+    public void ClearFog_WritesTheTilesOnly()
+    {
+        // The tiles are the only storage of the fog: one World.ClearFog has to answer the same through the tile
+        // and through the MapFog view, with no second table to write (ADR-238). Before that the two disagreed
+        // until SyncTilesFog copied one into the other.
+        World world = new();
+        world.GenerateUninitializedMap(8);
+
+        int center = (4 * world.Width) + 4;
+
+        Assert.True(world.ClearFog(center, 1, PlayerColor.Blue) > 0);
+
+        Tile tile = world.GetTile(center);
+
+        Assert.False(tile.IsFogForAll(PlayerColor.Blue));
+        Assert.Equal(tile.FogDirection, world.Fog!.GetDirection(4, 4));
+        Assert.False(world.Fog.IsFogged(4, 4, PlayerColor.Blue));
     }
 }

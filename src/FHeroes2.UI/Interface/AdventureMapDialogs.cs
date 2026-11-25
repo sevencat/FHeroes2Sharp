@@ -403,6 +403,11 @@ public sealed class AdventureMapDialogs
     /// 端口只有雷达版，隐藏界面时也画在雷达上，等扩展窗口有调用方再补。
     /// </para>
     /// <para>
+    /// 参考的 <c>UltimateArtifact::GetPuzzleMapSurface()</c>（<c>artifact_ultimate.cpp:44-47</c>）只是转调界面层的
+    /// 生成器，端口的分层是 <c>UI → Game</c>，所以这条转调落在了这里：Game 层的 <see cref="UltimateArtifact"/> 不带
+    /// 这个方法，整张图由本函数直接问 <see cref="GameArea"/> 要。
+    /// </para>
+    /// <para>
     /// 神器还没被挖出时参考的 <c>GetPuzzleMapSurface()</c> 返回空图，函数就什么都不做；端口把
     /// <see cref="UltimateArtifact.Position"/> 与生成结果两道检查都留着。
     /// </para>

@@ -26,7 +26,7 @@ public sealed class FogLayerTests
     {
         // No archives: the fog source is a set of four flat tiles, one value each, so the pixel of a
         // tile tells both that it was covered and which variant was picked.
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
         PixelBuffer target = Render(
@@ -50,7 +50,7 @@ public sealed class FogLayerTests
     [Fact]
     public void Draw_LeavesADiscoveredTileBare()
     {
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.Reveal(Center, Center, 0, PlayerColor.Blue);
         fog.UpdateDirections(PlayerColor.Blue);
 
@@ -82,7 +82,7 @@ public sealed class FogLayerTests
         HeroSpriteSet? heroes = HeroSpriteSet.TryCreate(assets);
         Assert.NotNull(heroes);
 
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
         Mp2TileInfo hero = HeroTile(3);
@@ -127,7 +127,7 @@ public sealed class FogLayerTests
         ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
         Assert.NotNull(objects);
 
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
         // The only difference between the two maps is the castle, and with the fog on and no
@@ -152,7 +152,7 @@ public sealed class FogLayerTests
 
         Sprite town = Assert.IsType<Sprite>(objects.GetSprite(Mp2ObjectIcnType.ObjnTown, TownFrame));
 
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
         Mp2Map map = TownMap();

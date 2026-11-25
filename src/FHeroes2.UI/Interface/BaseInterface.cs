@@ -1,6 +1,10 @@
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 
+using FHeroes2.Game.System;
+
+using FHeroes2.UI.Widgets;
+
 namespace FHeroes2.UI.Interface;
 
 /// <summary>
@@ -22,7 +26,9 @@ namespace FHeroes2.UI.Interface;
 public abstract class BaseInterface
 {
     private readonly bool _isEditor;
+    private readonly PixelBuffer _display;
     private Redraw _redraw;
+    private DisplayFade? _pendingFadeIn;
 
     /// <summary>Builds the interface, <c>BaseInterface( bool isEditor )</c>.</summary>
     /// <param name="isEditor">Whether this is the map editor interface.</param>
@@ -33,6 +39,7 @@ public abstract class BaseInterface
         ArgumentNullException.ThrowIfNull(display);
 
         _isEditor = isEditor;
+        _display = display;
         GameArea = new GameArea(this);
         Radar = new Radar(this, display);
     }
@@ -134,17 +141,55 @@ public abstract class BaseInterface
     /// Renders the given parts, fading the frame in when a fade-in is pending, <c>renderWithFadeInOrPlanRender()</c>.
     /// </summary>
     /// <param name="redrawMask">Parts to repaint and to include in the fade-in frame.</param>
-    /// <exception cref="NotImplementedException">
-    /// Not ported yet: the reference asks <c>Game::validateDisplayFadeIn()</c>, and the global game state is not
-    /// ported (S14). The port drives fade-ins through <c>DisplayFade</c> objects owned by the host instead.
-    /// </exception>
+    /// <remarks>
+    /// 参考（<c>gui/interface_base.cpp:28-38</c>）：有待播的淡入就立刻重画这一帧、再把整屏淡入；否则只把这几块排进队列，
+    /// 交给帧循环。<c>redraw()</c> 那一半端口照做，阻塞的 <c>fheroes2::fadeInDisplay()</c> 换成发布
+    /// <see cref="TakePendingFadeIn"/>，由宿主逐帧播放。
+    /// </remarks>
     public void RenderWithFadeInOrPlanRender(Redraw redrawMask)
-        => throw new NotImplementedException("BaseInterface::renderWithFadeInOrPlanRender needs the Game fade-in state (S14).");
+    {
+        if (GameDisplayFadeIn.ValidateDisplayFadeIn())
+        {
+            RedrawInterface(redrawMask);
+            _pendingFadeIn = DisplayFade.In(_display);
+
+            return;
+        }
+
+        SetRedraw(redrawMask);
+    }
 
     /// <summary>
     /// Clears a pending fade-in and paints the whole frame, <c>validateFadeInAndRender()</c>.
     /// </summary>
-    /// <exception cref="NotImplementedException">Not ported yet, same reason as <see cref="RenderWithFadeInOrPlanRender"/>.</exception>
+    /// <remarks>
+    /// 参考（<c>gui/interface_base.cpp:40-50</c>）：有待播的淡入就整屏淡入、再排一次地图区的重画；否则只
+    /// <c>Display::render()</c> 把当前帧推上屏。端口的呈现归宿主，后一支无事可做；前一支同样是把淡入交给
+    /// <see cref="TakePendingFadeIn"/>。
+    /// </remarks>
     protected void ValidateFadeInAndRender()
-        => throw new NotImplementedException("BaseInterface::validateFadeInAndRender needs the Game fade-in state (S14).");
+    {
+        if (!GameDisplayFadeIn.ValidateDisplayFadeIn())
+        {
+            return;
+        }
+
+        _pendingFadeIn = DisplayFade.In(_display);
+        SetRedraw(Redraw.GameArea);
+    }
+
+    /// <summary>The full-screen fade-in the frame loop still has to play, <c>fheroes2::fadeInDisplay()</c>.</summary>
+    /// <returns>The fade, or <see langword="null"/> when no fade-in is pending.</returns>
+    /// <remarks>
+    /// 参考的 <c>fadeInDisplay()</c> 自己阻塞跑完六帧、每帧 <c>Display::render()</c>；端口把逐帧时机交给宿主，
+    /// 所以淡入以对象的形式在这里取走，由宿主对着 <c>BeginFrame</c> 的节奏调 <see cref="DisplayFade.TryAdvance"/>。
+    /// 取一次就清空：一次请求只属于一帧。
+    /// </remarks>
+    public DisplayFade? TakePendingFadeIn()
+    {
+        DisplayFade? fade = _pendingFadeIn;
+        _pendingFadeIn = null;
+
+        return fade;
+    }
 }

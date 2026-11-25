@@ -157,6 +157,8 @@ public static class Assets
         IcnType.ButtonExitPuzzleDimDoorEvil => Gui.ExitButtons.PuzzleDimDoorEvilFileName,
         IcnType.ButtonViewworldExitGood => Gui.ExitButtons.ViewWorldGoodFileName,
         IcnType.ButtonViewworldExitEvil => Gui.ExitButtons.ViewWorldEvilFileName,
+        IcnType.MiniMonsterImage => Gui.MiniMonsterSprites.ImageFileName,
+        IcnType.MiniMonsterShadow => Gui.MiniMonsterSprites.ShadowFileName,
         _ => IcnCatalog.GetFileName(type),
     };
 
@@ -219,6 +221,7 @@ public static class Assets
         Sprite?[]? frames = Gui.EmptyButtons.Build(fileName)
                              ?? Gui.SmallOkayCancelButtons.Build(fileName)
                              ?? Gui.ExitButtons.Build(fileName)
+                             ?? Gui.MiniMonsterSprites.Build(fileName)
                              ?? Gui.ScenarioInfoIcons.Build(fileName);
         SyntheticFiles[fileName] = frames;
 

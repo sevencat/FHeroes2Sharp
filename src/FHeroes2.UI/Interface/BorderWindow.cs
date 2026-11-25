@@ -148,8 +148,9 @@ public abstract class BorderWindow : IDisposable
     /// <remarks>
     /// Only a hidden-interface panel has a border to grab, which is the
     /// <c>!isHideInterfaceEnabled() || !isMouseLeftButtonPressedInArea( border.GetTop() )</c> guard of the
-    /// reference. The caller has to reset the cursor to a plain pointer itself: the reference does it here
-    /// because it owns the global cursor, the port's cursor layer sits above this assembly.
+    /// reference. The caller has to reset the cursor to a plain pointer itself, <c>Cursor::Get().SetThemes(
+    /// Cursor::POINTER )</c>: the reference does it here because it owns the global cursor, while the port's cursor
+    /// layer sits above this assembly. <see cref="BorderDrag"/>'s host does it on the frame the drag starts.
     /// </remarks>
     public BorderDrag? QueueEventProcessing(LocalEvent events)
     {

@@ -589,14 +589,14 @@ public sealed partial class GameArea
 
                 switch (objectType)
                 {
-                    case Mp2ObjectType.Hero:
+                    case Mp2ObjectType.ActionHero:
                     {
                         if (isEditor)
                         {
                             Hero? hero = tile.GetHero(World.Current);
                             if (hero is null || !hero.IsShipMaster)
                             {
-                                byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.Hero);
+                                byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.ActionHero);
 
                                 IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetEditorHeroSpritesPerTile(tile);
 
@@ -649,14 +649,14 @@ public sealed partial class GameArea
                         break;
                     }
 
-                    case Mp2ObjectType.Monster:
+                    case Mp2ObjectType.ActionMonster:
                     {
                         if (isPuzzleDraw || isTileUnderFog)
                         {
                             continue;
                         }
 
-                        byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.Monster);
+                        byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.ActionMonster);
 
                         IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetMonsterSpritesPerTile(tile, isEditor);
                         IReadOnlyList<ObjectRenderingInfo> spriteShadowInfo = TileRendering.GetMonsterShadowSpritesPerTile(tile, isEditor);
@@ -672,7 +672,7 @@ public sealed partial class GameArea
                         continue;
                     }
 
-                    case Mp2ObjectType.Boat:
+                    case Mp2ObjectType.ActionBoat:
                     {
                         // Boats are 2 tiles high so the info has to be populated for a boat one tile lower than the
                         // fog.
@@ -685,7 +685,7 @@ public sealed partial class GameArea
                             continue;
                         }
 
-                        byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.Boat);
+                        byte alphaValue = GetObjectAlphaValue(tileIndex, Mp2ObjectType.ActionBoat);
 
                         IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetBoatSpritesPerTile(tile);
                         IReadOnlyList<ObjectRenderingInfo> spriteShadowInfo = TileRendering.GetBoatShadowSpritesPerTile(tile);
@@ -707,8 +707,8 @@ public sealed partial class GameArea
 
                 // These are parts of original action objects which must be rendered under heroes.
                 if (!isPuzzleDraw
-                    && (objectType == Mp2ObjectType.AbandonedMine
-                        || (objectType == Mp2ObjectType.Mine && tile.GetMineSpellId(World.Current) == SpellType.Haunt)))
+                    && (objectType == Mp2ObjectType.ActionAbandonedMine
+                        || (objectType == Mp2ObjectType.ActionMine && tile.GetMineSpellId(World.Current) == SpellType.Haunt)))
                 {
                     // To render the ghosts of an abandoned mine correctly the tile above has to be checked for fog.
                     bool areGhostsUnderFog = renderFog && isTileUnderFog && World.Current.GetTile(tileIndex - worldWidth).FogDirection == Directions.All;
@@ -720,7 +720,7 @@ public sealed partial class GameArea
 
                     ghostAnimationPos.Add(new Point(posX, posY));
                 }
-                else if (objectType == Mp2ObjectType.Mine && !isTileUnderFog)
+                else if (objectType == Mp2ObjectType.ActionMine && !isTileUnderFog)
                 {
                     IReadOnlyList<ObjectRenderingInfo> spriteInfo = TileRendering.GetMineGuardianSpritesPerTile(World.Current, tile);
                     if (spriteInfo.Count > 0)
@@ -1072,6 +1072,11 @@ public sealed partial class GameArea
     /// The reference calls <c>_disableTransformLayer()</c> on the result before drawing into it. The port's
     /// <see cref="PixelBuffer"/> has no transform layer — it is always the reference's non-transformed form — so that
     /// call has no counterpart.
+    /// </para>
+    /// <para>
+    /// The reference reaches this routine through <c>UltimateArtifact::GetPuzzleMapSurface()</c>. That class lives in the
+    /// game layer, which the port keeps free of interface code, so the puzzle dialog calls this method directly
+    /// (<see cref="AdventureMapDialogs.ShowPuzzleMap"/>) and no forwarding method exists on the game side.
     /// </para>
     /// </remarks>
     /// <param name="index">Tile index of the artifact.</param>

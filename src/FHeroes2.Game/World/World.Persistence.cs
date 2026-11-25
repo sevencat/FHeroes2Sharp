@@ -57,9 +57,6 @@ public sealed partial class World
 
         MapGeometry geometry = new(Width, Height);
 
-        // 参考的迷雾就在瓦片里，写之前先把端口的迷雾表搬过去（world.cpp:1450 写的就是瓦片）。
-        StoreFogIntoTiles(geometry);
-
         stream.Write(Width);
         stream.Write(Height);
         stream.WriteList(_tiles, static (target, tile) => tile.WriteTo(target));
@@ -190,55 +187,8 @@ public sealed partial class World
             return;
         }
 
-        // 迷雾在瓦片里读回来，这里搬回端口那张表；PostLoad 不碰迷雾，先后无所谓。
-        RestoreFogFromTiles(geometry);
-
+        // 迷雾就在瓦片里，读回来即生效；方向掩码是派生数据（文件里没有），由上层按玩家重算。
         PostLoad(false, true);
-    }
-
-    /// <summary>
-    /// Puts the fog colours of <see cref="MapFog"/> onto the tiles, the direction the save writer needs.
-    /// </summary>
-    /// <remarks>
-    /// 参考没有这一步：它的迷雾本来就是瓦片的一部分。端口在写盘前把表搬回瓦片，让文件里的迷雾与游戏里看见的一致。
-    /// 只搬颜色：方向掩码是派生数据，参考也不存（<see cref="Tile.Persistence"/> 的说明）。
-    /// </remarks>
-    /// <param name="geometry">The map the tiles belong to.</param>
-    private void StoreFogIntoTiles(MapGeometry geometry)
-    {
-        if (_fog is not { } fog)
-        {
-            // 没有表就是没有地图（Fog 在有尺寸时按需创建），瓦片本身已经是全黑，写出去也对。
-            return;
-        }
-
-        for (int index = 0; index < _tiles.Count; ++index)
-        {
-            _tiles[index].SetFogColors(fog.GetFogColors(index % geometry.Width, index / geometry.Width));
-        }
-    }
-
-    /// <summary>
-    /// Moves the fog colours of every tile into <see cref="Fog"/>, the direction the save reader needs.
-    /// </summary>
-    /// <remarks>
-    /// 读回来的瓦片带着自己的迷雾颜色（<see cref="Tile.FogColors"/>），而端口在游戏里改的是 <see cref="MapFog"/>。
-    /// 搬过去之后 <see cref="MapFog.IsFogged"/> 与 <see cref="ClearFog(PlayerColor)"/> 都对得上。
-    /// <b>方向掩码留在原地不动</b>：文件里没有它们，参考是读完之后由上层按玩家重算的
-    /// （<c>game_startgame.cpp:863</c>、<c>interface_gamearea.cpp:869</c>），端口把这一步留给存档层的调用者。
-    /// </remarks>
-    /// <param name="geometry">The map the tiles belong to.</param>
-    private void RestoreFogFromTiles(MapGeometry geometry)
-    {
-        if (Fog is not { } fog)
-        {
-            return;
-        }
-
-        for (int index = 0; index < _tiles.Count; ++index)
-        {
-            fog.SetFog(index % geometry.Width, index / geometry.Width, _tiles[index].FogColors);
-        }
     }
 
     /// <summary>

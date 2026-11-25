@@ -291,7 +291,6 @@ public static partial class ImageOps
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(sprite);
-        ArgumentNullException.ThrowIfNull(gamePalette);
 
         if (alpha == 0)
         {
@@ -321,8 +320,11 @@ public static partial class ImageOps
         byte[]? transform = sprite.Transform;
         int stride = sprite.Image.Stride;
 
-        // Column of the source row the left-most visible pixel reads. The mirrored case walks the area backwards.
-        int sourceStartX = flipHorizontally ? area.X + area.Width - 1 - skipX : area.X + skipX;
+        // Column of the source row the left-most visible pixel reads. The mirrored case walks the row backwards from the
+        // mirror image of the first source column: the reference mirrors around the axis of the whole image
+        // (<c>fheroes2::Blit</c>: <c>widthIn - 1 - inX</c>), not around the axis of the drawn segment, which only
+        // differs when a caller draws a slice of a wider sprite flipped.
+        int sourceStartX = flipHorizontally ? sprite.Image.Width - 1 - (area.X + skipX) : area.X + skipX;
         int sourceStep = flipHorizontally ? -1 : 1;
 
         if (alpha == 255)
@@ -352,6 +354,9 @@ public static partial class ImageOps
 
             return;
         }
+
+        // Only the blended branch looks colours up, the opaque one above copies palette indices verbatim.
+        ArgumentNullException.ThrowIfNull(gamePalette);
 
         ReadOnlySpan<byte> palette = gamePalette.ToRaw();
         int behind = 255 - alpha;

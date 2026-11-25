@@ -3,12 +3,16 @@
 > **2026-11-24 起**：`PLAN.md` 与 `PROGRESS.md` 已退役并从仓库删除，任务与进度以 **bd (beads)** 为准；
 > 全文归档为 closed issue `FHeroes2Sharp-3so`（PLAN）与 `FHeroes2Sharp-jwk`（PROGRESS）。
 
+> **唯一源头（2026-11-25，`FHeroes2Sharp-6y3.7`）**：C++ 文件/类 → C# 类型的对照**只在本文件维护**。
+> `ARCHITECTURE.md`、`DECISIONS.md` 或某个 ADR 里出现同名映射时，以本文件为准，并把那边改成本文的一句话指针；
+> 旧 PLAN 的覆盖率总表随归档冻结，不再更新。新增映射只在这里加一行。
+
 C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
 ## 已移植
 
 > 本节只收「已能跑、有对拍或测试」的映射。逐文件的覆盖率总表（`src/engine` + `src/fheroes2` 共 249 个
-> `.cpp` 的三态统计、未转清单与依赖顺序）在 `docs/PLAN.md` 的「参考文件覆盖率（逐文件盘点）」；
+> `.cpp` 的三态统计、未转清单与依赖顺序）在已归档的 PLAN（`bd show FHeroes2Sharp-3so`）的「参考文件覆盖率（逐文件盘点）」；
 > 「部分可用」在那边单列一档，本节不重复。
 
 | C++ | C# | 备注 |
@@ -96,10 +100,11 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/fheroes2/dialog/dialog_marketplace.cpp:380-685`（`Dialog::Marketplace()` 的循环本体） | `FHeroes2.App.Scenes.MarketplaceWindow` | 把 `MarketplaceView` 包成场景窗口（只盖屏幕中间 340 宽的石面，四周还看得见城镇屏）：`TryCreate` 取 `BUYBUILD`（外框六块）、`TRADPOST`、`MARKETPLACE_ICON`（原版 AGG 里没有，h2d 才有，缺了只是少一颗图标）、`RESOURCE` 与字形，任一外框/资源缺失返回 null 并打印各档案帧数；四颗按钮都按原始资源分支现拼——TRADE 与 EXIT 直接取 `TRADPOST` 第 15/16 与 17/18 帧（`game_assets.cpp:2196-2210`），GIFT 是把 EXIT 帧的标签区域擦成按钮底色再写白字（`game_assets.cpp:2240-2257`）；`SetCursor`/`SetLeftButton`/`SetRightButton` 灌 `LocalEvent`，`Update` 一帧交回 `MarketplaceAction`（`Exit`/`Trade`/`Gift`/`ExchangeRate`/`ResourceIncome`），`PressClose` 供 ESC/Enter/命令行用，`IsClosed` 由场景读；`Draw` 只画窗口本身（外框 + `MarketplaceView`），说明框由场景叠上去 | `--town-window market` 直接开这个窗口 |
 | `src/fheroes2/castle/castle_well.cpp:263-271`、`castle_dialog.cpp:683-687` + `dialog/dialog_recruit.cpp:253-668`（住宅的招募窗口，水井与城镇屏共用一个外壳） | `FHeroes2.App.Scenes.RecruitWindow` | 把 `RecruitWindowView` 包成场景窗口（只盖屏幕中间，底下的水井屏/城镇屏由调用方先画）：`TryCreate` 取 `RECRBKG`、`BLDGXTRA`（帧 1）、`RECRUIT`、`RESOURCE`、怪物静态帧（`MonsterIcnIds.GetSpriteIcn` + `MonsterAnimInfoCache` 的 `Static` 首帧）与外框（`SURDRBKG`/`WINLOSE`/`STONEBAK`），任一缺失返回 null 并打印各档案帧数；四颗小按钮在原版资源里都没有独立档案，照 `game_assets.cpp` 现拼——OKAY=`SPANBTN` 0/1（1042-1056）、CANCEL=`CPANEL` 8/9（1020-1034）、MAX=`RECRUIT` 4/5 裁 `(5,0,60,25)`（2214-2239）、MIN 是把 MAX 的标签区域填平再写 `MIN`（2240-2257，参考用的是固定 RGB，端口取那块区域出现最多的调色板索引）。裁帧要**保留变换层**：阴影、高光和圆角都在那一层，丢掉就成了调色板噪声。换降级兵的两个箭头（`MONSTER_SWITCH_*_ARROW`）原版也没有档案，由 `RECRUIT` 的上下箭头转置再上下翻转现拼（`game_assets.cpp:3022-3042`），端口搬成 `Sprite.Transpose()`；两个调用方都传 `allowDowngradedMonster = true`，住宅没升级时 `RecruitDialog.CanSwitchMonster` 自己就把箭头藏起来。窗口下移量随调用方：水井 `2`、城镇屏 `-65`（`WellWindowOffsetY`/`CastleWindowOffsetY`）。`Update` 一帧交回 `RecruitWindowFrame`，OKAY 时把选中队伍交给场景、ESC/Return 当取消（`Selected` 为 null） |
 | `src/fheroes2/gui/interface_events.cpp:1652-1659`（地图上点自己的城） | `FHeroes2.App.Scenes.AdventureMapScene.TakeCastleRequest` + `GameHost.TryOpenCastleFromAdventure` | 参考是两段式：第一次点聚焦、再点一次才 `Game::OpenCastleDialog`；端口先简化成一次按下就交出城。只认本王国（`Color == CurrentColor`）、位置在视口内，命中问 `World.GetCastle(x, y)`（整块 footprint 都算）。场景不自己开屏，由宿主换到 `CastleScene` 再换回来 |
+| `src/fheroes2/world/*`、`army/*`、`castle/*`、`kingdom/*`、`battle/*`（主体） | `FHeroes2.Game.{World,Army,Castle,Kingdom,Battle}` | 五个目录的主体已落地（M5–M7 各批，见 ADR-147 起的记录）：地图状态与对象、军队与编队、城镇与建筑、王国统计、战斗战场都在 `FHeroes2.Game` 里，行为测试在 `tests/FHeroes2.Game.Tests`。这是聚合行，不逐个 `.cpp` 列举；逐文件的覆盖率与剩余缺口以 bd 为准（`bd list`），旧的 PLAN 覆盖率总表已随归档冻结（`bd show FHeroes2Sharp-3so`） |
 
 ## 计划中
 
-> 这里只排长期未动的项；未转清单的完整名单（2026-11-21 实测：85 个整文件 / 约 4.3 万行，另有「部分文件里点明的缺口」）与「还差的主干」的先后顺序见 `PLAN.md` 同一节。
+> 这里只排长期未动的项；未转清单的完整名单（2026-11-21 实测：85 个整文件 / 约 4.3 万行，另有「部分文件里点明的缺口」）与「还差的主干」的先后顺序见已归档 PLAN（`bd show FHeroes2Sharp-3so`）同一节。
 
 | C++ | 计划 C# | 里程碑 | 备注 |
 | --- | --- | --- | --- |
@@ -107,7 +112,6 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/engine/audio/*`（`audio_xmi2mid`、`mus`、`xmi`）、`82M` 解码 | `Assets/Audio/*` | M7 | 音乐/音效播放已有 `AudioPlayer`，现在只能播 AGG 里现成的音轨；转换与 82M 是战斗与过场才要 |
 | `src/fheroes2/gui/ui_font.cpp`（各代码页的 `generateCP1250GoodButtonFont` … 补充字形）与 `SubpixelResize` | `Game.Gui.ButtonFont`、`Core.Imaging.ImageOps` | 未排期 | 只有非英文资材的按钮字形需要；`SubpixelResize` 目前没有调用者 |
 | `src/fheroes2/gui/ui_language.*` 的语言切换部分 | `Assets.Localization.*` | 未排期 | `getResourceLanguage` 已搬；运行时换资材语言还没入口（`--lang` / `F2` 只换 `.mo`） |
-| `src/fheroes2/world/*`、`army`、`castle`、`kingdom`、`battle` | `FHeroes2.Game.*` | M5–M7 | 顺序见 `PLAN.md`「还差的主干」：`world` → `kingdom` → `castle` → `army` → `battle` |
 | `src/engine/serialize.h` | `Game/Persistence/*`（自研 schema） | M8 | 不做与原版互通 |
 
 ## 文件格式速查

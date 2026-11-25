@@ -1,23 +1,31 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.AdventureMap;
 
 /// <summary>
-/// The fog of war of a map: per tile the colors that have not discovered it yet
-/// (<c>Maps::Tile::_fogColors</c>) and the direction mask that follows from it
-/// (<c>Maps::Tile::getDirection()</c>), which is all the renderer needs.
+/// The fog of war of a map as a view over the tiles that store it: <c>Maps::Tile::_fogColors</c>
+/// (which colours have not discovered a tile) and <c>Maps::Tile::_fogDirection</c> (the mask the
+/// renderer follows, <c>Maps::Tile::getDirection()</c>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// The reference keeps one byte of fog flags per tile and recomputes the direction mask of a
-/// rectangle whenever a tile is revealed (<c>Maps::ClearFog</c> →
-/// <c>updateDirectionsInArea</c>). The rectangle is a caching optimisation: the mask of a tile
-/// only depends on the fog of its eight neighbours, so this port recomputes the masks of the whole
-/// map in one pass instead of tracking the dirty rectangles.
+/// <b>No state of its own.</b> The reference keeps the fog in the tile (<c>maps_tiles.h:421</c>) and
+/// <c>Maps::ClearFog</c> writes it there; this class is the port of that reading, so every method
+/// forwards to <see cref="Tile"/> and a second table of fog bytes cannot drift out of step with the
+/// tiles. It exists because the AI, the radar and the map view all ask the same three questions
+/// (<see cref="IsFogged"/>, <see cref="GetDirection"/>, <see cref="CountFoggedAround"/>) and because
+/// the reveal disc is a map-level operation rather than a tile one.
 /// </para>
 /// <para>
-/// A tile is "under the fog" for a set of colors when it is undiscovered for <em>all</em> of them
+/// The reference recomputes the direction masks of the rectangle a reveal touched
+/// (<c>Maps::ClearFog</c> → <c>updateDirectionsInArea</c>). The rectangle is a caching optimisation:
+/// the mask of a tile only depends on the fog of its eight neighbours, so this port recomputes the
+/// masks of the whole map in one pass instead of tracking the dirty rectangles.
+/// </para>
+/// <para>
+/// A tile is "under the fog" for a set of colours when it is undiscovered for <em>all</em> of them
 /// (<c>Maps::Tile::isFog( colors )</c> is <c>( fog &amp; colors ) == colors</c>), so a tile that one
 /// human player can see is drawn without fog for every human player.
 /// </para>
@@ -60,21 +68,27 @@ public sealed class MapFog
     /// </summary>
     public const int MagiEyesRevealDistance = 9;
 
-    private readonly byte[] _fog;
-    private readonly Direction[] _directions;
+    private readonly IReadOnlyList<Tile> _tiles;
 
-    /// <summary>Creates a map whose every tile is undiscovered for every color.</summary>
-    public MapFog(int width, int height)
+    /// <summary>
+    /// Wraps the tiles of a map, <c>World::vec_tiles</c>, which own the fog.
+    /// </summary>
+    /// <param name="tiles">The tiles in map order, at least <paramref name="width"/> ×
+    /// <paramref name="height"/> of them.</param>
+    /// <param name="width">Width of the map in tiles.</param>
+    /// <param name="height">Height of the map in tiles.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="tiles"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A size is not positive, or the list is shorter than the map.</exception>
+    public MapFog(IReadOnlyList<Tile> tiles, int width, int height)
     {
+        ArgumentNullException.ThrowIfNull(tiles);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfLessThan(tiles.Count, width * height);
 
+        _tiles = tiles;
         Width = width;
         Height = height;
-        _fog = new byte[width * height];
-        _directions = new Direction[width * height];
-
-        Array.Fill(_fog, (byte)PlayerColors.All);
     }
 
     /// <summary>Width of the map in tiles.</summary>
@@ -90,9 +104,10 @@ public sealed class MapFog
     public int CountFogged()
     {
         int count = 0;
-        foreach (Direction direction in _directions)
+
+        for (int index = 0; index < Width * Height; ++index)
         {
-            if (direction != Direction.Unknown)
+            if (_tiles[index].FogDirection != Direction.Unknown)
             {
                 ++count;
             }
@@ -103,43 +118,13 @@ public sealed class MapFog
 
     /// <summary>Whether the tile is undiscovered for all <paramref name="colors"/>.</summary>
     public bool IsFogged(int column, int row, PlayerColor colors) =>
-        (_fog[(row * Width) + column] & (byte)colors) == (byte)colors;
+        _tiles[(row * Width) + column].IsFogForAll(colors);
 
     /// <summary>
     /// The fog mask of a tile, <see cref="Direction.Unknown"/> when it is visible. Only as good as
     /// the last <see cref="UpdateDirections"/> call.
     /// </summary>
-    public Direction GetDirection(int column, int row) => _directions[(row * Width) + column];
-
-    /// <summary>
-    /// The colors that still have the tile under the fog — the same value as <see cref="Maps.Tile.FogColors"/>
-    /// once the two are in step.
-    /// </summary>
-    /// <param name="column">Column of the tile.</param>
-    /// <param name="row">Row of the tile.</param>
-    /// <returns>The colors that have not revealed the tile.</returns>
-    public PlayerColor GetFogColors(int column, int row) => (PlayerColor)_fog[(row * Width) + column];
-
-    /// <summary>
-    /// Stores which colors have the tile under the fog, without touching the mask of <see cref="GetDirection"/>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <see cref="Reveal"/> is the only writer during play — this one exists for the save loader, which has the colours
-    /// per tile in the file and no discs to reveal. Rebuilding them by revealing would lose the parts of the map the
-    /// player has already seen.
-    /// </para>
-    /// <para>
-    /// The masks are <b>not</b> stored in a save: the reference keeps them as derived data and recomputes them with
-    /// <c>Maps::updateFogDirectionsInArea()</c> after a load (<c>game_startgame.cpp:863</c> for a blank map,
-    /// <c>:922</c> and <c>interface_gamearea.cpp:869</c> for a player). The caller of this method is expected to
-    /// follow the load with <see cref="UpdateDirections"/> for the colours it is about to draw.
-    /// </para>
-    /// </remarks>
-    /// <param name="column">Column of the tile.</param>
-    /// <param name="row">Row of the tile.</param>
-    /// <param name="colors">The colors that have the tile under the fog.</param>
-    internal void SetFog(int column, int row, PlayerColor colors) => _fog[(row * Width) + column] = (byte)colors;
+    public Direction GetDirection(int column, int row) => _tiles[(row * Width) + column].FogDirection;
 
     /// <summary>
     /// Reveals the disc around a tile for <paramref name="colors"/> — <c>Maps::ClearFog</c>: every
@@ -173,14 +158,12 @@ public sealed class MapFog
                 int dx = x - column;
                 if ((dx * dx) + (dy * dy) < limit)
                 {
-                    int index = (y * Width) + x;
-                    byte before = _fog[index];
-                    byte after = (byte)(before & (byte)~colors);
+                    Tile tile = _tiles[(y * Width) + x];
 
-                    if (after != before)
+                    if ((tile.FogColors & colors) != PlayerColor.None)
                     {
                         ++revealed;
-                        _fog[index] = after;
+                        tile.ClearFog(colors);
                     }
                 }
             }
@@ -235,24 +218,30 @@ public sealed class MapFog
     /// Recomputes the fog mask of every tile from the fog of its neighbours
     /// (<c>updateDirectionsInArea</c> over the whole map; tiles outside the map count as fogged).
     /// </summary>
+    /// <remarks>
+    /// The masks are derived data: a save carries the colours only, and the loader replicates the
+    /// reference's <c>updateFogDirectionsInArea()</c> afterwards (<c>game_startgame.cpp:863</c>,
+    /// <c>interface_gamearea.cpp:869</c>) by calling this method for the colours about to be drawn.
+    /// </remarks>
+    /// <param name="colors">Colors whose fog the current player shares.</param>
     public void UpdateDirections(PlayerColor colors)
     {
         if (colors == PlayerColor.None)
         {
             // Nothing is fogged: no tile is undiscovered for a set of no colors, so the masks are all
             // unknown and the renderer draws no fog at all.
-            Array.Clear(_directions);
+            foreach (Tile tile in _tiles)
+            {
+                tile.SetFogDirection(Direction.Unknown);
+            }
+
             return;
         }
 
-        for (int row = 0; row < Height; ++row)
-        {
-            for (int column = 0; column < Width; ++column)
-            {
-                _directions[(row * Width) + column] =
-                    IsFogged(column, row, colors) ? ComputeDirection(column, row, colors) : Direction.Unknown;
-            }
-        }
+        // The sweep itself is the reference's updateFogDirectionsInArea(), shared with the per-frame call of
+        // Interface::GameArea: one implementation, so the two entry points cannot disagree about a mask.
+        TileFog.UpdateFogDirectionsInArea(
+            _tiles, Width, Height, new Point(0, 0), new Point(Width - 1, Height - 1), colors);
     }
 
     /// <summary>
@@ -287,59 +276,4 @@ public sealed class MapFog
             _ => (distance + 1) * (distance + 1),
         };
     }
-
-    private Direction ComputeDirection(int column, int row, PlayerColor colors)
-    {
-        Direction direction = Direction.Center;
-
-        if (IsFoggedOrOutside(column - 1, row - 1, colors))
-        {
-            direction |= Direction.TopLeft;
-        }
-
-        if (IsFoggedOrOutside(column, row - 1, colors))
-        {
-            direction |= Direction.Top;
-        }
-
-        if (IsFoggedOrOutside(column + 1, row - 1, colors))
-        {
-            direction |= Direction.TopRight;
-        }
-
-        if (IsFoggedOrOutside(column - 1, row, colors))
-        {
-            direction |= Direction.Left;
-        }
-
-        if (IsFoggedOrOutside(column + 1, row, colors))
-        {
-            direction |= Direction.Right;
-        }
-
-        if (IsFoggedOrOutside(column - 1, row + 1, colors))
-        {
-            direction |= Direction.BottomLeft;
-        }
-
-        if (IsFoggedOrOutside(column, row + 1, colors))
-        {
-            direction |= Direction.Bottom;
-        }
-
-        if (IsFoggedOrOutside(column + 1, row + 1, colors))
-        {
-            direction |= Direction.BottomRight;
-        }
-
-        return direction;
-    }
-
-    /// <summary>
-    /// Whether a neighbour is under the fog, counting the tiles outside the map as fogged:
-    /// <c>updateDirectionsInArea</c> fills its cache with <c>1</c> and leaves the entries outside
-    /// the world untouched, so the fog of an edge tile reaches over the border.
-    /// </summary>
-    private bool IsFoggedOrOutside(int column, int row, PlayerColor colors) =>
-        column < 0 || row < 0 || column >= Width || row >= Height || IsFogged(column, row, colors);
 }

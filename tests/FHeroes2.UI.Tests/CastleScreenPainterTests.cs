@@ -218,6 +218,17 @@ public sealed class CastleScreenPainterTests
 }
 
 /// <summary>Serializes the tests that swap <see cref="GameAssets.Current"/>.</summary>
+/// <remarks>
+/// <para>
+/// <c>Assets.Current</c> 是进程级全局，字体的字形表还以它为键缓存（<c>FontGlyphTable</c>），所以一个测试把它切到
+/// <c>null</c> 时，并行运行的任何绘制类测试拿到的字体都会变，连「同一个对话框画两次像素相同」这种断言都会偶发失败
+/// （<c>FHeroes2Sharp-d8y</c>）。
+/// </para>
+/// <para>
+/// 规则：**只要测试会写 <c>Assets.Current</c>，或者会绘制文字/图标因而读到它，就必须挂
+/// <c>[Collection(GlobalArchiveCollection.Name)]</c>**。纯逻辑测试不必挂。
+/// </para>
+/// </remarks>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class GlobalArchiveCollection
 {

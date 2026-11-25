@@ -17,6 +17,11 @@ namespace FHeroes2.UI.Tests;
 /// The scenario info screen of <c>game_scenarioinfo.cpp</c>: the text of the difficulty names and the rating line, the
 /// pictures <c>generateDefaultImages()</c> cuts out for it, and the layout and clicks of the dialog itself.
 /// </summary>
+/// <remarks>
+/// 本类在测试里临时把 <c>Assets.Current</c> 指向真实 AGG（用完再置 <c>null</c>）。这是进程级全局，必须与其他
+/// 读写它的测试串行，否则并行的绘制类测试会在两帧之间看到不同的字体表（<c>FHeroes2Sharp-d8y</c> 记的那次偶发失败）。
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class ScenarioInfoDialogTests
 {
     private const byte GlyphColour = 200;

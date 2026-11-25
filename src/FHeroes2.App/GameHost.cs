@@ -2324,10 +2324,17 @@ public sealed class GameHost : IDisposable
             return;
         }
 
+        // --map is the port's stand-in for Game::SelectScenario(), and the reference records the chosen map in the
+        // settings there (scenarioinfo.cpp): the save writer refuses to write without it, and the AI's territory
+        // planning, the spells of a hero and the map-version checks all read it back. A map opened with --map has to
+        // look like a chosen one, otherwise it cannot be saved at all.
+        Settings.Get().SetCurrentMapFileInfo(mapInfo);
+
         AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
         if (scene is null)
         {
             GameLog.Warn($"The map file '{filePath}' cannot be shown: {error}");
+
             return;
         }
 

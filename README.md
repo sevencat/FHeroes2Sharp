@@ -320,6 +320,11 @@ pwsh tools/scripts/VerifyBattleBaseline.ps1 -Siege -Update    # 有意改了视�
 pwsh tools/scripts/SmokeFirstRun.ps1
 pwsh tools/scripts/SmokeFirstRun.ps1 -SkipBuild
 
+# 战斗到地图冒烟：--battle 开战，玩家自己点敌方一队发起攻击，再把剩下的交给状态栏的 Auto，
+# 连按 Enter 关掉结算窗后回冒险地图；第二趟按 F2 写出快速存档并核对文件（见 ADR-239）
+pwsh tools/scripts/SmokeBattleToMap.ps1
+pwsh tools/scripts/SmokeBattleToMap.ps1 -SkipBuild -BattleFrames 6000
+
 # 编译语言包（translations/*.po → <data>/files/lang/*.mo，需要 GNU gettext 的 msgfmt）
 pwsh tools/scripts/BuildTranslations.ps1
 pwsh tools/scripts/BuildTranslations.ps1 -Cultures zh_CN -NoInstall   # 只校验，不安装
@@ -359,8 +364,9 @@ docs/                    决策与参考笔记（计划与进度已迁入 bd）
   历史 `PLAN.md`/`PROGRESS.md` 已退役，全文归档为 closed issue `FHeroes2Sharp-3so` / `FHeroes2Sharp-jwk`
   （`bd show <id>`），旧文里的 `§x` 编号可据此对照。长期经验用 `bd memories` 检索。
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 分层、数据流、线程与资源模型
-* [docs/DECISIONS.md](docs/DECISIONS.md) — 关键技术决策（ADR 风格）
-* [docs/REFERENCE.md](docs/REFERENCE.md) — C++ 源码对照表（文件/类 → C# 类型）
+* [docs/DECISIONS.md](docs/DECISIONS.md) — 关键技术决策（ADR 风格，当前阶段 `ADR-151` 起）
+* [docs/DECISIONS-archive.md](docs/DECISIONS-archive.md) — 已冻结的历史 ADR（`ADR-001…150`，正文未改）
+* [docs/REFERENCE.md](docs/REFERENCE.md) — C++ 源码对照表（文件/类 → C# 类型；**源码位置的唯一源头**）
 * [docs/MISC.md](docs/MISC.md) — 构建约定、坑位记录、数据依赖测试说明
 * [docs/OTHER.md](docs/OTHER.md) — 许可、资源归属、后续想法
 

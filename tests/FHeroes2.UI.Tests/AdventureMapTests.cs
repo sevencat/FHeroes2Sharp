@@ -431,6 +431,33 @@ public sealed class AdventureMapTests : IDisposable
     }
 
     [Fact]
+    public void SetCenter_PutsTheMiddleOfTheTileInTheMiddleOfTheViewport()
+    {
+        if (!HasGameData)
+        {
+            return;
+        }
+
+        AdventureMap map = CreateMap();
+        GameArea area = map.GetGameArea();
+
+        // The area is laid out by BaseInterface::Reset() when the interface is resized; the tests drive it directly.
+        area.SetAreaPosition(16, 16, 608, 448);
+
+        Point tile = new(20, 24);
+
+        area.SetCenter(tile);
+
+        Point corner = area.GetRelativeTilePosition(tile);
+        Point middle = new(area.Roi.X + area.MiddlePoint.X, area.Roi.Y + area.MiddlePoint.Y);
+
+        // Interface::GameArea::_setCenterToTile() puts the centre of the viewport on the middle of the tile: this is
+        // the "the map is centred on the hero" of a new turn, and it is what keeps a focus hero in the middle.
+        Assert.Equal(middle.X, corner.X + (GameBorder.TileWidth / 2));
+        Assert.Equal(middle.Y, corner.Y + (GameBorder.TileWidth / 2));
+    }
+
+    [Fact]
     public void FinishHumanTurn_WithoutInput_KeepsTheTurnGoing()
     {
         if (!HasGameData)

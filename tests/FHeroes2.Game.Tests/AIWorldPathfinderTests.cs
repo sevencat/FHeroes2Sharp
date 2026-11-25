@@ -146,6 +146,12 @@ public sealed class AIWorldPathfinderTests
         Assert.Equal(7, step.Index);
         Assert.Equal(0, step.From);
         Assert.Equal(Direction.Center, step.Direction);
+
+        // A jump costs what the spell costs, Spell( DIMENSIONDOOR ).movePoints() = 225 (spell.cpp:131). The planner
+        // prices the door with Route::calculatePathPenalty() over these steps, so this penalty is the distance the
+        // AI weighs its targets with - it is not "200 per jump".
+        Assert.Equal(225u, step.Penalty);
+        Assert.Equal(225u, HeroPath.CalculatePenalty(path));
     }
 
     [Fact]
@@ -528,9 +534,8 @@ public sealed class AIWorldPathfinderTests
     /// Lifts the fog from a run of tiles for one color.
     /// </summary>
     /// <remarks>
-    /// The fog lives in two places: the <see cref="MapFog"/> table the AI plans territory expansion with, and the
-    /// per-tile bits the pathfinder asks. <see cref="World.ClearFog(int, int, PlayerColor)"/> only writes the
-    /// first, so a test that wants both answers has to write both.
+    /// The fog lives in the tiles only: <see cref="MapFog"/> reads <see cref="Tile.FogColors"/> and so does the
+    /// pathfinder, which is why one write serves both answers (ADR-238).
     /// </remarks>
     /// <param name="world">The world to change.</param>
     /// <param name="firstIndex">First revealed tile.</param>
@@ -541,7 +546,6 @@ public sealed class AIWorldPathfinderTests
         for (int index = firstIndex; index <= lastIndex; ++index)
         {
             world.GetTile(index).ClearFog(color);
-            world.Fog!.Reveal(index % world.Width, index / world.Width, 0, color);
         }
     }
 

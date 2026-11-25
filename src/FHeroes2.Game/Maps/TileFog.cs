@@ -30,10 +30,45 @@ public static class TileFog
     /// <param name="minPos">Top-left tile of the rectangle, inclusive.</param>
     /// <param name="maxPos">Bottom-right tile of the rectangle, inclusive.</param>
     /// <param name="colors">Colors whose fog the current player shares.</param>
-    public static void UpdateFogDirectionsInArea(Point minPos, Point maxPos, PlayerColor colors)
+    public static void UpdateFogDirectionsInArea(Point minPos, Point maxPos, PlayerColor colors) =>
+        UpdateFogDirectionsInArea(World.Current, minPos, maxPos, colors);
+
+    /// <summary>
+    /// Recomputes the fog directions of a rectangle of the tiles of <paramref name="world"/>,
+    /// <c>updateFogDirectionsInArea()</c>.
+    /// </summary>
+    /// <param name="world">The world whose tiles are updated.</param>
+    /// <param name="minPos">Top-left tile of the rectangle, inclusive.</param>
+    /// <param name="maxPos">Bottom-right tile of the rectangle, inclusive.</param>
+    /// <param name="colors">Colors whose fog the current player shares.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
+    public static void UpdateFogDirectionsInArea(World world, Point minPos, Point maxPos, PlayerColor colors)
     {
-        int worldWidth = World.Current.Width;
-        int worldHeight = World.Current.Height;
+        ArgumentNullException.ThrowIfNull(world);
+
+        UpdateFogDirectionsInArea(world.Tiles, world.Width, world.Height, minPos, maxPos, colors);
+    }
+
+    /// <summary>
+    /// Recomputes the fog directions of a rectangle of a tile grid — the single implementation behind
+    /// <see cref="World.Fog"/> and <c>Interface::GameArea</c>'s per-frame call.
+    /// </summary>
+    /// <param name="tiles">Tiles in map order.</param>
+    /// <param name="worldWidth">Width of the map in tiles.</param>
+    /// <param name="worldHeight">Height of the map in tiles.</param>
+    /// <param name="minPos">Top-left tile of the rectangle, inclusive.</param>
+    /// <param name="maxPos">Bottom-right tile of the rectangle, inclusive.</param>
+    /// <param name="colors">Colors whose fog the current player shares.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="tiles"/> is <see langword="null"/>.</exception>
+    public static void UpdateFogDirectionsInArea(
+        IReadOnlyList<Tile> tiles,
+        int worldWidth,
+        int worldHeight,
+        Point minPos,
+        Point maxPos,
+        PlayerColor colors)
+    {
+        ArgumentNullException.ThrowIfNull(tiles);
 
         // Never leave the map.
         int minX = Math.Max(minPos.X, 0);
@@ -67,7 +102,7 @@ public static class TileFog
 
             for (int x = fogMinX; x < fogMaxX; ++x)
             {
-                fogData[x + fogDataOffsetY] = World.Current.Tiles[x + fogTileOffsetY].IsFogForAll(colors) ? (byte)1 : (byte)0;
+                fogData[x + fogDataOffsetY] = tiles[x + fogTileOffsetY].IsFogForAll(colors) ? (byte)1 : (byte)0;
             }
         }
 
@@ -80,7 +115,7 @@ public static class TileFog
 
             for (int x = minX; x < maxX; ++x)
             {
-                Tile tile = World.Current.GetTile(x, y);
+                Tile tile = tiles[(y * worldWidth) + x];
 
                 int fogDataIndex = x + fogCenterDataOffsetY;
 

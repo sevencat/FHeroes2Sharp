@@ -207,8 +207,11 @@ public sealed partial class AiPlanner
             return (regularMovementDist, false);
         }
 
-        // 每次跳跃固定扣 200 移动力，跳数乘它就是次元门的代价。
-        uint dimensionDoorDist = (uint)(dimensionDoorPath.Count * 200);
+        // 参考是对整条路径求 Route::calculatePathPenalty()（route.cpp:411），而次元门每一步的 penalty 是
+        // Spell( DIMENSIONDOOR ).movePoints() = 225，不是整数 200。写成「跳数 × 200」会把次元门的距离低估
+        // 11%，AI 就会比参考更爱跳——这条是 8at.5 对拍出来的量级偏差。
+        uint dimensionDoorDist = HeroPath.CalculatePenalty(dimensionDoorPath);
+
         Debug.Assert(dimensionDoorDist > 0);
 
         return ShouldUseDimensionDoor(regularMovementDist, dimensionDoorDist)
@@ -916,7 +919,7 @@ public sealed partial class AiPlanner
     /// </remarks>
     /// <param name="objectType">The object type.</param>
     /// <returns>The multiplier applied to the distance.</returns>
-    private static double GetDistanceModifier(Mp2ObjectType objectType)
+    internal static double GetDistanceModifier(Mp2ObjectType objectType)
     {
         // 参考手上的是瓦片原值（带动作位）；端口的调用点已经折过位，所以这里不能再用 IsInGameActionObject
         // （它要求带位，折过的类型一律 false），改用它拆开后的等价判定。
@@ -965,13 +968,31 @@ public sealed partial class AiPlanner
 
     /// <summary>
     /// Discounts a value by the distance to the object, <c>scaleWithDistanceAndTime()</c>
-    /// (<c>ai_planner_hero.cpp:1007-1023</c>).
+    /// (<c>ai_planner_hero.cpp:1007-1023</c>), with the day taken from the world.
     /// </summary>
     /// <param name="value">The undiscounted value.</param>
     /// <param name="distance">The pathfinder distance, 0 for "the hero is standing on it".</param>
     /// <param name="objectType">The object type.</param>
     /// <returns>The discounted value.</returns>
     private static double ScaleWithDistanceAndTime(double value, uint distance, Mp2ObjectType objectType)
+    {
+        return ScaleWithDistanceAndTime(value, distance, objectType, World.Current.DayCount);
+    }
+
+    /// <summary>
+    /// Discounts a value by the distance to the object, <c>scaleWithDistanceAndTime()</c>
+    /// (<c>ai_planner_hero.cpp:1007-1023</c>), with the day passed in.
+    /// </summary>
+    /// <remarks>
+    /// 参考从 <c>world.CountDay()</c> 直接读天数；端口把天数提成参数只是为了能让测试在固定天数下对拍量级
+    /// （生产调用走上面那个重载，读的还是 <see cref="World.Current"/>）。公式一个字都没改。
+    /// </remarks>
+    /// <param name="value">The undiscounted value.</param>
+    /// <param name="distance">The pathfinder distance, 0 for "the hero is standing on it".</param>
+    /// <param name="objectType">The object type.</param>
+    /// <param name="dayCount">Days since the start of the game, <c>world.CountDay()</c>.</param>
+    /// <returns>The discounted value.</returns>
+    internal static double ScaleWithDistanceAndTime(double value, uint distance, Mp2ObjectType objectType, uint dayCount)
     {
         if (distance == 0)
         {
@@ -982,7 +1003,7 @@ public sealed partial class AiPlanner
         double correctedDistance = distance * GetDistanceModifier(objectType);
 
         // 随着日子过去，距离的权重缓慢变小，AI 会越来越愿意跑远路。0.5 是上限（约 5000 天）。
-        double timeCorrectionCoeff = 1 - Math.Min(0.5, World.Current.DayCount * 0.0001);
+        double timeCorrectionCoeff = 1 - Math.Min(0.5, dayCount * 0.0001);
         correctedDistance *= timeCorrectionCoeff;
 
         // 非线性衰减：距离越大，丢的分越多。

@@ -75,14 +75,22 @@ public static class MapSprites
     /// <param name="icnId">The ICN file, as listed in <c>agg/icn.h</c>.</param>
     /// <param name="index">Frame of the file.</param>
     /// <returns><see langword="null"/> when the file or the frame is missing.</returns>
+    /// <remarks>
+    /// <c>MINI_MONSTER_IMAGE</c> 这类表没有归档条目（参考在 <c>loadICN()</c> 里现场造），归档缓存查不到会记成缺图并告警，
+    /// 所以先问 <see cref="Assets.GetImage"/>；其余仍走本类的解码缓存，避免全工程的图都映射一份。
+    /// </remarks>
     public static Sprite? GetSprite(IcnType icnId, int index)
     {
-        if (_sprites is null || IcnCatalog.GetFileName(icnId) is not { } archiveName)
+        if (_sprites is null)
         {
             return null;
         }
 
-        return _sprites.GetSprite(archiveName, index);
+        string archiveName = Assets.GetFileName(icnId);
+
+        return Assets.IsRuntimeTable(archiveName)
+            ? Assets.GetImage(archiveName, index)
+            : _sprites.GetSprite(archiveName, index);
     }
 
     /// <summary>

@@ -662,7 +662,7 @@ public static class TileRendering
     {
         ArgumentNullException.ThrowIfNull(tile);
 
-        Debug.Assert(tile.MainObjectType == Mp2ObjectType.Monster);
+        Debug.Assert(tile.MainObjectType == Mp2ObjectType.ActionMonster);
 
         uint monsterIndex = Tile.MonsterSpriteIndex(tile.GetMonster(World.Current));
         (uint primary, uint secondary) = GetMonsterSpriteIndices(tile, monsterIndex, isEditorMode);
@@ -684,7 +684,7 @@ public static class TileRendering
     {
         ArgumentNullException.ThrowIfNull(tile);
 
-        Debug.Assert(tile.MainObjectType == Mp2ObjectType.Monster);
+        Debug.Assert(tile.MainObjectType == Mp2ObjectType.ActionMonster);
 
         uint monsterIndex = Tile.MonsterSpriteIndex(tile.GetMonster(World.Current));
         (uint primary, uint secondary) = GetMonsterSpriteIndices(tile, monsterIndex, isEditorMode);
@@ -705,7 +705,7 @@ public static class TileRendering
     {
         ArgumentNullException.ThrowIfNull(tile);
 
-        Debug.Assert(tile.MainObjectType == Mp2ObjectType.Boat);
+        Debug.Assert(tile.MainObjectType == Mp2ObjectType.ActionBoat);
 
         uint spriteIndex = tile.MainObjectPart.IcnIndex == ObjectPart.EmptyIcnIndex ? 18u : tile.MainObjectPart.IcnIndex;
         bool isReflected = spriteIndex > 128;
@@ -740,7 +740,7 @@ public static class TileRendering
     {
         ArgumentNullException.ThrowIfNull(tile);
 
-        Debug.Assert(tile.MainObjectType == Mp2ObjectType.Boat);
+        Debug.Assert(tile.MainObjectType == Mp2ObjectType.ActionBoat);
 
         uint spriteIndex = tile.MainObjectPart.IcnIndex == ObjectPart.EmptyIcnIndex ? 18u : tile.MainObjectPart.IcnIndex;
 
@@ -772,7 +772,7 @@ public static class TileRendering
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(tile);
 
-        Debug.Assert(tile.MainObjectType == Mp2ObjectType.Mine);
+        Debug.Assert(tile.MainObjectType == Mp2ObjectType.ActionMine);
 
         var output = new List<ObjectRenderingInfo>();
 
@@ -928,7 +928,7 @@ public static class TileRendering
 
         var output = new List<ObjectRenderingInfo>();
 
-        if (tile.MainObjectType != Mp2ObjectType.Hero)
+        if (tile.MainObjectType != Mp2ObjectType.ActionHero)
         {
             return output;
         }

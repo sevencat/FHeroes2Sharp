@@ -248,6 +248,10 @@ public static class GameSave
             LastSaveName = filePath;
         }
 
+        // 参考在成功时静默（game_io.cpp 只报失败）。端口补一条日志：失败路径本来就有 Error，成功却没有任何痕迹，
+        // 冒烟脚本与玩家排查「到底写没写出去」只能靠猜。
+        GameLog.Info($"The game was saved to '{filePath}'.");
+
         return true;
     }
 

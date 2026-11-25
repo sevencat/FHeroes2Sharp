@@ -1,11 +1,15 @@
+using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game.Gui;
 using FHeroes2.Game.Heroes;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
+
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Tests;
 
@@ -13,11 +17,29 @@ namespace FHeroes2.UI.Tests;
 /// The behaviour of <see cref="HeroDialog"/>, the port of <c>Heroes::OpenDialog()</c>
 /// (<c>heroes_dialog.cpp</c>).
 /// </summary>
-public sealed class HeroDialogTests
+/// <remarks>
+/// 本类的 sprite 全是纯色桩件，但主技能栏的名称与数值用的是参考里硬编码的 <c>FontType::smallWhite()</c>
+/// （<c>skill_bar.cpp</c>），所以 <see cref="HeroDialog.Draw"/> 会去读全局字体表。字体表以
+/// <c>Assets.Current</c> 为键，而共享 <see cref="GlobalArchiveCollection"/> 的其他测试会在两次绘制之间把它切到
+/// <c>null</c> 再切回来——这正是 <see cref="Draw_IsRepeatable"/> 曾经约 1/8 概率失败的原因（<c>FHeroes2Sharp-d8y</c>）。
+/// 因此本类加入同一个集合，并把全局资产固定成「没有资产」：桩件用不着真实字体，缺字形时的退化路径也是确定的。
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
+public sealed class HeroDialogTests : IDisposable
 {
     private const byte BackgroundColor = 17;
     private const byte PortraitColor = 42;
     private const byte ExitColor = 91;
+
+    private readonly AssetBundle? _previousAssets;
+
+    public HeroDialogTests()
+    {
+        _previousAssets = GameAssets.Current;
+        GameAssets.Current = null;
+    }
+
+    public void Dispose() => GameAssets.Current = _previousAssets;
 
     [Fact]
     public void GetTitle_NamesTheHero()

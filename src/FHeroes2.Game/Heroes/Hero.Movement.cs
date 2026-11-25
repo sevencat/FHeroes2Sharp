@@ -92,7 +92,23 @@ public sealed partial class Hero
     }
 
     /// <summary>Whether the hero may still move, <c>isMoveEnabled()</c> (<c>heroes.h:633</c>).</summary>
-    public bool IsMoveEnabled => _modes.HasFlag(HeroModes.MoveEnabled);
+    /// <remarks>
+    /// <para>
+    /// The reference ORs three answers together — the <c>ENABLEMOVE</c> flag, the route still being walkable
+    /// (<c>Path::isValidForMovement()</c>, <c>route.cpp:43</c>) and the front step being affordable
+    /// (<c>Path::hasAllowedSteps()</c>, <c>route.cpp:321</c>). Without the second one a hero whose route has
+    /// just run out keeps reporting itself as walking: the frame loop then never clears <c>ENABLEMOVE</c>, the
+    /// interface paints a hero with no route and its assert fires. That is why the route is part of this answer.
+    /// </para>
+    /// <para>
+    /// The two checks this property cannot make are made where the map is at hand: the range half of
+    /// <c>isValidForMovement()</c> is <see cref="Move"/>'s guard (<see cref="HeroPath.IsValidForMovement(int)"/>),
+    /// and the affordability half is <see cref="MayStillMove"/>, which the interface asks before it starts a
+    /// walk.
+    /// </para>
+    /// </remarks>
+    public bool IsMoveEnabled =>
+        _modes.HasFlag(HeroModes.MoveEnabled) && !_path.IsEmpty && _path.FrontDirection != Direction.Unknown;
 
     /// <summary>
     /// Rebuilds the route to the destination the hero already has, <c>Heroes::calculatePath()</c>

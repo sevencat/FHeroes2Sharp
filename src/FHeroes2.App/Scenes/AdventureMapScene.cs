@@ -213,7 +213,12 @@ public sealed class AdventureMapScene : IScene
             // The fog is drawn for the colors the map declares as human, like Players::FriendColors() in the
             // reference: a tile is fogged only when every one of them has not discovered it yet. A scenario
             // with no human player at all (a map only meant for the editor) stays fog free.
-            PlayerColor observers = map.Info.HumanPlayers;
+            // 迷雾按<b>当前视角玩家</b>的颜色画，而不是把所有人类玩家并成一个掩码：参考在切换玩家时用
+            // Players::GetPlayerFriends( Game::CurrentColor() ) 重算方向掩码，热座地图里三位人类玩家各看
+            // 各自的区域。开局视角停在第一位人类玩家身上（Players::SetStartGame→第一个能动的玩家）。
+            PlayerColor observers = PlayerColors.ToList(map.Info.HumanPlayers) is { Count: > 0 } humans
+                ? humans[0]
+                : PlayerColor.None;
             int scouted = ScoutStart(world, observers, focus);
             MapFog? fog = observers == PlayerColor.None ? null : world.Fog;
             FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
@@ -374,40 +379,7 @@ public sealed class AdventureMapScene : IScene
     /// 转发到 <see cref="FHeroes2.UI.Interface.AdventureMap.CastAdventureSpell"/>：施法之后地图会动（英雄可能落到
     /// 另一格），所以不能只改场景自己的状态。
     /// </remarks>
-    public void CastAdventureSpell(Spell spell)
-    {
-        _interface.CastAdventureSpell(spell);
-
-        GameArea gameArea = _interface.GetGameArea();
-        Hero? focused = FHeroes2.UI.Interface.InterfaceFocus.GetFocusHeroes();
-        Point? relative = focused is null
-            ? null
-            : gameArea.GetRelativeTilePosition(
-                new Point(focused.MapIndex % _world.Width, focused.MapIndex / _world.Width));
-        int plainMonsters = 0, actionMonsters = 0, plainHeroes = 0, actionHeroes = 0, plainBoats = 0, actionBoats = 0;
-        for (int i = 0; i < _world.Width * _world.Height; ++i)
-        {
-            switch (_world.GetTile(i).MainObjectType)
-            {
-                case Mp2ObjectType.Monster: ++plainMonsters; break;
-                case Mp2ObjectType.ActionMonster: ++actionMonsters; break;
-                case Mp2ObjectType.Hero: ++plainHeroes; break;
-                case Mp2ObjectType.ActionHero: ++actionHeroes; break;
-                case Mp2ObjectType.Boat: ++plainBoats; break;
-                case Mp2ObjectType.ActionBoat: ++actionBoats; break;
-                default: break;
-            }
-        }
-
-        GameLog.Info($"--dd-debug: monsters {plainMonsters}/{actionMonsters}, heroes {plainHeroes}/{actionHeroes}, boats {plainBoats}/{actionBoats}");
-        GameLog.Info(
-            $"--dd-debug: map {_world.Width}x{_world.Height}, hero {focused?.MapIndex} at {relative?.X},{relative?.Y} " +
-            $"fog {(focused is null ? Direction.Unknown : _world.GetTile(focused.MapIndex).FogDirection)}, " +
-            $"center {gameArea.CurrentCenterInPixels.X},{gameArea.CurrentCenterInPixels.Y}, roi {gameArea.Roi}, " +
-            $"sprite {focused?.SpriteIndex}, dir {focused?.Direction}, alpha {focused?.AlphaValue}, " +
-            $"parts {(focused is null ? -1 : TileRendering.GetHeroSpritesPerTile(focused).Count)}, " +
-            $"tileType {(focused is null ? default : _world.GetTile(focused.MapIndex).MainObjectType)}");
-    }
+    public void CastAdventureSpell(Spell spell) => _interface.CastAdventureSpell(spell);
 
     /// <summary>
     /// Opens the View World window on <paramref name="mode"/>, the body of <c>ViewWorld::ViewWorldWindow()</c>
@@ -527,9 +499,28 @@ public sealed class AdventureMapScene : IScene
 
         LocalEvent events = LocalEvent.Current;
 
+        // A frame that is inside a panel drag belongs to the drag alone. The reference blocks inside
+        // BorderWindow::QueueEventProcessing(): while the button is held it runs no panel or map input at all and
+        // keeps the cursor a plain pointer, so that dragging a panel next to the edge of the game window does not
+        // turn the pointer into a scroll cursor. The port pumps the drag from the frame loop instead, which is why
+        // the exclusivity has to be spelled out here.
+        if (_drag is not null)
+        {
+            PumpDrag(null, events);
+
+            return;
+        }
+
         AdventurePanelResult panel = _interface.ProcessTurnFrame(events, RequestExit);
 
-        PumpDrag(panel.Drag, events);
+        // The frame the drag starts on stops here too, the `return true` of the reference: the press belongs to the
+        // border, so no button of the panel it covers may also fire.
+        if (panel.Drag is not null)
+        {
+            PumpDrag(panel.Drag, events);
+
+            return;
+        }
 
         // The kingdom that has neither a hero nor a town cannot act, so the reference turns its "nothing to do"
         // into an end of turn, the `!myKingdom.isPlay()` branch of FinishHumanTurn().
@@ -810,12 +801,22 @@ public sealed class AdventureMapScene : IScene
     /// <see cref="BorderDrag.Owner"/>，所以这里松手调 <see cref="BorderDrag.Drop"/> 就够；面板的
     /// <c>SetPos</c> 会夹进屏幕并落进 <c>Settings</c> 的四个位置，退出时随配置写出。
     /// 只有隐藏界面模式有可抓的面板，正常布局下 <paramref name="drag"/> 一直是 <see langword="null"/>。
+    ///
+    /// 参考的拖动是阻塞的：从按下到松手，整个循环里不处理别的事件，光标也被钉成指针。端口由
+    /// <see cref="Update"/> 每帧调这里，拖动中的帧因此只走这一条（见那边的独占分支），光标同样在拖动开始时
+    /// 设成指针，否则面板拖到画面边缘会被卷屏光标替换。
     /// </remarks>
     private void PumpDrag(BorderDrag? drag, LocalEvent events)
     {
         if (drag is not null)
         {
             _drag = drag;
+
+            // The reference resets the cursor as soon as the drag starts (Cursor::Get().SetThemes( Cursor::POINTER )),
+            // because a panel dragged close to the edge of the game window would otherwise leave the scroll cursor
+            // on the pointer. The border itself does not touch the cursor layer, which sits above it in the port,
+            // so the scene does it here.
+            CursorState.Current?.SetThemes(CursorTheme.Pointer);
         }
 
         if (_drag is null)
@@ -827,6 +828,11 @@ public sealed class AdventureMapScene : IScene
         {
             _drag.Drop(events.CursorPosition);
             _drag = null;
+
+            // The panel is somewhere else now: what it covered has to come back and what it covers has to be
+            // painted there. Every panel's SetPos() only moves its rectangle, so the frame after the drop asks for
+            // the whole screen, which is what the reference gets by drawing its next frame anyway.
+            _interface.SetRedraw(Redraw.All);
 
             return;
         }

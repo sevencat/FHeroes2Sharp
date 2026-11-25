@@ -446,7 +446,12 @@ public sealed partial class World
         Tile entrance = GetTile(centerTileIndex);
         uint castleUid = entrance.MainObjectPart.Uid;
 
-        if (isRandom && entrance.MainObjectType is not (Mp2ObjectType.RandomCastle or Mp2ObjectType.RandomTown))
+        // A map file marks the gate of a random town with the action type — the reference compares against
+        // MP2::OBJ_RANDOM_CASTLE / MP2::OBJ_RANDOM_TOWN, both of which carry the action bit
+        // (maps.cpp:753) — while a town placed by the editor or built by a test may carry the non action
+        // twin, so both spellings are accepted.
+        if (isRandom && entrance.MainObjectType is not (Mp2ObjectType.RandomCastle or Mp2ObjectType.RandomTown
+            or Mp2ObjectType.ActionRandomCastle or Mp2ObjectType.ActionRandomTown))
         {
             GameLog.Warn($"Tile {centerTileIndex} is not a random town, its sprite was not updated.");
 

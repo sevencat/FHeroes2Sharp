@@ -290,7 +290,7 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
 6. **`.ttc` 字体集合**：SDL_ttf 打开的是第 0 个字面；`simsun.ttc` 的第 0 个正是 SimSun，
    12 px 有内嵌点阵，小字号最锐利。
 7. **依赖真实数据的测试**：`FHeroes2.Assets.Tests` 找不到数据时会**提前返回**（xunit 2 无 `Assert.Skip`），
-   因此务必关注测试总数与 `PROGRESS.md` 中的实测记录。
+   因此务必关注测试总数与已归档 PROGRESS 中的实测记录（`bd show FHeroes2Sharp-jwk`）。
 8. **`--smoke-frames` 的前几帧 FPS 偏低**：`RenderPresent` 受垂直同步影响，启动阶段还在等首个 vsync，
    平滑后的数值要 0.25 s 之后才稳定。
 9. **PowerShell 直接调用 MSYS2 的 `g++.exe` 会静默失败**：退出码 1、没有任何诊断输出。原因是从
@@ -340,7 +340,7 @@ pwsh tools/scripts/BuildTranslations.ps1 -NoInstall        # 只校验，不往�
     `NO_CYCLE` 调色板后、只留 `y ≥ 55` 的那一块，命中区 `63,202 108×160` 与发光像素并不重合。
     拿错帧、忘了裁剪或忘了套调色板都「看起来仍在发光」，因为光晕本身也画同一块区域；判对错
     只能与未悬停的同一帧逐像素 diff——门光那一笔实测 **499 像素**，全部落在 `48,238 136×125`
-    之内且全部变亮（`PROGRESS.md` 的「设置门悬停发光」记录）。
+    之内且全部变亮（已归档 PROGRESS 的「设置门悬停发光」记录，`bd show FHeroes2Sharp-jwk`）。
 24. **消息框的「中段」是切片而不是缩放**：`BUYBUILD.ICN` 的左右两列各三块，中段每次都从
     源图 **第 10 行**起切 35 行重复（`Blit( middle, 0, 10, ... )`），高度不够 70 px 时一块都不切、
     但仍按 70 px 画。另有两处容易「顺手修正」的坑：左列 161 px 比右列 145 px 宽 1，所以

@@ -74,7 +74,7 @@ public sealed class WorldHeroLayerTests
         hero.SpriteIndex = WalkingFrame;
 
         // A fog that has never been lifted: every tile is undiscovered, so the hero is under it.
-        MapFog fog = new(MapSize, MapSize);
+        MapFog fog = FogTestGrid.Create(MapSize, MapSize);
         fog.UpdateDirections(PlayerColor.Blue);
 
         TestHeroSprites sprites = new();
