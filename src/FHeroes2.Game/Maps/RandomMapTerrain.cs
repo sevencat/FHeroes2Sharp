@@ -24,15 +24,19 @@ public sealed class RandomMapTerrain
     /// <param name="height">Edge length of the map.</param>
     /// <param name="regionSizeLimit">How many tiles one region aims for.</param>
     /// <param name="regions">Every region, the neutral water one included.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="regions"/> is <see langword="null"/>.</exception>
-    internal RandomMapTerrain(int width, int height, int regionSizeLimit, IReadOnlyList<RandomMapRegion> regions)
+    /// <param name="state">The grid the regions grew on; the object passes keep marking it.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="regions"/> or <paramref name="state"/> is <see langword="null"/>.</exception>
+    internal RandomMapTerrain(
+        int width, int height, int regionSizeLimit, IReadOnlyList<RandomMapRegion> regions, RandomMapState state)
     {
         ArgumentNullException.ThrowIfNull(regions);
+        ArgumentNullException.ThrowIfNull(state);
 
         Width = width;
         Height = height;
         RegionSizeLimit = regionSizeLimit;
         Regions = regions;
+        State = state;
         _grounds = new MapGround[width * height];
 
         Array.Fill(_grounds, MapGround.Grass);
@@ -49,6 +53,12 @@ public sealed class RandomMapTerrain
 
     /// <summary>Every region; index 0 is the neutral water region the reference inserts first.</summary>
     public IReadOnlyList<RandomMapRegion> Regions { get; }
+
+    /// <summary>
+    /// The grid the regions grew on, <c>mapState</c> of <c>generateMap()</c>. It still carries the region id of every
+    /// tile, which is what the object passes ask for when they need to keep a route inside one region.
+    /// </summary>
+    public RandomMapState State { get; }
 
     /// <summary>Tile coordinates of an index, <c>Maps::GetPoint()</c>.</summary>
     /// <param name="index">Absolute index.</param>
@@ -107,8 +117,14 @@ public sealed class RandomMapTerrain
 /// </remarks>
 public static class RandomMapTerrainGenerator
 {
-    /// <summary>The colour index of a region nobody owns, <c>neutralColorIndex</c>.</summary>
-    public const int NeutralColorIndex = 0;
+    /// <summary>
+    /// The colour index of a region nobody owns, <c>neutralColorIndex</c> (<c>map_random_generator_info.h:50</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考写的是 <c>Color::GetIndex( PlayerColor::UNUSED )</c>，那就是 <c>Color::GetIndex</c> 的默认分支——
+    /// <b>6</b>，也就是 MP2 里「无主」的那个颜色槽。0 是蓝色（第一个玩家），不能拿它当「中立」。
+    /// </remarks>
+    public const int NeutralColorIndex = 6;
 
     /// <summary>The grounds a player's starting region may have, <c>playerStartingTerrain</c> (<c>:63</c>).</summary>
     public static readonly MapGround[] PlayerTerrains =
@@ -178,7 +194,7 @@ public static class RandomMapTerrainGenerator
 
         GrowRegions(regions, state, randomGenerator);
 
-        RandomMapTerrain terrain = new(width, height, regionSizeLimit, regions);
+        RandomMapTerrain terrain = new(width, height, regionSizeLimit, regions, state);
 
         PaintTerrain(regions, terrain);
 

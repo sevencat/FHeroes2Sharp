@@ -334,6 +334,40 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>
+    /// Opens the editor on a map that was built in memory instead of read from a file, the random map generator's
+    /// output; <see langword="null"/> with an <paramref name="error"/> when the terrain tiles cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// 随机地图生成器产出的是 <see cref="Mp2Map"/>（`RandomMapBuilder`），它还没有文件；编辑器照常在里面涂改，
+    /// 第一次保存时才需要给个文件名。
+    /// </remarks>
+    public static EditorScene? CreateFromMap(
+        ScreenBuffer frame,
+        AssetBundle? assets,
+        GameFonts? fonts,
+        Mp2Map map,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(map);
+
+        error = null;
+
+        TerrainTileSet? tiles = TerrainTileSet.TryLoad(assets);
+        if (tiles is null)
+        {
+            error = $"'{TerrainTileSet.GroundFileName}' is not available, so the map cannot be drawn.";
+            return null;
+        }
+
+        EditorScene scene = Assemble(frame, fonts, map, tiles, assets);
+
+        GameLog.Info($"Editor opened on a map built in memory ({map.Width}x{map.Height}, no file behind it).");
+
+        return scene;
+    }
+
+    /// <summary>
     /// Opens the editor on an empty map of <paramref name="size"/> tiles instead of a file;
     /// <see langword="null"/> with an <paramref name="error"/> when the size is not a map size or the
     /// terrain tiles cannot be read.

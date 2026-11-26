@@ -62,6 +62,14 @@ public sealed class RandomMapNode
 }
 
 /// <summary>
+/// A road object the generator laid down, the entry of the map format's object list the road update works from
+/// (<c>Map_Format::TileInfo::objects</c> with <c>group == ROADS</c>).
+/// </summary>
+/// <param name="Uid">The object id every piece of that road carries.</param>
+/// <param name="ObjectIndex">Which entry of <c>ROADS</c> it is; <see cref="RandomMapObjectPhase.TemporaryRoadIndex"/> while it is a placeholder.</param>
+public readonly record struct RandomMapRoadPlacement(uint Uid, int ObjectIndex);
+
+/// <summary>
 /// The grid the random map generator lays its regions on, <c>Maps::Random_Generator::MapStateManager</c>
 /// (<c>map_random_generator_info.h:80-190</c>, <c>map_random_generator_info.cpp:43-89</c>).
 /// </summary>
@@ -127,6 +135,22 @@ public sealed class RandomMapState
 
     /// <summary>How many nodes the grid holds.</summary>
     public int Count => _data.Length;
+
+    /// <summary>
+    /// The roads the generator has laid, by tile index — the port's stand-in for the <c>ROADS</c> entries of the
+    /// reference's <c>Map_Format</c> object lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>为什么不能问地图</b>：一件路面物件除了锚点那一格，还会把若干「接头」面片写到相邻的格子里（<c>ROADS</c>
+    /// 的第 0 号就有五个）。相邻格因此会画出路面，<b>但它自己没有路</b>——参考的 <c>doesContainRoad()</c> 查的是对象表，
+    /// 那些接头面片不在表里。端口把「哪一格真的有路」记在这里，<see cref="RandomMapRoads"/> 才数得准。
+    /// </para>
+    /// <para>
+    /// 每一条路带着自己的 UID：重排时按 UID 把旧件全部撤掉、再用同一个 UID 写新的，物件表里的 id 因此一直有效。
+    /// </para>
+    /// </remarks>
+    public Dictionary<int, RandomMapRoadPlacement> Roads { get; } = [];
 
     /// <summary>Whether a point is inside the map, <c>Maps::isValidAbsPoint()</c> (<c>maps.cpp:382</c>).</summary>
     /// <param name="point">Tile coordinates.</param>

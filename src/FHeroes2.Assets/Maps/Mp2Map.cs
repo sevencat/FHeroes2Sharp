@@ -260,11 +260,11 @@ public sealed record Mp2Map
             },
             Tiles = tiles,
             Addons = new List<Mp2AddonInfo> { default },
-            Castles = [],
-            CaptureObjects = [],
+            Castles = new List<Mp2CastlePosition>(),
+            CaptureObjects = new List<Mp2CaptureObject>(),
             Heroes = [],
             ObeliskCount = 0,
-            InfoBlocks = [],
+            InfoBlocks = new List<Mp2InfoBlock>(),
             LastObjectUid = 0,
         };
     }
@@ -391,6 +391,67 @@ public sealed record Mp2Map
         }
 
         addons[index] = addon;
+    }
+
+    /// <summary>
+    /// Appends a town position to the castle table and returns its slot, the table side of the town the
+    /// editor or the random map generator just placed.
+    /// </summary>
+    /// <remarks>
+    /// The table has a fixed 72 entries and the writer packs the entries it is given, so a town added
+    /// here is stored without a hole. The entry carries the race and the "fortified" bit; the owner is
+    /// not part of the table — it comes from the town's information block.
+    /// </remarks>
+    /// <param name="castle">The position, its race and its raw type byte.</param>
+    /// <returns>Index of the new entry.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="castle"/> is <see langword="null"/>.</exception>
+    /// <exception cref="NotSupportedException">The castle list of this map cannot be changed.</exception>
+    /// <exception cref="InvalidOperationException">The table already holds <see cref="CastleCount"/> towns.</exception>
+    public int AddCastle(Mp2CastlePosition castle)
+    {
+        ArgumentNullException.ThrowIfNull(castle);
+
+        if (Castles is not List<Mp2CastlePosition> castles)
+        {
+            throw new NotSupportedException("The castles of this map are not backed by a list, so they cannot be edited.");
+        }
+
+        if (castles.Count >= CastleCount)
+        {
+            throw new InvalidOperationException($"The castle table already holds its {CastleCount} towns.");
+        }
+
+        castles.Add(castle);
+
+        return castles.Count - 1;
+    }
+
+    /// <summary>
+    /// Appends an information block and returns the index the file numbers it with.
+    /// </summary>
+    /// <remarks>
+    /// A tile refers to a block by <see cref="Mp2InfoBlock.ObjectId"/>, which is the returned index plus
+    /// one, stored in its 13 bit metadata word. The block is written back by <see cref="Mp2MapWriter.Serialize"/>
+    /// as long as the list stays backed by a list, which is the case for a map built by
+    /// <see cref="CreateBlank"/> and for one read from a file.
+    /// </remarks>
+    /// <param name="data">The payload, without a size prefix.</param>
+    /// <returns>Zero based index of the new block.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="data"/> is <see langword="null"/>.</exception>
+    /// <exception cref="NotSupportedException">The block list of this map cannot be changed.</exception>
+    public int AddInfoBlock(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+
+        if (InfoBlocks is not List<Mp2InfoBlock> blocks)
+        {
+            throw new NotSupportedException("The information blocks of this map are not backed by a list, so they cannot be edited.");
+        }
+
+        int index = blocks.Count;
+        blocks.Add(new Mp2InfoBlock(index, data));
+
+        return index;
     }
 
     /// <summary>

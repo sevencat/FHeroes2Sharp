@@ -34,6 +34,17 @@ public sealed class RandomMapObjectValuesTests
     }
 
     [Fact]
+    public void TheActionSpellingIsPricedLikeThePlainOne()
+    {
+        // 物件目录里存的是带动作位的类型；两种写法都要查得到同一行。
+        Assert.Equal(
+            RandomMapObjectValues.GoldValue(Mp2ObjectType.TreasureChest),
+            RandomMapObjectValues.GoldValue(Mp2ObjectType.ActionTreasureChest));
+        Assert.True(RandomMapObjectValues.HasGoldValue(Mp2ObjectType.ActionTreasureChest));
+        Assert.True(RandomMapObjectValues.HasGoldValue(Mp2ObjectType.ActionMine));
+    }
+
+    [Fact]
     public void AnUnpricedObjectIsWorthNothing()
     {
         Assert.False(RandomMapObjectValues.HasGoldValue(Mp2ObjectType.Sign));

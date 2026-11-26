@@ -27,6 +27,7 @@ using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
 using FHeroes2.Game.Highscores;
 using FHeroes2.Game.Kingdom;
+using FHeroes2.Game.Maps;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 
@@ -2191,16 +2192,16 @@ public sealed class GameHost : IDisposable
         }
 
         int edgeLength = MapSizes.EdgeLength(request.MapSize);
+        EditorScene? scene = null;
 
         if (request.Action == EditorMenuAction.NewRandomMap)
         {
-            // The generator itself (Maps::updateRandomMapConfiguration() and generateRandomMap()) is
-            // not ported yet; a blank map of the requested size keeps the editor usable meanwhile.
-            GameLog.Warn(
-                $"The random map generator is not ported yet; creating a blank {edgeLength}x{edgeLength} map.");
+            scene = CreateRandomMapScene(edgeLength);
         }
 
-        EditorScene? scene = EditorScene.CreateNew(_frame, _assets, _fonts, edgeLength, out string? error);
+        string? error = null;
+
+        scene ??= EditorScene.CreateNew(_frame, _assets, _fonts, edgeLength, out error);
 
         if (scene is null)
         {
@@ -2218,6 +2219,52 @@ public sealed class GameHost : IDisposable
 
         _scene = scene;
         GameLog.Info($"Editor main menu: new {MapSizes.Describe(request.MapSize)} map ('{scene.MapName}').");
+    }
+
+    /// <summary>
+    /// Builds the editor scene of a freshly generated map, <c>Maps::generateRandomMap()</c>
+    /// (<c>map_random_generator.cpp:621-981</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考先开配置对话框（<c>Maps::updateRandomMapConfiguration()</c>）再生成；端口还没有那个对话框（`bd 4f2.2`），
+    /// 所以这里用默认配置：两名玩家、无水、镜像布局、正常资源与正常怪物，种子取自时钟——同一张图不会每次都一样。
+    /// </para>
+    /// <para>
+    /// 地形与区域这一段（参考步 1-4）已经完整；物件那一段还没做（`bd 4f2.1.3`），所以生成的是一张只有地形的图：
+    /// 编辑器里可以直接涂改、可以保存成 .mp2。
+    /// </para>
+    /// </remarks>
+    /// <param name="size">Edge length of the map in tiles.</param>
+    /// <returns>The scene, or <see langword="null"/> when generation or the terrain tiles fail.</returns>
+    private EditorScene? CreateRandomMapScene(int size)
+    {
+        // 种子留 0 表示「每次都要新图」，生成器自己摇一个并写进日志（参考的规矩）。
+        RandomMapConfig config = new() { Seed = 0 };
+
+        Mp2Map? map = RandomMapGenerator.Generate(config, size, size, out RandomMapTerrain? terrain);
+
+        if (map is null || terrain is null)
+        {
+            GameLog.Warn(
+                $"The random map generator cannot fill a {size}x{size} map; a blank one is created instead.");
+
+            return null;
+        }
+
+        GameLog.Info(
+            $"The generated map has "
+            + $"{terrain.Regions.Count(region => region.Type == RandomMapRegionType.Starting)} player starts; "
+            + "the object phase is not ported yet, so the map holds terrain only.");
+
+        EditorScene? scene = EditorScene.CreateFromMap(_frame, _assets, _fonts, map, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"The generated map cannot be opened in the editor: {error}");
+        }
+
+        return scene;
     }
 
     /// <summary>

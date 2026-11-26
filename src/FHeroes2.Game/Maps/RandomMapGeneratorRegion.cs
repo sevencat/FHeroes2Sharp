@@ -388,4 +388,25 @@ public sealed class RandomMapEconomy
     /// <param name="resource">The resource to ask about.</param>
     /// <returns>The count, <c>0</c> for one the economy does not count.</returns>
     public uint MineCount(Mp2ResourceType resource) => _minesCount.GetValueOrDefault(resource);
+
+    /// <summary>
+    /// Which map object stands for a mine of a resource, <c>getFakeMP2MineType()</c>
+    /// (<c>map_random_generator_helper.cpp:188-207</c>).
+    /// </summary>
+    /// <param name="resource">The resource the mine produces.</param>
+    /// <returns>
+    /// <c>Sawmill</c> for wood and ore, <c>Mine</c> for the four gems, <c>AbandonedMine</c> for gold and
+    /// <see cref="Mp2ObjectType.None"/> for anything else (the reference asserts on that case).
+    /// </returns>
+    /// <remarks>
+    /// 原版只有三种矿的图形：锯木厂（木、铁）、矿（四种宝石）、废弃矿（金）。落子时按产出资源挑一个「长得像」的。
+    /// </remarks>
+    public static Mp2ObjectType MineObjectType(Mp2ResourceType resource) => resource switch
+    {
+        Mp2ResourceType.Wood or Mp2ResourceType.Ore => Mp2ObjectType.Sawmill,
+        Mp2ResourceType.Sulfur or Mp2ResourceType.Crystal or Mp2ResourceType.Gems or Mp2ResourceType.Mercury =>
+            Mp2ObjectType.Mine,
+        Mp2ResourceType.Gold => Mp2ObjectType.AbandonedMine,
+        _ => Mp2ObjectType.None,
+    };
 }

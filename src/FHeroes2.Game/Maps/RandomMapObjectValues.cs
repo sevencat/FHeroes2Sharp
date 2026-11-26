@@ -81,9 +81,14 @@ public static class RandomMapObjectValues
     /// <summary>The gold value of an object, <c>getObjectGoldValue()</c>.</summary>
     /// <param name="objectType">The object.</param>
     /// <returns>Its value; <c>0</c> for an object the table does not price.</returns>
+    /// <remarks>
+    /// 端口的 <see cref="Mp2ObjectType"/> 把「动作位」拆成两个成员（<c>TreasureChest</c> 与
+    /// <c>ActionTreasureChest</c>），而物件目录里存的是带动作位的那个；表按不带动作位的写法建，
+    /// 查之前先 <see cref="Mp2ObjectTypes.NonActionType"/> 归一，两个成员都查得到。
+    /// </remarks>
     public static int GoldValue(Mp2ObjectType objectType)
     {
-        if (GoldValues.TryGetValue(objectType, out int value))
+        if (GoldValues.TryGetValue(Mp2ObjectTypes.NonActionType(objectType), out int value))
         {
             return value;
         }
@@ -96,7 +101,8 @@ public static class RandomMapObjectValues
     /// <summary>Whether the table prices an object, without the assertion of <see cref="GoldValue"/>.</summary>
     /// <param name="objectType">The object.</param>
     /// <returns><see langword="true"/> when the object is in the table.</returns>
-    public static bool HasGoldValue(Mp2ObjectType objectType) => GoldValues.ContainsKey(objectType);
+    public static bool HasGoldValue(Mp2ObjectType objectType) =>
+        GoldValues.ContainsKey(Mp2ObjectTypes.NonActionType(objectType));
 }
 
 /// <summary>

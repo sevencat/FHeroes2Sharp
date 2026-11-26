@@ -4262,3 +4262,525 @@ Win / Lose / HighScore 三支与 `FinishHumanTurn` 的接线属于 `d4k.3`，它
 **验证**：`RandomMapObjectValuesTests` 35 条——十五个物件的估价、表外物件为 0、两个常量、十一条阶梯边界
 （含每一档的首尾兵种与名单长度）、四档低价值的随机兵种名、低于 2000 无守卫、三种强度设置挪动价值的四个例子、
 `Normal` 不挪价值。构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6253 通过（295 + 441 + 3652 + 1865）。
+## ADR-270：P7 随机地图：宝物组与能力点组的预制表（`4f2.1.3` 第二刀）
+
+继续把物件阶段拆成「先搬表、再搬逻辑」。这一刀是落子要用的**预制小景**：
+
+| 参考 | 端口 |
+|---|---|
+| `ObjectPlacement{ offset, groupType, objectIndex }` | `RandomMapObjectPlacement(Point Offset, ObjectGroup Group, int ObjectIndex)` |
+| `ObjectSet{ obstacles, valuables, entranceCheck }` | `RandomMapObjectSet(Obstacles, Valuables, EntranceCheck)` |
+| `prefabObjectSets`（五组） | `RandomMapObjectSets.Prefabs` |
+| `powerupObjectSets`（五组） | `RandomMapObjectSets.PowerUps` |
+| `ObjectGroup` 枚举 | **端口已有**（`Game/Maps/ObjectGroup.cs`，名字与参考一一对应：`LandscapeTrees`、`LandscapeMountains`、`AdventureTreasures`、`AdventurePowerUps`） |
+
+**几处抄表时的发现**（都写进了测试，越界的抄写会立刻红）：
+
+1. 五组宝物组都是「四个宝箱围成一圈 + 三到四棵树封边 + 三到五个入口格」，宝箱统一是
+   `ADVENTURE_TREASURES` 第 9 号；能力点组骨架一样，只把一个宝箱换成 `ADVENTURE_POWER_UPS`，编号依次是
+   **10 / 18 / 12 / 13 / 16**（第五组的外圈还换成了两座山）。
+2. 入口格与宝物格都不与障碍格重合、宝物之间也不共格——这两条是我抄完表后加的**数据自检**，不是参考里的断言，
+   但它们正是「落子时不要把玩家堵在外面」这件事的最低价保险。
+3. `decorationsPerGround`（`map_random_generator.cpp:213-550`，约 330 行）这次没搬：它是纯装饰，
+   而且量比前两张表大得多，单独一刀更稳。
+
+**下一步的关键情报**：端口**已经有** `ObjectGroup` 与 `MapObjectCatalog`（`GetObjectsByGroup` / `GetObjectInfo`），
+也就是「物件组里第 N 个物件的占地」已经拿得到；再加上 `Mp2Map.CreateBlank` 与 `TerrainTransitions.TryGetBlend`，
+落子这一半并不需要先造 `Map_Format::MapFormat`——直接在 `Mp2Map` 上写瓦片即可。
+
+**还没做的**（仍是 `4f2.1.3`）：`decorationsPerGround`、`canPlaceObject` 系列空间判定、`getRandomTreasure`、
+把预制与宝物写进 `Mp2Map`、水面百分比与地形过渡、按边界长度连路。
+
+**验证**：`RandomMapObjectSetsTests` 8 条——五加五组、第一组逐格对照、宝物组的奖品一致、能力点组「一换二」、
+能力点编号序列、只用到四个组、入口与奖品不压障碍、奖品互不共格。构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；
+全量 6261 通过（295 + 441 + 3660 + 1865）。
+## ADR-271：P7 随机地图：落子的两条格规则（`4f2.1.3` 第三刀）
+
+表的下一刀是**逻辑**：格子怎么被占、物件能不能放。落点 `Game/Maps/RandomMapObjectRules.cs`。
+
+| 参考 | 端口 |
+|---|---|
+| `markNodeAsType()` / `markNodeIndexAsType()`（`:221-237`） | `RandomMapObjectRules.MarkNodeAsType` / `MarkNodeIndexAsType` |
+| `canPlaceObject()`（`:239-281`） | `RandomMapObjectRules.CanPlaceObject` |
+| `iterateOverObjectParts()`（`:209-219`） | `CanPlaceObject` 里的地面层循环（跳过 `Shadow` / `Terrain` 两层） |
+
+**三条优先级规则**（参考注释里点名的）：
+
+1. `BORDER` 与 `ACTION` 从不被后来的标记覆盖——区域边界与「留给可交互物件的位置」优先。
+2. `PATH` 不许盖到 `OBSTACLE` 上：路不能从石头里穿过去。
+3. 反过来，`OBSTACLE` **可以**盖住 `PATH`（参考的条件就是这么写的），所以落树时不必先清路。
+
+**`CanPlaceObject` 的判据**：地面层每一格都要「在地图内、有主人（region 非 0）、不是 `ACTION`/`PATH`、且要么是
+`OPEN`、要么是 `BORDER` 而这个物件不是可交互物件」；顶层（悬空树冠、屋顶）只要求在地图内且有主人；可交互物件
+还要正下方那一格是 `OPEN` 或 `PATH`，玩家才走得到跟前。
+
+**一处测试教给我们的细节**：参考的 `info.objectType` 是**动作类型**（`MP2::OBJ_TREASURE_CHEST` 带访问位），
+端口的 `Mp2ObjectType` 把两者拆成 `TreasureChest` 与 `ActionTreasureChest`；`Mp2ObjectTypes.IsInGameActionObject`
+对前者答 `false`、对后者答 `true`。用错了类型，「可交互物件压在边界上」这条规则根本不会触发。
+
+**验证**：`RandomMapObjectRulesTests` 12 条——区域内放得下、无主格子拒绝、出界拒绝、影子与地表层不占格、
+障碍挡住装饰物、边界容装饰物但不容可交互物件、`ACTION`/`PATH` 不许盖、可交互物件要下方可走、顶层只要格子、
+标记不覆盖边界与 `ACTION`、路不穿障碍而障碍可盖路、越界标记无副作用。构建 0 警告 0 错误；
+全量 6273 通过（295 + 441 + 3672 + 1865）。
+
+**还没做的**（仍是 `4f2.1.3`）：`decorationsPerGround`、`getRandomTreasure` / `convertMP2ToObjectInfo`、
+把预制与宝物写进 `Mp2Map`（`Mp2Map.CreateBlank` + `TerrainTransitions.TryGetBlend` 已验证可用）、
+水面百分比、按边界长度连路。
+## ADR-272：P7 随机地图：宝物池与类型换算（`4f2.1.3` 第四刀）
+
+物件阶段的第四刀：一个区域「还能花多少钱」时，挑什么宝物放下去。
+
+| 参考 | 端口 |
+|---|---|
+| `possibilities` 八项宝物池（`:367-370`） | `RandomMapTreasureSelection.Candidates`（宝箱与资源各两份，所以权重是别的两倍） |
+| 按 `getObjectGoldValue(object) > goldValueLimit` 过滤（`:372-378`） | `TryPick()` 里的 `Where`，池子空了返回 `false` |
+| `convertMP2ToObjectInfo()` + 缓存表（`:383-406`） | `TryConvert()` + 静态 `Lookup` |
+| `limitedGroupList` 六张表、`try_emplace` 先到先得（`:388-396`） | `LookupGroups`：饰品 → 住处 → 矿 → 能力点 → 宝物 → 怪物 |
+
+**这一刀挖出的一个真问题**：端口把 `MP2::OBJ_*` 的「动作位」拆成两个成员——`TreasureChest` 与
+`ActionTreasureChest`——而**物件目录里存的都是带动作位的那一个**（`Mp2ObjectCatalog.Generated.cs` 里全是
+`Mp2ObjectType.ActionTreasureChest` / `ActionRandomResource` / `ActionCampfire` / `ActionRandomArtifact*`）。
+估价表当初是按不带动作位的写法建的，于是换算一查就落空。修法：两处都先 `Mp2ObjectTypes.NonActionType()` 归一——
+
+1. `RandomMapObjectValues.GoldValue/HasGoldValue` 查表前归一，两种写法查到同一行；
+2. `RandomMapTreasureSelection` 建表与查询时都归一。
+
+这样「估价表按可读的写法维护、目录按文件的写法存储、换算处对齐」三件事各自自洽。
+
+**验证**：`RandomMapTreasureSelectionTests` 7 条——八项池子的顺序、每个候选都能换算回自身（并验证带动作位的写法
+指向同一格）、六张表之外的物件换算失败、650 上限只买得到资源堆、0 与 649 什么都买不到、1000 上限能出宝箱/篝火/资源
+但买不起次级宝物、同种子同选择；`RandomMapObjectValuesTests` 加一条「动作写法与平写法同价」。
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6281 通过（295 + 441 + 3680 + 1865）。
+
+**还没做的**（仍是 `4f2.1.3`）：`decorationsPerGround`（约 330 行）、把预制与宝物真正写进 `Mp2Map`
+（落点与瓦片写入路径已验证可行）、水面百分比、按边界长度连路、`generateMap` 收口。
+## ADR-273：P7 随机地图：装饰物分块与矿的图形（`4f2.1.3` 第五刀）
+
+两张按地形查的小表，落的都是落子阶段要用的常量：
+
+| 参考 | 端口 |
+|---|---|
+| `treeTypeFromGroundType()`（`:128-156`） | `RandomMapDecorations.TreeIndexFor(MapGround)` |
+| `mountainTypeFromGroundType()`（`:158-186`） | `RandomMapDecorations.MountainIndexFor(MapGround)` |
+| `getFakeMP2MineType()`（`:188-207`） | `RandomMapEconomy.MineObjectType(Mp2ResourceType)` |
+
+抄表记下的几个「反直觉但要照抄」：
+
+- 树：沼泽与草地共用第 0 块，沙滩与沙漠共用第 24 块；水面没有树（参考断言后回 0）。
+- 山：沙滩是第 0 块而不是沙漠的第 30 块；荒野跳到第 44 块，是九档里最大的一跳。
+- 矿：只有三种图形——锯木厂（木/铁）、矿（硫磺/水晶/宝石/水银）、废弃矿（金）；别的资源回 `None`（参考断言）。
+
+**验证**：`RandomMapDecorationsTests` 27 条（树的十种地形、山的九种地形、矿的八种资源，含水面与未知地形的 0）。
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6308 通过（295 + 441 + 3707 + 1865）。
+## ADR-274：P7 随机地图：把地形写进真正的 MP2 地图（`4f2.1.3` 第六刀）
+
+`RandomMapTerrain` 之前只是「一张 `MapGround` 表」；这一刀把它变成**可保存的真地图**。落点
+`Game/Maps/RandomMapBuilder.cs`，`Build(RandomMapTerrain) → Mp2Map?`。
+
+| 参考 | 端口 |
+|---|---|
+| `Maps::setTerrainOnTile( mapFormat, index, ground )`（`:738-740`） | `Mp2Map.CreateBlank(size, (x, y) => TerrainTransitions.PlainImageIndex(ground, tile))` |
+| `Maps::setTerrainBoundaries( mapFormat )`（步 5 的过渡修复） | `BlendTransitions()`：逐格 `TerrainTransitions.TryGetBlend` → `SetTile(tile with { TerrainImageIndex, TerrainFlags })` |
+
+**三处需要说明的判断**：
+
+1. **两遍而不是一遍**：先用 `PlainImageIndex` 把每格铺成纯色图（八变体按坐标取，可复现），再整体混一次过渡。
+   第二遍可以顺序走——混出来的图**永远落在本格的地形块内**，不会改变邻格看到的地形，所以前后顺序不影响结果。
+   这一点也是「`TheMapKeepsTheGroundOfEveryTile` 能对 5184 格全量断言」的前提。
+2. **尺寸只认四种**：MP2 的边长只有 36 / 72 / 108 / 144，别的尺寸 `Build` 返回 `null` 并记警告（参考的编辑器格式没有这条限制）。
+3. **落盘要用 `WriteAll` 不是 `Save`**：`Mp2MapWriter.Save(filePath, map)` 的语义是「把改动补丁回源文件」，它会去读
+   `sourcePath`，从零生成的图没有源文件；`WriteAll` 才是「按当前字段造一个完整镜像」。这一条是测试逼出来的
+   （`Save` 直接抛 `ArgumentException: The path cannot be empty`）。
+
+**端到端验证**（`RandomMapBuilderTests` 5 条）：非法尺寸返回 `null`、72×72 的每一格地面与区域表一致、每格都有图且小于
+`MaxImageIndex`、同地形两次构建逐格相同、**生成 → 构建 → `WriteAll` 写盘 → `Mp2Map.Read` 读回 → 每一格地面仍一致**。
+构建 0 警告 0 错误；全量 6313 通过（295 + 441 + 3712 + 1865）。
+
+**还没做的**（仍是 `4f2.1.3`）：把**物件**（预制 / 宝物 / 矿 / 城堡 / 英雄 / 守卫 / 装饰）写进这张图、
+`decorationsPerGround` 表、水面百分比、按边界长度连路、`generateMap` 收口；以及把 `CompleteCampaignScenario`
+之外的入口（编辑器主菜单的「随机地图」）接到生成器上。
+## ADR-275：P7 随机地图：编辑器主菜单的「随机地图」接上生成器
+
+生成器能出图之后，让它真正被用户碰到：编辑器主菜单的 **New Random Map** 以前只记一句「生成器未移植，先给一张空白图」，
+现在会**生成一张真地图**再进编辑器。
+
+| 位置 | 改动 |
+|---|---|
+| `GameHost.HandleEditorMenuRequest` | `NewRandomMap` 分支先试 `CreateRandomMapScene(edgeLength)`，失败才 `??=` 回落空白图（原有行为保留） |
+| `GameHost.CreateRandomMapScene` | 默认配置（两玩家、无水、镜像、正常资源、正常怪物）+ 种子 0（让生成器现摇）→ `RandomMapGenerator.Generate` → `EditorScene.CreateFromMap` |
+| `EditorScene.CreateFromMap` | 新公开工厂：把内存里的 `Mp2Map` 交给编辑器（此前只有「读文件」与「空白图」两个入口） |
+| `Game/Maps/RandomMapGenerator.cs` | 生成入口：`Generate(config, w, h, out terrain)`，按参考的规矩处理种子（大于 0 就用，否则现摇 0…999999），把「地形 → 地图」串成一次调用 |
+
+**两处刻意的取舍**：
+
+1. **配置对话框还没有**（`bd 4f2.2` 就是它），所以用默认配置并把种子取自时钟。参考是先 `updateRandomMapConfiguration()`
+   再生成；等 4f2.2 落地，这里只是把 `new RandomMapConfig()` 换成对话框的结果。
+2. **生成的图只有地形**：物件那一段（`4f2.1.3` 剩的部分）没做完，所以玩家起点只是「一块属于某色玩家的区域」，还没有城堡
+   与英雄。日志把这一点写清楚（`N regions, M player starts`），免得把「地形对了」当成「图能玩了」。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6318 通过（295 + 441 + 3717 + 1865）。App 层没有测试工程，
+端到端要带游戏数据跑：编辑器主菜单点「New Random Map」→ 日志里出现
+`Generating a random map with seed N, 72x72 tiles.`、`The random map generator laid out 7 region(s) on a 72x72 map.`、
+`The generated map has 2 player starts; the object phase is not ported yet…` 与
+`Editor opened on a map built in memory (72x72, no file behind it).`，随后 Ctrl+S 保存出的 `.mp2` 应能被场景列表读到。
+
+## ADR-276：P7 随机地图：预制落子的判定与占格（`4f2.1.3` 第七刀）
+
+上一刀能让生成器出一张**有地形**的图，但没有物件。物件落子要回答两个问题——「这里放得下吗」与「放下去占了哪些格」。
+参考把这两个问题写成 `canPlaceObject` / `markObjectPlacement` 两个自由函数，`4f2.1.3` 第三刀已经搬了前者的单物件版本
+（`RandomMapObjectRules.CanPlaceObject`）；这一刀把**成组**的那一半补齐，落子循环因此只差「写进 `Mp2Map`」一步。
+
+| 新增 | 参考 | 作用 |
+|---|---|---|
+| `SelectTerrainVariant(group, index, ground)` | `selectTerrainVariantForObject()` `:408-418` | 树前六种、山前八种按地带换块（`TreeIndexFor` / `MountainIndexFor`），其余原样 |
+| `CanPlaceAllObjects(state, objects, position, ground)` | `canPlaceAllObjects()` `:689-695` | 一组摆放逐个换地形变体后再查 `CanPlaceObject` |
+| `CanFitObjectSet(state, set, position, ground)` | `canFitObjectSet()` `:697-713` | 入口格必须仍为空地；障碍、奖品与守宝物的怪物都要放得下 |
+| `MarkObjectPlacement(state, info, position)` | `markObjectPlacement()` `:715-727` | 地面层逐格标 `OBSTACLE`，带动作位的物件把锚点标 `ACTION` |
+| `CanPlaceBorderObstacle(state, info, position)` | `canPlaceBorderObstacle()` `:660-687` | 装饰物专用：**允许压在已有障碍上** |
+| `RandomMonsterPlacement` | `randomMonsterSet` `:74` | 每个预制都附带的那只 (0,0) 守卫怪 |
+
+**三个值得记下来的判断**：
+
+1. **同一个物件，两条规则用的是不同的谓词**。`canPlaceObject` 判「BORDER 能不能压」时用的是
+   `MP2::isInGameActionObject`（英雄能不能访问），而 `markObjectPlacement` 判「锚点要不要留 ACTION」时用的是
+   `MP2::isOffGameActionObject`——后者在 `mp2.cpp:650-653` 里**只是动作位测试**。端口里正好两个都有
+   （`IsInGameActionObject` 与 `Mp2ObjectTypes.IsActionObject`），照抄，不合并：合并会让「带动作位但不可访问」
+   的那批物件（`OBJ_EVENT` 一类）少标一个 `ACTION` 位，路就会从它身上穿过去。
+2. **装饰物可以长在装饰物上**。`CanPlaceBorderObstacle` 的境界面比 `CanPlaceObject` 多一个 `OBSTACLE`，
+   因为区域边缘的树丛本来就是一丛压一丛；`ACTION` 与 `PATH` 仍然拒绝，否则会盖掉可交互物件的站位或已修好的路。
+3. **目录越界退成警告而不是断言**。参考在 `canPlaceAllObjects` 里断言编号永远合法（编号来自它自己的常量表），
+   但端口的生成器可以被编辑器以任意设置驱动；越界时 `TryGetObjectInfo` 记一条 `GameLog.Warn` 并让整组判为放不下，
+   一次坏编号不该让编辑器崩在菜单里。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6330 通过（295 + 441 + 3729 + 1865）。
+新增 12 条测试：树的雪地变体落在 33、山按荒野换块、非分块物件保持编号；多格物件逐格占格、动作位不可被后来者覆盖、
+影子不占格；`Prefabs[0]` 在开阔区域放得下、入口被堵 / 奖品被压 / 锚点贴地图边时放不下；
+装饰物能压障碍但不能压路、仍然要求每个格子有主人；目录外编号返回 `false` 且不抛异常。
+
+**还没做的**（仍是 `4f2.1.3`）：把预制 / 宝物 / 矿 / 城堡 / 英雄真正**写进 `Mp2Map`**（参考的
+`putObjectOnMap` → `Maps::setObjectOnTile` + `Maps::addObjectToMap`，端口缺一个「`ObjectInfo` → 瓦片字段 + 附加项链」
+的写法）、`decorationsPerGround` 表（约 330 行）、水面百分比、按边界长度连路。
+
+
+## ADR-277：P7 随机地图：把物件写进 MP2 的瓦片（`4f2.1.3.1`）
+
+物件阶段最后一块硬骨头：生成器终于能把目录里的一件东西**真的写进地图**。参考的链是
+`putObjectOnMap()` → `Maps::setObjectOnTile()` → `placeObjectOnTile()`，但它写的是**运行时 `Tile` 的 `ObjectPart` 列表**，
+MP2 字段是存档时由 `Map_Format` 的对象表反推的；端口没有 `Map_Format`（编辑器一直直接写 `Mp2TileInfo`），所以这一层翻译
+必须自己写。新类 `Game/Maps/RandomMapObjectWriter.cs`：
+
+| 目标 | 参考 |
+|---|---|
+| `TryWrite(map, position, ObjectGroup, index)` / `TryWrite(map, position, ObjectInfo)` | `putObjectOnMap()` `:761-796` |
+| 逐瓦片分组 → 底/顶面片 + 附加链 | `placeObjectOnTile()` `maps_tiles_helper.cpp:195-334` |
+| metadata 分支（矿的资源、神器的编号、怪物的数量） | `setObjectOnTile()` `:2214-2284` |
+
+**形状是先看读入侧定下来的**，不是猜的：`Tile.Init()` 从瓦片取一个底面片（`ObjectName1`、`BottomIcnImageIndex`、
+层在 `Quantity1` 低两位）和一个顶面片，再把 `EnumerateAddonChain()` 里的每一件追加成额外的面片，最后
+`SortObjectParts()`。于是规则只有一条：**一格最多一个底 + 一个顶，其余进附加链**。底面片按层号升序选第一个
+（`Object 0` → `Terrain 3`，与 `sortObjectParts()` 一致），影子因此会落到附加链上而不是抢走瓦片本体。
+
+**四个决定**：
+
+1. **一件物件只吃一个 UID**（`TakeObjectUid()` 一次），底/顶面片与每个附加件都带它——参考在 `placeObjectOnTile` 里
+   就是这样；读回时这件东西还是一个整体。
+2. **只写空瓦片**。参考能把新面片并进已有物件（`moveMainObjectPartToGroundLevel` 加那套「谁的类型说了算」的判断），
+   但生成器的落子规则已经保证目标格是空地；把「非空」当调用方错误直接拒绝，比悄悄写坏一格便宜得多。据此那条
+   「更靠上的面片不改写类型」的判断在空瓦片上恒不成立，类型规则收敛成两句：底面片里第一个有类型的说了算、
+   动作位类型可覆盖；顶面片只在当前不是动作类型时覆盖（与参考逐字对应的部分都写进了代码注释）。
+3. **metadata 按类型分流，不是照抄目录**。MP2 的瓦片只有一个 13 位字（`Metadata`），而物件目录的 `ObjectInfo.Metadata`
+   一半根本不是文件字段：怪物存的是**怪物编号**、旗帜存的是颜色、神龛存的是法术（那几样是 fh2 存档自己的东西）。所以照
+   `setObjectOnTile` 的分支写：怪物写 0（读图时 0 表示数量随机，守卫的实际数量由生成器自己算）、神器写编号、矿/锯木厂/
+   炼金实验室写资源类型、魔法花园写 1、其余写 0。参考的 `metadata[1]`（矿的日收入）在文件里没有位置，读图时由
+   `setInitialObjectInfo` 重算。
+4. **「空瓦片」要按面片算，不能只看类型**。`Mp2TileInfo.IsEmpty` 只测 `ObjectType == None`，一片没有类型的装饰物
+   照样能过——覆盖它就等于把它吞掉。`IsBlank` 同时要求没有底面片和顶面片。
+5. **`TryGetObjectInfo` 提到 `internal`**，让写入侧与判定侧共用同一张目录查找和同一套越界警告。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6341 通过（295 + 441 + 3740 + 1865）。11 条新测试：树进底面片、
+一件物件的所有面片共用一个 UID、顶面片进顶面片、同格第二件面片进附加链（层号小的当本体）、13 位 metadata 往返
+（8191 上限）、动作类型写在瓦片上、怪物不把编号写进数量、只有装饰面片的瓦片不算空、出界的物件被拒且
+`LastObjectUid` 不动、已占的瓦片被拒、**真实目录物件（`LANDSCAPE_TREES` 第 3 号）写完后 `WriteAll` 落盘 →
+`Mp2Map.Read` 读回字段一致**。
+
+**下一步**（仍是 `4f2.1.3`）：用这个原语把预制组、宝物、矿、城堡、英雄、守卫与装饰写进区域；
+`decorationsPerGround` 表、水面百分比、按边界长度连路随后跟上。
+
+
+## ADR-278：P7 随机地图：把预制组真正撒到地图上（`4f2.1.3` 第八刀）
+
+三类原语（判定 / 写入 / 占格）齐了之后，接上参考的落子循环：新增 `Game/Maps/RandomMapObjectPhase.cs`。
+
+| 成员 | 参考 |
+|---|---|
+| `PlaceSimpleObject(map, state, anchor, placement, ground)` | `placeSimpleObject()` `:958-973` |
+| `PlaceTreasureGroup(map, state, region, set, anchor, strength, rng)` | `placeValidTreasures()` `:1080-1112` |
+| `PlaceMonster(map, state, position, selection)` | `placeMonster()` `:936-956` |
+
+一组预制按参考的次序落地：障碍 → 四个奖品（能力点原样放，宝箱位按剩余预算现摇）→ 守卫。每摇一个奖品，组预算就减掉
+已放下的价值（`MinimumTreasureValue` 是地板，允许超支——参考注释写明这是故意的），最后 `region.TreasureLimit -= 组价值`，
+守卫则按**这一组的总价值**查强度表。怪物条目靠 `ObjectInfo.Metadata[0]` 里的怪物编号反查（与参考的 `GetSpriteIndex()`
+同一个顺序，四个「随机档位」也是表里真实存在的条目）。
+
+**这一刀改了写入原语的三条规矩**，全部由测试逼出来——都是「参考允许、我原来禁止」的假冲突：
+
+1. **一格可以合并**。参考的 `placeObjectOnTile` 把新面片**并进**已有格子再排序，不是覆盖。原来「只写空瓦片」的规矩让
+   **守卫放不下去**：宝物的精灵有 `@-1,0` 的边缘片，正好压在锚点邻居上，锚点自己也被前一件宝物的影子占了。
+   现在 `WriteTile` 会先读回该格原有的面片（`GroundPiecesOf`/`TopPiecesOf`，含附加链），与新面片一起按层号排序再落盘。
+2. **两条前置只看锚点格**。`putObjectOnMap` 只对**锚点**判「一格不许两个动作物件」与「同类可交互物件不重复放」。
+   我最初对每个覆盖格都判，结果预制里相邻的两件宝物（影子互相压）被判成冲突而整件丢弃。
+3. **类型判定从「这一格已有的类型」起算**，再按参考的「动作位压过一切、顶面片只压非动作类型」两条走。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6348 通过（295 + 441 + 3747 + 1865）。新增 7 条落子测试：
+一整组（三丛树 + 四件奖品 + 守卫）真的落到地图上、预算按组价值缩水、障碍占格且锚点变 `ACTION`、便宜的一组不设守卫、
+同一棵树在草地与雪地上落到不同图、出界的物件整件被拒且不改格子、守卫站在 `ACTION` 格上（空选择一个也不放）；
+写入侧另有两条改成新语义的测试（同类动作物件不重复放、装饰面片在物件落下时被保留）。
+
+**还没做的**（仍是 `4f2.1.3`）：把这两段接进 `planObjectPlacement`/`placeObjectSet` 的**择位**循环（它们要求「先能修一条到
+最近的路」才算过关，得先有修路那一段）、矿、城堡与英雄、`decorationsPerGround` 表、水面百分比、按边界长度连路。
+
+
+## ADR-279：P7 随机地图：到最近那条路的路由（`4f2.1.3` 第九刀）
+
+择位循环（`planObjectPlacement` / `placeObjectSet`）的硬门槛是「放下之后还能修出一条到最近的路」，修不出来整件撤掉。
+所以修路不是收尾美化，是「能不能放」的一部分。这一刀搬的是搜索本身：`Game/Maps/RandomMapRoadBuilder.cs`
+（`findPathToNearestRoad()`，`map_random_generator_helper.cpp:420-537`）。
+
+| 要点 | 参考 |
+|---|---|
+| 带代价的 BFS，直走 100、斜走 150 | `defaultGroundPenalty`、`defaultGroundPenalty * 3 / 2` |
+| 找到第一条路后继续推进 `roadBuilderMargin`（= 300） | `:443-446` |
+| 只认「从直方向到达」的路 | `:448-453` |
+| 只走本区域的 `OPEN` / `PATH` / `CONNECTOR` | `:483-491` |
+| 从可交互物件出发第一步不许斜走、不许朝上 | `:461-464` |
+| 斜走的两步不许拼成急转弯、`Bottom` 之后不许横折 | `:466-476` |
+| 斜接路面补一格过渡路 | `:517-525` |
+
+**三个照抄而不「优化」的地方**：一是**不用优先队列**——参考按入队顺序处理节点（它自己的注释也承认这不是严格最短路），
+换成 Dijkstra 会让同一张种子生成出不同的地图；二是**找到路后继续跑一个 margin**，那几格的多余探索会改变后续节点的
+到达次序，进而改变路径形状；三是结果**从路那一端往回走**，返回的列表是「路 → 起点」，补过渡格也插在路那一侧。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6354 通过（295 + 441 + 3753 + 1865）。新增 6 条测试：一条直路
+（11 格、首格是路、末格是起点）、区域里没有路返回空、别的区域的路不算、障碍切断返回空、从 `ACTION` 格出发第一步不斜
+不朝上、两个代价常量等于参考值。
+
+**还没做的**（仍是 `4f2.1.3`）：接上 `planObjectPlacement`/`placeObjectSet`、矿、城堡与英雄、
+`decorationsPerGround` 表、水面百分比。
+
+**补完（同一天的第十刀）**：路由接上之后，择位与铺路也一起落地了，仍在 `RandomMapObjectPhase` 里：
+
+| 新增 | 参考 |
+|---|---|
+| `ForceTempRoadOnTile(map, state, index)` | `forceTempRoadOnTile()` `:729-757` |
+| `PlanObjectPlacement(state, region, sets, rng)` | `planObjectPlacement()` `:1014-1078` |
+| `PlaceObjectSet(map, state, region, sets, strength, expectedCount, rng)` | `placeObjectSet()` `:1114-1176` |
+
+两处值得记下的细节：
+
+1. **规划什么也不改**。参考用两个 `MapStateTransaction`：外层在函数返回时把所有标记撤回，内层只在「这一组确实成立」时
+   提交。端口的 `RandomMapStateTransaction` 本来就支持嵌套（按历史长度记录起点），照搬即可；测试用「整张图的
+   `区域:类型` 快照前后一致 + `LastObjectUid` 不动」证明规划是纯的。
+2. **路面先铺，物件后写**。`placeObjectSet` 在有路可修之后先 `ForceTempRoadOnTile` 写 `ROADS` 组第 2 号（直路）并标
+   `PATH`，再让 `PlaceTreasureGroup` 落障碍、奖品与守卫。地面图自带装饰时先换成干净的变体（确定性版本，见 ADR-274）；
+   这些路只是「路由成立」的凭证，真正的路面最后由 `updateAllRoads` 按相邻格重排。
+
+**验证（第十刀）**：全量 6363 通过（295 + 441 + 3762 + 1865），构建 0 警告 0 错误。新增 9 条测试：临时路面写进瓦片、
+障碍格不给路、自带装饰的地面被换成干净图、已有路不重写、规划不改格子、没有路的区域规划为空、没有预算的区域规划为空、
+两组宝物连同路面一起落地、区域要 0 组时一个 UID 都不花。
+
+
+## ADR-280：P7 随机地图：矿、选格与「先有路才落地」（`4f2.1.3` 第十一刀）
+
+矿是第一个「自带入口」的物件：玩家走到矿前才占领，所以它**必须**有路可达。这一刀把这条规矩做成代码，并补上它需要的
+三张表与三个函数。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapMines.ObjectInfoIndex/MineBlock/SawmillOf` | `fheroes2::getMineObjectInfoId()` 与两张换块表（`gui/ui_map_object.cpp:91-150`, `:328-366`） |
+| `RandomMapTileSelection.FindTilesByType` | `findTilesByType()` `:578-587` |
+| `RandomMapTileSelection.FindOpenTilesSortedJittered` | `:539-576` |
+| `RandomMapTileSelection.PickEvenlySpacedTiles` | `:589-658` |
+| `RandomMapObjectPhase.PlaceActionObject` | `placeActionObject()` `:797-822` |
+| `RandomMapObjectPhase.FindTilesForPlacement` | `findTilesForPlacement()` `:975-1012` |
+| `RandomMapObjectPhase.PlaceMine` | `placeMine()` `:897-912` |
+
+**矿的图形是「资源 × 地面」**：目录里 `ADVENTURE_MINES` 正好 56 条，排法是八块矿（通用、草地、雪地、沼泽、熔岩、沙漠、
+泥土、荒野）× 五资源 = 40，接着 8 座废弃矿、6 座锯木厂、2 座炼金实验室。参考在这里写着「若新增矿种请更新这段逻辑」的
+警告，端口照抄并用「遍历所有地面与资源，索引必须落在 0…55」的测试把它钉住——顺带验证了目录真的就是 56 条。
+
+**三个可复用的选择器**：按类型取格、按「离区域中心的抖动距离」分环、按「越散越好」的贪心挑格。抖动是给每个格子加一个
+0…2 的随机量再分环，所以环与环之间会互相渗透，铺出来的东西不像同心圆；贪心挑格先算每个候选格到「被避开那些格」的最近
+距离，每次取最远的那一个再刷新其余格子的距离。
+
+**`placeActionObject` 与 `placeSimpleObject` 的分工**：前者「先要有路，才允许落盘」——先标格、再找路，路找不到就整件撤掉，
+找到才写对象并把路铺好；后者只管把东西放下去。矿、城堡这类带入口的走前者。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6375 通过（295 + 441 + 3774 + 1865）。新增 12 条测试：56 条目录
+自检、矿按地面分块与块内资源槽位、木/铁/水银/废弃矿各自那一块、所有（地面,资源）组合的索引都在目录内；按类型取格；
+挑格先取最远的、要得多就全给；分环覆盖每个空地各一次、抖动把距离 4 的格子放在第 4…6 环；矿连同守卫（正下方一格）与
+路面一起落地、修不出路的矿被跳过且不计数。
+
+**还没做的**（仍是 `4f2.1.3`）：矿的整体投放（`mineCount`/`goldMineCount`/`secondaryMineCount` 与主矿的木铁优先）、
+城堡与英雄起点、`decorationsPerGround` 表、水面百分比、区域连接与边界装饰、`generateMap` 收口。
+
+
+## ADR-281：P7 随机地图：矿的整体投放与区域连接（`4f2.1.3` 第十二刀）
+
+上一刀把「一座矿怎么落地」做完了，这一刀补的是**谁来点这个名**：玩家起点的木矿与铁矿，以及每个区域按面积与配置摊派
+的副矿与金矿；顺带把步 7 的最后一段「区域连接」也搬了过来。新增 `Game/Maps/RandomMapMinePhase.cs`：
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapMinePhase.PlacePrimaryMines` | `generateMap()` 步 5 的 `if ( region.type == STARTING )` 块（`:806-820`） |
+| `RandomMapMinePhase.FillRegion` | 步 7 的矿投放（`:843-871`） |
+| `RandomMapMinePhase.ConnectRegion` | 步 7 末尾的 `region.connections` 循环（`:873-880`） |
+| `RegionSizeForSecondaryMines` / `RegionSizeForGoldMine` / `FirstPrimaryMineRing` | `:60-61`、`:812` |
+
+**两次投放的次序就是策略**：步 5 先给每个玩家起点找一块木矿与一块铁矿——从离中心第 4 环以外的空地开始，一圈一圈往外试，
+**找到第一块就换下一种资源**；这些位置进 `primaryMineLocations`，步 7 挑副矿时按「越散越好」躲开它们。这样玩家门口的
+主矿不会被一座宝石矿挤掉，四种宝石矿也不会挤在一起。
+
+**「小区域一座、中立区给满」**：`secondaryMineCount` 在 `regionSizeLimit > 250` 或区域是 `NEUTRAL` 时取配置里的
+`mineCount`，否则只给 1。参考的注释解释得很直白：中立区是玩家要去抢的地方，再小也得有东西可抢；玩家自己的副矿按面积给，
+免得小图上一步一矿。金矿另有 `regionSizeLimit > 350` 的门槛（`goldMineCount` 在 `SCARCE`/`NORMAL` 下本来就是 0）。
+
+**连接排在矿之后**：连接格先标 `PATH`，再从那里修一条到最近路面的路。参考特意把它放在矿与城堡之后——先修路会让路从
+矿与城堡要占的格子上穿过去。修不出路时连接格仍留在 `PATH` 上（参考也不撤回），等后面落的矿或宝物从旁边经过时接上。
+
+**与参考的偏差**：参考在步 5 先摆城堡（`adjustRegionToFitCastle` 会把区域中心挪到城堡下方两格）、再摆主矿；端口还没有
+城堡那一段，所以 `PlacePrimaryMines` 用的是未调整的中心。城堡落地时必须按参考的次序接在它前面，否则同一种子会摇出不同图。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6385 通过（295 + 441 + 3784 + 1865）。新增 10 条测试：非起点区域
+不放主矿、起点区域木与铁各一座且都标成 `ACTION`、宽区域放满 `mineCount` 且四种资源轮流各一、小区域只放一座而小中立区放满、
+金矿的 350 门槛、水面区域不放矿、没有区域归属的格子不放矿、连接格连同路面一起落地、修不出路的连接格留在 `PATH` 且不花 UID、
+三个门槛常量等于参考值。
+
+**还没做的**（仍是 `4f2.1.3`）：城堡与英雄起点、`decorationsPerGround` 表、水面百分比、缺的守卫怪与免费拾取物、
+`updateAllRoads`、`generateMap` 收口。
+
+
+## ADR-282：P7 随机地图：城堡与英雄起点（`4f2.1.3` 第十三刀）
+
+上一刀的矿在等城堡：参考的步 5 先摆城堡（`adjustRegionToFitCastle` 会把区域中心挪到城堡下方两格），再摆玩家的木矿与
+铁矿。这一刀把城堡补齐，新增 `Game/Maps/RandomMapCastlePhase.cs`。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapCastlePhase.PlaceCastle` | `placeCastle()` `:824-895` |
+| `RandomMapCastlePhase.PlaceCastles` | `generateMap()` 步 5 的城堡分支 `:788-804` |
+| `RandomMapCastlePhase.BasementIndex` | `fheroes2::getTownBasementId()`（`gui/ui_map_object.cpp:295-326`） |
+| `Mp2Map.AddCastle` / `Mp2Map.AddInfoBlock` | 文件里那两张表与 72 条的城镇位置表 |
+| `RandomMapObjectWriter.TryWrite(…, uid)` / `SetMetadata` | `Maps::setLastObjectUID()` 与瓦片的 13 位 metadata |
+
+**一座城堡是五件东西加两段路**：地基（`LANDSCAPE_TOWN_BASEMENTS`，按地面挑第 0…7 块）、城镇本体（`KINGDOM_TOWNS`，
+六族各「城堡/城镇」两版）、左右两面旗（`LANDSCAPE_FLAGS`，颜色 × 2）、城堡下方一格的英雄（`KINGDOM_HEROES`，每种颜色
+七个精灵、最后一个是「随机英雄」）。参考让它们共用一个 UID——每次落子前把计数器退回上一个值——所以
+`RandomMapObjectWriter` 多了个能传 UID 的重载；`TryWrite` 的校验仍然全在领号之前，被拒绝的落子不许弄脏
+`LastObjectUid`（否则同一个种子会生成出不同的图）。
+
+**文件里还有两处外挂**：城堡要进 72 条的城镇位置表（`Mp2Map.AddCastle`），颜色要写进它自己的 70 字节信息块；
+英雄光站上瓦片不够，还要一段 76 字节的英雄块，否则 `World.ReadInfoBlocks` 根本不会为它建对象。两段块都由瓦片的 metadata
+指过来（`Mp2Map.AddInfoBlock` + `RandomMapObjectWriter.SetMetadata`），而 **metadata 必须在铺路之后写**——`forceTempRoadOnTile`
+会整张重写瓦片，路的目录数据里没有 metadata 字段。
+
+**测试逼出来的三件事**：
+
+1. **中立的颜色索引是 6，不是 0**。参考写的是 `neutralColorIndex = Color::GetIndex( PlayerColor::UNUSED )`，而
+   `Color::GetIndex` 的默认分支回 6；0 是蓝色，也就是第一个玩家。端口一直把 0 当中立，于是玩家 0 的区域既算起点又算
+   中立——这一刀把 `RandomMapTerrainGenerator.NeutralColorIndex` 改成 6，玩家区取 0…5、中立区取 6。
+2. **`canPlaceObject` 不查地图边界，MP2 的瓦片却必须在地图里**。城堡的影子往左伸五格、屋顶往上伸三格，而
+   `adjustRegionToFitCastle` 只保证四格余量（clamp 到 `[4, width-4]`）。第一版照抄，结果 72×72 的图上玩家区中心落在边上时
+   整张图生成失败。端口按两件物件的实际包围盒把锚点收进地图（`TryFitIntoMap`），挪过之后重挑地基图（地面可能换了），
+   并把区域中心跟到城堡下方两格，主矿的搜索环才不会错位。
+3. **树冠可以盖在障碍上，地面层不行**。同一件物件「检查」与「写入」用的层不一样：`CanPlaceObject` 跳过影子与地表层，
+   `RandomMapObjectWriter` 却把影子的面片也写进瓦片。装饰阶段因此能在障碍块上留下树冠——参考也是如此。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6412 通过（295 + 441 + 3811 + 1865）。新增 11 条测试：起点城堡
+进了城镇表且主格的 metadata 指向 70 字节的块（主人、种族、城堡位与表一致）、英雄站在城堡下方一格且有自己的 76 字节块
+（全零＝默认兵力）、两面旗一左一右且帧号不同、门口两格铺上路、中立城镇没有主人也没有英雄、水面格子不放城堡、小中立区
+只留下中心的一格路、大中立区放一座无主城镇、起点城堡放不下时整趟生成失败、「生成 → 写盘 → 读回」之后城镇表与英雄表
+都由文件重建，以及最终的一条端到端：生成的图落盘后用 `World.LoadMap()` 载入，每个玩家王国都有城有英雄、城的颜色就是
+自己的颜色。
+
+顺带修了两条装饰阶段的测试：它们原来把一条**一格宽**的纵向路当成「贴着已占格子的空地」，但参考的每一组景都占三到四格，
+紧贴单格缝隙时整组都放不下（`canPlaceObject` 对 `PATH` 一律拒绝）。改成中间一小块 3×3 的障碍，语义不变，装饰才落得下来。
+
+**还没做的**（仍是 `4f2.1.3`）：把矿、宝物、装饰按参考的次序接进 `RandomMapGenerator`、水面百分比与地形过渡、缺的守卫怪与
+免费拾取物、`updateAllRoads`、`Mp2MapWriter` 落盘前的 `updatePlayerRelatedObjects`（地图头里的玩家颜色与种族）。
+（后半段已在 ADR-283 补掉，只剩 `updateAllRoads`。）
+
+
+## ADR-283：P7 随机地图：把物件阶段接进 generateMap（`4f2.1.3` 第十四刀）
+
+前面的刀都是「单个阶段能单独跑」，这一刀把它们按参考的次序接进一次生成，并补上地图头。新增
+`Game/Maps/RandomMapObjectPasses.cs` 与 `Game/Maps/RandomMapHeader.cs`。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapObjectPasses.Run` | `generateMap()` 的步 5–11（`:751-957`） |
+| `RandomMapCastlePhase.PlaceRegionCastle` | 步 5 里「哪种区域放什么」的那段判断（`:788-804`） |
+| `RandomMapHeader.Apply` | `updatePlayerRelatedObjects()` + `updateMapPlayers()`（`map_format_helper.cpp:1287-1490`）、名字与描述（`:973-978`） |
+
+**次序就是这一刀的全部内容**：城堡（连同门口的路）→ 玩家区的木矿铁矿 → 连接格与边框树 → 副矿 → 区域之间的路 →
+能力点组 → 宝物组 → 装饰 → 接口的守军 → 路边的免费资源。每一步都假设前面的已经占好格子：连接格先算出来路面最后才铺，
+矿与城堡之后才连路（否则路从它们身上穿过去），宝物与装饰排在最后（只要有空地就能长）。
+
+**宝物先规划后落**：`PlanObjectPlacement` 在不改地图的前提下算出哪些格子放得下整组，再用 `PickEvenlySpacedTiles` 从这批格子里
+按「越散越好」挑 `treasureCount` 个真正落下去。挑选时整片区域都还是空的，不会因为前面落的组把后面的挤到角落。
+
+**一个真问题：metadata 被邻居的精灵抹掉。** 一件宝物的影子常常落在相邻的格子上，而 `WriteTile` 原来无条件写
+`MetadataOf(info)`——大多数物件是 0，于是正好压在**英雄格**上的影子把「这格指向哪个信息块」抹成了 0，读图时英雄瓦片
+还在（`ActionHero`）、英雄对象却建不出来，`World` 的通行判定直接断言。改成 `MetadataOf` 返回 `uint?`，`null` 表示
+「这一格原来的值留着」：只有真正带 metadata 的四种物件（怪物、宝物、矿、魔法花园）才写。
+
+**地图头必须重算。** `Mp2Map.CreateBlank` 给的是「六个颜色都在局中」的空白头，生成器只造玩家数那么几个王国，不重算的话
+`World` 会给没人坐的颜色也建王国。端口照参考从**物件**而不是从配置推：英雄的 `MINIHERO` 精灵给出颜色与种族，城镇两侧的
+旗子（`FLAG32`，左侧那面 `index / 2` 就是颜色）给出「这座城归谁」。名字与描述也照参考写，但 MP2 的名字字段只有 16 字节，
+「Random map 20261126」放不下，所以在内存里就按字段截断，免得盘上与内存不一致（参考用的是自己的编辑器格式，没有这个限制）。
+
+**两种「读图时会变」的东西，端口保持原样**：英雄用的是每种颜色第 7 个精灵（参考的 `randomHeroIndex - 1`），所以
+`PlayerRaces` 里那个玩家读出来是 `Random`，由读图时按王国补；不在局中的颜色，头里那六个种族槽仍是「骑士」，只有
+`KingdomColors` 能区分。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6421 通过（295 + 441 + 3820 + 1865）。新增 9 条测试：生成的图上有矿、
+有装饰、有宝物、有守军、有路边资源；同种子同物件（逐格的类型、两层面片与 metadata 都比）；生成 → 写盘 → 读回后物件
+与 UID 计数一致；每一格最多一件动作物件；36×36 也生成得出来；只有配置里的玩家在局中；每个玩家都有种族；名字与描述带上
+种子与配置；头在往返之后（在局颜色范围内）不变。
+
+
+## ADR-284：P7 随机地图：路面重排（`4f2.1.3` 第十五刀，收口）
+
+择位时铺的路都是为了「这个位置修得出路」而放的同一条直路。最后一遍把它们全部改写成真正的直/弯/三叉/十字：
+`Game/Maps/RandomMapRoads.cs`（`updateAllRoads()`、`getRoadObjectIndex()`、`updateRoadOnTile()`，
+`map_format_helper.cpp:858-882`、`:1848-1897`）。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapRoads.UpdateAll` / `UpdateTile` / `ObjectIndexAt` | `updateAllRoads()`、`updateRoadOnTile()`、`getRoadObjectIndex()` |
+| `RandomMapState.Roads` + `RandomMapRoadPlacement` | 对象表里 `group == ROADS` 的那一条 |
+| `RandomMapObjectWriter.Remove(map, uid)` | `removeObjectFromMapByUID()` |
+| `RandomMapObjectWriter.TryWriteRoad` | `placeObjectOnTile()` 的「地图外的面片跳过」分支（`:233-239`） |
+
+**「有没有路」必须按对象表算，不能按画面算。** 一件路面物件除了锚点那一格，还会把接头面片写到相邻格（`ROADS` 第 0 号
+就有五片）。相邻格因此会画出路面，但它**没有路**——参考的 `doesContainRoad()` 查的是对象表。端口把「哪一格真的有路」
+记进 `RandomMapState.Roads`（tile → UID + 目录编号），方向掩码只数这个集合，于是掩码与处理顺序无关、也就与参考一致。
+
+**旧件按 UID 整件撤掉，新件用同一个 UID 写上。** 参考在 `updateRoadOnTile()` 里把 UID 计数器退回去再写，就是为了让对象表
+里的 id 一直有效。端口照做：`Remove(uid)` 扫整张图、挑出属于这个 id 的所有面片（锚点 + 撒在邻居上的接头），把剩下的重新
+铺一遍；`TryWriteRoad` 再用同一个号写上。副作用是 `LastObjectUid` 一次都不动——测试直接钉住了这一点。
+
+**地图外的面片跳过，而不是整件拒掉。** 一个方向掩码带的接头最多铺到锚点周围五格，而地图最后一排照样得有路。参考在那里写的
+是「Ignore this tile since it is out of the map」并 `continue`。端口因此多了一个 `TryWriteRoad` 入口：只有它跳过越界面片，
+其它物件越界仍然整件拒绝（那是落子逻辑出错，`RandomMapObjectWriterTests` 一直钉着这条）。
+
+**两处刻意的偏差**：一是精灵变体 `mask + 256 * n` 的 `n` 用生成器而不是参考的全局 `Rand::Get( 1 )`——同一种子才画得出同一张
+图（ADR-274 的同一立场）；二是城堡门口那一格（`ROADS` 第 512 号）按「正上方是城镇」判定，参考查的是对象表里的
+`KINGDOM_TOWNS` 条目，端口查瓦片上的城镇类型，等价。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6430 通过（295 + 441 + 3829 + 1865）。新增 9 条测试：直路中间那格
+掩码是「左 | 右」、路的一端只连进来的那一侧、孤立的路掩码为 0、城镇正下方那格用城堡门口那一条、没有路的格子不被邻居带偏、
+重排后 UID 与计数器都不变、重排两遍不再改动、`Remove` 只撤掉那一件（同一格的路面还在、动作位没了）、以及端到端：
+生成的图上每一格的编号都等于按它现在的邻居算出来的那个，且至少有一格是真正的岔路口。
+
+
+
