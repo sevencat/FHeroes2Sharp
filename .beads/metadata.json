@@ -1,7 +1,10 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "FHeroes2Sharp",
-  "project_id": "d5e1d5fe-4edf-41b0-ab1d-2271ba451d9a"
+  "dolt_mode": "server",
+  "dolt_server_host": "1.15.245.172",
+  "dolt_server_port": 7050,
+  "dolt_server_user": "nwms",
+  "dolt_database": "king_fh2sharp",
+  "project_id": "61ae686d-7c2b-47d8-8bb4-370e201a7023"
 }
