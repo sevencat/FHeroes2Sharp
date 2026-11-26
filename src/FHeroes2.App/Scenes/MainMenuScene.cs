@@ -2459,6 +2459,14 @@ public sealed class MainMenuScene : IScene
             return entry.Action;
         }
 
+        // HIGH SCORES 同样是宿主接管的：屏幕在 GameHost.ShowHighScores 里开，场景只管把选择交上去。
+        if (entry.Action == MainMenuAction.HighScores)
+        {
+            _status = null;
+            GameLog.Info($"Main menu: '{label}' opens the high score table.");
+            return entry.Action;
+        }
+
         _status = $"{label} - not available yet";
         GameLog.Info($"Main menu: '{label}' is not implemented yet.");
         return entry.Action;

@@ -1,4 +1,5 @@
 using FHeroes2.App.Audio;
+using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Video;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
@@ -22,6 +23,11 @@ namespace FHeroes2.App.Video;
 /// 参考的跳过条件是「任意按键或鼠标左右键」；端口在 <see cref="HotKey"/>、<see cref="PressKey"/> 和
 /// 鼠标按下时直接收尾。停止后不等待按键松开，与参考的 <c>while (le.HandleEvents())</c> 退出后立即返回一致。
 /// </para>
+/// <para>
+/// <b>两条片尾用的附加规则</b>（战役最后那个 <c>WIN.SMK</c>）：<c>PLAY_CUTSCENE_WAIT</c> 在放完之后停在最后一帧上
+/// 等按键（<c>waitForKey</c>），字幕则在播到 <c>subtitleDelaySeconds</c> 之后才画出来
+/// （<c>Video::Subtitle</c> 的「第 5 秒起」）。
+/// </para>
 /// </remarks>
 internal sealed class VideoModalScreen : IModalScreen
 {
@@ -29,12 +35,31 @@ internal sealed class VideoModalScreen : IModalScreen
     private readonly AudioPlayer? _audio;
     private readonly bool _playSound;
     private readonly bool _loop;
+    private readonly bool _waitForKey;
     private readonly Palette _palette = new();
 
-    private double _elapsed;
-    private bool _audioPlayed;
+    private readonly IGlyphSource? _subtitleFont;
+    private readonly string? _subtitleText;
+    private readonly double _subtitleDelaySeconds;
+    private readonly Point _subtitlePosition;
+    private readonly int _subtitleWidth;
 
-    public VideoModalScreen(SmkVideoSequence sequence, AudioPlayer? audio, bool playSound, bool loop)
+    private double _elapsed;
+    private double _totalElapsed;
+    private bool _audioPlayed;
+    private bool _reachedTheEnd;
+
+    public VideoModalScreen(
+        SmkVideoSequence sequence,
+        AudioPlayer? audio,
+        bool playSound,
+        bool loop,
+        bool waitForKey = false,
+        IGlyphSource? subtitleFont = null,
+        string? subtitleText = null,
+        double subtitleDelaySeconds = 0,
+        Point subtitlePosition = default,
+        int subtitleWidth = VideoSubtitle.ReferenceWidth)
     {
         ArgumentNullException.ThrowIfNull(sequence);
 
@@ -42,6 +67,12 @@ internal sealed class VideoModalScreen : IModalScreen
         _audio = audio;
         _playSound = playSound && audio is not null && audio.IsAvailable;
         _loop = loop;
+        _waitForKey = waitForKey;
+        _subtitleFont = subtitleFont;
+        _subtitleText = subtitleText;
+        _subtitleDelaySeconds = subtitleDelaySeconds;
+        _subtitlePosition = subtitlePosition;
+        _subtitleWidth = subtitleWidth;
 
         IsFinished = _sequence.FrameCount == 0;
     }
@@ -81,7 +112,7 @@ internal sealed class VideoModalScreen : IModalScreen
     /// <inheritdoc/>
     public void Update(ScreenBuffer frame, double elapsedSeconds)
     {
-        if (IsFinished)
+        if (IsFinished || _reachedTheEnd)
         {
             return;
         }
@@ -92,7 +123,10 @@ internal sealed class VideoModalScreen : IModalScreen
             _audioPlayed = true;
         }
 
-        _elapsed += Math.Max(0, elapsedSeconds);
+        double delta = Math.Max(0, elapsedSeconds);
+
+        _elapsed += delta;
+        _totalElapsed += delta;
 
         double frameSeconds = Math.Max(1, _sequence.MicrosecondsPerFrame) / 1_000_000.0;
 
@@ -107,6 +141,14 @@ internal sealed class VideoModalScreen : IModalScreen
 
             if (!_loop)
             {
+                if (_waitForKey)
+                {
+                    // PLAY_CUTSCENE_WAIT：停在最后一帧等按键，字幕照旧留在画面上。
+                    _reachedTheEnd = true;
+
+                    return;
+                }
+
                 IsFinished = true;
 
                 return;
@@ -139,6 +181,14 @@ internal sealed class VideoModalScreen : IModalScreen
         {
             _palette.Load(palette);
             frame.ChangePalette(_palette);
+        }
+
+        // 字幕压在片子上面，用的是画面自己的索引表；参考同样在贴完帧之后才写字。
+        if (_subtitleFont is { } font
+            && _subtitleText is { Length: > 0 } text
+            && _totalElapsed >= _subtitleDelaySeconds)
+        {
+            VideoSubtitle.Draw(font, frame.Pixels, text, _subtitlePosition, _subtitleWidth);
         }
 
         frame.InvalidateAll();

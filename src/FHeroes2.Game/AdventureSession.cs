@@ -156,6 +156,13 @@ public sealed class AdventureSession
         {
             Settings.Get().Players.SetCurrentColor(savedCurrent);
         }
+        else
+        {
+            // 参考在开局时重置结局判定，<c>GameOver::Result::Reset()</c>（game_over.cpp:475-479）：它记的是
+            // 「还在局中的颜色」，取的是设置里的玩家表，所以必须在槽位建好之后。读档不走这一步，颜色集合由存档
+            // 里的那份恢复（game_over.cpp:689-699）。
+            GameOverResult.Current.Reset();
+        }
 
         var humans = new List<PlayerColor>();
         var computers = new List<PlayerColor>();

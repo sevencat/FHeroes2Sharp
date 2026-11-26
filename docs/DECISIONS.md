@@ -3988,3 +3988,277 @@ text support 输出层（把场景名、奖励、日期写成机器可读的行�
 标准榜留前十并返回 -1、战役榜反向排序、同一次通关替换原地、默认行数值、评分与天数两张阈值表的边界。
 
 **验证**：全量 6118 通过（295 + 441 + 3542 + 1840），0 警告。
+## ADR-262：P5 高分屏：进榜、两张榜与名字输入（`d4k.2`）
+
+`d4k.1` 把数据层逐个函数核对完了，本层把 `game_highscores.cpp` 的界面接上。主菜单的 HIGH SCORES 招牌现在真的能开榜，
+打完一局的高分也能进榜落位。
+
+**分层与落点**：
+
+| 参考 | 端口 |
+|---|---|
+| `highScoreDataContainer` 静态量 + `openHighScores()` 的读一次、换表、登记、存盘 | `Game/Highscores/HighScoreBoard.cs` |
+| `redrawHighScoreScreen()` / `redrawMonstersAnimation()` | `UI/Dialogs/HighScoresView.cs` |
+| `initialHighScoreEntryOffsetY` … `monsterOffsetY` 与两颗竖排按钮的位置 | `UI/Dialogs/HighScoresLayout.cs` |
+| `ICN::HSBKG` / `HISCORE` / `MINIMON` | `UI/Dialogs/HighScoresArtwork.cs` |
+| `openHighScores()` 的循环与 `DisplayHighScores()` 的换表 | `App/Scenes/HighScoresScreen.cs`（`IModalScreen`） |
+| `Game::DisplayHighScores( false )`（主菜单那一支） | `GameHost.ShowHighScores()` + `_pendingHighScores` |
+
+**逐项对照**（都对得上）：
+
+| 参考 | 端口 |
+|---|---|
+| 标题 `top+50/+31`，标准榜第 6 帧、战役榜第 7 帧 | 同 |
+| 行距 40、首行 72；人名 88、地图名 244、天数 403、评分 484、兵种 554/91 | 同（`HighScoresLayout`） |
+| 人名截到 `244-88`、地图名截到 `403-244`，用本行字体量 | `FitToOneRow` |
+| 选中行 `normalYellow()`，其余 `normalWhite()` | `HighScoresFonts` 的两张脸 |
+| 标准榜 `getMonsterByRating(rating)`、战役榜 `getMonsterByDay(rating)` | `MonsterFor()` |
+| 帧 `GetSpriteIndex()*9 + 1 + sequence[(top.x + offsetY + dayCount + frameId) % 15]` | `MonsterFrameBase()` + `AnimationFrame()` |
+| 动画每 `DelayType::MAPS_DELAY`（250 ms）一帧 | `GameDelays.ValidateAnimationDelay( DelayType.MapsDelay )` |
+| 战役数据不全时切换键 `disable()` | `IsSuccessionWarsCampaignPresent(assets)` 传进 `TryCreate` |
+| 标准榜最后一行 `<= rating` 才上榜、战役榜 `>= rating` 才上榜 | `HighScoreBoard.Accepts()` |
+| 名字空则写 `Unknown Hero`，限 15 字 | `NormalizePlayerName()` / `PlayerNameLength` |
+| 标准榜分 `GetRating() * getGameOverScoreFactor() / 100`；战役榜分 `days * percent / 100` | `GetStandardRating()` / `GetCampaignRating()` |
+
+`Game::getGameOverScoreFactor()`（`game.cpp:397-439`）此前没有移植，这一层补上了：四个尺寸系数 140/100/80/60，
+天数分四段递减，六百天以上一律扣 180。
+
+**偏差**（都记在这里）：
+
+1. **名字输入不另开模态**：参考的 `Dialog::inputString()` 自己转循环，而 `GameHost.RunModal` 不允许嵌套，所以名字框以
+   `InputStringView` 压在同一屏上，输入、光标、闪烁先给它，关掉之后再登记并换成黄色行。玩家看到的顺序与参考一致。
+2. **换表不重建屏幕**：参考靠外层循环再开一次 `openHighScores( true )`；端口在同一屏里 `SetTable()`，省掉一次读文件
+   （参考第二次也不读，`isInternalUpdate` 正是这个意思）。
+3. **每帧整屏重画**：参考存底后只重画兵种那块矩形；端口本来就每帧全量推屏，像素一致，少一层 `ImageRestorer`。
+4. **按钮文案 = 当前榜**：参考 `:376-381` 就是这么取素材的（标准榜配 STANDARD、战役榜配 CAMPAIGN），点它才换到另一张；
+   右键帮助反而说目标榜（`:437-444`）。照抄，不「修」。
+5. **右键帮助只写日志**：端口的模态里没有消息窗，`HighScoresScreen.LastHelpText` 把文案留给宿主。
+
+**验证**：
+
+- 构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；
+- `HighScoreBoardTests` 15 条：缺文件补十行默认榜且不生成文件、文件只读一次、两张榜合格线的相反方向、登记落位与字段、
+  空名写 `Unknown Hero`、存写回环、四个天数分段、两条评分乘积；
+- `HighScoresViewTests` 19 条：缺素材返回 null、背景居中、标题与四列偏移、行距、黄色行、两张榜各自的兵种、两颗按钮的位置与
+  按下态、点击 / 越界点击 / 右键帮助 / 禁用态、列宽截断、九帧起点、动画表达式；
+- 全量 6152 通过（295 + 441 + 3557 + 1859），0 警告。
+
+**剩下的**：像素基线要游戏数据才生成得到（本机没有 AGG，脚本按 ADR-010 跳过）；一局打完之后的
+Win / Lose / HighScore 三支与 `FinishHumanTurn` 的接线属于 `d4k.3`，它只需把 `HighScoreCompletion` 交给
+`HighScoresScreen.TryCreate`。
+## ADR-263：结局三支的接线：胜、败与高分（`d4k.3`）
+
+`GameOverResult` 早已能算出条件并说明文案，`AdventureMapDialogs.CheckGameOver()` 也早就把窗口都画出来了；缺的是
+**谁来看这个返回值**——`AdventureMapScene.HandleResult` 的 `Lose` / `HighScore` 一直落在 `default` 分支里只写日志。
+
+**这一轮接了什么**：
+
+| 位置 | 改动 |
+|---|---|
+| `AdventureMapScene.HandleResult` | `HighScore`：把 `DescribeFinishedGame()` 算出的 `HighScoreCompletion` 交给宿主（新属性 `HighScoreRequested`），没有宿主时按「离开地图」处理；`Lose`：回主菜单，不再落进 `default` |
+| `AdventureMapScene.DescribeFinishedGame` | 参考 `game_highscores.cpp:322-337` 的三个数：场景名取 `Settings.CurrentMapFileInfo.Name`、天数取 `World.DayCount`、分数取 `HighScoreBoard.GetStandardRating(map, 难度, 天数)`、种子取 `World.MapSeed` |
+| `AdventureMapScene.Update` | 新增 `CheckGameOverOnNewTurn()`：每 (颜色, 天) 判一次，补上参考 `game_startgame.cpp:1062-1065` 那个「人类回合开始时判胜负」的调用点。少了它，「上一回合被灭、这一回合才开始」的局永远等不到失败屏 |
+| `AdventureInterface.CheckGameOver()` | 把 `AdventureMapDialogs.CheckGameOver()` 包一层公开方法，场景才够得到判定 |
+| `AdventureSession.Create` | 新开局时 `GameOverResult.Current.Reset()`，参考 `game_over.cpp:475-479`。**这一步是这个 ADR 的关键**：`Reset()` 记的是「还在局中的颜色」，不清的话热座局第一回合就会被判成「所有人类玩家都出局」；读档不走它，颜色集合由存档里的那份恢复 |
+| `GameHost.ShowHighScoresAfterWin` | 先 `ReturnToMenu()`（那里放 `WIN.SMK`），再把开榜排到下一帧——`RunModal` 不能在场景 `Update` 的栈上压 |
+| `GameHost.CompleteCampaignScenario` | 战役最后一关走 `HIGHSCORES_CAMPAIGN`：表名用 `CampaignAwardData.GetCampaignName()`、分数用 `days × 难度百分比`，`IsCampaign` 为真 |
+| `GameHost` 的 pending | `bool _pendingHighScores` 换成 `PendingHighScores?(IsCampaign, Completion)`：主菜单那一支是「只看榜」，结局两支各带一张榜与一局成绩 |
+
+**顺序与参考一致**：胜负框（`AdventureMapDialogs`）→ 离开地图（`ReturnToMenu` 放 `LOSE.SMK`/`WIN.SMK`）→ 主菜单 →
+下一帧开高分屏（问名字、登记、黄色行）→ 关掉回主菜单。
+
+**偏差**：
+
+1. 战役最后一关原本「片尾与战役高分榜没有，先停在主菜单」；现在高分榜接了，片尾（credits）仍然缺，属于 P4。
+2. `ReportGameOver()`（电脑回合里发现人类全灭的那一支）仍只离开地图：它和 `HandleResult(Lose)` 是两条路，参考里前者也
+   走 `checkGameOver()`，但那条支路要重跑 AI 的一帧判断，留给以后；这一轮只保证人类回合的三支。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6152 通过（295 + 441 + 3557 + 1859）。App 层没有测试工程，
+这三处接线的行为与既有冒烟脚本一样要靠带游戏数据的运行验证（`--map` 开一张图、打完一局看日志里的
+「the high score table follows」与「took row N of the standard table」）。
+## ADR-264：P7 随机地图：先拆四步，再做配置与尺寸（`4f2.1.4`）
+
+`maps/map_random_generator*.cpp` 一共约 113 KB，一次吞不下。先按参考的三个文件与生成阶段拆成四步，各自独立可测：
+
+| 子项 | 内容 | 依赖 |
+|---|---|---|
+| `4f2.1.4` | 配置与尺寸：`Configuration` 的五个旋钮、三组枚举、三个名字、`calculateMaximumWaterPercentage`、`calculateRegionSizeLimit`（本轮） | — |
+| `4f2.1.1` | 地图状态网格与区域：`MapStateManager`/`Node`/事务、`Region` 的扩张与连接 | ← `4f2.1.4` |
+| `4f2.1.2` | 地形、区域布局与道路连通 | ← `4f2.1.1` |
+| `4f2.1.3` | 物件、经济平衡与玩家起点，`generateMap` 收口 | ← `4f2.1.2` |
+
+`4f2.2`（生成对话框）本来就挂在 `4f2.1` 下面，四个子项做完它才有得接。（期间 `bd create` 撞上远程超时重试，
+误生成了一个重复项 `4f2.1.5`，已 `bd supersede` 到 `4f2.1.2`。）
+
+**本轮落地**：`Game/Maps/RandomMapConfig.cs`（`RandomMapConfig`、`RandomMapLayout`、`RandomMapResourceDensity`、
+`RandomMapMonsterStrength`、`RandomMapRegionalObjects.For`、`RandomMapSizing`）。
+
+**逐项对照**：
+
+| 参考 | 端口 |
+|---|---|
+| `Configuration{ playerCount 2, waterPercentage 0, seed 0, MIRRORED, NORMAL, NORMAL }` | `RandomMapConfig` 的同名默认值 |
+| `regionObjectSetup` 三行 `{1,2,0,1,1,2,8500}` / `{1,4,0,2,1,3,15000}` / `{1,4,1,2,2,5,25000}` | `RandomMapRegionalObjects.For` |
+| `layoutToString` / `resourceDensityToString` / `monsterStrengthToString` | `LayoutName` / `ResourceDensityName` / `MonsterStrengthName`，返回参考的 msgid |
+| `calculateMaximumWaterPercentage`：`tileCount - 200*(players+1)` 后取百分比并夹到 0 | `MaximumWaterPercentage` |
+| `calculateRegionSizeLimit`：占地权重 49/15/6/9/16 → 补 40% 空地 → 圆形边距 → 夹在 `players+1` 与 `players*3` 之间 | `RegionSizeLimit`，整数运算顺序逐字照抄 |
+
+**两个算出来的事实**（写进测试，免得以后「优化」掉）：
+
+1. 默认配置（2 玩家、正常密度、72×72、无水）的区域是 **864** 格：187 格物件 → 311 → 加 69 格边距 = 380；
+   5184 / 380 = 13 个区域，被上限 6 压住，于是 5184 / 6。
+2. **36×36 上「正常」与「丰富」给出同一个 432**：两者目标区域（380 与 430）都让平均区域数落到「玩家数 + 1」这个
+   地板之下，被地板抬成同一个数。所以严格的三档大小关系要在 45×45 上验（337 / 405 / 506），36×36 只用来钉住
+   「稀缺 = 324」。
+
+**验证**：`RandomMapConfigTests` 20 条（默认值、三行密度表、三个 msgid、水面上限 53/93/0、默认区域 864、
+36×36 三档、45×45 严格序、水面占块、六玩家 144×144、非法玩家数与水面百分比返回 0）；
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6172 通过（295 + 441 + 3577 + 1859）。
+## ADR-265：电脑回合里的结局判定（`fkz`）
+
+`AdventureMapScene.ReportGameOver()`（电脑回合里发现人类全灭）原来只写一行日志再 `RequestExit()`。参考在
+`game_startgame.cpp:960-976` 的那条支路里同样调 `checkGameOver()` 并解释返回值，所以端口的后果是：热座局被电脑灭掉时，
+`GameOverResult.Requests` 一直是空的——**没有失败屏，也没有 `LOSE.SMK`**，玩家直接掉回主菜单。
+
+**改动**：`ReportGameOver()` 现在先 `_interface.CheckGameOver()`，结论非 `Cancel` 时交给 `HandleResult`（与人类回合的
+三支同一条路：`Lose` 回主菜单并在 `ReturnToMenu()` 里放失败片，`HighScore` 开榜），判不出结论才退回原来的
+`RequestExit()`。仍然只做一次（`_gameOverReported`），因为宿主不换场景时这条分支每帧都会被走到。
+
+**验证**：构建 0 警告 0 错误；全量 6172 通过（295 + 441 + 3577 + 1859）。App 层无测试工程，实际行为要带游戏数据跑
+一局热座（或 `--map` + 让 AI 拿下最后一座城）看日志里的「the game is over on day N」与随后的「the scenario is lost」。
+## ADR-266：P7 随机地图：状态网格、区域扩张与矿物经济（`4f2.1.1`）
+
+参考的 `map_random_generator_info.h/.cpp`（约 19 KB）搬完：网格、事务、区域与矿的均衡。落点两个文件：
+
+| 参考 | 端口 |
+|---|---|
+| `NodeType` / `Node` | `RandomMapNodeType` / `RandomMapNode`（引用类型，见下） |
+| `MapStateManager`（构造函数、`commitTransaction`、`rollbackTransaction`、四个 `getNode*`） | `RandomMapState` |
+| `MapStateTransaction`（析构回滚、`commit()`） | `RandomMapStateTransaction`（`IDisposable` + `Commit()`） |
+| `Region`（构造、`checkAdjacentTiles`、`regionExpansion`、`checkNodeForConnections`、`adjustRegionToFitCastle`） | `RandomMapRegion` |
+| `MapEconomy` | `RandomMapEconomy`（键用 `Mp2ResourceType`） |
+
+**几处必须说清楚的设计**：
+
+1. **网格自己带宽高**：参考的 `Maps::GetPoint/GetIndexFromAbsPoint` 读的是 `world.w()`，生成器因此离不开世界。
+   端口把宽高收进 `RandomMapState`，`GetPoint`/`IndexAt`/`ApproximateDistance` 都是它的成员——生成器才能在单测里跑。
+   索引约定不变（`y * width + x`），`ApproximateDistance` 照抄八方向距离 `max + min / 2`。
+2. **`Node` 是引用类型**：参考的 `Region.nodes` 存的是 `std::vector<Node>` 元素的引用，写进去就是改网格那一格。
+   C# 里只有类能保住这个语义，所以 `RandomMapNode` 是类，`GetNode*` 返回同一个对象。事务的历史因此存的是
+   `(index, region, type)` 三元组而不是节点快照。
+3. **事务用 `IDisposable`**：`using` 里没 `Commit()` 就回滚，对应参考的析构回滚；嵌套由 `_transactionRecords` 的栈维护，
+   与 `record` 比较后只回滚本层。
+4. **越界**：返回共享的 `_outOfBounds`（索引 `-1`、`BORDER`），与参考的断言 + 返回同一对象一致；写它等于丢进黑洞。
+5. **区域 id 就是列表下标**：`checkNodeForConnections` 里参考直接 `mapRegions[node.region]`，端口照抄，测试里因此
+   给列表补了一个 id 0 的中立水区占位。
+6. **`adjustRegionToFitCastle` 收 `RandomMapState`** 而不是参考的 `Map_Format::MapFormat`：后者在参考里只用到了
+   `width`，端口直接问网格要，省掉一个还没移植的格式类型。
+
+**两个从参考抠出来的细节**（都进了测试）：
+
+- `checkAdjacentTiles` 的「相邻」判定把 **region 0（空闲）也算作一个不同的邻居**：`seen` 初值是节点自己的 region，
+  任何不同的值都会 `++distinctNeighbours`。所以一个能连路的边界格，八邻域里只能有「自己 + 一个连续的别区」，
+  中间夹着一个空闲格就会被判成「这不是能放一个路口的地方」。
+- 扩张半径是 `sqrt( sizeLimit / π ) * 1.85`：40 格的区域约 6.6 格半径，测试按这个上限断言没有节点跑得更远。
+
+**验证**：新增 19 条测试——网格编号与越界哨兵、坐标往返、八方向距离、回滚 / 提交 / 嵌套 / 点重载回滚、
+区域占用中心、非法 size、扩张（节点数、region 标记、半径、`sizeLimit` 上限）、碰到别区变边界并入邻居、
+连接把四个格子标成路口并把 `connections` 双向登记、水邻域变海岸、非边界格不动、城堡贴合钳到四格、
+矿物轮转顺序（Wood → Ore → Crystal → Sulfur → Gems → Mercury → Wood）、金矿只计数不被选、非法资源被拒。
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6191 通过（295 + 441 + 3596 + 1859）。
+
+**下一步**：`4f2.1.2`（地形、区域布局与道路连通），它要用这里的事务做「试探失败就还原」。
+## ADR-267：P7 随机地图：区域布局与地形铺设（`4f2.1.2` 前半）
+
+参考 `generateMap()` 的**步 1 到步 4** 落地：区域怎么摆、怎么长、地形怎么铺。落点
+`Game/Maps/RandomMapTerrain.cs`（`RandomMapTerrain` + `RandomMapTerrainGenerator`）。
+
+| 参考 | 端口 |
+|---|---|
+| 步 1：`groundTiles`、`expectedRegionCount`、`regionObjectSetup` 行 | `Generate()` 开头，复用 `RandomMapSizing.RegionSizeLimit` 与 `RandomMapRegionalObjects.For` |
+| 步 2：`mapLayers` 内外两圈、`startingAngle`/`offsetAngle`、玩家区判定 `factor`、起点地形两条表、宝藏上限 ×2、区域大小 ×6/5 | `PlaceRegions()` |
+| `mapBoundsCheck` lambda（`x*width + y`） | `ClampedIndex()` |
+| 步 3：所有区域轮流各长一圈 | `GrowRegions()` |
+| 步 4：`setTerrainOnTile` + 补反向邻居 | `PaintTerrain()`，写进 `RandomMapTerrain` 的 `MapGround[]` |
+
+**必须记下的几件事**：
+
+1. **端口没有 <c>MapFormat</c>**：参考把地形直接写进编辑器格式；端口先产出一张 `MapGround[]` 与区域表，写文件留给
+   `4f2.1.3`。未铺过的格子是草地——参考的新图本来就是整张草地。
+2. **`mapBoundsCheck` 是转置的**：参考算的是 `x * width + y`，不是通常的 `y * width + x`。方形地图上两种写法都在界内，
+   只是中心点关于对角线镜像。端口照抄并写进注释，否则区域落点与参考不同。
+3. **`assert( placedPlayers == playerCount )` 换成返回值**：摆不下就返回 `null`，不把进程带走。
+4. **玩家区的地形表与中立区不同**：`{Grass, Dirt, Snow, Lava, Wasteland}` 对
+   `{Grass, Dirt, Snow, Lava, Wasteland, Beach, Swamp, Desert}`，参考的两条表原样搬过来。
+5. **区域大小**：稀缺资源下玩家起点就是 `regionSizeLimit`，其余一律 `×6/5`，因为区域里要装下城堡、矿与宝箱。
+
+**算出来的形状**（进测试）：72×72、两名玩家、正常密度 → 区域 864 格、中立区 4 个、内圈 2 个、外圈 4 个，
+共 **7 个区域**（含 id 0 的水域占位）；每个玩家一个 `STARTING` 区，颜色 0..n-1，宝藏上限 15000，中立区 30000。
+
+**验证**：`RandomMapTerrainTests` 10 条——非法配置返回 null、区域表（7 个、id 0 是水域且只有一个节点）、
+每个玩家恰好一个起点区与颜色、区域地形逐格一致且越界是 `Unknown`、起点表/中立表取值、稀缺下的区域大小、
+邻居双向、同种子同图、不同种子中心不同、坐标按宽度换算。
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6201 通过（295 + 441 + 3606 + 1859）。
+
+**移出去的**：步 5（地形过渡、水面百分比、城堡）与步 6（按边界长度连路）都要在物件落位之后才有意义——参考自己
+就把连路放在「摆完矿与城堡之后，免得路从物件下面穿过」。所以这两步并进 `4f2.1.3`（物件、经济平衡与玩家起点），
+`4f2.1.2` 以「布局 + 地形」收口，免得一个 issue 挂着两件互不相干的事。
+## ADR-268：战役结局的顺序：评分字幕、WIN.SMK 与胜利音乐（`urk` 的前半）
+
+上一轮把 `nh9.4` 收口时，战役最后一关只是「直接开战役高分榜」；参考在那里还有三步
+（`game_campaign.cpp:1240-1276`）。这一轮把不需要新界面的那两步补齐：
+
+| 参考 | 端口 |
+|---|---|
+| `playPreviousScenarioVideo()` | 早就在 `CompleteCampaignScenario()` 里（`CampaignVideoPlayback`） |
+| `Game::ShowCredits( false )`（`game_credits.cpp`，35 KB 的滚动致谢） | **仍未移植**，留给 `urk` |
+| `ratingText`：`Congratulations!\n\nDays: N` + `\nDifficulty: X\n\n` + `Score: S\n\nRating:\n<按天数反查的兵种名>` | `Game/Campaign/CampaignEndingText.cs`（三段分开 + `Describe` 拼合） |
+| `Video::Subtitle( ratingText, 5000, UINT32_MAX, {475,110}, 140 )` 压在 `WIN.SMK` 上 | `UI/Widgets/VideoSubtitle.cs`（`GlyphText.DrawMultiline` 的换行 + 居中）+ `VideoModalScreen` 的字幕参数 |
+| `PLAY_CUTSCENE_WAIT`：放完停在最后一帧等按键 | `VideoModalScreen.waitForKey` |
+| `AudioManager::PlayMusicAsync( MUS::VICTORY )` | `_audio?.PlayMusic( MusicTrack.Victory )` |
+| `return HIGHSCORES_CAMPAIGN` | `_pendingHighScores = new PendingHighScores(IsCampaign: true, …)`（ADR-263 已接） |
+
+**落在哪**：`GameHost.CompleteCampaignScenario()` 的 `completion.IsCampaignFinished` 分支，顺序就是参考的顺序：
+算分数 → 组字幕 → `PlayVideo("WIN.SMK", waitForKey: true, subtitle: …)` → 胜利音乐 → 排下一帧开战役榜。
+字幕里难度的名字走 `GameText`（`campaignDifficulty|Default` 这类 msgid，翻译层会去掉上下文），分数与兵种名来自
+`HighScoreBoard.GetCampaignRating()` 与 `HighScoreDataContainer.GetMonsterByDay()`。
+
+**几个细节**：
+
+1. **字幕不换字体**：参考用三张脸（`normalWhite` / `smallWhite` / `normalWhite`）拼一段 `MultiFontText`；端口把三段
+   分开放出来，`VideoSubtitle.Draw` 只按一种脸画。要还原三种字号，得先把 `MultiFontText` 接进字幕，暂无必要。
+2. **字幕位置与延时照抄**：第 5 秒起、`(475,110)`、最宽 140 像素——那是 `WIN.SMK` 里刚烧掉的那块黑方框。
+3. **字幕用画面的索引表**：字幕画在贴完帧、换完调色板之后，所以白色字映射的是片子的调色板（参考同样如此）。
+4. **`waitForKey` 只对「放完」生效**：中途按键仍然直接跳过，与参考「任意键结束」一致。
+
+**验证**：`CampaignEndingTextTests` 11 条（三段原文、拼合无多余空格、难度 msgid、兵种名按天数的四个边界）；
+`VideoSubtitleTests` 6 条（空文本、两行落点、长词折行、居中、无宽度时不偏移、参考宽度 140）。
+构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6218 通过（295 + 441 + 3617 + 1865）。
+
+**剩下的**：`Game::ShowCredits( false )` 那一屏（滚动致谢 + `CBKGLAVA` 背景 + 动画序列，35 KB）仍在 `urk` 里，
+它的标题与描述这一轮已改成「只做 credits 屏」。端到端的片尾顺序要带游戏数据跑（`--campaign 0` 打完最后一关）。
+## ADR-269：P7 随机地图：物件估价表与守卫强度（`4f2.1.3` 第一刀）
+
+`4f2.1.3`（物件阶段）比前面三块都大：参考的 `map_random_generator_helper.cpp` 有 53 KB，而它的落子函数
+（`putObjectOnMap`、`placeCastle`、`forceTempRoadOnTile`）全都吃 `Map_Format::MapFormat`——端口还没有那个格式。
+所以先切掉不需要落子、纯查表的两块，把「物件值多少、守卫多强」先钉死：
+
+| 参考 | 端口 |
+|---|---|
+| `objectGoldValue`（`map_random_generator_helper.cpp:79-126`） | `Game/Maps/RandomMapObjectValues.cs` 的 `GoldValue(Mp2ObjectType)`，键直接用端口的 `Mp2ObjectType` |
+| `getObjectGoldValue()` 的断言 | 换成 `GameLog.Warn` + 返回 0：一个没列进表的装饰物不该把生成器带走（测试宿主里 `Debug.Assert` 会直接抛） |
+| `minimalTreasureValue` / `maximumTreasureGroupValue` | `MinimumTreasureValue = 650` / `MaximumTreasureGroupValue = 14000` |
+| `MonsterSelection{ monsterId, allowedMonsters }` | `RandomMapMonsterSelection` 记录 + `None` |
+| `getMonstersByValue()`（`:304-363`） | `Game/Maps/RandomMapMonsterPools.cs` 的 `ByValue(strength, protectedObjectValue)` |
+
+**逐档对照**（价值 → 随机兵种 + 名单长度）：13000 七种、11500 九种、10000 十三种、8500 / 7000 各十五种、
+5500 十七种、3500 二级随机、2000 一级随机、2000 以下不放守卫。玩家的强度设置先挪价值再查表：
+`DEADLY +2500`、`STRONG +1500`、`WEAK -1500`。
+
+**还没做的**（仍是 `4f2.1.3` 的范围）：`prefabObjectSets` / `powerupObjectSets` / `decorationsPerGround` 三张表、
+`canPlaceObject` 系列的空间判定、`getRandomTreasure`、把物件写进 `Mp2Map`（`Mp2Map.CreateBlank` 已经在
+`EditorScene.CreateNew` 里用过，是可行的落点）、水面百分比与地形过渡、按边界长度连路。
+
+**验证**：`RandomMapObjectValuesTests` 35 条——十五个物件的估价、表外物件为 0、两个常量、十一条阶梯边界
+（含每一档的首尾兵种与名单长度）、四档低价值的随机兵种名、低于 2000 无守卫、三种强度设置挪动价值的四个例子、
+`Normal` 不挪价值。构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6253 通过（295 + 441 + 3652 + 1865）。

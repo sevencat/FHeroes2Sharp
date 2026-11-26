@@ -11,6 +11,7 @@ using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
 using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Heroes;
+using FHeroes2.Game.Highscores;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Spells;
@@ -568,6 +569,18 @@ public sealed class AdventureMapScene : IScene
 
         LocalEvent events = LocalEvent.Current;
 
+        // 每位人类玩家的回合开始时判一次胜负（game_startgame.cpp:1062-1065）：上一回合被灭、这一回合才开始的情形
+        // 只能在这里发现。同一 (颜色, 天) 只判一次——判定会把胜负框与片子的请求填进 GameOverResult，重复调用就是重复弹窗。
+        if (CheckGameOverOnNewTurn() is { } verdict)
+        {
+            if (verdict != AdventureEventResult.Cancel)
+            {
+                HandleResult(verdict);
+
+                return;
+            }
+        }
+
         // A frame that is inside a panel drag belongs to the drag alone. The reference blocks inside
         // BorderWindow::QueueEventProcessing(): while the button is held it runs no panel or map input at all and
         // keeps the cursor a plain pointer, so that dragging a panel next to the edge of the game window does not
@@ -679,11 +692,18 @@ public sealed class AdventureMapScene : IScene
 
     /// <summary>
     /// Tells the host that every human kingdom is out, the <c>checkGameOver()</c> of <c>StartGame()</c>
-    /// (<c>game_startgame.cpp:970-976</c>).
+    /// (<c>game_startgame.cpp:960-976</c>).
     /// </summary>
     /// <remarks>
-    /// 结局画面还没有（<c>bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）</c> §7.4），所以只记一笔再请宿主离开这张图，且只做一次：
-    /// 宿主不换场景时，这个分支每帧都会被走到。
+    /// <para>
+    /// 参考在电脑回合里同样调一次 <c>checkGameOver()</c> 并解释它的返回值，而不是直接离开地图：失败框、<c>LOSE.SMK</c>
+    /// 与「最后一位人类出局」全靠那一次判定填进 <see cref="GameOverResult.Requests"/>。端口原来只记一笔就请宿主离开，
+    /// 于是热座局里被电脑灭掉时既没有失败屏也没有失败片。
+    /// </para>
+    /// <para>
+    /// 判定的结果交给 <see cref="HandleResult"/>，与人类回合那三支走同一条路（<c>Lose</c> 回主菜单、<c>HighScore</c>
+    /// 开榜）；判不出结论时才退回「离开地图」。只做一次：宿主不换场景时这个分支每帧都会被走到。
+    /// </para>
     /// </remarks>
     /// <param name="session">The session that is over.</param>
     private void ReportGameOver(AdventureSession session)
@@ -696,6 +716,16 @@ public sealed class AdventureMapScene : IScene
         _gameOverReported = true;
         _aiTurnAnnounced = false;
         GameLog.Info($"The game is over on day {session.DayCount}: every human kingdom is out.");
+
+        AdventureEventResult verdict = _interface.CheckGameOver();
+
+        if (verdict != AdventureEventResult.Cancel)
+        {
+            HandleResult(verdict);
+
+            return;
+        }
+
         RequestExit();
     }
 
@@ -753,6 +783,23 @@ public sealed class AdventureMapScene : IScene
     /// </para>
     /// </remarks>
     public Action? CampaignScenarioCompleted { get; set; }
+
+    /// <summary>
+    /// What the host does when a single map has been won, the <c>GameMode::HIGH_SCORES_STANDARD</c> the turn loop hands
+    /// back to <c>StartGame()</c> (<c>game_startgame.cpp:990-1005</c>, <c>game_mainmenu.cpp:203-205</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这一步只把值交回主循环，主循环接着 <c>Game::DisplayHighScores( false )</c>：先放 <c>WIN.SMK</c>
+    /// （<c>game_over.cpp:544-559</c>），再问名字、登记、开榜。端口照同样的分工：场景算出成绩
+    /// （<see cref="HighScoreCompletion"/>）交给宿主，片子在宿主离开地图时放（<c>GameHost.ReturnToMenu</c>），
+    /// 榜在一帧之后开（<c>RunModal</c> 不能在 <see cref="Update"/> 的栈上压）。
+    /// </para>
+    /// <para>
+    /// 没有接这一手时按「离开地图」处理，与「返回 Cancel」同义。
+    /// </para>
+    /// </remarks>
+    public Action<HighScoreCompletion>? HighScoreRequested { get; set; }
 
     /// <summary>
     /// What the host does when the player asks for the scenario information of a campaign game, the
@@ -952,13 +999,92 @@ public sealed class AdventureMapScene : IScene
 
                 break;
 
+            case AdventureEventResult.HighScore:
+                // 单图打赢：参考把 HIGH_SCORES_STANDARD 交回主循环，Game::DisplayHighScores( false ) 先放胜利片再开榜
+                // （game_startgame.cpp:990-1005 → game_mainmenu.cpp:203-205）。成绩与场景名只有地图这一侧拿得到，
+                // 所以先算成 HighScoreCompletion 再交给宿主；宿主没接这一手时按「离开地图」处理。
+                if (HighScoreRequested is { } highScore && DescribeFinishedGame() is { } completion)
+                {
+                    GameLog.Info(
+                        $"The scenario '{completion.ScenarioName}' is won in {completion.DayCount} days "
+                        + $"with a score of {completion.Rating}; the high score table follows.");
+
+                    highScore(completion);
+                }
+                else
+                {
+                    GameLog.Info("The scenario is won, but no high score table is attached; the map is left.");
+                    RequestExit();
+                }
+
+                break;
+
+            case AdventureEventResult.Lose:
+                // 参考的失败支（game_over.cpp:537-547）：失败框与 LOSE.SMK 都已经由 CheckGameOver 与宿主放过，
+                // 接下来回主菜单，不再问「确定退出吗」。
+                GameLog.Info("The scenario is lost; back to the main menu.");
+                RequestExit();
+
+                break;
+
             default:
-                // 失败与高分的结局屏还没有（bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）§7.4）：先把值记下来，
-                // 免得它被悄悄吞掉。
                 GameLog.Info($"The adventure map returned '{result}', which has no handler yet.");
 
                 break;
         }
+    }
+
+    /// <summary>
+    /// The score of the finished single map, the three numbers <c>openHighScores()</c> reads from <c>world</c> and the
+    /// settings (<c>game_highscores.cpp:322-337</c>).
+    /// </summary>
+    /// <returns>The completion, or <see langword="null"/> when no map is recorded in the settings.</returns>
+    /// <remarks>
+    /// 评分的两个乘数分别是 <c>Game::GetRating()</c> 与 <c>Game::getGameOverScoreFactor()</c>，都在
+    /// <see cref="HighScoreBoard.GetStandardRating(Mp2FileInfo, GameDifficulty, uint)"/> 里。
+    /// 战役不从这里走：战役的最后一关由 <c>GameHost.CompleteCampaignScenario</c> 换成战役榜。
+    /// </remarks>
+    private HighScoreCompletion? DescribeFinishedGame()
+    {
+        if (Settings.Get().CurrentMapFileInfo is not { } mapInfo)
+        {
+            return null;
+        }
+
+        uint dayCount = World.Current.DayCount;
+        uint rating = HighScoreBoard.GetStandardRating(mapInfo, Settings.Get().GameDifficulty, dayCount);
+
+        return new HighScoreCompletion(mapInfo.Name, dayCount, rating, World.Current.MapSeed);
+    }
+
+    /// <summary>
+    /// The verdict of the last turn it was asked for, the bookkeeping the reference gets from calling
+    /// <c>checkGameOver()</c> exactly once when a human turn starts.
+    /// </summary>
+    private (PlayerColor Color, uint Day)? _verdictAskedFor;
+
+    /// <summary>
+    /// Asks for the end-of-scenario verdict once per human turn, the <c>checkGameOver()</c> at
+    /// <c>game_startgame.cpp:1062-1065</c>.
+    /// </summary>
+    /// <returns>The verdict, or <see langword="null"/> when this turn was judged already.</returns>
+    private AdventureEventResult? CheckGameOverOnNewTurn()
+    {
+        if (_session is not { } session)
+        {
+            return null;
+        }
+
+        (PlayerColor, uint) turn = (session.CurrentColor, session.DayCount);
+
+        if (_verdictAskedFor == turn)
+        {
+            return null;
+        }
+
+        _verdictAskedFor = turn;
+
+        return _interface.CheckGameOver();
     }
 
     /// <summary>

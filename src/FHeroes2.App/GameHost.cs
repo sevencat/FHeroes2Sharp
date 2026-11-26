@@ -25,6 +25,7 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.H2D;
+using FHeroes2.Game.Highscores;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
@@ -61,6 +62,18 @@ public sealed class GameHost : IDisposable
     /// run with <c>--no-config</c> and rely on this 2.
     /// </summary>
     private const int DefaultWindowScale = 2;
+
+    /// <summary>
+    /// How long the campaign rating waits before it appears over <c>WIN.SMK</c>, the <c>5000</c> milliseconds of
+    /// <c>game_campaign.cpp:1269</c>.
+    /// </summary>
+    private const double CampaignSubtitleDelaySeconds = 5.0;
+
+    /// <summary>
+    /// Where the campaign rating is burnt into <c>WIN.SMK</c>, the <c>{ 475, 110 }</c> of
+    /// <c>game_campaign.cpp:1269</c> — the black square the clip has just burned away.
+    /// </summary>
+    private static readonly Point CampaignSubtitlePosition = new(475, 110);
 
     private readonly CommandLineOptions _options;
     private readonly FrameTimer _timer = new();
@@ -203,6 +216,18 @@ public sealed class GameHost : IDisposable
     /// 选关屏要等主循环把地图换成主菜单之后再开。
     /// </remarks>
     private bool _pendingCampaignSelection;
+
+    /// <summary>
+    /// The high score table the loop still has to open, and the finished game to enter into it. It is a pending value
+    /// for the same reason as <see cref="_pendingCampaign"/>: the screen runs its own loop and must not be opened from
+    /// inside a scene's <c>Update</c>.
+    /// </summary>
+    private PendingHighScores? _pendingHighScores;
+
+    /// <summary>Which table the next frame opens, and whether a finished game has to be entered into it.</summary>
+    /// <param name="IsCampaign">The campaign table when <see langword="true"/>, the standard one otherwise.</param>
+    /// <param name="Completion">The finished game, or <see langword="null"/> when the table is only being viewed.</param>
+    private readonly record struct PendingHighScores(bool IsCampaign, HighScoreCompletion? Completion);
 
     /// <summary>
     /// Whether the frame being handled belongs to the main loop's own <c>HandleEvents</c>, see
@@ -450,8 +475,16 @@ public sealed class GameHost : IDisposable
     /// </summary>
     /// <param name="fileName">File name such as <c>intro.smk</c>; the extension is added when missing.</param>
     /// <param name="loop">Whether the video starts over when it ends, the victory and defeat clips do.</param>
+    /// <param name="waitForKey">
+    /// Whether the last frame stays on screen until a key is pressed, the <c>PLAY_CUTSCENE_WAIT</c> of the campaign
+    /// ending (<c>game_campaign.cpp:1272</c>).
+    /// </param>
+    /// <param name="subtitle">
+    /// Text burnt over the video once it has been running for <see cref="CampaignSubtitleDelaySeconds"/>, the
+    /// <c>Video::Subtitle</c> of the campaign rating (<c>game_campaign.cpp:1267-1269</c>).
+    /// </param>
     /// <returns>Whether the clip was found and played.</returns>
-    public bool PlayVideo(string fileName, bool loop = false)
+    public bool PlayVideo(string fileName, bool loop = false, bool waitForKey = false, string? subtitle = null)
     {
         byte[]? data = FindVideo(fileName);
 
@@ -481,7 +514,17 @@ public sealed class GameHost : IDisposable
 
         using (sequence)
         {
-            RunModal(new VideoModalScreen(sequence, _audio, _audio is not null, loop));
+            RunModal(new VideoModalScreen(
+                sequence,
+                _audio,
+                _audio is not null,
+                loop,
+                waitForKey,
+                subtitle is null ? null : _fonts?.White,
+                subtitle,
+                CampaignSubtitleDelaySeconds,
+                CampaignSubtitlePosition,
+                VideoSubtitle.ReferenceWidth));
         }
 
         GameLog.Info($"Video '{fileName}' finished.");
@@ -683,6 +726,13 @@ public sealed class GameHost : IDisposable
             {
                 _pendingCampaignSelection = false;
                 RunCampaignScenarioSelection(CampaignSaveData.Get());
+            }
+
+            // HIGH SCORES 的招牌同理：这一屏是阻塞式模态，排在帧里开，不能从事件回调里直接压栈。
+            if (_pendingHighScores is { } highScores)
+            {
+                _pendingHighScores = null;
+                ShowHighScores(highScores);
             }
 
             // --adventure-window 同理。
@@ -1749,6 +1799,14 @@ public sealed class GameHost : IDisposable
             return false;
         }
 
+        // The HIGH SCORES sign opens the table, `Game::DisplayHighScores( false )` of the reference
+        // (game_mainmenu.cpp:203-205). The screen is a modal of its own, so the loop opens it on the next frame.
+        if (action == MainMenuAction.HighScores)
+        {
+            _pendingHighScores = new PendingHighScores(IsCampaign: false, Completion: null);
+            return false;
+        }
+
         if (action != MainMenuAction.Quit)
         {
             // The other signs are wired up from M3 on; the scene already shows this in its status bar.
@@ -1759,6 +1817,83 @@ public sealed class GameHost : IDisposable
         _running = false;
         return true;
     }
+
+    /// <summary>
+    /// Opens the high score table, <c>Game::DisplayHighScores()</c> (<c>game_highscores.cpp:462-476</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 只读一遍文件（<see cref="HighScoreBoard.Load"/> 自带「只读一次」），把两张榜交给
+    /// <see cref="HighScoresScreen"/>；换榜、登记与存盘都在那一屏里，宿主只等它关掉。
+    /// </para>
+    /// <para>
+    /// <see cref="HighScoresScreen"/> 是模态：<see cref="RunModal"/> 自己取事件、自己重画。带着一局的成绩来时
+    /// （<c>Completion</c> 不为 <see langword="null"/>）先问名字、登记新行，这正是参考
+    /// <c>openHighScores()</c> 在 <c>isAfterGameCompletion</c> 分支里做的事（<c>:286-347</c>）。
+    /// </para>
+    /// </remarks>
+    /// <param name="request">Which table to open, and the finished game to enter into it when there is one.</param>
+    private void ShowHighScores(PendingHighScores request)
+    {
+        if (_assets is not { } assets || _fonts is not { } fonts)
+        {
+            GameLog.Warn("The high score screen needs the game archives and the bitmap fonts; the sign does nothing.");
+
+            return;
+        }
+
+        HighScoreBoard board = new();
+        var screenSize = new Size(_frame.Pixels.Width, _frame.Pixels.Height);
+
+        HighScoresScreen? screen = HighScoresScreen.TryCreate(
+            assets,
+            fonts,
+            screenSize,
+            board,
+            request.IsCampaign,
+            out string? error,
+            campaignAvailable: IsSuccessionWarsCampaignPresent(assets),
+            completion: request.Completion,
+            text: _menu?.Text);
+
+        if (screen is null)
+        {
+            GameLog.Warn($"The high score screen cannot be shown: {error}");
+
+            return;
+        }
+
+        RunModal(screen);
+
+        GameLog.Info(
+            $"The high score screen closed after the {(request.IsCampaign ? "campaign" : "standard")} table, "
+            + $"back to the main menu.");
+    }
+
+    /// <summary>
+    /// Answers the map's won standard scenario: the map is left — which plays <c>WIN.SMK</c>, the order of
+    /// <c>Game::DisplayHighScores()</c> — and the table opens on the next frame.
+    /// </summary>
+    /// <param name="completion">The score of the finished map.</param>
+    private void ShowHighScoresAfterWin(HighScoreCompletion completion)
+    {
+        GameLog.Info(
+            $"The map '{completion.ScenarioName}' is finished; the main menu comes back and the high score table follows.");
+
+        _pendingHighScores = new PendingHighScores(IsCampaign: false, Completion: completion);
+        ReturnToMenu();
+    }
+
+    /// <summary>
+    /// Whether both original campaigns have their map files, <c>Game::isSuccessionWarsCampaignPresent()</c>; the switch
+    /// button of the high score screen is disabled without them (<c>game_highscores.cpp:387-390</c>).
+    /// </summary>
+    /// <param name="assets">The archives, for the data directory the maps are searched in.</param>
+    /// <returns><see langword="true"/> when both campaigns are playable.</returns>
+    private static bool IsSuccessionWarsCampaignPresent(AssetBundle assets) =>
+        assets.DataDirectory is { } directory
+        && CampaignData.GetCampaignData(CampaignId.Roland).IsAllCampaignMapsPresent([directory])
+        && CampaignData.GetCampaignData(CampaignId.Archibald).IsAllCampaignMapsPresent([directory]);
 
     /// <summary>
     /// Handles the keys of the two windows the scene still owns, View World and the adventure options dialog.
@@ -2885,6 +3020,10 @@ public sealed class GameHost : IDisposable
         // （interface_events.cpp:366-396 → game_campaign.cpp:1284）。取消就留在图上，重启则在里面重开这一关。
         scene.CampaignSelectionRequested = () => RunCampaignScenarioSelection(CampaignSaveData.Get(), allowToRestart: true);
 
+        // 单图打赢：参考回 HIGH_SCORES_STANDARD，主循环先放 WIN.SMK 再开榜（game_mainmenu.cpp:203-205）。
+        // 榜与片子都要宿主，场景只把成绩交上来；开榜排到下一帧（RunModal 不能在 Update 的栈上压）。
+        scene.HighScoreRequested = ShowHighScoresAfterWin;
+
         if (scene.HeroActionHost is { } host)
         {
             host.RunModal = RunModal;
@@ -3164,7 +3303,35 @@ public sealed class GameHost : IDisposable
 
         if (completion.IsCampaignFinished)
         {
-            GameLog.Info("The campaign is over; the credits and the campaign high score are not ported yet.");
+            // 战役打完最后一关：参考的顺序是「上一关的片 → Game::ShowCredits( false ) → 带评分字幕的 WIN.SMK
+            // → 胜利音乐 → 战役高分榜」（game_campaign.cpp:1240-1276）。credits 屏还没移植（bd urk），其余照做。
+            CampaignSaveData saveData = CampaignSaveData.Get();
+            uint score = HighScoreBoard.GetCampaignRating(saveData);
+
+            string difficulty = _menu is { } menu
+                ? menu.Text.Get(CampaignEndingText.DifficultyMessageId(saveData.MinDifficulty))
+                : CampaignEndingText.DifficultyMessageId(saveData.MinDifficulty);
+
+            string rating = CampaignEndingText.Describe(saveData.DaysPassed, difficulty, score);
+
+            GameLog.Info(
+                $"The campaign is over after {saveData.DaysPassed} days; the score is {score} and the rating "
+                + $"is '{CampaignEndingText.RatingName(score)}'.");
+
+            if (!PlayVideo("WIN.SMK", loop: false, waitForKey: true, subtitle: rating))
+            {
+                GameLog.Warn("'WIN.SMK' is not in the game data; the campaign table follows without the ending clip.");
+            }
+
+            _audio?.PlayMusic(MusicTrack.Victory);
+
+            _pendingHighScores = new PendingHighScores(
+                IsCampaign: true,
+                new HighScoreCompletion(
+                    CampaignAwardData.GetCampaignName(saveData.CampaignId),
+                    saveData.DaysPassed,
+                    score,
+                    world.MapSeed));
 
             return;
         }

@@ -266,6 +266,19 @@ public sealed partial class AdventureMap : BaseInterface
     /// <summary>The hide-interface panel, <c>getControlPanel()</c>; <see langword="null"/> without game data.</summary>
     public ControlPanel? GetControlPanel() => _controlPanel;
 
+    /// <summary>
+    /// Evaluates the end-of-scenario conditions and shows the windows they ask for, the
+    /// <c>GameOver::Result::Get().checkGameOver()</c> call at the beginning of every human turn
+    /// (<c>game_startgame.cpp:1062-1065</c>).
+    /// </summary>
+    /// <remarks>
+    /// 事件里的判定（挖神器、默认动作）走 <see cref="AdventureMapDialogs.CheckGameOver"/>；回合开始这一处参考另有一个
+    /// 调用点，用同一个判定，否则「上一回合被灭、这一回合才开始」的局永远等不到胜负屏。结果由调用方解释（场景的
+    /// <c>HandleResult</c>）。
+    /// </remarks>
+    /// <returns>The outcome; <see cref="AdventureEventResult.Cancel"/> while the game goes on.</returns>
+    public AdventureEventResult CheckGameOver() => _dialogs.CheckGameOver();
+
     /// <inheritdoc />
     /// <remarks>
     /// The viewport swallows the clicks that land on the strip, because the strip is drawn over the map. The base
