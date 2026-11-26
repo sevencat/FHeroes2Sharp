@@ -1,4 +1,5 @@
 using FHeroes2.Assets.Maps;
+using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 
 namespace FHeroes2.Game.System;
@@ -283,6 +284,9 @@ public sealed partial class Settings
             | GameOptions.BattleAutoResolve));
 
         editorOptions.SetModes((uint)EditorOptions.Animation);
+
+        // 默认不开 text support，但这里也要写一次：<see cref="Reset"/> 之后新建的这一份不能继承上一份留下的通道开关。
+        TextSupport.IsEnabled = false;
     }
 
     /// <summary>The one set of settings, <c>Settings::Get()</c> (<c>settings.cpp:148-153</c>).</summary>
@@ -729,10 +733,15 @@ public sealed partial class Settings
     /// Switches text support mode, <c>setTextSupportMode()</c> (<c>settings.cpp:824-836</c>).
     /// </summary>
     /// <remarks>
-    /// 参考在同一处还会调 <c>Logging::setTextSupportMode()</c> 让日志转义字符；端口没有日志层，只留模式位。
+    /// 除了模式位，参考还会调 <c>Logging::setTextSupportMode()</c> 打开输出通道；端口对应的是
+    /// <see cref="TextSupport.IsEnabled"/>，两边必须一起翻，否则模式位说开着、却没有人输出。
     /// </remarks>
     /// <param name="enable">True to keep unprintable characters readable in text output.</param>
-    public void SetTextSupportMode(bool enable) => SetGameOption(GameOptions.TextSupportMode, enable);
+    public void SetTextSupportMode(bool enable)
+    {
+        SetGameOption(GameOptions.TextSupportMode, enable);
+        TextSupport.IsEnabled = enable;
+    }
 
     /// <summary>Switches auto resolved battles, <c>setBattleAutoResolve()</c>.</summary>
     /// <param name="enable">True to resolve battles automatically.</param>

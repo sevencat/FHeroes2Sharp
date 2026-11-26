@@ -3207,3 +3207,755 @@ golden 存下来，实现漂移（少乘时间系数、读错天数、丢掉 log
 
 **没做**：`objectValue` 里各物件的基础分（artifact/resource/怪物强度折算）没有逐表对拍，那是另一批数，
 本任务只到「距离与时间怎么缩放」这一层。
+
+## ADR-241：读档端到端——玩法类型先定、地图路径按数据目录还原、读档窗口自己扣帧
+
+**背景**：`6y3.11` 要把「存档 → 重启 → 读回 → 进图」走通。第一次实跑暴露三处断点：F2 写出的档是
+`QUICKSAVE.savm`，`GameSave.Load` 以「belongs to another type of game」拒收自己写的档；即便绕过类型，
+存档头里的地图只有文件名，地图文件打不开；从主菜单点 LOAD GAME 后窗口再也退不出来。
+
+**决定**：
+
+1. **玩法类型在开局前就定下来**：`--map`／主菜单选图写 `GameTypes.Standard`（对应 `Game::NewStandard()`,
+   game_newgame.cpp:149-157），主菜单 LOAD GAME 在列档前写 Standard（`Game::LoadStandard()`,
+   game_loadgame.cpp:209-213）。此前一直是 `None`（TYPE_MENU=0），于是扩展名落到 `.savm`、存档头里的类型是 0，
+   读档的类型校验（game_io.cpp:227-231）谁也不匹配——自己写的档自己读不回。
+2. **`--load` 按扩展名反推类型**：`.sav`/`.savc`/`.savh` → 单图/战役/热座，`.savm` 直接拒绝并告警。反推表与
+   写档用的 `GameSave.GetSaveFileExtension` 成对；`.savm` 装的是网络、单场战斗与自动试玩，端口还不能继续玩，
+   **不猜**。
+3. **地图路径按数据目录还原**：存档头只存文件名（maps_fileinfo.cpp:666-667），参考靠
+   `Settings::GetLastFile( "maps", name )` 还原（game_io.cpp:275）。端口没有那张表，改用
+   `MapCatalog.FindDirectories([数据目录])` 探「数据目录」与「数据目录/maps」，命中就把完整路径写回
+   `CurrentMapFileInfo`；不命中照旧报错，不做近似匹配。
+4. **读档窗口的帧算作界面自己的帧**：窗口是从主循环事件处理里开出来的（点标牌那一下就在 `HandleEvents` 内），
+   所以它的嵌套帧里 `_mainLoopFrame` 仍是 true，`OnFrameEnded` 会提前返回、冒烟预算永远扣不掉 → 窗口无限等。
+   现在 `OnFrameEnded` 里那道判断改成 `!_mainLoopFrame || _loadDialogOpen`，窗口每帧照常扣预算、重放脚本输入。
+5. **冒烟补第三节**：`SmokeBattleToMap.ps1` 在删档之前，以「无 `--map`/`--load`」启动 → 点 LOAD GAME 标牌
+   (235,218) → Enter 确认列表首行（刚写的 QUICKSAVE）→ 断言「存档文件列表打开」「地图名相同」
+   「reopened from a save」「Loaded the game from …」「Drawing the 'AdventureMapScene'」。
+   「英雄位置没变」靠日志：地图开场的状态行补上焦点英雄与它的格子（`focus hero 'Ariel' at 5591`）——
+   存档前与读档后必须逐字相同，脚本直接拿前一次的尾巴当后一次的期望。
+
+**理由**：类型与路径都是**存档头**里的数据，缺一项就只能靠猜；而窗口退不出来是端口自己的冒烟工具问题，不该
+用「再点一下」掩盖。读档成功后 `Settings` 从存档里读回 GameType，所以第 1、2 条的设置只是把校验放行，不会
+把玩家的类型改掉。
+
+**后果**：F2 写 `.sav`（不再是 `.savm`）；读档能直接进图，且地图路径不再依赖启动时的工作目录。旧版本写出的
+`.savm`（头里类型为 0）无法修复，需要重新存档。
+
+**没做**：主菜单的 Standard / Campaign / Multi-Player 子菜单没有拆，LOAD GAME 固定按单图列档（端口只有单图
+可玩）；`Settings::GetLastFile` 那张「最近用过的文件」表没有移植，只做了读档需要的那一处查找。
+
+## ADR-242：淡入的三段——调用点、设置点、宿主播放
+
+**背景**：`6y3.5` 把 `DisplayFade` 与 `BaseInterface.RenderWithFadeInOrPlanRender` / `ValidateFadeInAndRender`
+做出来了，但没有调用点、没有 `Game::setDisplayFadeIn()` 的设置点、也没有人逐帧播放，所以端口从来不会淡入。
+
+**决定**：
+
+1. **调用点**：`AdventureMap.Events.cs` 的 `EventDefaultAction` 在 `HeroActions.Action(...)` 之后补
+   `RenderWithFadeInOrPlanRender(Redraw.Heroes | Redraw.Buttons | Redraw.Status)`。这对应参考
+   `heroes_action.cpp` 的 10 处与 `ai_hero_action.cpp` 的 2 处（446、569、644、1187、1404、1745、2155、
+   2208、2492、3190；472、565），每一处都在 `ActionToXxx` 打完仗的收尾位置。
+2. **设置点**（`GameDisplayFadeIn.SetDisplayFadeIn()`）四处落地、两处无落点：
+   - 进地图：`AdventureMapScene.TryCreate` 收尾（`game_startgame.cpp:759`），开局与读档共用一条 StartGame；
+   - 城堡屏关闭回地图：`GameHost.CloseCastleWhenDone`（`game_startgame.cpp:376`）；
+   - 战斗结束回地图：`GameHost.CloseBattleWhenDone`（`battle_interface.cpp:1534`）；
+   - 盗贼公会关闭：`AdventureHeroActionHost.OpenThievesGuild`（`dialog_thievesguild.cpp:476`）；
+   - 王国总览关闭：`AdventureMapDialogs.OpenKingdomOverview`（`kingdom_overview.cpp:874`）；
+   - **英雄会面**（`heroes_meeting.cpp:863`）与**战役**（`interface_events.cpp:374`、`381`）没有落点：
+     端口还没移植英雄会面窗与战役界面，设了也没人播，留给对应的移植任务。
+3. **宿主播放**：`IScene.TakePendingFadeIn()` 默认返回 `null`，`AdventureMapScene` 每帧画完调
+   `ValidateFadeInAndRender()`（参考 `game_startgame.cpp:1580` 是 `redraw(0)` 之后紧跟它）再把淡入交给宿主；
+   `GameHost.Draw` 在 `_presenter.Upload` 之前 `TryAdvance(_palette)`，一帧推进一轮，六帧约 100 毫秒。淡入直接改
+   索引像素，脏区报不了自己，所以播放那一帧整帧标脏。
+4. **诊断**：开始播放时记一行 `Fading the screen in over 6 frames, 640x480`，与 `Drawing the 'X'.` 同级；
+   `SmokeBattleToMap.ps1` 拿它断言「战斗结束后地图淡回来」——没有这一行，脚本分不清「标志设了」与「有人取了并播了」。
+
+**理由**：参考的淡入是阻塞的六帧、每帧自己 `Display::render()`；端口的呈现集中在宿主，照搬会把渲染拆成两处。
+把「谁要淡入（设置点）」「谁把淡入取出来（场景）」「谁推上屏（宿主）」分成三段，每一段都能单独测：
+UI 层已有 `InterfaceBaseTests` 覆盖 `RenderWithFadeInOrPlanRender`/`ValidateFadeInAndRender`，端到端由冒烟覆盖。
+
+**后果**：进图、战斗结束、关城堡屏、关盗贼公会、关王国总览之后地图会淡回来。冒烟里淡入是可断言的：
+实拍帧 2 平均亮度 24.5、帧 20 为 77.6（同一张地图，640x480 PNG 采样）。
+
+**没做**：主菜单没有淡入（参考的主菜单淡入由 SDL 渲染层做，端口的主菜单场景还没有 `DisplayFade`），所以
+「离开地图回主菜单」那次 `setDisplayFadeIn`（`game_startgame.cpp:996`）没有接——设了也没有人播。
+
+## ADR-243：地图上的 L 确认后直接进读档屏——场景只交回调，宿主按参考的两步走
+
+**背景**：`6y3.12`。参考的 `Interface::AdventureMap::EventLoadGame` 只是确认框（`interface_events.cpp:352-359`），
+答 YES 返回 `GameMode::LOAD_GAME`；`StartGame()` 把它交回主循环，主循环直接调 `Game::LoadGame()`
+（`game_mainmenu.cpp:154-155`），后者先画主菜单背景再开 `Dialog::SelectFileLoad()`（`game_loadgame.cpp:215-246`）。
+端口把 `AdventureEventResult.LoadGame` 走成 `RequestExit()`，玩家答完 YES 却回到主菜单，还得再点一次 LOAD GAME。
+
+**决定**：
+1. **场景不换场景**：`AdventureMapScene` 新增 `LoadGameEvent`（`Action?`），`HandleResult` 的 `LoadGame` 分支优先调它；
+   没接时退回原来的 `RequestExit()`。日志分两句——接了写「the save file list is opened」，没接写「the map is left」，
+   冒烟据此分辨走的是哪条路。
+2. **宿主做参考的两步**：`GameHost.LeaveAdventureMapForLoadGame()` 先 `ReturnToMenu()` 再 `OpenLoadGame()`。
+   顺序照抄参考：地图离开之后列表才画在主菜单背景上；列表取消停在主菜单——参考回的是 Load Game 子菜单，
+   端口还没有那个子菜单。
+3. **装配收拢到 `ShowAdventureScene`**：`TryEnterAdventureMap` 原来自己设 `ExitEvent` 与 `host.RunModal`，
+   与 `ShowAdventureScene` 重复；现在只有一处装配，两个回调（退出、读档）都接在那里。
+4. **冒烟补第四节**：`SmokeBattleToMap.ps1` 在删快存之前，以 `--map` 启动 → `20:L` → `40:Enter`（确认框 YES）→
+   `70:Enter`（列表首行）→ 断言「the save file list is opened」「Leaving the adventure map」
+   「reopened from a save」「Loaded the game from <路径>」「The saved game continues」「Drawing the 'AdventureMapScene'」。
+
+**理由**：地图的 `Update` 里开读档窗口是安全的：`OnFrameEnded` 对 `_loadDialogOpen` 的帧照常计时并回放脚本输入
+（ADR-241 第 4 条），所以脚本按键能在这条路上落地。把「谁要读档」与「怎么开读档屏」分开，场景不必知道主菜单存在。
+
+**后果**：地图上按 L 答 YES 直接进存档列表，读到档就进那张图；取消列表停在主菜单。
+
+**没做**：`Game::LoadGame()` 的 Standard / Campaign / Multi-Player 子菜单仍未拆（见 ADR-241），所以列表取消无法回到
+「Load Game 子菜单」这一层；这一步不影响地图上的 L。
+
+## ADR-244：野怪逃跑问句的两支，以及一路走出来的三个崩溃
+
+**背景**：`ig3`。问句窗的 YES/NO 与点击在城堡、招募、盗贼公会那几处都验过（ADR-236 一带的证据），剩下没验的是
+`HeroActions.ActionToMonster()` 里野怪「逃跑/加入」这一支。为了让英雄真的走到野怪格上触发它，把地图上的点击打通，
+顺带撞出三个崩溃。
+
+**三个崩溃与修法**：
+
+1. **`MovePlayback` 起始索引写到 -1**（`BattleFieldPainter.cs:2165`）。构造时 `_stepIndex = -1` 紧接着
+   `BeginStep()`，而 `BeginStep()` 的循环条件是 `_stepIndex < Steps.Count`，`-1` 照样进循环，`Current` 就去读
+   `Steps[-1]`——**任何会走路的单位一动就抛 IndexOutOfRange**。改成 `0`：`BeginStep()` 的契约是「索引已经指向待播
+   的那一步」，`NextStep()` 才是先 `++` 再调它；`Steps` 为空时 `0 < 0` 不成立，直接 `Finish()`，也是对的。
+   之前的战斗冒烟没暴露它，是因为那场仗的兵都站在原地打完。
+2. **英雄在路上阵亡后地图还在拿他算光标**（`AdventureMap.Turn.cs` 的 `AnimateHeroMovement`）。输掉战斗的人会被
+   `Dismiss` 掉（`heroes.cpp:1959-2002`）：`MapIndex` 变 `-1`、移动状态清空。参考紧接着问 `hero->isAction()` 判
+   整局胜负（`game_startgame.cpp:1521-1529`），输了最后一个英雄就回主菜单，走不到 `SetCenter()` 与 `updateCursor()`；
+   端口还没有那一步，于是同一帧里 `SetCenter(-1)`，下一帧 `World.GetPath()` 以「The hero stands outside the map」
+   拒绝站不在图上的英雄。修法：`hero.Move()` 之后发现人已离场就收工——不居中、不更新光标、不再动画，并调用
+   `ResetFocus(GameFocus.Heroes, true)`；这个分支的注释本来就写着「当前英雄可能刚输掉战斗、已经不在英雄列表里」。
+   整局胜负那一步仍然没做（见「没做」）。
+3. **战斗规划器的移动命令结算时不可达**（`BattleArena.Action.cs:280`）。`BattlePlanner` 给出的 Move 命令在
+   `ApplyAction` 里过 `CheckMoveParams` 时抛「The unit cannot move to that cell this turn」，九头骷髅那场约三次一遇。
+   **没修**，登记为 `FHeroes2Sharp-6ms`；怀疑规划器读的可达格与 `BattleArena.Turns.cs:334` 烘进去的桥通行状态不同步。
+
+**问句两支的验证**：新增 `NeutralMonsterFleeQuestionTests`（`tests/FHeroes2.Game.Tests`），五个格子的小地图上
+10 农民对 1 农民（比值 10 > 5，人类英雄才判逃跑，`army.cpp:1725`），走 `HumanHeroMovementHandler.ActionNewPosition()`
+这条真实入口：
+
+- 答 YES：宿主收到的问句是 `HeroActionQuestion.PursueFleeingMonsters`，兵力是 1 农民，战斗真的打完、给经验，格子清空；
+- 答 NO：同一句问句，经验不变、`AttackedMonsterTileIndex` 仍是 -1、格子也清空（`destroy = true` 那一支）。
+
+问句窗本身（窗口、两个按钮、鼠标点击）由界面层的既有证据覆盖；这里补的是「拿到答案之后走哪一支」。
+
+**没做**：
+1. 整局胜负（`GameResult::checkGameOver`）：现在丢了最后一个英雄只是当场停下、把焦点重新挑一遍，不会判负回主菜单。
+   这是独立的一步，排在 `6y3` 的后期。
+2. `FHeroes2Sharp-6ms`：规划器与结算的可达格不同步，会让脚本化的野怪战斗约三次一崩一次；地图冒烟目前不会碰到它。
+
+## ADR-245：移动命令被应用两次（`ApplyActionMove` 判「原地移动」非法）
+
+**症状**：有观战者（`--map` 里点野怪开打）的战场上，AI 单位一行走就抛
+`ArgumentException: The unit cannot move to that cell this turn.`（`BattleArena.Action.cs:280` 的 `CheckMoveParams`）。
+`MerryMen.mp2` 那场脚本化战斗修前 8 次崩 4 次，无观战者的战斗冒烟一次都不崩——所以一直没被发现。
+
+**取到的现场**（临时插桩打印）：
+
+```
+monster 'Skeleton' at head 40 tail -1, destination 40, reachable head 40 cost 0,
+available 4..9,15..21,25..31,36..39,41,42,47...
+```
+
+目的地就是单位自己站的格子，`GetAllAvailableMoves()` 里也没有它（起点被排掉）。也就是说命令本身没错，是
+**这个单位在命令被应用之前就已经站在终点了**。
+
+**根因**：`BattleFieldPainter` 的 `MovePlayback` 每播完一格就 `unit.SetPosition(...)`（画面上要按单位当前格算插值
+偏移），播到终点时模型已经在目的地。随后场景才把同一条命令交给 `BattleArena.ApplyAction`，`ApplyActionMove`
+再校验一次就撞上 `unit.HeadIndex == destination`，`CheckMoveParams` 明写「原地移动不是移动」。参考里没有这个缝：
+播动画与改位置都在 `moveUnit` 一个函数里（`battle_action.cpp` 的 `ApplyActionMove` → `moveUnit`），只在
+`battle_interface.cpp` 的阻塞循环里逐格推进。端口把它拆成「先播（界面）、后结算（竞技场）」，两半就都动了手。
+
+**修法**：`BattleArena.ApplyActionMove()` 在 `RefreshBridgePassability` 之后、`CheckMoveParams` 之前加一条：
+单位已经站在 `destination` 就只补 `BattleMonsterState.Moved` 然后返回——另一半已经做完，不必也不该再走一次。
+`CheckMoveParams` 本身保持严格（「原地移动」仍然是非法参数），只有「应用一条已经生效的移动」被容忍。
+
+**测试**：`BattleArenaActionTests.AMoveTheAnimationAlreadyWalkedIsOnlyMarkedAsSpent`（把单位摆在终点再交 Move 命令，
+断言位置不变、模式位有 `Moved`）。现场复跑：`--map MerryMen.mp2 --cursor 112,304 --left-click-at '40:112,304;60:112,304'`
+连跑 10 次 0 崩溃（修前 4/8），`--battle-siege` 连跑 3 次也干净。
+
+**留下的坑**（已由 ADR-246 修掉）：`qa6`。这条分支跳过的不只是「再走一次」，还有 `MoveUnit` 里那套吊桥收放
+（`BattleArena.Action.cs:100-150` 的 `_bridge.ActionDown/ActionUp`），而界面层从不碰桥。于是有观战者的攻城场里
+吊桥永远是升起的：本城单位出城没问题（升起的桥只对本城放行），攻方却进不了城门。参考把桥混在逐格循环里，
+正确的补法是把 `NeedDown/ActionDown/ActionUp` 搬进 `MovePlayback.NextStep`。
+
+## ADR-246：有观战者的攻城不放下吊桥（`qa6`）
+
+**症状**：`--battle-siege` 里守城方从城里走出来时，吊桥一直挂在升起的状态。城里的兵照样能过（升起的桥只对本城
+单位放行，`Bridge::isPassable`），攻方却永远进不了城门：每回合 `BattleArena.RefreshBridgePassability` 按
+「桥是升的」重算闸门通行性，而没有任何东西把它放下来。
+
+**根因**：放桥收桥写在 `Arena::moveUnit()` 的逐格循环里（`battle_action.cpp:333-350`）。ADR-245 之后，有观战者的
+移动由 `BattleFieldPainter` 的 `MovePlayback` 一格格 `SetPosition` 走完，竞技场只在「已经站在终点」时补一个
+`Moved` 模式位就走了——那条逐格循环整个被跳过，于是桥段跟着一起没了。界面层自己从不碰桥。
+
+**修法**：把桥段从 `MoveUnit` 里抽出来，给两边共用：
+
+- `BattleArena.LowerBridgeForStep(unit, cellIndex, tailIndex = -1)`：`Bridge::NeedDown` 成立就 `ActionDown()`；
+- `BattleArena.RaiseBridgeAfterStep()`：`Bridge::AllowUp` 成立就 `ActionUp()`。
+
+`MoveUnit` 的两个分支改为调用它们（行为不变），`MovePlayback` 在自己的那一格补上同样的调用：
+`NextStep()` 里「放桥 → `SetPosition` → 收桥」，飞行单位则集中到新的 `Land()`（`FlyLand` 帧与 `Finish()` 都走它），
+顺序与参考一致——先看落点（宽单位连尾巴）要不要放桥，落位之后再看能不能升起。
+
+**测试**：`BattleArenaTests.AWalkedStepTurnsTheDrawbridgeAroundIt`——守城方站在闸门内侧，`LowerBridgeForStep` 之后桥
+放下；站到闸门上时 `RaiseBridgeAfterStep` 不升（桥上有人）；走到闸门后面再升。
+
+**验证**：全量测试 441 / 3462 / 1779 全过；`--battle-siege` 连跑 3 次干净；`SmokeBattleToMap.ps1` 通过。
+
+**没做**：吊桥升降的**动画帧**。参考的 `Bridge::ActionDown/ActionUp` 是带逐帧重绘的阻塞动画，端口的
+`BattleBridge.ActionDown/ActionUp` 只改状态，桥会瞬间换图。要让那段动画也同步进来，得给播放加一个「桥步」，
+排在行军步之间——等攻城的美术核对时再一起做。
+
+## ADR-247：战役开局的表头准备（`nh9.1`）
+
+**背景**：`campaign_data.cpp:697-747` 的 `updateScenarioGameplayConditions()` 早就搬好了（`CampaignData.UpdateScenarioGameplayConditions`）
+也有测试，缺的是**谁来调**。参考只有一个调用点：`game_campaign.cpp:1604-1615`，`Dialog::CampaignInfo` 的 OK 分支里
+`scenario.loadMap()` 之后——先修法语字符，再补联盟，然后 `conf.setCurrentMapInfo()`。
+
+**问题**：端口还没有战役主流程（`nh9.3`），所以这段接线没有现成的落点。选项是等 `nh9.3`（那样 `nh9.1` 就只能空转），
+或者先把「读图 + 准备表头」合成一个入口，让 `nh9.3` 只能照它写。选了后者——项目一贯的做法是先立接口、后接调用方。
+
+**做法**：
+
+- `CampaignData.PrepareScenarioMap(scenarioInfoId, mapInfo, interfaceLanguage, resourceLanguage)`：参考那两句的合并版。
+  法语字符那一步照参考的三重门槛——地图不是 `RESURRECTION` 格式、**界面**说法语、**资材**也是法语版，缺一不可；
+  然后接既有的联盟合并。两个语言做成参数而不是内部读全局，参考在调用点读的也是这两个全局量，做成参数才测得动。
+- `ScenarioData.LoadPlayableMap(rootDirectories)`：`LoadMap()` + 上面那步，并在里面取 `GameLanguage.Current` 与
+  `ResourceLanguage.Get()`。参考 `loadMap()` 只有这一个调用者，紧跟其后的就是这两步，所以合成一个入口不会漏。
+
+**测试**：`CampaignTests.APreparedScenarioMapBringsTheAllianceAndTheFrenchAccents`（`C#te` → `Côte`，两个网家并成一方）；
+`TheFrenchFixNeedsBothLanguagesAndALegacyMap` 三条反例（界面英文 / 资材英文 / 新格式地图，文本都不动，联盟照补）。
+
+**没做**：
+1. `LoadPlayableMap` 还没有调用者，等 `nh9.3` 的战役主流程。它只有两行（读 + 准备），两块都被单测盖住了；
+   要给它补端到端测试得先在测试工程里造一份可读的 `.h2c`，`TemporaryMap` 现在只在资材测试里是 `internal`。
+2. 战役地图（`CAMPG01.H2C` 那一批）不在数据目录里，本机只装了 `.mp2` 地图，跑不到真实战役图。
+
+## ADR-248：战役存档的派生字段（`nh9.2`）
+
+**核对**：`campaign_savedata.cpp:165-210` 的 `operator<<` / `operator>>` 与端口 `CampaignSaveData.Write/Read` 逐字段对过，
+次序、版本分支（1.1.11.1 之前的天数摊平、1.1.08 之前没有最小难度）、`resize` 补齐全都一致；`GameSave` 在
+`IsCampaignGameType` 时也早就把这一段写进 `.savc` / 读回来。所以序列化本身没有缺口，缺的是文件尾部的三个派生函数。
+
+**补上**（`CampaignSaveData` 的实例方法，对应参考里 `Campaign::` 命名空间的三个自由函数）：
+
+- `GetCurrentScenarioVictoryCondition()`（`campaign_savedata.cpp:212-227`）：按存档里的关卡编号去战役表取胜利条件。
+  编号是读回来的，手改过的存档会越界，参考此时断言并退回 `STANDARD`，端口照做（`Debug.Assert` + 三目）。
+- `GetCurrentScenarioLossCondition()`（`229-244`）：同上。
+- `GetCurrentScenarioDifficultyLevel()`（`246-268`）：原版把十关的地图难度写死在 `adjustedDifficultyLevels` 里
+  （罗兰/阿基巴德各 1 关、Descendants 2 关、巫师岛 1 关、回乡 1 关、忠诚的代价 4 关）。表外的关返回
+  `null`，调用方用地图表头自己的难度。
+
+**测试**（`CampaignTests`，4 个新测试）：
+
+- `CampaignSaveDataRoundTripsThroughAStream`：写一遍再读回来，逐字段比对（含五格携带部队的号位形状）。之前只有
+  `ScenarioInfoId` 有来回测试，战役状态本身没有。
+- `TheCurrentScenarioDrawsItsConditionsFromTheCampaignTable`：罗兰第三关（丢光女巫村就输）、第八关（拿终极王冠才赢）。
+- `TenScenariosHardCodeTheirMapDifficulty`：十条例外逐条表格化。
+- `ScenariosWithoutAHardCodedDifficultyKeepTheMapOne`：表外的关拿到 `null`。
+
+**踩到的坑**：`CampaignSaveData` 自己有个 `CampaignId` 属性，类内的字段初始值设定项里写 `CampaignId.Roland` 会被解析成
+那个属性（CS0236）。给常量类加了个 `CampaignIds` 别名。
+
+**没做**：这三个函数现在没有调用方——胜负判定（`game_startgame.cpp` 的 `GameResult`）与地图难度的选择分别属于
+`nh9.3` 与 `6y3` 的收尾，到时候接上去即可。
+
+## ADR-249：战役主流程拆成五块，先落奖励那一块（`nh9.3`）
+
+**背景**：`game_campaign.cpp` 一共 1170 行，去掉匿名命名空间里的绘制与界面壳，真正属于「流程」的是两段：选关时把玩家挑的奖励
+落到人和王国身上（`SetScenarioBonus` / `applyObtainedCampaignAwards` 及其三个辅助函数，501-780），以及选关界面与
+`CompleteCampaignScenario` 的状态推进。前者是纯数据动作、能单独测；后者要界面、原版按钮与图标、以及 App 的场景切换。
+一口吃不下，按能独立验收的边界拆成五块：
+
+1. **奖励与奖励物的落账**（本轮完成）：`CampaignBonuses`。
+2. 选关流程的状态推进：`SelectCampaignScenario` 的「点哪个图标 = 下一步干什么」与 `CompleteCampaignScenario` 的
+   「打完一关怎么记账、什么时候算战役结束」。
+3. 选关界面的绘制与按钮：`DrawCampaignScenarioIcons` / `addScenarioButton` / `DrawCampaignScenarioDescription` /
+   `drawCampaignNameHeader` / `drawObtainedCampaignAwards` / 影片与音乐。
+4. 新战役入口与难度选择：`NewSuccessionWarsCampaign` / `NewPriceOfLoyaltyCampaign`（在 `game_newgame.cpp`）、
+   `setCampaignDifficulty`、App 场景接线与读档分支（`--campaign` 之类）。
+5. TextSupport 模式的战役输出：`outputCampaignScenarioInfoInTextSupportMode`。
+
+**本轮做了第 1 块**，新文件 `src/FHeroes2.Game/Campaign/CampaignBonuses.cs`：
+
+- `SetScenarioBonus(world, scenarioInfoId, bonus)`：只给人控制的玩家加；八种奖励（资源、宝物、兵、法术、起始种族、
+  起始种族兼兵表、主技能、副技能）逐条对应 `game_campaign.cpp:605-702`。
+- `ApplyObtainedCampaignAwards(world, currentScenarioInfoId, awards)`：只兑现「开局立刻要生效」的四类（宝物、法术、
+  消灭指定敌方英雄、携带部队）。奖励物从它自己的 `StartScenarioId` 那一关起生效，早于它的关卡跳过。
+- `ReplaceArmy` / `SetHeroAndArmyBonus` / `GetHeroToApplyBonusOrAwards`：后两个是参考的私有辅助，端口保持私有。
+
+**踩到的三个坑**（都写进了测试的注释）：
+
+1. `Army.Reset()` 不是「清空」。参考里「没有携带部队」时调的就是 `Army::Reset()`，那是「给一个一级兵」——端口
+   `Reset(defaultArmy: false)` 语义一致，所以断言要的是「一个一级兵、数量 1」，不是空军队。
+2. 王国的开局资金不是 0（难度不同数量不同），测资源奖励只能比增量。
+3. 地图生成时英雄自带一队兵，测试里要先 `Army.Clean()` 才能看清奖励自己动的手。
+
+**没做 / 已知偏差**：
+
+- 宝物奖励里卷轴携带的法术（`Artifact::SetSpell()`）：端口的宝物栏槽位只存 `ArtifactType`，没有地方放「这一份卷轴
+  携带哪个法术」，所以只发卷轴本体。这与 `ArtifactScroll` 的既有说明同源，不是本轮新欠的债。
+- `GetHeroToApplyBonusOrAwards` 的前两张表（按头像定人、按种族定人）没测到：地图里造不出战役专属英雄，种族表要的
+  术士英雄也没有稳定的编号入口。表是照参考逐条抄的，等第 2 块接上流程时用真实存档验。
+
+## ADR-250：战役记帐与叛变关判定（`nh9.3` 第 2 块）
+
+按 ADR-249 的五块拆分，本轮做第 2 块「选关流程的状态推进」，再把纯逻辑的部分落成两个可测单元：
+
+**`CampaignProgress.CompleteScenario(world, isLoadingSaveFile)`**——`CompleteCampaignScenario()`（`game_campaign.cpp:1160-1282`）
+里只管记帐的那一半：
+
+- `isLoadingSaveFile` 为假时记完成记录、加天数；非最后一关才需要写「下一关的存档」。
+- 逐条发这一关的奖励物：`DefeatEnemyHero` 跳过（必须在战斗里发），`CarryOverForces` 先抄人类王国里最老的英雄
+  （`Kingdom.Heroes[0]`，与参考 `VecHeroes.front()` 同序），`GetArtifact` 触发组套。
+- 组套照参考：把「已拿到的全部宝物奖励」摊进临时背包、从存档摘掉、`AssembleArtifactSets()`，再把背包里剩下的宝物
+  按编号找回奖励编号加回去。额外奖励表（`GetExtraCampaignAwardData`）提供成品（战斗装束）的编号，所以三件安德兰
+  会变成 `10`。
+- 最后一关 → 战役结束；否则把当前关推进到 `GetScenariosAfter(last).front()`。
+
+**返回值 `CampaignScenarioCompletion`**：参考里「非最后一关就存一次档」是 `Game::SaveCompletedCampaignScenario()`，
+端口没有写文件的责任，改成 `ShouldSave` 交回调用方（等 App 接线的第 4 块）。
+
+**`CampaignProgress.GetSelectableScenarios(saveData, allowToRestart)`**——`SelectCampaignScenario()`（`1471-1478`）
+里「哪几关可点」的三分支，界面那一块直接拿来画图标。
+
+**`CampaignData.IsBetrayalScenario(ScenarioInfoId)`**——参考放在 `game_campaign.cpp:122-132` 的匿名命名空间里，但它
+只查战役表、与界面无关，都放在 `CampaignData`（界面与流程都要用）。判定为「后续关卡跨了战役号」，即罗兰第十一关
+「Betrayal」与阿基巴德第十二关。
+
+**测试**（`CampaignProgressTests`，7 个）：叛变关正反例、完成一关加天数并推进、最后一关结束且不写档、读档不重复记帐、
+携带部队取最老英雄的部队、三关打完后合出战斗装束、可点关卡三分支。
+
+**踩到的坑**：这三个战役测试类共用两个进程级单例（`CampaignSaveData.Get()`、`Settings.Get().Players`），xUnit 默认
+按类并行，单跑各自的类都过、全量一起跑就有 6 个倒在别人的中间状态上。加 `CampaignCollection`（`DisableParallelization
+= true`）把三个类收进同一个集合，连跑两遍确认稳定。
+
+## ADR-251：战役选关界面的分层（`nh9.3` 第 3 块）
+
+按 ADR-249 的五块拆分，本轮做第 3 块：`SelectCampaignScenario()`（`game_campaign.cpp:1284-1710`）里「画出来 + 按钮」
+的那部分。参考是一个 420 行的死循环，端口按既有惯例把它切成不含循环的几块：
+
+- `src/FHeroes2.UI/Dialogs/CampaignScenarioTrack.cs`：关卡轨道。`Create()` 决定哪些关可点（用第 2 块的
+  `CampaignProgress.GetSelectableScenarios()`）、把图标按 `getCampaignIconOffsets()` 的格子摆好（一格 37 × 42 像素，
+  格坐标从 `addScenarioButton()` 的 184-251 行抄）、`HitTest()` 报「点到了哪一关」、`DrawButtons()` 画按钮、
+  `Press()` 把一关的按钮按下去。
+- `src/FHeroes2.UI/Dialogs/CampaignScenarioSelectionDialog.cs`：背景、五个按钮（VIEW INTRO / OK 或 RESTART /
+  CANCEL / DIFFICULTY）、奖励单选列、天数、关卡名、描述、已得奖励。对外只有
+  `Draw(PixelBuffer)` / `PressButtons(LocalEvent)` / `ProcessLeftClick(LocalEvent, HotKeys)` /
+  `ProcessRightClick(LocalEvent)` 四个动作，淡入淡出、影片、音乐与循环都留给宿主（App 场景，第 4 块）。
+
+**奖励单选怎么在没有 `OptionButtonGroup` 的情况下做**：参考用一个互斥按钮组，按下哪个就 `press()` 哪个，未按下的
+按钮贴的是「从背景图上按按钮 anchor 挖下来的一块」（`game_campaign.cpp:1382` 的 `Copy`）。端口没有按钮组，改成
+「当前选中下标 + 一张从背景挖下的未按下贴片」：选中的行贴 `CAMPXTRG` 第 8 帧（按下态），其余行贴那块背景。
+按下即生效（参考用的就是 `isMouseLeftButtonPressedInArea`，不等抬起），点击区是按钮区域再往左扩 170 像素，
+所以点奖励名称和点那块小按钮是一回事。
+
+**右键不弹窗，只报「点到了哪一块」**：参考在循环里直接 `displayScenarioBonusPopupWindow()` /
+`displayScenarioAwardsPopupWindow()`。端口把弹窗留给宿主（弹窗要字体与美术装配），界面层返回
+`CampaignSelectionHelpRequest(Target, Index)`：`Index` 是奖励选项或已得奖励的行号，其它块为 -1。已得奖励的行也是
+一块一块报的（参考的 `{ top.x + 414, top.y + 100 - yOffset / 2 + yOffset * i, 200, yOffset }`），不是整片。
+天数、关卡名各一块。
+
+**按钮细节**：五个按钮同高、同 y（`top.y + 431`），x 由「VIEW INTRO 左边缘到 CANCEL 右边缘的剩余空间三等分」推出；
+OK 与 RESTART 是同一个位置的两张脸（新开局 = 第 4 帧，重开 = 第 2 帧），地图文件缺失时 `disable` 而不是隐藏。
+影子用的是第 0 帧的轮廓、摆放点各用各的（参考对四个按钮都传 `getImage(buttonIconID, 0)`）。
+
+**两处与参考不同的地方，都是为了让端口不炸**：
+
+1. 点「当前这一关」不再重新 `setCurrentScenarioInfo()`。参考会顺手把存下来的奖励编号清成 -1；重开界面上点自己
+   没有意义，端口直接返回 `None`。
+2. 新战役还没选第一关时存档里是 `ScenarioInfoId.NotStarted`（`{-1, -1}`），参考照样拿它去查「叛变关」；端口的
+   战役表对未知战役断言，所以 `ObtainedAwards` 在这一状态下直接给空表。
+
+**踩到的坑**：先前以为按钮条是「一张图竖排十张」的合成图、要按 `index * (width + 1)` 手工切帧；实际现在参考已经
+是 `Assets::getImage( buttonIconID, index )` 的十帧集合，端口的 `ICampaignScenarioArtwork.GetIcon()` 也按帧给，
+所以切帧那套代码删掉了。
+
+**测试**（`CampaignScenarioSelectionDialogTests`，16 个）：新开局预选第一个奖励、重开按存档里的奖励编号预选（含
+编号越界给 -1）、奖励行 22 像素步进、新开局画 OK / 重开画 RESTART（取色）、只给选中的奖励贴按下帧、地图缺失时
+确定键点不动、热键与按钮同语义、重开时 OK 隐藏而 RESTART 生效、右键报奖励/已得奖励/天数/关卡名、叛变关不显示
+已得奖励、老战役的关卡名帮助区 25 高而资料片 22、点另一关会记进存档。全量 `FHeroes2.UI.Tests` 1795 个与
+`FHeroes2.Game.Tests` 3496 个都通过。
+
+## ADR-252：新游戏菜单（`nh9.3` 第 4 块之一）
+
+`nh9.3` 第 4 块的第一件东西是战役的入口，也就是参考的 `Game::NewGame()`
+（`game_newgame.cpp:416-648`）：主菜单上点 New Game 出来的那个子菜单，标准游戏 / 战役 / 多人 /
+仅战斗 / 设置 / 取消六条路，战役那条再分原版与资料片。端口把它做成
+`src/FHeroes2.UI/Dialogs/NewGameMenuView.cs`。
+
+**状态机不靠「哪组按钮 enabled」猜**：参考把四组按钮同时建好，用 `while` 里
+`if (buttonStandardGame.isEnabled()) ... else if (playerCountButtons.button(0).isEnabled()) ...`
+的阶梯判断当前在哪个界面。端口用显式 `Page`（`Modes` / `HotSeat` / `PlayerCount` / `Campaigns`）
+四态，切页时 disable 旧组、enable 新组，外加 `IsChoosingCampaign` 等三个只读属性——语义与参考一致，
+但宿主不用去问按钮。
+
+**布局全按参考的算式**：窗口由五个主按钮撑出（`CreateForSymmetricButtons(singleColumn: true,
+extraHeight: 按钮高 + 10)`），单列从活跃区 (25,22) 开始、行距 10；取消按钮在
+`activeArea.y * 2 + activeArea.height - 按钮.y - 按钮.height` 处，就是「与第一个按钮距顶边等距地贴底边」
+（`game_newgame.cpp:467`）。热座按钮盖在第一个主按钮上，两个战役按钮盖在前两个主按钮上，五个玩家人数
+按钮从第一个主按钮起按「按钮高 + 10」往下叠。帧表就是归档里的原顺序：0-9 五个模式、10/11 取消、
+12/13 热座、14-23 人数、24-27 两个战役，都是「先松后按」成对。
+
+**`ButtonGroup` 只借来排版和画**：它的 `SetCursor`/`SetLeftButton` 靠按钮的 `DialogButton` 值判点击，
+而新游戏菜单要回答的是「第几个按钮」，不是 `DialogButton` 值。端口给五个主按钮填合法但不读的占位值
+（`Ok/Cancel/Yes/No/Ok`，避免 `FindClicked()` 撞上同一值），点击判定自己按 `ButtonBase.Area` 做：
+按下记下标并 `Press()`，抬起时同一按钮内才结算，随后按页 `Activate(index)`。切页和取消都在
+`Activate`/`SetLeftButton` 里，与参考「先处理当前组、最后统一处理取消」的顺序一致。
+
+**热键单独列一套**：参考用 `HotKeyEvent::MAIN_MENU_STANDARD` 等，端口没有热键表，照
+`CampaignSelectionHotKeys` 的做法定义 `NewGameMenuHotKey`，只在对应页生效（参考把热键判断写在
+「当前组 enabled」的分支里），`Cancel` 全局。主菜单热键解码后交给宿主。
+
+**右键只报块**：参考直接 `showStandardTextMessage()`，端口返回 `NewGameMenuHelpRequest`
+（标准/战役/多人/仅战斗/设置/热座/原版/资料片/人数第几个/取消），由宿主弹窗——与第 3 块的
+`CampaignSelectionHelpRequest` 同一套理由，弹窗要字体与美术装配。
+
+**还没接线的部分**：主菜单的 New Game 仍然是直接开单人场景列表（M3 的简化）。本轮只落地了这个子菜单
+本身，接线（主菜单改成 NewGameMenuView、战役难度对话框、战役选关场景、战役开局与读档分支）留给第 4 块
+的下一段，见 `bd` 上的 `FHeroes2Sharp-nh9.3`。
+
+**测试**（`NewGameMenuViewTests`，24 个）：缺帧返回 null、五个主按钮的单列位置、取消按钮的镜像位置、
+热座与两个战役按钮叠在主按钮上、没有资料片时没有战役按钮、没有原版战役数据时战役键 disable、
+初始停在模式页、标准/仅战斗/设置三条路、抬起落在别的按钮上不算、有资料片时点战役进选择页、
+没资料片时直接返回原版战役、选择页两个按钮分别返回原版/资料片、多人 → 热座 → 人数三级下钻并返回
+人数 2-6、每页都能取消、disable 的战役键点不动、热键按页生效（战役键切页、人数键 2/6、取消全局）、
+右键块判定（模式页、disable 的战役键、战役页、人数页）、`Draw` 画出当前页与取消按钮。
+全量 `FHeroes2.UI.Tests` 1819 个通过。
+
+## ADR-253：新游戏菜单的接线与素材组装（`nh9.3` 第 4 块之二）
+
+**难度窗口先落地**：`setCampaignDifficulty()`（`game_campaign.cpp:900-1130`）做成
+`src/FHeroes2.UI/Dialogs/CampaignDifficultyView.cs`，`TryCreate(frame, font, captionFont, icons,
+selection, okayReleased, okayPressed, currentDifficulty)` 在素材不全时返回 `null`。三档图标
+（`DIFFICULTY_ICON_EASY/NORMAL/HARD`）、选择框、黄字标题和 `NGEXTRA` 62 的 Okay 按钮，位置全按参考的
+`CreateForSymmetricButtons` 算式。选择框是两层 Sprite：图像整片填色，`transform` 全 1（保留目标像素），
+边框一圈改 0——单层 Sprite 的 `null` 变换等于「全部拷贝」，表达不了这个镂空。它还没接进战役流程，
+因为流程本体（开局、选关、读档分支）排在下一段。
+
+**素材在 App 层组装**：`ICN::BUTTONS_NEW_GAME_MENU_GOOD/EVIL` 是参考运行时生成的表
+（`game_assets.cpp:1657-1710`），AGG 里没有。端口新增 `Scenes/NewGameMenuArtwork.TryCreate(assets,
+text, isEvilInterface)`：`BTNNEWGM.ICN` 出标准/战役/多人/取消，`BTNMP.ICN` 出热座，`BTNHOTST.ICN` 出人数，
+`X_LOADCM.ICN` 出两个战役按钮，仅战斗与设置用 `ButtonFactory.MakeButtonSprites` 以 `STONEBAK` 为底生成
+（与参考同一套 `makeButtonSprites`）。坏界面不单独生成，照参考把好界面整表过
+`GOOD_TO_EVIL_BUTTON`（`convertToEvilButtonBackground`），所以先生成好表再逐帧 `Clone()` 上色。
+缺 `X_LOADCM` 时 24-27 帧填透明占位——视图在 `isPriceOfLoyaltyPresent == false` 时不会画它们。
+
+**接线做成场景级模态**：`MainMenuScene.OpenNewGameMenu()` 组装帧并调
+`NewGameMenuView.TryCreate`，`NewGameMenu`/`NewGameTip` 两个只读属性暴露给宿主，`HasModalDialog`
+把两者算进去；光标、左键、字符键、右键四个入口都排在设置窗口之后、其它模态之前（设置可以从新游戏
+菜单里开）。`MainMenuAction.NewGame` 改成先开新游戏菜单，素材缺失时退回原来的直接开场景列表，坏安装
+仍有可玩路径。标准游戏 → 关菜单再开场景列表并返回 `NewGame` 给宿主；设置 → 关菜单再开设置窗口
+（参考设置窗口返回后回主菜单，不回新游戏菜单）；取消/Escape → 关菜单。仅战斗、热座人数与两个战役
+仍只写日志与状态栏，等各自的场景。
+
+**战役可用性照参考的两层检查**：原版看 Archibald 与 Roland 地图是否齐；资料片还要 `X_LOADCM.ICN` 在
+包里且四套地图都在（`IsAllCampaignMapsPresent`，对应 `game_campaign.cpp:1141-1157`）。
+
+**右键帮助**：视图返回 `NewGameMenuHelpRequest`，场景按块弹 `MessageBox`（标题 + 参考原文），
+按下弹出、松开消失，即参考的 `Dialog::ZERO`。帮助框开着时按钮不亮，光标归它。
+
+**验证**：`--open-new-game` 新增命令行开关（与 `--open-settings`/`--open-scenario` 同用途），用
+`F:\game\fh2` 截图核对模式页、战役页、Standard Game → 选关列表、右键帮助框四张；全量 6068 个测试通过。
+
+## ADR-254：战役选关场景接入与 StartWithHeroInFirstCastle（`nh9.3` 第 4 块之三）
+
+**选关屏接进宿主**：`CampaignScenarioSelectionScreen.TryCreate(assets, text, fonts, saveData, mapDirectories,
+screenSize, allowToRestart, out error)` 由 `GameHost.RunCampaignScenarioSelection` 驱动，做成场景级模态。
+`--campaign <id>` 只登记 `_pendingCampaign`，主循环首帧再开——与 `--cast-spell` / 梦魇谜题同一条延迟路径，
+避免在事件栈里再压一层循环。动作照 `SelectCampaignScenario()` 分：Cancel 退出、ChooseDifficulty 开难度窗、
+ViewIntro 播当前关的 `CampaignVideoInfo`、StartScenario 进地图、其余（SelectOtherScenario）重建一屏。
+
+**开局照参考顺序**：`StartCampaignScenarioMap` 先 `scenario.LoadPlayableMap(mapDirectories)`，再
+`Settings.SetCurrentMapFileInfo` 与 `SetGameType(GameTypes.Campaign)`（存档扩展名与存档头里的游戏类型靠它分家，
+`game_io.cpp:227-231`），最后 `AdventureMapScene.TryCreate` + `CampaignBonuses.SetScenarioBonus` +
+`ApplyObtainedCampaignAwards`。难度窗按 `setCampaignDifficulty()` 落到 `CampaignSaveData.SetDifficulty(d,
+resetMinDifficulty: true)`。
+
+**开局没有英雄的根因**：`CAMPG01.H2C` 的头部 `startWithHeroInFirstCastle = 0`（真值），而地图上既没有
+`MP2::OBJ_HERO` 瓦片也没有 `MINIHERO` 精灵——原版编辑器做战役地图时常把「开局给英雄」写在头部。参考在
+`world_loadmap.cpp:1456` 装载末尾调 `vec_kingdoms.ApplyPlayWithStartingHero()`（`kingdom.cpp:701`），
+端口有 `Kingdom.ApplyPlayWithStartingHero` 却**从没有调用点**，于是地图开出来 0 英雄、焦点英雄为空。
+补齐 `Kingdoms.ApplyPlayWithStartingHero(world, startWithHeroInFirstCastle)` 并在 `World.LoadMap` 的
+`PostLoad` 之后调用；两条分支照抄（城门口的己方英雄进城 / 第一个有城的王国 `GetHeroForHire(城种族)` 现招）。
+修完日志从 `0 heroes in the kingdom, no focus hero` 变成 `1 hero in the kingdom, focus hero 'Halon'`，
+城堡门口站着蓝方法师英雄。
+
+**难度窗素材补全**：`DIFFICULTY_ICON_EASY/NORMAL/HARD` 不是档案条目，是 `ScenarioInfoIcons` 从 `NGHSBKG`
+第一帧裁的 65×65 小块（`game_assets.cpp:3993-4042`），按它给的缓存名取图即可（用 `IcnType` 查会落到
+`CUSTOM`）。`BUTTON_SMALL_OKAY_GOOD/EVIL` 走端口既有惯例 `SPANBTN`/`SPANBTNE`，再没有才用
+`ButtonFactory` 现拼。三张图标缺了用同尺寸透明图（参考缺资源也是空图），只有 `NGEXTRA` 62 帧的选择框缺了
+才返回 `null`——玩家看不出选中哪一档时窗不如不开。
+
+**验证**：`--campaign 0 --left-click-at "4:300,440;6:300,170;8:320,352"` 走完「难度窗 → 改档 → 确认 →
+选关 → 开局」；截图 `f:\tmp\campaign-difficulty3.png`（图标、选择框、OKAY 全在）与 `f:\tmp\campaign-start2.png`
+（蓝方城门口的英雄）。新增 `tests/FHeroes2.Game.Tests/WorldStartingHeroTests.cs` 三个用例：头部置位现招、
+不置位不招、城门口英雄进城。全量 6071 个测试通过、0 警告。
+
+## ADR-255：战役一关打完之后的结算与去向（`nh9.3` / `nh9.4`）
+
+**接线**：`AdventureMapScene.HandleResult` 收到 `AdventureEventResult.Win`（`GameOverMode.CompleteCampaignScenario`
+的端口名）时不再只记一行日志，而是转交给 `CampaignScenarioCompleted`；`GameHost` 把它装配成
+`CompleteCampaignScenario()`。场景只转达、不换场景，与 `ExitEvent` / `LoadGameEvent` 同一条分工。
+
+**四步按参考顺序**（`game_campaign.cpp:1160-1282`）：
+
+1. `CampaignProgress.RecordFinishedScenario(world)`：本关写进已完成列表、累加天数，返回「是否还有下一关」。
+   调用后 `CurrentScenarioInfoId` 仍指着刚打完的这一关，而 `GetLastCompletedScenarioInfoId()` 已经指向它。
+2. `GameSave.SaveCompletedCampaignScenario()`（`game_io.cpp:419-422`，文件名 `地图名_Complete.savc`）：
+   **必须夹在 1 与 3 之间、且在 `ReturnToMenu()` 之前**——前半句是因为 `game_io.cpp:261-265` 靠
+   `current == lastCompleted` 认出「这一关打完了」，顺序写反就算不出这个状态；后半句是因为文件名与存档头
+   都取自 `Settings.CurrentMapFileInfo` 与 `Settings.GameType`，一换场景就变。
+3. `CampaignProgress.CollectScenarioAwards(world)`：发这一关的奖励与携带部队。参考也把它放在写档之后，
+   所以「下一关」存档里不含本关奖励，读档时补发（见下）。
+4. `CampaignProgress.AdvanceScenario(shouldSave)`：最后一关返回「已结束」，否则把当前关挪到
+   `GetScenariosAfter().front()`（`:1279-1281`）。非最后一关回选关屏：端口用 `_pendingCampaignSelection`
+   排到主循环下一帧，与 `_pendingCampaign` 同一条「等这一帧画完」的理由；最后一关在参考里进片尾与战役高分榜
+   （`:1242-1277`），属于 P5 结局屏，端口先停在主菜单。
+
+原来合在一起的 `CampaignProgress.CompleteScenario(world, isLoadingSaveFile)` 保留为不写档的便捷入口（三段串联），
+测试与只关心最终状态的调用方用它；`GameHost` 走四段，因为它必须把写档插在中间。
+
+**读档那一支**：`GameHost.OpenLoadFile` 在 `GameSave.Load` 之后照 `game_io.cpp:261-265` 判一次
+`GameType == Campaign && !IsStarting && CurrentScenarioInfoId == GetLastCompletedScenarioInfoId()`，命中就补发奖励
+（`CollectScenarioAwards`）、`AdvanceScenario(shouldSave: false)`、`ReturnToMenu()` 并排一帧选关屏，
+即参考的 `COMPLETE_CAMPAIGN_SCENARIO_FROM_LOAD_FILE` → `CompleteCampaignScenario(true)`
+（`game_mainmenu.cpp:208-213`）。普通中途存档（`IsStarting`，或已打完前一关但当前关不同）不受影响。
+
+**冒烟开关**：`--complete-campaign-scenario` 在地图建立后立即宣布本关打赢。战役地图的胜利条件通常要打几十个
+回合，截图与冒烟等不起；它走的仍是真实的结算、写档与回选关屏，只是跳过战斗，与 `--enter-town` 同类。
+
+**验证**：
+
+- `--campaign 0 --complete-campaign-scenario --left-click-at "4:300,440;8:320,352;14:402,440"`：日志出现
+  `Saved the game to '…\Good_1_Complete.savc'` 与 `next scenario … ScenarioId = 1`，截图
+  `f:\tmp\campaign-complete2.png` 停在选关屏的 Scenario 2「Annexation」（Scenario 1 打勾、Days Spent 1）。
+- `--load "…\Good_1_Complete.savc"`：日志 `ends a campaign scenario, so the campaign returns to its scenario list`，
+  截图 `f:\tmp\campaign-from-load.png` 同样是选关屏而不是旧地图。
+- 新增 `TheInterScenarioSaveIsNamedAfterTheMap`（文件名与目录）与 `TheInterScenarioSaveHoldsTheScenarioThatWasJustFinished`
+  （写档时 `current == lastCompleted`，顺序写反就红）。全量 6073 通过、0 警告。
+
+**未接**：上一关的过场影片（`playPreviousScenarioVideo()`，`game_campaign.cpp:1240`）、片尾与战役高分榜
+（`:1242-1277`）。前者要视频播放，后两者属于 P5 结局屏。
+## ADR-256：战役开局的奖励三选一接到世界（`nh9.3`）
+
+**接线**：选关屏早就画出了 CHOICE 三行并且能切换选中态（`CampaignScenarioSelectionDialog.SelectedBonusIndex`），
+但宿主一直把它丢掉——`StartCampaignScenarioMap` 从存档读 `CurrentScenarioBonusId`，而那个值在开局前恒为 -1，
+于是奖励永远不生效。现在 `CampaignSelectionAction.StartScenario` 把 `SelectedBonusIndex` 传进
+`StartCampaignScenarioMap(saveData, mapDirectories, bonusIndex)`，顺序照 `game_campaign.cpp:1631-1671`：
+
+1. **起始种族在 LoadMap 之前**（`:1631-1635`）：`StartingRace` / `StartingRaceAndArmy` 先按
+   `CampaignBonuses.SetStartingRaceBonus()` 改玩家种族——地图一读进来，玩家阵容与英雄就按这个种族定了。
+2. **叛变关先清空奖励**（`:1638-1640`）：`CampaignData.IsBetrayalScenario` 命中时 `RemoveAllAwards()`。
+3. **LoadMap**（原有路径，`AdventureMapScene.TryCreate`）。
+4. **其余奖励在 LoadMap 之后**（`:1665-1669`）：`ApplyCampaignStartBonuses` 接收 `bonusIndex` 与本帧算出的
+   `ScenarioBonusData`，跳过纯 `StartingRace`（第 1 步已设），其余交给 `CampaignBonuses.SetScenarioBonus`；
+   接着照旧 `ApplyObtainedCampaignAwards` 发前几关攒的奖励。
+5. **最后才记账**（`:1671`）：`saveData.SetCurrentScenarioInfo(scenarioInfo, bonusIndex)`，这样
+   `_bonusesForFinishedMaps` 记的是玩家这次的选择。参考也放在最后，读地图失败时存档不会被写脏。
+
+**顺带修掉的真 bug**：`CampaignSelectionHotKeys.Bonus` 原来是 `int Bonus = -1`，但它是 `readonly record struct`，
+`default(T)` 是「所有字段全零」而不是构造参数的默认值，也就是 `Bonus == 0`。选关屏每帧末尾都
+`_hotKeys = default`，于是**每一帧都假装第一项奖励被按下**，玩家点或按到第二、三项后立刻被打回第一项——
+真人玩也一样（不只是冒烟脚本）。改成 `int? Bonus = null`（零值即 `null`，与「按第一项」区分开），
+并补测试 `APickedBonus_SurvivesFramesWithoutHotKeys`。冒烟之所以一直显示 `bonus 0`，根因就是这个，不是点击通道的问题。
+
+**可观测性**：选关屏建好后打一行 `The campaign selection shows scenario '...' with bonus areas [...]`，
+冒烟要精确点中单选按钮时不用再猜坐标（与主菜单的 `signs at [...]` 同一性质）。
+
+**验证**：
+
+- `--campaign 0 --key-at "2:Digit2;6:Enter"`：日志 `Started the campaign scenario 'Force of Arms' (campaign 0,
+  scenario 0, bonus 1 'Thunder Mace')`——数字键 2 选中第二项，Enter 开局，编号一路带到世界。
+- `--key-at "2:Digit3;6:Enter"`：截图 `f:\tmp\campaign-bonus6.png`，地图与英雄正常登场。
+- 新增与既有 UI 测试全绿；全量 6074 通过、0 警告。
+
+**未接**：
+
+- 换难度时的确认弹窗（`game_campaign.cpp:1589-1596`）：端口目前直接改难度。
+- `allowToRestart = true` 的入口（`interface_events.cpp:378` 的 Scenario Information，即地图里打开选关屏并允许
+  RESTART）；参考的主菜单与读档两条都是 `false`，所以选关屏仍固定 `allowToRestart: false`。
+- 重开确认弹窗（`:1598-1602`）与`上一关过场影片`（`:1240`）。
+## ADR-257：战役影片接上主流程（`nh9.3`）
+
+**问题**：`ScenarioData` 的 `StartScenarioVideoPlayback` / `EndScenarioVideoPlayback` 早就随战役数据表落了地，
+但没有任何地方去播——`PlayCampaignScenarioIntro` 是唯一入口（选关屏的 View Intro），而且它只放本关开场，
+漏了上一关的结尾。参考有三处（`game_campaign.cpp`）：
+
+| 参考 | 时机 | 端口 |
+|---|---|---|
+| `:1305-1307` | 进选关屏（`!allowToRestart`）先放本关开场 | `RunCampaignScenarioSelection` 的循环之前 |
+| `:1675-1689` | View Intro：先上一关结尾，再本关开场 | `CampaignSelectionAction.ViewIntro` 分支 |
+| `:1240` | 打完一关、发完奖励后放这一关的结尾 | `CompleteCampaignScenario()` 里 `CollectScenarioAwards` 之后 |
+
+**分层**：「要播哪几个文件」放进 Game 层的 `CampaignVideoPlayback`（`GetPreviousScenarioVideoFiles` /
+`GetCurrentScenarioVideoFiles`），界面层只负责 `PlayVideo()`。这样清单可以用单元测试钉住
+（`CampaignVideoPlaybackTests`：新战役只有开场、打完第二关才有 `GOOD03.SMK`、第一关没有结尾片段），
+不必在测试里准备真实的 `.SMK`。
+
+**顺序要点**：进选关屏的播放在 `while` **外面**——`SelectOtherScenario` 会重建整屏，参考的
+`SelectCampaignScenario` 一个函数只进一次，重放会让每次换关都多响一遍开场。
+
+**冒烟**：`--smoke-frames` / `--screenshot` 时只记
+`Skipping the campaign video '<file>' because the run is scripted.`，与启动 logo 同一判据。
+否则脚本会停在视频模态窗里等按键，把预算烧在与要截的画面无关的动画上。
+
+**验证**：
+
+- `--campaign 0 --key-at "4:V"`：进屏一次 `GOOD01.SMK`/`GOOD01V.SMK`，按 V 后再一次——View Intro
+  走的是「上一关结尾（空，还没打完）+ 本关开场」。
+- `--campaign 1 --complete-campaign-scenario --key-at "2:Digit1;6:Enter"`：日志依次是进屏开场
+  `EVIL01.SMK`/`EVIL01V.SMK` → `Started the campaign scenario 'First Blood'` → `The campaign scenario is complete`
+  → `Skipping the campaign video 'EVIL02.SMK'`/`'EVIL02W.SMK'`（第 0 关的结尾）→ 第 2 关选关屏。截图
+  `f:\tmp\campaign-video4.png`。
+
+**已知偏差**：参考 `Video::ShowVideo( vector<VideoInfo> )`（`game_video.cpp:103-300`）把一组内的多轨**同时**
+播放并按 `offset` 叠加、按 `VideoControl` 决定画面/音轨/循环/等待；端口把组摊平成顺序列表逐条播一遍，
+`VideoLoop` 不真的循环。对战役数据表里「循环背景 + 叠加动画」那种组合，观感与参考不同，但文件与顺序是对的。
+合成播放器等 `VideoModalScreen` 支持多序列混播时再补（记为 P5 视频播放器的活）。
+## ADR-258：换难度确认框与「最低难度」语义（`nh9.3`）
+
+**问题**：选关屏按 `D` 换难度时，端口挑完就 `SetDifficulty(..., resetMinDifficulty: true)` 立刻写档。
+参考不是这样：`setCampaignDifficulty()`（`game_campaign.cpp:912-1082`）只把选择**返回**给选关屏的局部变量
+`currentDifficulty`（`:1513`、`:1698-1699`），真正写档在点 OK 开局之后（`:1643`）：
+
+```cpp
+campaignSaveData.setDifficulty( currentDifficulty, campaignSaveData.isStarting() && !allowToRestart );
+```
+
+后一个参数是「是否把最低难度重置成当前值」。端口恒传 `true`，于是**中途换难度会把已经记下的更低难度抹平**，
+最终评分算高——这是会算错分的 bug，不只是缺个弹窗。
+
+**改了什么**
+
+| 位置 | 内容 |
+|---|---|
+| `RunCampaignScenarioSelection` | 循环外 `int campaignDifficulty = saveData.Difficulty;`，`ChooseDifficulty` 只更新它 |
+| 同上 `StartScenario` | 照 `:1589-1596`：`!IsStarting && campaignDifficulty != saveData.Difficulty` 时弹 YES/NO，NO 就 `continue` 留在选关屏 |
+| `StartCampaignScenarioMap(..., int difficulty, bool resetMinDifficulty)` | 在 `LoadPlayableMap` 拿到 `mapInfo` 之后才 `SetDifficulty(difficulty, resetMinDifficulty)`，与 `:1643` 同序（地图读不到就不动存档） |
+| `ChooseCampaignDifficulty` | 返回值从 `void` 变 `int`，不再写档 |
+| `ShowCampaignYesNo` | 用 `MessageBoxModal` + `SystemButtonArtwork` 拼标准 YES/NO 框，按钮素材缓存在 `_systemButtons` |
+
+**最低难度只在第一关重置**：`resetMinDifficulty = saveData.IsStarting`（参考的 `isStarting() && !allowToRestart`，
+端口 `allowToRestart` 恒为 false）。
+
+**验证**（`--campaign 0 --complete-campaign-scenario` 让第一关自动打完再回选关屏）：
+
+- 新战役换难度（`IsStarting`）：日志 `The campaign difficulty is 1 with a minimum of 1.` → `Started ... 'Force of Arms'`，
+  **没有**确认框（参考只在 `!isStarting` 时问）。
+- 第 2 关换难度后开局：先弹 `Difficulty` / "You have changed the campaign difficulty. …" 的 YES/NO
+  （截图 `f:\tmp\campaign-duty-confirm.png`）；点 YES → `The campaign difficulty is 1 with a minimum of 0.`
+  且 `Started ... 'Annexation'`（截图 `f:\tmp\campaign-duty-yes.png`）；点 NO →
+  `The campaign difficulty change was cancelled; the scenario is not started.`，留在选关屏（无 `Annexation` 日志）。
+- 全量 6077 通过、0 警告。
+
+**备注**：`CampaignSaveData.SetDifficulty` 的最小值语义早就有单元测试（`MinDifficulty`），本轮的坑在**调用点**——传了常量 `true`。
+这类「参数写死常量」的错误测试抓不到，只能对着参考逐行核。
+## ADR-259：冒险地图的 Scenario Information 与重开（`nh9.3` 收尾）
+
+**问题**：`EventScenarioInformation()`（`interface_events.cpp:366-396`）在战役局里不弹信息表，它淡出画面后调
+`Game::SelectCampaignScenario( CANCEL, true )` —— 就是主菜单那张选关屏，但 `allowToRestart` 为真。端口此前
+`allowToRestart` 恒为 false，`EventScenarioInformation()` 也一律只开单图的信息表，注释写着「选关界面还没搬」。
+
+`allowToRestart` 的四处差别（`game_campaign.cpp`）：
+
+| 行 | 差别 |
+|---|---|
+| `:1305` | 为真时不播本关开场 |
+| `:1402-1405` | 奖励必须已选过（新战役则强制选第一项） |
+| `:1420-1429` | OKAY 隐藏、RESTART 显示；地图文件缺了则禁用 RESTART |
+| `:1484` | 高亮当前关而不是不选 |
+| `:1589` | 难度变了要不要问 —— 条件 `(!isStarting() \|\| allowToRestart)` |
+| `:1598-1602` | 点 RESTART 再确认一次 |
+| `:1643` | `resetMinDifficulty` 取 `isStarting() && !allowToRestart` |
+
+`CampaignScenarioSelectionDialog` 早就实现了 2/3/4（上一轮核过），缺的是把它们接出来。
+
+**改了什么**
+
+| 文件 | 内容 |
+|---|---|
+| `AdventureMapResults.cs` | 加 `AdventureEventResult.CampaignSelection = 8`，注释写明它不是 `GameMode`，而是端口的「请宿主开选关屏」 |
+| `AdventureMap.Events.cs` | `EventScenarioInformation()`：`Settings.IsCampaignGameType` 为真时返回 `CampaignSelection`，否则照旧 `ShowGameInfo()` |
+| `AdventureMapScene.cs` | 加 `CampaignSelectionRequested` 回调；`HandleResult` 里 `case CampaignSelection` 转达给宿主 |
+| `GameHost.ShowAdventureScene` | 接 `CampaignSelectionRequested = () => RunCampaignScenarioSelection(CampaignSaveData.Get(), allowToRestart: true)` |
+| `RunCampaignScenarioSelection(saveData, allowToRestart = false)` | 播片跳过、`TryCreate` 传参、难度条件加 `\|\| allowToRestart`、加 RESTART 确认、`resetMinDifficulty: IsStarting && !allowToRestart` |
+| `CampaignMusic.cs`（新增）+ `RunCampaignScenarioSelection` | `:1311` 的 `playCampaignMusic()`：罗兰/阿基巴德各一首专属曲，其余战役返回 `null`、保持当前音乐；`CampaignMusicTests` 六个断言钉住这张表 |
+
+**为什么用「请求」值而不是直接返回 `START_GAME`**：参考的 `EventScenarioInformation` 在 UI 层就能调游戏层的
+`SelectCampaignScenario`（同一个进程、同一个全局 `conf`），端口把选关屏放在 App 层（它有场景、字体、美术），
+UI 层引用不到。所以让 UI 层只报「该开选关屏」，宿主跑完后自己把地图换掉（重开）或什么也不做（取消），
+与 `LoadGameEvent` / `CampaignScenarioCompleted` 是同一条接缝。
+
+**重开靠 `allowToRestart` 分辨**：`CampaignSelectionAction.StartScenario` 同时覆盖 OKAY 与 RESTART，但重开模式下
+OKAY 是隐藏的（`:1420-1429`），所以 `allowToRestart && Result == StartScenario` 就是点了 RESTART，不必再加枚举值。
+
+**验证**（`--campaign 0`，帧号是脚本帧）：
+
+- `--key-at "2:Enter;8:I"`：开局后在地图上按 `I` → `The adventure map asked for the campaign selection, so the host opens it.`
+  → 选关屏，按钮是 `VIEW INTRO / DIFFICULTY / RESTART / CANCEL`，当前关高亮、奖励已选（截图
+  `f:\tmp\campaign-restart1.png`）。
+- 点 RESTART → `Restart` / "Are you sure you want to restart this scenario?"（截图 `f:\tmp\campaign-restart2.png`）；
+  不答 = NO → `The scenario restart was cancelled.`；点 YES → 第二次 `Started the campaign scenario 'Force of Arms'`，
+  地图重开（截图 `f:\tmp\campaign-restart3.png`）。
+- 重开模式里改难度再点 RESTART：先弹难度确认（`:1589` 的 `|| allowToRestart` 生效，截图
+  `f:\tmp\campaign-restart4.png`），答 YES 后才是重开确认（`f:\tmp\campaign-restart5.png`），两个都 YES →
+  `The campaign difficulty is 1 with a minimum of 0.` —— 重开**不重置**最低难度（`:1643`）。
+- 单图局（`--map Beltway.mp2`）按 `I` 仍走 `ShowGameInfo()`，没有变化。
+- 音乐只订了映射表（单测），没在冒烟里听：`AudioPlayer.PlayMusic` 无声卡时静默失败，日志里看不出区别。
+
+**仍未转的一块**：`outputCampaignScenarioInfoInTextSupportMode()`（`game_campaign.cpp:1084-1158`）要的是全局的
+text support 输出层（把场景名、奖励、日期写成机器可读的行），端口只有 `Settings.IsTextSupportMode` 这个模式位、
+没有输出层。等那个层落地再补，与 `nh9.3` 的界面流程无关。
+## ADR-260：text support 输出层与战役选关屏的文本块（`nh9.5`）
+
+**问题**：`outputCampaignScenarioInfoInTextSupportMode()`（`game_campaign.cpp:1084-1138`）把选关屏的场景名、奖励、
+奖励选项与按键提示写成机器可读的行，靠的是 `START_TEXT_SUPPORT_MODE`（`logging.h:197-201`）加一串 `COUT`。
+端口此前只有 `Settings.IsTextSupportMode` 这个模式位（F10 切、系统选项切、配置读），**没有任何输出通道**，
+`SetTextSupportMode` 的注释直接写着「端口没有日志层，只留模式位」。
+
+**通道本身**（参照 `logging.h:179-201` 与 `logging.cpp:148-155`）：
+
+| 参考 | 端口 |
+|---|---|
+| `Logging::textSupportMode` 静态开关 | `TextSupport.IsEnabled` |
+| `Logging::setTextSupportMode()` | `Settings.SetTextSupportMode()` 里一起翻（`settings.cpp:824-836` 也是两处一起改） |
+| `COUT` 的默认分支写 stderr | `TextSupport.Output`（默认 null = `Console.Out`，测试可指向 `StringWriter`） |
+| `Logging::TextSupportLogger` 在块首尾各写 `----------` | `TextSupport.WriteBlock()` 前后各写 `TextSupport.Separator` |
+| `if (!isTextSupportModeEnabled()) return;` | `WriteBlock` 关着就什么都不写 |
+
+**特意不用 `GameLog`**：它给每行加 `[INFO   ]` 前缀，而 text support 的行是给外部工具原样读的（参考直接
+`COUT` 裸行），加了前缀就等于改了格式。
+
+**文本内容**（`CampaignScenarioTextSupport.Describe`，纯函数，不碰控制台）：
+
+- `Scenario Information`、`'Roland' campaign, scenario 1: Force of Arms`（关号是 `scenarioId + 1`，`:1096`）；
+- 描述行后跟一个空行 —— `:1097` 的行尾自带 `'\n'`；
+- `Awards: None` 或 `Awards:` 加每项 `- 名字 : 描述`；奖励从**已打完的关**翻译出来（`GetObtainedCampaignAwards`）；
+- `Bonuses:` 加每项，再按个数决定三条 `-  Press X to select the … bonus.`（短横线后是两个空格，与奖励行不同，照抄）；
+- 最后四行：`Press X to Start scenario.` 或 `Press X to Restart scenario.`、Intro、Difficulty、Exit。
+
+**键名为什么由调用方传**：参考直接问 `Game::getHotKeyNameByEventId()`，端口的热键表在 UI 层
+（`GameHotKeys`），Game 层不能引用 UI。所以 `Describe` 收一个 `CampaignScenarioTextSupportKeys` 记录，由
+`GameHost.WriteCampaignSelectionTextSupport()` 从 `GameHotKeys` 取值填好，这样文本组合留在 Game 层、可单测。
+
+**插在哪**：`RunCampaignScenarioSelection()` 里播片之后、主题曲之前，就是参考 `:1309`（文本）与 `:1311`（音乐）
+的顺序。
+
+**验证**：
+
+- `f:\tmp\fh2-textsupport.cfg` 只写一行 `text support mode = on`，用 `--config` 跑 `--campaign 0`，控制台里出现
+  完整的 `----------` 块，逐行与参考对得上（含空行、两个空格的 `-  Press`、`RETURN`/`V`/`D`/`ESCAPE`）；
+- 同一局按 `I` 走到重开模式，块里换成 `Press R to Restart scenario.`；
+- 新增 `CampaignScenarioTextSupportTests`（6 条：表头、一基关号、无奖励、有奖励、奖励选项与按键、两条结尾）与
+  `TextSupportTests`（3 条：关着不写、块首尾短横线、空块）。两个全局开关的测试走 `TextSupportCollection`
+  串行。
+- 全量 6092 通过（295 + 441 + 3516 + 1840），0 警告。
+
+**剩下的**：参考里其它模块也有 `START_TEXT_SUPPORT_MODE` 的函数（主菜单、战斗、冒险地图等）。通道现在有了，
+那些地方可以按同样的写法逐个补，但不在 `nh9.5` 的范围内。

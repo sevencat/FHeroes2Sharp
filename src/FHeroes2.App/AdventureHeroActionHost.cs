@@ -10,6 +10,7 @@ using FHeroes2.Game.Battle;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 
 using CastleTown = FHeroes2.Game.Castle.Castle;
@@ -294,6 +295,10 @@ internal sealed class AdventureHeroActionHost : IHeroActionHost
         }
 
         runModal(new ThievesGuildModal(window, assets, fonts));
+
+        // 参考在窗口 Show() 返回之后调 Game::setDisplayFadeIn()（dialog_thievesguild.cpp:476）：窗口关掉时
+        // 把自己遮住的那块淡出成黑，地图要把整屏淡回来。淡入本身由场景在 DrawFrame 里交给宿主播放。
+        GameDisplayFadeIn.SetDisplayFadeIn();
     }
 
     /// <summary>How many players are still in the game, <c>Settings::Get().GetPlayers()</c> of the gift test.</summary>

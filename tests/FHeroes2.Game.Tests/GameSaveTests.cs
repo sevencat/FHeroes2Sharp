@@ -171,6 +171,85 @@ public sealed class GameSaveTests
     }
 
     [Fact]
+    public void TheInterScenarioSaveIsNamedAfterTheMap()
+    {
+        // game_io.cpp:419-422：文件名是「地图名 + _Complete + 扩展名」，写进存档目录。
+        StartGame(gameType: GameTypes.Campaign);
+
+        string? previous = GameDataDirectory.OverrideRoot;
+        string root = Path.Combine(Path.GetTempPath(), $"fh2-complete-{Guid.NewGuid():N}");
+
+        try
+        {
+            GameDataDirectory.OverrideRoot = root;
+            CampaignSaveData.Get().Reset();
+
+            Assert.True(GameSave.SaveCompletedCampaignScenario());
+
+            string[] written = Directory.GetFiles(GameSave.GetSaveDir(), "*_Complete" + GameSave.GetSaveFileExtension());
+
+            Assert.Single(written);
+            Assert.Equal("Island_Complete" + GameSave.GetSaveFileExtension(), Path.GetFileName(written[0]));
+        }
+        finally
+        {
+            GameDataDirectory.OverrideRoot = previous;
+
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TheInterScenarioSaveHoldsTheScenarioThatWasJustFinished()
+    {
+        // 参考在「记完成、还没挪到下一关」的那一刻写档（game_campaign.cpp:1165-1172），存档里因此
+        // CurrentScenarioInfoId == LastCompletedScenarioInfoId；读档靠这个判据认出「这一关打完了」
+        // （game_io.cpp:261-265）。顺序写反了这条用例就会红。
+        StartGame(gameType: GameTypes.Campaign);
+
+        string? previous = GameDataDirectory.OverrideRoot;
+        string root = Path.Combine(Path.GetTempPath(), $"fh2-complete-{Guid.NewGuid():N}");
+        CampaignSaveData campaign = CampaignSaveData.Get();
+
+        try
+        {
+            GameDataDirectory.OverrideRoot = root;
+            campaign.Reset();
+            campaign.SetCurrentScenarioInfo(new ScenarioInfoId(CampaignId.Roland, 0));
+
+            Assert.True(CampaignProgress.RecordFinishedScenario(World.Current));
+            Assert.Equal(campaign.CurrentScenarioInfoId, campaign.GetLastCompletedScenarioInfoId());
+
+            Assert.True(GameSave.SaveCompletedCampaignScenario());
+
+            string path = Assert.Single(Directory.GetFiles(GameSave.GetSaveDir(), "*_Complete" + GameSave.GetSaveFileExtension()));
+
+            // 清空之后读回来，读到的一定是文件里的那份。
+            campaign.Reset();
+            World.Current = new World();
+            Settings.Reset();
+            Settings.Get().SetGameType(GameTypes.Campaign);
+
+            Assert.True(GameSave.Load(path));
+            Assert.False(campaign.IsStarting);
+            Assert.Equal(campaign.CurrentScenarioInfoId, campaign.GetLastCompletedScenarioInfoId());
+        }
+        finally
+        {
+            campaign.Reset();
+            GameDataDirectory.OverrideRoot = previous;
+
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void TheUserDataDirectoryEndsWithTheApplicationName()
     {
         string? previous = GameDataDirectory.OverrideRoot;

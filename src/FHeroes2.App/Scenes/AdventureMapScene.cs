@@ -18,6 +18,7 @@ using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
+using FHeroes2.UI.Widgets;
 
 // `AdventureMap` 这个名字同时是 FHeroes2.Game 下的命名空间与 Interface::AdventureMap 这个类，因此用别名钉住后者。
 using AdventureInterface = FHeroes2.UI.Interface.AdventureMap;
@@ -164,11 +165,50 @@ public sealed class AdventureMapScene : IScene
     /// Opens the adventure map of <paramref name="mapInfo"/>; <see langword="null"/> with an
     /// <paramref name="error"/> when the map or the terrain tiles cannot be read.
     /// </summary>
+    /// <remarks>Starts a new game: the map is loaded into <see cref="World.Current"/> and day one begins.</remarks>
     public static AdventureMapScene? TryCreate(
         ScreenBuffer frame,
         AssetBundle? assets,
         GameFonts? fonts,
         Mp2FileInfo mapInfo,
+        out string? error)
+    {
+        return TryCreate(frame, assets, fonts, mapInfo, loadedFromSave: false, out error);
+    }
+
+    /// <summary>
+    /// Reopens the adventure map of a game that <see cref="GameSave.Load"/> already read into
+    /// <see cref="World.Current"/>; <see langword="null"/> with an <paramref name="error"/> when its map or the
+    /// terrain tiles cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 读档与开局在参考里是同一条 <c>StartGame()</c>，只由 <c>isLoadedFromSave</c> 分岔
+    /// （<c>game_startgame.cpp:755</c>）：不再 <c>LoadMap</c>（世界已经是存档里的局面）、不再 <c>NewDay()</c>
+    /// （日期在存档里）、不清迷雾、从存档停下的那位玩家接着走。地图文件本身还要读一遍——地形与对象精灵是按
+    /// 文件画的，存档只存状态，不存图。
+    /// </para>
+    /// <para>
+    /// 调用方必须先成功调过 <see cref="GameSave.Load"/>：那里恢复了世界、王国、英雄、迷雾与
+    /// <see cref="Settings.CurrentMapFileInfo"/>。
+    /// </para>
+    /// </remarks>
+    public static AdventureMapScene? TryCreateLoaded(
+        ScreenBuffer frame,
+        AssetBundle? assets,
+        GameFonts? fonts,
+        Mp2FileInfo mapInfo,
+        out string? error)
+    {
+        return TryCreate(frame, assets, fonts, mapInfo, loadedFromSave: true, out error);
+    }
+
+    private static AdventureMapScene? TryCreate(
+        ScreenBuffer frame,
+        AssetBundle? assets,
+        GameFonts? fonts,
+        Mp2FileInfo mapInfo,
+        bool loadedFromSave,
         out string? error)
     {
         ArgumentNullException.ThrowIfNull(frame);
@@ -197,7 +237,7 @@ public sealed class AdventureMapScene : IScene
             // a map show its heart instead of an empty corner.
             int middleX = map.Width / 2;
             int middleY = map.Height / 2;
-            Mp2CastlePosition? focus = map.Castles
+            Mp2CastlePosition? heart = map.Castles
                 .OrderBy(castle => ((castle.X - middleX) * (castle.X - middleX))
                                    + ((castle.Y - middleY) * (castle.Y - middleY)))
                 .FirstOrDefault();
@@ -208,20 +248,24 @@ public sealed class AdventureMapScene : IScene
             // 起始资源按玩家挑的难度发（参考 Kingdom::Init 取 Game::getDifficulty()），地图头的那一档只用来
             // 显示与评分；--difficulty 就是没法开窗时替玩家做这个选择的口子（ADR-203）。
             World world = World.Current;
-            world.LoadMap(map, Settings.Get().GameDifficulty);
+
+            if (!loadedFromSave)
+            {
+                world.LoadMap(map, Settings.Get().GameDifficulty);
+            }
 
             // The fog is drawn for the colors the map declares as human, like Players::FriendColors() in the
             // reference: a tile is fogged only when every one of them has not discovered it yet. A scenario
             // with no human player at all (a map only meant for the editor) stays fog free.
             // 迷雾按<b>当前视角玩家</b>的颜色画，而不是把所有人类玩家并成一个掩码：参考在切换玩家时用
             // Players::GetPlayerFriends( Game::CurrentColor() ) 重算方向掩码，热座地图里三位人类玩家各看
-            // 各自的区域。开局视角停在第一位人类玩家身上（Players::SetStartGame→第一个能动的玩家）。
-            PlayerColor observers = PlayerColors.ToList(map.Info.HumanPlayers) is { Count: > 0 } humans
-                ? humans[0]
-                : PlayerColor.None;
-            int scouted = ScoutStart(world, observers, focus);
-            MapFog? fog = observers == PlayerColor.None ? null : world.Fog;
-            FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
+            // 各自的区域。读档时视角停在存档里的那位玩家（conf.CurrentColor()），
+            // 新局停在第一位人类玩家身上（Players::SetStartGame→第一个能动的玩家）。
+            PlayerColor observers = loadedFromSave
+                ? Settings.Get().Players.CurrentColor
+                : PlayerColors.ToList(map.Info.HumanPlayers) is { Count: > 0 } humans
+                    ? humans[0]
+                    : PlayerColor.None;
 
             // The hero actions of a human player go through the interface layer: the battle screen has to be opened
             // from inside the action (the reference blocks there, heroes_action.cpp), and the questions of the
@@ -230,8 +274,20 @@ public sealed class AdventureMapScene : IScene
 
             // The turn loop of the reference's StartGame(): day one, kingdoms' income, the focus hero. A map
             // without a human player returns null and stays a viewer, which is what the scene was until the
-            // session existed.
-            AdventureSession? session = AdventureSession.Start(world, map.Info, actionHost);
+            // session existed. A save picks the turn up where it stopped instead of rolling a new day.
+            AdventureSession? session = loadedFromSave
+                ? AdventureSession.Resume(world, map.Info, actionHost)
+                : AdventureSession.Start(world, map.Info, actionHost);
+
+            // 读档时居中到存档里的焦点英雄，新局居中到地图中部的城堡：两者都没有时用地图中心。
+            (int X, int Y) focus = session?.FocusHero is { MapIndex: >= 0 } focusHero
+                ? (focusHero.MapIndex % map.Width, focusHero.MapIndex / map.Width)
+                : heart is { } castle ? (castle.X, castle.Y) : (middleX, middleY);
+
+            // 开局清迷雾（game_startgame.cpp:766-777）；读档的迷雾来自存档本身，除非存档停在第一天。
+            int scouted = loadedFromSave && world.DayCount > 1 ? 0 : ScoutStart(world, observers, heart);
+            MapFog? fog = observers == PlayerColor.None ? null : world.Fog;
+            FogSpriteSet? fogSprites = FogSpriteSet.TryLoad(assets);
 
             // Both sets share one decoder cache, so keeping them apart is only about what they map. The world
             // goes in last: from now on the adventurers are drawn from the world's heroes (position, facing,
@@ -248,10 +304,7 @@ public sealed class AdventureMapScene : IScene
                 fogSprites,
                 world);
 
-            if (focus is not null)
-            {
-                view.CenterOn(focus.X, focus.Y);
-            }
+            view.CenterOn(focus.X, focus.Y);
 
             // 屏幕自己建面板、自己生成 GameArea：参考在 StartGame 里 reset() 之后才 SetFocus，
             // 端口照这个次序来——先 Reset() 摆好边框、雷达、图标条、按钮与状态面板，再按焦点英雄居中。
@@ -266,8 +319,12 @@ public sealed class AdventureMapScene : IScene
             // StartGame() 在 reset() 之后还要把雷达按世界画出来、把状态面板摆回初始态（game_startgame.cpp:745-750），
             // 这两步在参考里由宿主做，端口同样留给场景。
             // 开局前把「轮到谁」摆成人类颜色，参考在 reset() 之前就是这么做的（game_startgame.cpp:742），
-            // 迷雾方向与雷达都按这个颜色取 Friends 来算。
-            FHeroes2.Game.System.Settings.Get().Players.SetCurrentColor(FHeroes2.Game.System.Players.HumanColors());
+            // 迷雾方向与雷达都按这个颜色取 Friends 来算。读档时存档自己带着当前色，不覆盖。
+            if (!loadedFromSave)
+            {
+                FHeroes2.Game.System.Settings.Get().Players.SetCurrentColor(
+                    FHeroes2.Game.System.Players.HumanColors());
+            }
 
             screen.Reset();
             screen.GetRadar().Build(world);
@@ -280,7 +337,7 @@ public sealed class AdventureMapScene : IScene
             {
                 screen.SetFocus(actingHero, false);
             }
-            else if (focus is not null)
+            else
             {
                 screen.GetGameArea().SetCenter(new Point(focus.X, focus.Y));
             }
@@ -319,14 +376,26 @@ public sealed class AdventureMapScene : IScene
                 $"Adventure map opened: '{map.Info.Name}' ({map.Width}x{map.Height}, " +
                 $"{scene.View.MapPixelSize.Width}x{scene.View.MapPixelSize.Height} pixels, " +
                 $"{map.Castles.Count} castles, {map.Addons.Count} add-ons, " +
-                $"{scouted} tiles scouted, {scene.View.Fog?.CountFogged() ?? 0} under the fog).");
+                $"{(loadedFromSave ? "reopened from a save" : $"{scouted} tiles scouted")}, " +
+                $"{scene.View.Fog?.CountFogged() ?? 0} under the fog).");
+
+            // 参考摆好界面、进 HumanTurn 之前调一次 Game::setDisplayFadeIn()（game_startgame.cpp:759）：
+            // 地图从黑里出来。开局与读档是同一条 StartGame，所以两处都设；第一帧由场景交给宿主播。
+            GameDisplayFadeIn.SetDisplayFadeIn();
 
             if (session is not null)
             {
                 int heroes = session.Kingdom.Heroes.Count;
+
+                // 焦点英雄与它站在哪个格子也写进来：读档冒烟拿这一行和存档前那一行逐字比对，确认英雄没被挪位。
+                string focusInfo = session.FocusHero is { } focusedHero
+                    ? $", focus hero '{focusedHero.Name}' at {focusedHero.MapIndex}"
+                    : ", no focus hero";
+
                 GameLog.Info(
-                    $"The game has started: day {session.DayCount}, {session.CurrentColor} plays, " +
-                    $"{heroes} {(heroes == 1 ? "hero" : "heroes")} in the kingdom.");
+                    $"{(loadedFromSave ? "The saved game continues" : "The game has started")}: " +
+                    $"day {session.DayCount}, {session.CurrentColor} plays, " +
+                    $"{heroes} {(heroes == 1 ? "hero" : "heroes")} in the kingdom{focusInfo}.");
             }
 
             return scene;
@@ -649,6 +718,59 @@ public sealed class AdventureMapScene : IScene
     /// </remarks>
     public Func<AdventureEventResult>? ExitEvent { get; set; }
 
+    /// <summary>
+    /// What the host does when the player confirms loading a save, the <c>GameMode::LOAD_GAME</c> the turn loop
+    /// hands back to <c>StartGame()</c> (<c>game_startgame.cpp:1166-1168</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在 <c>EventLoadGame()</c> 里只弹确认框（<c>interface_events.cpp:352-359</c>），答 YES 就把
+    /// <c>LOAD_GAME</c> 交回 <c>StartGame()</c>；主循环拿到它之后调 <c>Game::LoadGame()</c>
+    /// （<c>game_mainmenu.cpp:154-155</c>），后者先把主菜单背景画出来再开读档屏（<c>game_loadgame.cpp:215-246</c>）。
+    /// 端口的地图不是主循环里的一个 <c>GameMode</c>，所以这两步由宿主做：先放下地图，再开读档屏。
+    /// </para>
+    /// <para>
+    /// 没有接这一手时退回 <see cref="ExitEvent"/>，也就是离开地图回主菜单——玩家还得自己再点一次 LOAD GAME，
+    /// 那是这条接缝接上之前的行为。
+    /// </para>
+    /// </remarks>
+    public Action? LoadGameEvent { get; set; }
+
+    /// <summary>
+    /// What the host does when the scenario of a campaign has been won, the <c>GameMode::COMPLETE_CAMPAIGN_SCENARIO</c>
+    /// the turn loop hands back to <c>StartGame()</c> (<c>game_startgame.cpp:990-1005</c>,
+    /// <c>game_mainmenu.cpp:205-206</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这一步只把值交回主循环，记账、写「下一关」存档、决定回选关屏还是结局屏都由
+    /// <c>Game::CompleteCampaignScenario()</c> 做（<c>game_campaign.cpp:1160-1282</c>）。端口照同样的分工：
+    /// 场景只转达，宿主拿得到 <see cref="World.Current"/> 与 <see cref="CampaignSaveData"/>，由它做那三件事。
+    /// </para>
+    /// <para>
+    /// 只有战役会走到这里：单图胜利在参考里返回 <c>HIGH_SCORES_STANDARD</c>，到端口是
+    /// <see cref="AdventureEventResult.HighScore"/>，仍留在没接的结局屏那一块。没有接这一手时按「离开地图」处理。
+    /// </para>
+    /// </remarks>
+    public Action? CampaignScenarioCompleted { get; set; }
+
+    /// <summary>
+    /// What the host does when the player asks for the scenario information of a campaign game, the
+    /// <c>Game::SelectCampaignScenario( fheroes2::GameMode::CANCEL, true )</c> of
+    /// <c>Interface::AdventureMap::EventScenarioInformation()</c> (<c>interface_events.cpp:366-396</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这一步把地图画面淡出、开选关屏（RESTART 而不是 OKAY），答取消就把画面恢复回来、留在图上，答重启就
+    /// 带着 <c>START_GAME</c> 回主循环重新读地图 —— 地图画面上什么都不会变，所以没有「淡回」这一步。端口同样把
+    /// 它交给宿主：选关屏与重开都要存档与地图目录，场景拿不到。
+    /// </para>
+    /// <para>
+    /// 没有接这一手时（单图局、或者宿主还没接）什么都不做，与「事件返回 Cancel」一致。
+    /// </para>
+    /// </remarks>
+    public Action? CampaignSelectionRequested { get; set; }
+
     /// <summary>The acting kingdom has no hero and no town, the <c>!myKingdom.isPlay()</c> of the turn loop.</summary>
     /// <returns><see langword="true"/> when the current player cannot act any more.</returns>
     private bool IsKingdomVanquished() => _session is not null && _session.Kingdom.IsLoss;
@@ -773,17 +895,66 @@ public sealed class AdventureMapScene : IScene
 
                 break;
 
-            case AdventureEventResult.NewGame:
             case AdventureEventResult.LoadGame:
+                // 参考的 L 只确认、不换场景：答 YES 之后 StartGame 拿到 LOAD_GAME 就往回走，主循环直接进读档屏
+                // （game_startgame.cpp:1166-1168 → game_mainmenu.cpp:154-155）。端口由宿主接手这两步，见
+                // LoadGameEvent；没接时退回「离开地图」。
+                if (LoadGameEvent is { } loadGame)
+                {
+                    GameLog.Info("The adventure map asked for 'LoadGame', so the save file list is opened.");
+                    loadGame();
+                }
+                else
+                {
+                    GameLog.Info("The adventure map asked for 'LoadGame', so the map is left.");
+                    RequestExit();
+                }
+
+                break;
+
+            case AdventureEventResult.NewGame:
             case AdventureEventResult.QuitGame:
-                // 开新局、读档、退出都要换场景，那是宿主的活；参考在这三个值上离开这张图，端口先回主菜单。
+                // 开新局与退出都要换场景，那是宿主的活；参考在这两个值上离开这张图，端口先回主菜单。
                 GameLog.Info($"The adventure map asked for '{result}', so the map is left.");
                 RequestExit();
 
                 break;
 
+            case AdventureEventResult.CampaignSelection:
+                // 战役局里的 Scenario Information：参考淡出后自己开选关屏，那屏在 App 层，所以交给宿主；
+                // 玩家重启就把地图换成新开的那一张，取消就什么都不做（参考用 ImageRestorer 把画面放回去）。
+                if (CampaignSelectionRequested is { } selection)
+                {
+                    GameLog.Info("The adventure map asked for the campaign selection, so the host opens it.");
+                    selection();
+                }
+                else
+                {
+                    GameLog.Warn("The campaign selection was asked for, but no host is attached to it.");
+                }
+
+                break;
+
+            case AdventureEventResult.Win:
+                // 战役的一关打完了：参考把 COMPLETE_CAMPAIGN_SCENARIO 交回 StartGame()，主循环随即
+                // CompleteCampaignScenario()（game_mainmenu.cpp:205-206）。端口把这一步交给宿主，见
+                // CampaignScenarioCompleted。
+                if (CampaignScenarioCompleted is { } completed)
+                {
+                    GameLog.Info("The campaign scenario is won, so the campaign takes it from here.");
+                    completed();
+                }
+                else
+                {
+                    GameLog.Info("The scenario is won, but no campaign is attached; the map is left.");
+                    RequestExit();
+                }
+
+                break;
+
             default:
-                // 胜负、高分与战役的入口都还没有接：先把值记下来，免得它被悄悄吞掉。
+                // 失败与高分的结局屏还没有（bd 归档（PROGRESS.md，FHeroes2Sharp-jwk）§7.4）：先把值记下来，
+                // 免得它被悄悄吞掉。
                 GameLog.Info($"The adventure map returned '{result}', which has no handler yet.");
 
                 break;
@@ -907,6 +1078,11 @@ public sealed class AdventureMapScene : IScene
         _frame.InvalidateAll();
         _interface.RedrawInterface(Redraw.All);
 
+        // 参考的帧循环画完这一帧就立刻问有没有待播的淡入（game_startgame.cpp:1580：redraw(0) 之后紧跟
+        // validateFadeInAndRender），淡入压在刚画好的画面上。这里只把淡入取出来存到 _interface，宿主在把帧推上屏
+        // 之前逐帧播放。
+        _interface.ValidateFadeInAndRender();
+
         // The outline of a grabbed panel goes over the map and under the dialogs, the order the reference
         // draws it in inside its drag loop.
         _drag?.Draw(_frame.Pixels);
@@ -926,6 +1102,10 @@ public sealed class AdventureMapScene : IScene
     public void DrawOverlay(in DiagnosticsState state)
     {
     }
+
+    /// <summary>Takes the fade-in the screen queued in <see cref="DrawFrame"/>.</summary>
+    /// <returns>The fade the host plays before uploading the frame, or <see langword="null"/>.</returns>
+    public DisplayFade? TakePendingFadeIn() => _interface.TakePendingFadeIn();
 
     /// <summary>Scrolls the map area by map pixels, clamped to the map, <c>GameArea::ShiftCenter()</c>.</summary>
     public void ScrollBy(int dx, int dy) => _interface.GetGameArea().ShiftCenter(new Point(dx, dy));

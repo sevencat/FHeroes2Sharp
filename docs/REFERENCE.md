@@ -33,6 +33,7 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/engine/image_tool.cpp`（`decodeTILImages`；1.1.18 没有 `til.cpp`） | `FHeroes2.Assets.Til.TilFile` | 未压缩图块网格 |
 | PNG 导出 / 读回（用于回归比对） | `FHeroes2.Core.Imaging.PngWriter` + `PngReader` + `PngImage` | 导出 8 bit RGBA（`transform==1` → alpha 0）；读回支持 0/2/3/4/6 色彩类型、1/2/4/8/16 bit、五种行滤波、`tRNS` |
 | `src/engine/image_tool.cpp`（`Save`） | `FHeroes2.Core.Imaging.BmpWriter` | 8 bit 索引 BMP，布局同 `SDL_SaveBMP`；`EncodeSprite` 对应 `Save(image, path, background)` |
+| `src/engine/serialize.h`（`StreamBase` 的读写原语、`StreamBuf`、`StreamFile`、`ROStreamBuf`、字符串与容器、大端读数） | `FHeroes2.Core.Io.StreamBase` / `StreamBuf` / `StreamFile` / `RoStreamBuf` + `BinaryFormatException` + `Compression` | 原版存档格式整条打通：`System.GameSave.Save/Load`（`game_io.cpp` 的 `HeaderSAV`、版本、`zlib` 压缩的正文），`--map` 冒烟的 `F2` 存、保存列表读回、`Enter` 载入都是走这条 |
 | `src/engine/image_tool.cpp`（`decodeBMPFile`） | `FHeroes2.Assets.Cursor.MonoCursorFile` | 单色光标 `*.BMP` 条目（非 Windows 位图），1 = 白、2 = 黑、其他 = 透明 |
 | `src/engine/h2d_file.h/.cpp`（`H2DReader`、`H2DWriter`、`readImageFromH2D`、`writeImageToH2D`） | `FHeroes2.Assets.H2D.H2DArchive` + `H2DWriter` + `H2DImageCodec` | 魔数里带版本（3）、`uint32` 长度前缀字符串、每条体是 zlib（`zzlib.cpp` 的 `unzipData`/`zipData`，用 `ZLibStream`）；空名 / 零长 / 越界的记录跳过而不是整档失败，重名取第一条（`try_emplace`）。图像体 17 字节头（w、h、x、y、单层标志）+ 像素 + 可选透明层，长度必须精确匹配；单层 sprite 不分配透明层。写回按名字序重排，压缩级同 `zipData( …, true )`（`SmallestSize`），所以重写的档与参考逐字节一致 |
 | `src/fheroes2/h2d/h2d.cpp`（`H2DInitializer`、`h2d::readImage`） | `FHeroes2.Game.H2D.H2DResources` | 68 个文件名的样本表在 `SampleFileNames`（`FrozenSet`，序数比较等于 `std::set<std::string>`）；开档三处失败：缺档 `FileNotFoundException`、读不动 `BinaryFormatException`、名单不符 `InvalidOperationException`（消息照参考）。`Settings::findFile` 的文件搜索没搬，`GetDefaultPath(dataDir)` 给 `files/data/resurrection.h2d`；`Current` 只由组合根赋值，`TryReadCurrentImage` 在没装档时返回 false（同参考全局 reader 未初始化） |
@@ -42,6 +43,8 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 | `src/fheroes2/gui/ui_font.h` | `FHeroes2.Rendering.Text.ITextRenderer` | TrueType 后端先行；界面文本已改走 `Assets.Fonts.IGlyphSource` |
 | `src/fheroes2/gui/interface_font.cpp`（`getTextWidth` / `renderText` 的「位图为主、TrueType 补位」） | `FHeroes2.Assets.Fonts.CompositeGlyphSource` | 度量只取位图字体，TrueType 只提供字形（ADR-021）；客户端装配在 `GameFonts` |
 | `src/fheroes2/agg/game_assets.cpp`（`getFont()` / `getIcon()` 的字体缓存） | `FHeroes2.App.Fonts.GameFonts` | 启动时装载 `FONT.ICN` / `SMALFONT.ICN` 与 `YELLOW_FONT` 副本 |
+| `src/fheroes2/gui/ui_font.cpp`（8 个 `generateCPxxxxAlphabet`、5 个 `generateCPxxxxGoodButtonFont`、`resizeCodePage`） | `FHeroes2.Game.Gui.FontAlphabet` + `ButtonFont` | 字母 8 份（CP1250/1251/1252/1253/1254/1258、ISO8859-3、ISO8859-16，由 `tools/GenerateFontAlphabets.ps1` 逐句转写）、按钮字 5 份（CP1250–1254，`ButtonFont.Cp12xx.cs`，由 `tools/GenerateButtonFontAlphabets.ps1` 生成）；`FontGlyphTable` 按 `GameLanguage.Current` 的代码页补字形、按 `ResourceLanguage.Get()` 做参考那套修补（法语那几个字），界面文本经 `GameFonts` 取用。`ui_font.cpp` 尾部的 `SubpixelResize` 在 `ImageOps.SubpixelResize`（暂时没有调用者，参考里也没有） |
+| `src/fheroes2/agg/audio_manager.cpp`（`LoadWAV`：给 `*.82M` 的裸 PCM 补 RIFF 头） | `FHeroes2.Assets.Audio.WaveSound` + `M82Catalog`/`GameSound` | 44 字节 WAV 头逐字节照搬（8 位无符号、单声道 22050 Hz）；`M82Catalog.GetFileName` 给出 `m82map` 里的归档名，`App/Audio/AudioPlayer` 按名字取归档条目、包好头再交给播放设备。XMI/MUS 的转换仍属未移植，见「计划中」 |
 | `src/engine/translations.h/.cpp`（`Translation::MOFile`、`stripContext`、`getCharsetFromHeader`） | `FHeroes2.Assets.Localization.MoCatalog` | GNU MO 读取；按 `msgid` 查表，未命中回退英文；仅 UTF-8 目录（ADR-016） |
 | `files/lang/*.po` → `<data>/files/lang/*.mo` | `translations/*.po` + `tools/scripts/BuildTranslations.ps1` | `zh_CN.po` 当前 95 条（主菜单 / 设置 / 语言 / 快捷键 / 分辨率） |
 | `src/fheroes2/game/game_mainmenu.cpp`（`Game::MainMenu`） | `FHeroes2.App.Scenes.MainMenuScene` | 背景 `HEROES.ICN`（资料片优先）、招牌 `BTNSHNGL.ICN` 1/5/9/13/17（悬停 `+1`、按下 `+2`）、热键 N/L/H/C/Q、灯笼光晕 `SHNGANIM.ICN`（第 0 帧灯体 + 第 1…39 帧闪烁） |
@@ -108,11 +111,9 @@ C++ 参考实现校验值：`version.txt` = `1.1.18`，commit `6c51acfdc`。
 
 | C++ | 计划 C# | 里程碑 | 备注 |
 | --- | --- | --- | --- |
-| `src/engine/image_tool.cpp`（图像缩放余量） | `ImageOps.Resize`（最近邻，颜色层与透明度层各一份，`engine/image.cpp:3087`） | 未排期 | 单层与双层两条路径已搬；「输出带透明度、输入不带」那条按 `transformTable` 反查的分支未搬（无全量 `transformTable` 数据） |
-| `src/engine/audio/*`（`audio_xmi2mid`、`mus`、`xmi`）、`82M` 解码 | `Assets/Audio/*` | M7 | 音乐/音效播放已有 `AudioPlayer`，现在只能播 AGG 里现成的音轨；转换与 82M 是战斗与过场才要 |
-| `src/fheroes2/gui/ui_font.cpp`（各代码页的 `generateCP1250GoodButtonFont` … 补充字形）与 `SubpixelResize` | `Game.Gui.ButtonFont`、`Core.Imaging.ImageOps` | 未排期 | 只有非英文资材的按钮字形需要；`SubpixelResize` 目前没有调用者 |
-| `src/fheroes2/gui/ui_language.*` 的语言切换部分 | `Assets.Localization.*` | 未排期 | `getResourceLanguage` 已搬；运行时换资材语言还没入口（`--lang` / `F2` 只换 `.mo`） |
-| `src/engine/serialize.h` | `Game/Persistence/*`（自研 schema） | M8 | 不做与原版互通 |
+| `src/engine/image_tool.cpp`（图像缩放余量） | `ImageOps.Resize`（最近邻，颜色层与透明度层各一份，`engine/image.cpp:3087`） | 未排期 | 单层与双层两条路径已搬；只剩「目标带变换层、源不带」那条按 `transformTable` 反查的分支——全量 `transformTable` 现在有了（`PaletteTransformTable`），缺的只是这段反查，端口目前在这条路上直接返回（目标层的变换数据不会被更新），源带变换层而目标不带则抛异常 |
+| `src/engine/audio/*`（`audio_xmi2mid`、`mus`、`xmi`） | `Assets/Audio/Xmi*`、`MusicTrack*`（名字表） | M7 | 82M 解码已搬（见「已移植」）；XMI→MIDI 转换还没做，现在音乐只走磁盘上的现成音轨（`MusicTrackCatalog`） |
+| `src/fheroes2/gui/ui_language.*` 的语言切换部分 | `Assets.Localization.*` | 未排期 | `getResourceLanguage`（`ResourceLanguage`）、语言名/缩写表（`GameLanguage`）、代码页枚举（`CodePage`）都已搬；缺的是运行时换资材语言的入口（`updateAlphabet` + `Assets::updateLanguageDependentResources` 的对应物），`--lang` / `F2` 只换 `.mo` |
 
 ## 文件格式速查
 

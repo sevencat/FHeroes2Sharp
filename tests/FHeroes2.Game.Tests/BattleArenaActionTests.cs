@@ -61,6 +61,22 @@ public class BattleArenaActionTests
     }
 
     [Fact]
+    public void AMoveTheAnimationAlreadyWalkedIsOnlyMarkedAsSpent()
+    {
+        BattleArena arena = Field();
+        BattleUnit unit = arena.AttackingForce.First();
+
+        // 界面层先播完行军：BattleFieldPainter 的 MovePlayback 每格 SetPosition，播到终点时模型已经站在 24
+        // （battle_interface.cpp:4524-4830）。竞技场再把命令应用一次时只剩「这一回合用掉了」要记。
+        unit.SetPosition(24);
+
+        arena.ApplyAction(BattleCommand.Move((int)unit.Uid, 24));
+
+        Assert.Equal(24, unit.HeadIndex);
+        Assert.True(unit.HasModes(BattleMonsterState.Moved));
+    }
+
+    [Fact]
     public void AUnitCannotMoveOntoItsOwnCell()
     {
         BattleArena arena = Field();

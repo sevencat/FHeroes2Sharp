@@ -83,6 +83,35 @@ public sealed partial class Kingdoms
     }
 
     /// <summary>
+    /// Gives every kingdom in play the hero the map placed under its town gate, or the starting hero the map
+    /// asks for, <c>Kingdoms::ApplyPlayWithStartingHero()</c> (<c>kingdom.cpp:701-708</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考只处理 <c>isPlay()</c> 的槽位；「没有颜色」的垃圾桶与未参战的颜色什么都不做。
+    /// </para>
+    /// <para>
+    /// <b>这张图差不多全是这类地图</b>：原版编辑器做出来的战役地图常把 <c>startWithHeroInFirstCastle</c> 置位而不在
+    /// 地图上摆英雄，玩家开局的那位英雄是装载末尾现招的（见 <see cref="Kingdom.ApplyPlayWithStartingHero"/>）。
+    /// 调用点在 <c>World::LoadMapMP2()</c> 的末尾，<see cref="World.LoadMap"/> 照抄。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">The map.</param>
+    /// <param name="startWithHeroInFirstCastle">
+    /// <c>Maps::MapData::startWithHeroInFirstCastle</c> — whether the map asks for a starting hero.
+    /// </param>
+    public void ApplyPlayWithStartingHero(World world, bool startWithHeroInFirstCastle = false)
+    {
+        foreach (Kingdom kingdom in _kingdoms)
+        {
+            if (kingdom.IsPlay)
+            {
+                kingdom.ApplyPlayWithStartingHero(world, startWithHeroInFirstCastle);
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether any kingdom has visited that tile for that object, <c>World::isAnyKingdomVisited()</c>.
     /// </summary>
     /// <remarks>

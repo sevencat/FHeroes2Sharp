@@ -85,6 +85,35 @@ public sealed class CampaignData
     }
 
     /// <summary>
+    /// Whether the scenario hands the player over to another campaign, <c>isBetrayalScenario()</c>
+    /// (<c>game_campaign.cpp:122-132</c>).
+    /// </summary>
+    /// <param name="scenarioInfoId">The scenario.</param>
+    /// <returns>True when one of the scenarios that follow it belongs to a different campaign.</returns>
+    /// <remarks>
+    /// <para>
+    /// 「叛变关」是原版里两段战役之间的切换点（罗兰与阿基巴德各自的第六关）：打完它，下一关的战役号就变了。
+    /// 参考拿它决定三件事——选关界面上图标画哪一张、进关前是否清空已得奖励、以及奖励物里的「携带部队」是否照常带走。
+    /// </para>
+    /// <para>
+    /// 参考把这个函数放在 <c>game_campaign.cpp</c> 的匿名命名空间里，但它只查战役表、与界面无关，端口放进
+    /// <see cref="CampaignData"/>，让界面和流程都能用。
+    /// </para>
+    /// </remarks>
+    public static bool IsBetrayalScenario(ScenarioInfoId scenarioInfoId)
+    {
+        foreach (ScenarioInfoId next in GetScenariosAfter(scenarioInfoId))
+        {
+            if (next.CampaignId != scenarioInfoId.CampaignId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// A scenario is a starting one when no other scenario leads to it,
     /// <c>isStartingScenario()</c> (<c>campaign_data.cpp:621-632</c>).
     /// </summary>
@@ -237,6 +266,49 @@ public sealed class CampaignData
         }
 
         return mapInfo with { PlayerUnions = unions };
+    }
+
+    /// <summary>
+    /// Turns a scenario's freshly read map header into the one the campaign starts from, the block above
+    /// <c>updateScenarioGameplayConditions()</c> in <c>Dialog::CampaignInfo</c> (<c>game_campaign.cpp:1604-1615</c>).
+    /// </summary>
+    /// <param name="scenarioInfoId">The scenario that is about to be played.</param>
+    /// <param name="mapInfo">The header read from the scenario's map file.</param>
+    /// <param name="interfaceLanguage">The language the interface runs in, <c>getCurrentLanguage()</c>.</param>
+    /// <param name="resourceLanguage">The language version of the archives, <c>getResourceLanguage()</c>.</param>
+    /// <returns>The header to hand to the players and the world.</returns>
+    /// <remarks>
+    /// <para>
+    /// 两件事，参考在同一个分支里连着做：先把法语老地图被偷走的字符还原回名字与简介（游戏里其他地方的处理见
+    /// <see cref="World.FixFrenchCharactersInStrings"/>），再补战役自己写死的联盟。
+    /// </para>
+    /// <para>
+    /// 法语那两个条件是「界面说法语 **且** 资材是法语版」并且地图不是新格式——照参考原样，缺一不可：中文界面开
+    /// 法语资材、或者法语界面开英文资材都不该动地图文本，否则标点会被换成重音字母。
+    /// </para>
+    /// </remarks>
+    public static Mp2FileInfo PrepareScenarioMap(
+        ScenarioInfoId scenarioInfoId,
+        Mp2FileInfo mapInfo,
+        SupportedLanguage interfaceLanguage,
+        SupportedLanguage resourceLanguage)
+    {
+        ArgumentNullException.ThrowIfNull(mapInfo);
+
+        Mp2FileInfo prepared = mapInfo;
+
+        if (mapInfo.Version != MapVersion.Resurrection
+            && interfaceLanguage == SupportedLanguage.French
+            && resourceLanguage == SupportedLanguage.French)
+        {
+            prepared = prepared with
+            {
+                Name = MapTextCodec.FixFrenchCharacters(prepared.Name),
+                Description = MapTextCodec.FixFrenchCharacters(prepared.Description),
+            };
+        }
+
+        return UpdateScenarioGameplayConditions(scenarioInfoId, prepared);
     }
 
     /// <summary>Creates the campaign and freezes its scenario list.</summary>

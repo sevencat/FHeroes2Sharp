@@ -132,4 +132,24 @@ public sealed class ScenarioData
 
         return Mp2FileInfo.TryRead(filePath, out Mp2FileInfo? info) ? info : null;
     }
+
+    /// <summary>
+    /// Reads the map of the scenario and applies the campaign's own gameplay conditions to it, the start of
+    /// <c>Dialog::CampaignInfo</c>'s OK branch (<c>game_campaign.cpp:1604-1615</c>).
+    /// </summary>
+    /// <param name="rootDirectories">The directories to search, usually the data directory.</param>
+    /// <returns>The header to start the scenario from, or <see langword="null"/> when the file is missing.</returns>
+    /// <remarks>
+    /// 参考在 <c>loadMap()</c> 之后紧接着修法语字符、补联盟，然后把表头写进 <c>conf.setCurrentMapInfo()</c>；它只有这一个
+    /// 调用者（`game_campaign.cpp:1604`），所以端口把这两步合成战役开局的唯一入口，省得将来抄流程时漏掉一步。
+    /// 那两句读取语言：界面语言来自设置，资材语言来自归档指纹。
+    /// </remarks>
+    public Mp2FileInfo? LoadPlayableMap(IEnumerable<string> rootDirectories)
+    {
+        Mp2FileInfo? mapInfo = LoadMap(rootDirectories);
+
+        return mapInfo is null
+            ? null
+            : CampaignData.PrepareScenarioMap(ScenarioInfo, mapInfo, GameLanguage.Current, ResourceLanguage.Get());
+    }
 }

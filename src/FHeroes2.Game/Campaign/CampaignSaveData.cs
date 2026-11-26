@@ -1,10 +1,14 @@
 using System.Diagnostics;
 
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.System;
 
 using TroopArmy = FHeroes2.Game.Army.Army;
+
+// 同一个文件里的属性也叫 CampaignId，写全名会打架，这里给常量表一个别名。
+using CampaignIds = FHeroes2.Game.Campaign.CampaignId;
 
 namespace FHeroes2.Game.Campaign;
 
@@ -381,6 +385,79 @@ public sealed class CampaignSaveData
             ? _difficulty
             : stream.ReadInt32();
     }
+
+    /// <summary>
+    /// The victory condition of the scenario being played, <c>getCurrentScenarioVictoryCondition()</c>
+    /// (<c>campaign_savedata.cpp:212-227</c>).
+    /// </summary>
+    /// <returns>The scenario's condition, or <see cref="ScenarioVictoryCondition.Standard"/> outside the table.</returns>
+    /// <remarks>
+    /// 只能在战役里调用。编号是从存档里读回来的，手改过的存档可能越界，参考那里断言之后退回 STANDARD，端口照做。
+    /// </remarks>
+    public ScenarioVictoryCondition GetCurrentScenarioVictoryCondition()
+    {
+        IReadOnlyList<ScenarioData> scenarios = CampaignData.GetCampaignData(_currentScenarioInfoId.CampaignId).AllScenarios;
+        int scenarioId = _currentScenarioInfoId.ScenarioId;
+
+        Debug.Assert(scenarioId >= 0 && scenarioId < scenarios.Count);
+
+        return scenarioId >= 0 && scenarioId < scenarios.Count
+            ? scenarios[scenarioId].VictoryCondition
+            : ScenarioVictoryCondition.Standard;
+    }
+
+    /// <summary>
+    /// The loss condition of the scenario being played, <c>getCurrentScenarioLossCondition()</c>
+    /// (<c>campaign_savedata.cpp:229-244</c>).
+    /// </summary>
+    /// <returns>The scenario's condition, or <see cref="ScenarioLossCondition.Standard"/> outside the table.</returns>
+    public ScenarioLossCondition GetCurrentScenarioLossCondition()
+    {
+        IReadOnlyList<ScenarioData> scenarios = CampaignData.GetCampaignData(_currentScenarioInfoId.CampaignId).AllScenarios;
+        int scenarioId = _currentScenarioInfoId.ScenarioId;
+
+        Debug.Assert(scenarioId >= 0 && scenarioId < scenarios.Count);
+
+        return scenarioId >= 0 && scenarioId < scenarios.Count
+            ? scenarios[scenarioId].LossCondition
+            : ScenarioLossCondition.Standard;
+    }
+
+    /// <summary>
+    /// The map difficulty a scenario is played on when the original hard-codes one,
+    /// <c>getCurrentScenarioDifficultyLevel()</c> (<c>campaign_savedata.cpp:246-268</c>).
+    /// </summary>
+    /// <returns>The overridden difficulty, or <see langword="null"/> when the map's own difficulty stands.</returns>
+    /// <remarks>
+    /// 原版有十关的地图难度与玩家选的战役难度不一致，游戏把这十个例外写死在代码里。表外的关返回
+    /// <see langword="null"/>，调用方就用地图表头里的难度。
+    /// </remarks>
+    public GameDifficulty? GetCurrentScenarioDifficultyLevel()
+    {
+        return AdjustedDifficultyLevels.TryGetValue(
+            (_currentScenarioInfoId.CampaignId, _currentScenarioInfoId.ScenarioId),
+            out GameDifficulty difficulty)
+            ? difficulty
+            : null;
+    }
+
+    /// <summary>
+    /// The ten scenarios whose map difficulty is hard-coded in the original,
+    /// <c>adjustedDifficultyLevels</c> (<c>campaign_savedata.cpp:248-260</c>).
+    /// </summary>
+    private static readonly Dictionary<(int Campaign, int Scenario), GameDifficulty> AdjustedDifficultyLevels = new()
+    {
+        [(CampaignIds.Roland, 1)] = GameDifficulty.Easy,
+        [(CampaignIds.Archibald, 1)] = GameDifficulty.Easy,
+        [(CampaignIds.Descendants, 0)] = GameDifficulty.Easy,
+        [(CampaignIds.Descendants, 5)] = GameDifficulty.Hard,
+        [(CampaignIds.WizardsIsle, 3)] = GameDifficulty.Hard,
+        [(CampaignIds.VoyageHome, 0)] = GameDifficulty.Easy,
+        [(CampaignIds.PriceOfLoyalty, 0)] = GameDifficulty.Easy,
+        [(CampaignIds.PriceOfLoyalty, 5)] = GameDifficulty.Hard,
+        [(CampaignIds.PriceOfLoyalty, 6)] = GameDifficulty.Hard,
+        [(CampaignIds.PriceOfLoyalty, 7)] = GameDifficulty.Expert,
+    };
 
     /// <summary>The table of <c>getCurrentScenarioDifficultyLevel()</c> and the fallback of an unknown difficulty.</summary>
     /// <returns>A percentage that keeps the rating sensible after a bug add a new difficulty.</returns>

@@ -119,6 +119,31 @@ public class BattleArenaTests
     }
 
     [Fact]
+    public void AWalkedStepTurnsTheDrawbridgeAroundIt()
+    {
+        BattleArena arena = Siege();
+        BattleBridge bridge = arena.Bridge!;
+        BattleUnit ward = arena.DefendingForce.First();
+
+        // 守城方从闸门内侧走到闸门上：参考在迈上闸门前把桥放下（battle_action.cpp:333-350）。
+        ward.SetPosition(BattleBridge.CellAfterGates);
+        arena.LowerBridgeForStep(ward, BattleBridge.CellGates);
+
+        Assert.True(bridge.IsDown);
+
+        // 站在闸门上时不能升（桥上有人），走到闸门后面才升回去。
+        ward.SetPosition(BattleBridge.CellGates);
+        arena.RaiseBridgeAfterStep();
+
+        Assert.True(bridge.IsDown);
+
+        ward.SetPosition(BattleBridge.CellAfterGates);
+        arena.RaiseBridgeAfterStep();
+
+        Assert.False(bridge.IsDown);
+    }
+
+    [Fact]
     public void FortifiedWallsStartAtThreeOtherwiseAtTwo()
     {
         BattleArena fortified = Siege();

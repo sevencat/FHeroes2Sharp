@@ -8,6 +8,7 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.Game.Campaign;
 using FHeroes2.Game.H2D;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
@@ -177,6 +178,75 @@ public sealed class MainMenuScene : IScene
     /// </summary>
     public const string WelcomeResolutionId = "Before starting the game, please select a game resolution.";
 
+    /// <summary>Title of the Standard game button of the new game menu, <c>_( "Standard Game" )</c>.</summary>
+    public const string StandardGameLabelId = "Standard Game";
+
+    /// <summary>Tooltip of the Standard game button.</summary>
+    public const string StandardGameTooltipId = "A single player game playing out a single map.";
+
+    /// <summary>Title of the Campaign game button, <c>_( "Campaign Game" )</c>.</summary>
+    public const string CampaignGameLabelId = "Campaign Game";
+
+    /// <summary>Tooltip of the Campaign game button.</summary>
+    public const string CampaignGameTooltipId = "A single player game playing through a series of maps.";
+
+    /// <summary>Title of the Multi-player game button, <c>_( "Multi-Player Game" )</c>.</summary>
+    public const string MultiplayerGameLabelId = "Multi-Player Game";
+
+    /// <summary>Tooltip of the Multi-player game button.</summary>
+    public const string MultiplayerGameTooltipId =
+        "A multi-player game, with several human players competing against each other on a single map.";
+
+    /// <summary>Title of the Battle only button, <c>_( "Battle Only" )</c>.</summary>
+    public const string BattleOnlyLabelId = "Battle Only";
+
+    /// <summary>Tooltip of the Battle only button.</summary>
+    public const string BattleOnlyTooltipId = "Setup and play a battle without loading any map.";
+
+    /// <summary>Title of the Settings button, <c>_( "Game Settings" )</c>.</summary>
+    public const string GameSettingsLabelId = "Game Settings";
+
+    /// <summary>Tooltip of the Settings button.</summary>
+    public const string GameSettingsTooltipId = "Change language, resolution and settings of the game.";
+
+    /// <summary>Title of the Hot seat button, <c>_( "Hot Seat" )</c>.</summary>
+    public const string HotSeatLabelId = "Hot Seat";
+
+    /// <summary>Tooltip of the Hot seat button.</summary>
+    public const string HotSeatTooltipId =
+        "Play a Hot Seat game, where 2 to 6 players play on the same device, switching into the 'Hot Seat' when " +
+        "it is their turn.";
+
+    /// <summary>Title of the original campaign button, <c>_( "Original Campaign" )</c>.</summary>
+    public const string OriginalCampaignLabelId = "Original Campaign";
+
+    /// <summary>Tooltip of the original campaign button.</summary>
+    public const string OriginalCampaignTooltipId =
+        "Either Roland's or Archibald's campaign from the original Heroes of Might and Magic II.";
+
+    /// <summary>Title of the expansion campaign button, <c>_( "Expansion Campaign" )</c>.</summary>
+    public const string ExpansionCampaignLabelId = "Expansion Campaign";
+
+    /// <summary>Tooltip of the expansion campaign button.</summary>
+    public const string ExpansionCampaignTooltipId =
+        "One of the four new campaigns from the Price of Loyalty expansion set.";
+
+    /// <summary>Title of the cancel button of the new game menu, <c>_( "Cancel" )</c>.</summary>
+    public const string NewGameCancelLabelId = "Cancel";
+
+    /// <summary>Tooltip of the cancel button of the new game menu.</summary>
+    public const string NewGameCancelTooltipId = "Cancel back to the main menu.";
+
+    /// <summary>Titles and tooltips of the five player count buttons, indexed by count minus two.</summary>
+    private static readonly (string Header, string Body)[] PlayerCountHelpTexts =
+    [
+        ("2 Players", "Play with 2 human players, and optionally, up to 4 additional computer players."),
+        ("3 Players", "Play with 3 human players, and optionally, up to 3 additional computer players."),
+        ("4 Players", "Play with 4 human players, and optionally, up to 2 additional computer players."),
+        ("5 Players", "Play with 5 human players, and optionally, up to 1 additional computer player."),
+        ("6 Players", "Play with 6 human players."),
+    ];
+
     /// <summary>Frames of the resolution chooser's scroll bar, <c>ICN::SCROLL</c>.</summary>
     public const string ResolutionScrollAssetName = "SCROLL.ICN";
 
@@ -247,6 +317,11 @@ public sealed class MainMenuScene : IScene
     private ScenarioInfoArtwork? _scenarioInfoArtwork;
     private MessageBox? _scenarioInfoTip;
     private Mp2FileInfo? _confirmedScenario;
+    private readonly AssetBundle? _assets;
+    private Sprite[]? _newGameFrames;
+    private bool _newGameFramesEvil;
+    private NewGameMenuView? _newGame;
+    private MessageBox? _newGameTip;
 
     private MainMenuScene(
         ScreenBuffer frame,
@@ -263,6 +338,7 @@ public sealed class MainMenuScene : IScene
         SettingsArtwork? settingsArtwork,
         ScenarioDialogArtwork? scenarioArtwork,
         ResolutionArtwork? resolutionArtwork,
+        AssetBundle? assets,
         string? dataDirectory)
     {
         _frame = frame;
@@ -278,6 +354,7 @@ public sealed class MainMenuScene : IScene
         _settingsArtwork = settingsArtwork;
         _scenarioArtwork = scenarioArtwork;
         _resolutionArtwork = resolutionArtwork;
+        _assets = assets;
         _dataDirectory = dataDirectory;
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
@@ -396,7 +473,8 @@ public sealed class MainMenuScene : IScene
 
             MainMenuScene scene = new(
                 frame, streetScene, lanternBase, lantern, door, hasMessageFrame, buttons, editorSign, fonts,
-                languages, culture, settingsArtwork, scenarioArtwork, resolutionArtwork, assets.DataDirectory);
+                languages, culture, settingsArtwork, scenarioArtwork, resolutionArtwork, assets,
+                assets.DataDirectory);
 
             GameLog.Info(
                 $"Main menu ready: {BackgroundAssetName} {background.Sprites[0].Width}x" +
@@ -410,6 +488,9 @@ public sealed class MainMenuScene : IScene
                 (hasMessageFrame ? "right click tooltips, " : "no tooltips, ") +
                 (scenarioArtwork is null ? "no scenario selection, " : "scenario selection ready, ") +
                 (resolutionArtwork is null ? "no resolution chooser, " : "resolution chooser ready, ") +
+                // 每个标牌的命中区打进日志：冒烟脚本需要知道点哪里，而坐标来自 BTNSHNGL.ICN 的精灵偏移，
+                // 不写出来就只能靠截图量。
+                $"signs at {string.Join(", ", scene._buttons.Select(static sign => sign.Area))}, " +
                 $"language '{scene.Text.Culture}' ({scene.Text.TranslatedEntries} entries).");
 
             return scene;
@@ -553,6 +634,8 @@ public sealed class MainMenuScene : IScene
         // scenario list, then the two windows of the first run. They can never be open at the same
         // time, the order only keeps the code in the order the host opens them.
         _settings?.Draw(pixels);
+        _newGame?.Draw(pixels);
+        _newGameTip?.Draw(pixels);
         _scenario?.Draw(pixels);
         _scenarioInfo?.Draw(pixels);
         _scenarioInfoTip?.Draw(pixels);
@@ -574,6 +657,20 @@ public sealed class MainMenuScene : IScene
         if (_settings is not null)
         {
             _settings.SetCursor(cursor);
+            return;
+        }
+
+        // 新游戏菜单的帮助框先于菜单本身：它开着时菜单的按钮不再亮起。
+        if (_newGameTip is not null)
+        {
+            _newGameTip.SetCursor(cursor);
+            return;
+        }
+
+        if (_newGame is not null)
+        {
+            _newGame.SetCursor(cursor);
+            _cursor = cursor;
             return;
         }
 
@@ -651,6 +748,25 @@ public sealed class MainMenuScene : IScene
             }
 
             return null;
+        }
+
+        // 新游戏菜单的帮助框先关，再轮到菜单自己的按钮。
+        if (_newGameTip is not null)
+        {
+            if (_newGameTip.SetLeftButton(down) == DialogButton.Ok)
+            {
+                _newGameTip = null;
+            }
+
+            return null;
+        }
+
+        // 新游戏菜单按自己的 Area 判定点击（DialogButton 只是占位），结果立刻分派。
+        if (_newGame is not null)
+        {
+            NewGameMenuChoice choice = _newGame.SetLeftButton(down, _cursor ?? new Point(-1, -1));
+
+            return choice.Action == NewGameMenuAction.None ? null : ApplyNewGameChoice(choice);
         }
 
         // The help box of the scenario info screen sits on top of it: its OK button closes the box and nothing
@@ -819,7 +935,17 @@ public sealed class MainMenuScene : IScene
     /// the button is down.
     /// </summary>
     /// <param name="down">Whether the right mouse button is currently held.</param>
-    public void SetRightButton(bool down) => _tip = down && !HasModalDialog ? CreateTip() : null;
+    public void SetRightButton(bool down)
+    {
+        // 新游戏菜单的右键是 <c>Dialog::ZERO</c> 的帮助框：按下弹出，松开消失。
+        if (_newGame is not null)
+        {
+            _newGameTip = down ? CreateNewGameTip() : null;
+            return;
+        }
+
+        _tip = down && !HasModalDialog ? CreateTip() : null;
+    }
 
     /// <summary>
     /// Selects a sign through its hot key (<c>N</c>, <c>L</c>, <c>H</c>, <c>C</c>, <c>Q</c>), or the
@@ -904,6 +1030,41 @@ public sealed class MainMenuScene : IScene
                 EnterCharacter or LineFeedCharacter => ConfirmSettings(),
                 _ => null,
             };
+        }
+
+        // 新游戏菜单的帮助框是一个 OK 框，Escape/Enter 关掉它；下面的菜单保留自己的按键。
+        if (_newGameTip is not null)
+        {
+            switch (hotKey)
+            {
+                case EscapeCharacter or EnterCharacter or LineFeedCharacter:
+                    _newGameTip = null;
+                    break;
+
+                default:
+                    break;
+            }
+
+            return null;
+        }
+
+        // 新游戏菜单的按键照 <c>game_hotkeys.cpp:118-155</c>：S/C/M/T/B/H/O/E 与人数键 2-6。
+        if (_newGame is not null)
+        {
+            if (hotKey == EscapeCharacter)
+            {
+                CloseNewGameMenu();
+                return null;
+            }
+
+            if (MapNewGameHotKey(hotKey) is not { } menuKey)
+            {
+                return null;
+            }
+
+            NewGameMenuChoice choice = _newGame.SetHotKey(menuKey);
+
+            return choice.Action == NewGameMenuAction.None ? null : ApplyNewGameChoice(choice);
         }
 
         // The help box of the scenario info screen is an OK box: Escape and Enter close it, the screen behind it
@@ -1122,13 +1283,214 @@ public sealed class MainMenuScene : IScene
     public ScenarioSelectionDialog? Scenario => _scenario;
 
     /// <summary>
-    /// Whether a modal window owns the input: the settings dialog, the scenario list, or the language
-    /// picker, greeting and resolution chooser of the first run.
+    /// Whether a modal window owns the input: the settings dialog, the scenario list, the new game
+    /// menu, or the language picker, greeting and resolution chooser of the first run.
     /// </summary>
     public bool HasModalDialog =>
         _settings is not null || _scenario is not null || _scenarioInfo is not null ||
-        _scenarioInfoTip is not null || _languagePicker is not null || _welcome is not null ||
-        _resolutionPicker is not null || _resolutionTip is not null;
+        _scenarioInfoTip is not null || _newGame is not null || _newGameTip is not null ||
+        _languagePicker is not null || _welcome is not null || _resolutionPicker is not null ||
+        _resolutionTip is not null;
+
+    /// <summary>The open new game menu, or <see langword="null"/> when New Game has not been used.</summary>
+    public NewGameMenuView? NewGameMenu => _newGame;
+
+    /// <summary>The explanation of a button of the new game menu, or <see langword="null"/>.</summary>
+    public MessageBox? NewGameTip => _newGameTip;
+
+    /// <summary>
+    /// Opens the new game menu of <c>Game::NewGame()</c>, what a click on the New Game sign does in the
+    /// reference (<c>game_newgame.cpp:416-648</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在主菜单循环里直接进 <c>Game::NewGame()</c>；端口把它拆成一块场景级模态：这里只按当前界面风格组装
+    /// 28 帧（<see cref="NewGameMenuArtwork"/>），点击与热键由 <see cref="NewGameMenuView"/> 自己判定，结果回到
+    /// <see cref="ApplyNewGameChoice"/>。
+    /// </para>
+    /// <para>
+    /// 两个战役按钮的可用性照参考的两个检查：原版两大战役看地图是否齐；资料片四战役还要求
+    /// <c>X_LOADCM.ICN</c> 在包里且四套地图都在（<c>Game::isPriceOfLoyaltyCampaignPresent()</c>，
+    /// <c>game_campaign.cpp:1141-1157</c>）。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="true"/> when the menu is now open.</returns>
+    public bool OpenNewGameMenu()
+    {
+        if (_newGame is not null)
+        {
+            return true;
+        }
+
+        if (_assets is null || HasModalDialog)
+        {
+            return false;
+        }
+
+        bool isEvilInterface = Game.System.Settings.Get().IsEvilInterfaceEnabled;
+
+        if (_newGameFrames is null || _newGameFramesEvil != isEvilInterface)
+        {
+            _newGameFrames = NewGameMenuArtwork.TryCreate(_assets, Text, isEvilInterface);
+            _newGameFramesEvil = isEvilInterface;
+        }
+
+        if (_newGameFrames is null)
+        {
+            return false;
+        }
+
+        bool successionWars = IsCampaignPresent(CampaignId.Archibald) && IsCampaignPresent(CampaignId.Roland);
+
+        bool priceOfLoyalty =
+            _assets.TryReadIcn(NewGameMenuArtwork.CampaignAssetName) is not null &&
+            IsCampaignPresent(CampaignId.PriceOfLoyalty) && IsCampaignPresent(CampaignId.Descendants) &&
+            IsCampaignPresent(CampaignId.WizardsIsle) && IsCampaignPresent(CampaignId.VoyageHome);
+
+        _newGame = NewGameMenuView.TryCreate(_newGameFrames, successionWars, priceOfLoyalty);
+
+        if (_newGame is null)
+        {
+            return false;
+        }
+
+        _status = null;
+        GameLog.Info(
+            $"New game menu opened; original campaigns {(successionWars ? "available" : "missing")}, " +
+            $"Price of Loyalty {(priceOfLoyalty ? "available" : "missing")}.");
+
+        return true;
+    }
+
+    /// <summary>Closes the new game menu without a choice, the Cancel button and Escape of the reference.</summary>
+    /// <returns><see langword="true"/> when the menu was open.</returns>
+    public bool CloseNewGameMenu()
+    {
+        if (_newGame is null && _newGameTip is null)
+        {
+            return false;
+        }
+
+        _newGame = null;
+        _newGameTip = null;
+        GameLog.Info("New game menu closed without a choice.");
+
+        return true;
+    }
+
+    /// <summary>Whether every map of one campaign is installed, <c>Game::is*CampaignPresent()</c>.</summary>
+    private bool IsCampaignPresent(int campaignId)
+    {
+        if (_dataDirectory is null)
+        {
+            return false;
+        }
+
+        return CampaignData.GetCampaignData(campaignId).IsAllCampaignMapsPresent([_dataDirectory]);
+    }
+
+    /// <summary>
+    /// Applies one answer of the new game menu.
+    /// </summary>
+    /// <param name="choice">What the player picked.</param>
+    /// <returns>
+    /// The action the host has to handle, or <see langword="null"/> when the menu stays open and the
+    /// scene keeps the frame to itself.
+    /// </returns>
+    /// <remarks>
+    /// Standard game goes to the scenario list of the third block. Battle only, the hot seat player
+    /// count and the two campaigns need their own scenes and are not wired yet; they keep the menu up
+    /// rather than pretending that something happened.
+    /// </remarks>
+    private MainMenuAction? ApplyNewGameChoice(NewGameMenuChoice choice)
+    {
+        switch (choice.Action)
+        {
+            case NewGameMenuAction.None:
+                return null;
+
+            case NewGameMenuAction.Cancel:
+                CloseNewGameMenu();
+                return null;
+
+            case NewGameMenuAction.StandardGame:
+                CloseNewGameMenu();
+
+                if (OpenScenario())
+                {
+                    GameLog.Info("New game menu: Standard game opens the scenario selection.");
+                    return MainMenuAction.NewGame;
+                }
+
+                return null;
+
+            case NewGameMenuAction.GameSettings:
+                // 参考在设置窗口返回后回到主菜单（GameMode::MAIN_MENU），所以这里也把新游戏菜单关掉。
+                CloseNewGameMenu();
+                OpenSettings();
+                return null;
+
+            default:
+                GameLog.Info($"New game menu: {choice.Action} is not wired yet; the menu stays open.");
+                _status = $"{choice.Action} - not available yet";
+                return null;
+        }
+    }
+
+    /// <summary>Builds the help box of a button of the new game menu, <c>Dialog::ZERO</c> of the reference.</summary>
+    private MessageBox? CreateNewGameTip()
+    {
+        if (_newGame is not { } menu || _cursor is not { } cursor)
+        {
+            return null;
+        }
+
+        NewGameMenuHelpRequest request = menu.ProcessRightClick(cursor);
+
+        (string header, string body)? message = request.Target switch
+        {
+            NewGameMenuHelpTarget.StandardGame => (StandardGameLabelId, StandardGameTooltipId),
+            NewGameMenuHelpTarget.CampaignGame => (CampaignGameLabelId, CampaignGameTooltipId),
+            NewGameMenuHelpTarget.MultiplayerGame => (MultiplayerGameLabelId, MultiplayerGameTooltipId),
+            NewGameMenuHelpTarget.BattleOnly => (BattleOnlyLabelId, BattleOnlyTooltipId),
+            NewGameMenuHelpTarget.GameSettings => (GameSettingsLabelId, GameSettingsTooltipId),
+            NewGameMenuHelpTarget.HotSeat => (HotSeatLabelId, HotSeatTooltipId),
+            NewGameMenuHelpTarget.SuccessionWarsCampaign => (OriginalCampaignLabelId, OriginalCampaignTooltipId),
+            NewGameMenuHelpTarget.PriceOfLoyaltyCampaign => (ExpansionCampaignLabelId, ExpansionCampaignTooltipId),
+            NewGameMenuHelpTarget.PlayerCount => PlayerCountHelpTexts[
+                Math.Clamp(request.PlayerCount - 2, 0, PlayerCountHelpTexts.Length - 1)],
+            NewGameMenuHelpTarget.Cancel => (NewGameCancelLabelId, NewGameCancelTooltipId),
+            _ => null,
+        };
+
+        if (message is not { } texts)
+        {
+            return null;
+        }
+
+        return MessageBox.Create(Text.Get(texts.header), Text.Get(texts.body), _fonts.Yellow, _fonts.Normal);
+    }
+
+    /// <summary>Translates a character to one of the hot keys of the new game menu.</summary>
+    /// <param name="hotKey">Key that was pressed.</param>
+    /// <returns>The hot key, or <see langword="null"/> for keys the menu does not answer.</returns>
+    private static NewGameMenuHotKey? MapNewGameHotKey(char hotKey) => char.ToUpperInvariant(hotKey) switch
+    {
+        'S' => NewGameMenuHotKey.Standard,
+        'C' => NewGameMenuHotKey.Campaign,
+        'M' => NewGameMenuHotKey.Multiplayer,
+        'T' => NewGameMenuHotKey.Settings,
+        'B' => NewGameMenuHotKey.BattleOnly,
+        'H' => NewGameMenuHotKey.HotSeat,
+        'O' => NewGameMenuHotKey.OriginalCampaign,
+        'E' => NewGameMenuHotKey.ExpansionCampaign,
+        '2' => NewGameMenuHotKey.TwoPlayers,
+        '3' => NewGameMenuHotKey.ThreePlayers,
+        '4' => NewGameMenuHotKey.FourPlayers,
+        '5' => NewGameMenuHotKey.FivePlayers,
+        '6' => NewGameMenuHotKey.SixPlayers,
+        _ => null,
+    };
 
     /// <summary>The open resolution chooser of the first run, or <see langword="null"/>.</summary>
     public ResolutionDialog? ResolutionPicker => _resolutionPicker;
@@ -2068,12 +2430,32 @@ public sealed class MainMenuScene : IScene
             return entry.Action;
         }
 
-        // New Game opens the scenario list of the original; the other signs are later milestones
-        // (load game M8, high scores / credits M9) and only say so in the status bar.
-        if (entry.Action == MainMenuAction.NewGame && OpenScenario())
+        // New Game opens <c>Game::NewGame()</c>, the new game menu of the reference rather than the
+        // scenario list directly. The original falls back to the list when the button archives are
+        // missing, so a broken install still gets a playable path.
+        if (entry.Action == MainMenuAction.NewGame)
         {
             _status = null;
-            GameLog.Info($"Main menu: '{label}' opens the scenario selection.");
+
+            if (OpenNewGameMenu())
+            {
+                GameLog.Info($"Main menu: '{label}' opens the new game menu.");
+                return entry.Action;
+            }
+
+            if (OpenScenario())
+            {
+                GameLog.Info($"Main menu: '{label}' falls back to the scenario selection.");
+                return entry.Action;
+            }
+        }
+
+        // LOAD GAME 的存档列表由宿主接管（GameHost.HandleMenuAction → OpenLoadGame）：场景只把选择交上去，
+        // 不能在这里说「还没实现」，否则日志会把一条已经能走的路标成缺口。
+        if (entry.Action == MainMenuAction.LoadGame)
+        {
+            _status = null;
+            GameLog.Info($"Main menu: '{label}' opens the save file list.");
             return entry.Action;
         }
 

@@ -487,16 +487,23 @@ public sealed partial class AdventureMap
     /// <summary>
     /// Opens the scenario information, <c>EventScenarioInformation()</c> (<c>interface_events.cpp:366-396</c>).
     /// </summary>
-    /// <returns>Always <see cref="AdventureEventResult.Cancel"/>.</returns>
+    /// <returns>
+    /// <see cref="AdventureEventResult.CampaignSelection"/> in a campaign game, <see cref="AdventureEventResult.Cancel"/>
+    /// otherwise.
+    /// </returns>
     /// <remarks>
-    /// The reference has a campaign branch that fades out, selects a scenario
-    /// (<c>Game::SelectCampaignScenario()</c>) and either restores the map or leaves for the campaign screen. Campaign
-    /// selection is not ported, so the port only does the non-campaign part — the scenario information — and the
-    /// branch has no way to ask for another mode yet.
+    /// 参考在战役局里不弹信息表：它淡出画面、调 <c>Game::SelectCampaignScenario( CANCEL, true )</c> —— 就是主菜单
+    /// 用的那张选关屏，只是 <c>allowToRestart</c> 为真，OKAY 换成 RESTART —— 答 CANCEL 就恢复地图画面，答
+    /// <c>START_GAME</c> 就把值交回主循环、由它重新读地图开这一关（<c>:368-391</c>）。选关屏是 App 层的场景，
+    /// 所以这里只报「该开选关屏了」，见 <see cref="AdventureEventResult.CampaignSelection"/>。
     /// </remarks>
     public AdventureEventResult EventScenarioInformation()
     {
-        // 战役局在参考里走的是「淡出 → 选关 → 淡入」，选关界面还没搬，端口在战役局里也照样只开这一张信息表。
+        if (Settings.Get().IsCampaignGameType)
+        {
+            return AdventureEventResult.CampaignSelection;
+        }
+
         _dialogs.ShowGameInfo();
 
         return AdventureEventResult.Cancel;
@@ -639,6 +646,11 @@ public sealed partial class AdventureMap
                 // Heroes::Action() is the hero's own action handler; the port's HeroActions takes the hero it works
                 // on, so the call builds one for the action.
                 new HeroActions(hero, world.Kingdoms).Action(hero.MapIndex, world);
+
+                // The action may have been a battle, and every ActionToXxx of the reference ends the fight with
+                // this exact call (heroes_action.cpp:446, 569, 644, 1187, 1404, 1745, 2155, 2208, 2492 and 3190,
+                // ai_hero_action.cpp:472 and 565). The icons are repainted because a hero can die in it.
+                RenderWithFadeInOrPlanRender(Redraw.Heroes | Redraw.Buttons | Redraw.Status);
 
                 // The action object can change the hero's status (a well, stables) or move it (a whirlpool, the
                 // stone liths).

@@ -4,6 +4,7 @@ using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Resources;
+using FHeroes2.Game.System;
 
 namespace FHeroes2.Game.Army;
 
@@ -83,8 +84,10 @@ public readonly record struct NeutralMonsterJoiningCondition(NeutralMonsterJoini
 /// points buys — and only if the kingdom can pay for them.
 /// </item>
 /// <item>
-/// <b>Fright beats money.</b> At more than five times the strength and against a human hero, the monsters flee
-/// rather than fight. This is checked <i>after</i> the join, so a stack that would have joined still joins.
+/// <b>Fright beats money.</b> At more than five times the strength and when the hero is not driven by the AI
+/// (<c>!hero.isControlAI()</c>, <c>army.cpp:1725</c>), the monsters flee rather than fight — a human hero scares
+/// them, a computer one does not. This is checked <i>after</i> the join, so a stack that would have joined still
+/// joins.
 /// </item>
 /// </list>
 /// <para>
@@ -159,7 +162,9 @@ public sealed partial class Army
             }
         }
 
-        if (armyStrengthRatio > 5 && !hero.IsControlHuman)
+        // 参考问的是 <c>!hero.isControlAI()</c>：除电脑以外的英雄（人、远端、无主）都能把怪吓跑，电脑英雄不会。
+        // 端口此前写成 <c>!hero.IsControlHuman</c>——正好反了，人类英雄永远看不到「要不要追」这一问。
+        if (armyStrengthRatio > 5 && !hero.GetControl().IsAi())
         {
             // ... will surely flee before us
             return new NeutralMonsterJoiningCondition(NeutralMonsterJoiningReason.RunAway, 0);

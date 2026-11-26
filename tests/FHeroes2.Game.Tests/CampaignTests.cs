@@ -1,9 +1,12 @@
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Io;
+using FHeroes2.Game.Army;
 using FHeroes2.Game.Campaign;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
+
+using TroopArmy = FHeroes2.Game.Army.Army;
 
 namespace FHeroes2.Game.Tests;
 
@@ -12,6 +15,7 @@ namespace FHeroes2.Game.Tests;
 /// the awards and <see cref="CampaignSaveData"/>
 /// (<c>campaign_data.cpp</c>, <c>campaign_scenariodata.cpp</c>, <c>campaign_savedata.cpp</c>).
 /// </summary>
+[Collection(CampaignCollection.Name)]
 public sealed class CampaignTests
 {
     /// <summary>The scenarios of each campaign, in scenario order.</summary>
@@ -230,6 +234,65 @@ public sealed class CampaignTests
         Assert.Same(mapInfo, result);
     }
 
+    /// <summary>A map header of the shape the campaign scenarios have: three colours, one human.</summary>
+    /// <param name="name">The map name, as read from the file.</param>
+    /// <param name="version">The map format version.</param>
+    /// <returns>The header.</returns>
+    private static Mp2FileInfo ScenarioMap(string name, MapVersion version) => new()
+    {
+        FilePath = "test.h2c",
+        Name = name,
+        Description = "C#te",
+        Width = 72,
+        Height = 72,
+        Difficulty = GameDifficulty.Normal,
+        Version = version,
+        KingdomColors = PlayerColor.Blue | PlayerColor.Green | PlayerColor.Red,
+        HumanPlayers = PlayerColor.Blue,
+        ComputerPlayers = PlayerColor.Green | PlayerColor.Red,
+    };
+
+    [Fact]
+    public void APreparedScenarioMapBringsTheAllianceAndTheFrenchAccents()
+    {
+        // Archibald 第五关：法语资材 + 法语界面 + 老格式地图，两件事都要做（game_campaign.cpp:1606-1615）。
+        Mp2FileInfo prepared = CampaignData.PrepareScenarioMap(
+            new ScenarioInfoId(CampaignId.Archibald, 5),
+            ScenarioMap("C#te", MapVersion.SuccessionWars),
+            SupportedLanguage.French,
+            SupportedLanguage.French);
+
+        Assert.Equal("Côte", prepared.Name);
+        Assert.Equal("Côte", prepared.Description);
+        Assert.Equal(
+            PlayerColor.Green | PlayerColor.Red,
+            prepared.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Green)]);
+    }
+
+    [Theory]
+    [InlineData(SupportedLanguage.English, SupportedLanguage.French, MapVersion.SuccessionWars)]
+    [InlineData(SupportedLanguage.French, SupportedLanguage.English, MapVersion.SuccessionWars)]
+    [InlineData(SupportedLanguage.French, SupportedLanguage.French, MapVersion.Resurrection)]
+    public void TheFrenchFixNeedsBothLanguagesAndALegacyMap(
+        SupportedLanguage interfaceLanguage,
+        SupportedLanguage resourceLanguage,
+        MapVersion version)
+    {
+        // 缺一条就不动文本：中文界面开法语资材、法语界面开英文资材、法语界面开新格式地图，参考都不修。
+        Mp2FileInfo prepared = CampaignData.PrepareScenarioMap(
+            new ScenarioInfoId(CampaignId.Archibald, 5),
+            ScenarioMap("C#te", version),
+            interfaceLanguage,
+            resourceLanguage);
+
+        Assert.Equal("C#te", prepared.Name);
+
+        // 联盟与语言无关，照样补上。
+        Assert.Equal(
+            PlayerColor.Green | PlayerColor.Red,
+            prepared.PlayerUnions[PlayerColors.IndexOf(PlayerColor.Green)]);
+    }
+
     [Fact]
     public void CampaignSaveDataTracksTheCurrentScenario()
     {
@@ -383,6 +446,132 @@ public sealed class CampaignTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CampaignSaveDataRoundTripsThroughAStream()
+    {
+        CampaignSaveData save = CampaignSaveData.Get();
+        save.Reset();
+
+        try
+        {
+            // 罗兰第三关有一个「矮人联盟」奖励：读回来要能按编号翻回完整奖励，编的编号会被过滤掉。
+            ScenarioInfoId scenario = new(CampaignId.Roland, 2);
+            CampaignAwardData award = Assert.Single(CampaignAwardData.GetCampaignAwardData(scenario));
+
+            save.SetCurrentScenarioInfo(scenario, 1);
+            save.AddCurrentMapToFinished();
+            save.AddDaysPassed(42);
+            save.AddCampaignAward(award.Id);
+
+            save.SetDifficulty(CampaignDifficulty.Increased, resetMinDifficulty: true);
+
+            TroopArmy army = new(MapRace.Knight);
+            Assert.True(army.JoinTroop(MonsterType.Peasant, 88));
+            save.SetCarryOverTroops(army);
+
+            // 字段次序即格式（campaign_savedata.cpp:165-170），所以一个来回就够了：次序错位会在读的时候立刻看出来。
+            StreamBuf stream = new();
+            save.Write(stream);
+            stream.Seek(0);
+
+            save.Reset();
+            Assert.True(save.IsStarting);
+
+            save.Read(stream);
+
+            Assert.Equal(CampaignId.Roland, save.CampaignId);
+            Assert.Equal(2, save.CurrentScenarioId);
+            Assert.Equal(1, save.CurrentScenarioBonusId);
+            Assert.Equal([scenario], save.FinishedMaps);
+            Assert.Equal(42u, save.DaysPassed);
+            Assert.Equal([award.Id], save.GetObtainedCampaignAwards().Select(obtained => obtained.Id));
+            Assert.Equal(CampaignDifficulty.Increased, save.Difficulty);
+            Assert.Equal(CampaignDifficulty.Increased, save.MinDifficulty);
+
+            // 携带部队存的是整个五格（参考写的是 Troops，不是压紧过的表），空格也跟着来回。
+            Assert.Equal(TroopArmy.MaximumTroopCount, save.CarryOverTroops.Count);
+
+            Troop carryOver = save.CarryOverTroops[0];
+            Assert.Equal(MonsterType.Peasant, carryOver.Monster);
+            Assert.Equal(88u, carryOver.Count);
+            Assert.True(save.CarryOverTroops[1].IsEmpty);
+        }
+        finally
+        {
+            save.Reset();
+        }
+    }
+
+    [Fact]
+    public void TheCurrentScenarioDrawsItsConditionsFromTheCampaignTable()
+    {
+        CampaignSaveData save = CampaignSaveData.Get();
+        save.Reset();
+
+        try
+        {
+            // Roland 第三关是唯一一关「丢了所有女巫村就输」的，第八关要拿终极王冠才赢。
+            save.SetCurrentScenarioInfo(new ScenarioInfoId(CampaignId.Roland, 2));
+            Assert.Equal(ScenarioVictoryCondition.Standard, save.GetCurrentScenarioVictoryCondition());
+            Assert.Equal(ScenarioLossCondition.LoseAllSorceressVillages, save.GetCurrentScenarioLossCondition());
+
+            save.SetCurrentScenarioInfo(new ScenarioInfoId(CampaignId.Roland, 7));
+            Assert.Equal(ScenarioVictoryCondition.ObtainUltimateCrown, save.GetCurrentScenarioVictoryCondition());
+            Assert.Equal(ScenarioLossCondition.Standard, save.GetCurrentScenarioLossCondition());
+        }
+        finally
+        {
+            save.Reset();
+        }
+    }
+
+    [Theory]
+    [InlineData(CampaignId.Roland, 1, GameDifficulty.Easy)]
+    [InlineData(CampaignId.Archibald, 1, GameDifficulty.Easy)]
+    [InlineData(CampaignId.Descendants, 0, GameDifficulty.Easy)]
+    [InlineData(CampaignId.Descendants, 5, GameDifficulty.Hard)]
+    [InlineData(CampaignId.WizardsIsle, 3, GameDifficulty.Hard)]
+    [InlineData(CampaignId.VoyageHome, 0, GameDifficulty.Easy)]
+    [InlineData(CampaignId.PriceOfLoyalty, 0, GameDifficulty.Easy)]
+    [InlineData(CampaignId.PriceOfLoyalty, 5, GameDifficulty.Hard)]
+    [InlineData(CampaignId.PriceOfLoyalty, 6, GameDifficulty.Hard)]
+    [InlineData(CampaignId.PriceOfLoyalty, 7, GameDifficulty.Expert)]
+    public void TenScenariosHardCodeTheirMapDifficulty(int campaignId, int scenarioId, GameDifficulty expected)
+    {
+        CampaignSaveData save = CampaignSaveData.Get();
+        save.Reset();
+
+        try
+        {
+            save.SetCurrentScenarioInfo(new ScenarioInfoId(campaignId, scenarioId));
+
+            Assert.Equal(expected, save.GetCurrentScenarioDifficultyLevel());
+        }
+        finally
+        {
+            save.Reset();
+        }
+    }
+
+    [Fact]
+    public void ScenariosWithoutAHardCodedDifficultyKeepTheMapOne()
+    {
+        CampaignSaveData save = CampaignSaveData.Get();
+        save.Reset();
+
+        try
+        {
+            // Roland 第一关没在表里，用地图表头里的难度。
+            save.SetCurrentScenarioInfo(new ScenarioInfoId(CampaignId.Roland, 0));
+
+            Assert.Null(save.GetCurrentScenarioDifficultyLevel());
+        }
+        finally
+        {
+            save.Reset();
         }
     }
 }

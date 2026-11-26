@@ -1587,6 +1587,12 @@ public sealed partial class World
         PlaceUltimateArtifact();
 
         PostLoad(true, false);
+
+        // The hero the map asks for: a hero standing under a town's gate goes inside, and when no town had one
+        // the first castle hires a hero of its own race (world_loadmap.cpp:1456 -> kingdom.cpp:701 -> :504).
+        // Campaign maps made by the original editor rely on this: they set startWithHeroInFirstCastle and place
+        // no hero on the map at all, so without this step a campaign scenario opens with no hero to play.
+        _kingdoms.ApplyPlayWithStartingHero(this, map.Info.StartWithHeroInFirstCastle);
     }
 
     /// <summary>

@@ -46,6 +46,18 @@ public enum AdventureEventResult
 
     /// <summary>A high score should be shown, <c>fheroes2::GameMode::HIGH_SCORE</c>.</summary>
     HighScore = 7,
+
+    /// <summary>
+    /// The campaign selection has to be opened and its answer acted on,
+    /// <c>Game::SelectCampaignScenario( fheroes2::GameMode::CANCEL, true )</c> of <c>interface_events.cpp:378</c>.
+    /// </summary>
+    /// <remarks>
+    /// 这不是 <c>GameMode</c> 里的值，而是端口的一处「请求」：参考的 <c>EventScenarioInformation()</c> 自己调
+    /// <c>Game::SelectCampaignScenario()</c> 并把它返回的 <c>START_GAME</c>/<c>CANCEL</c> 直接交回主循环，
+    /// 端口的分层里战役选关屏是 App 层的场景，UI 层够不着，所以只报「该开选关屏了」，由宿主跑完再决定
+    /// 重开这一关还是留在图上。
+    /// </remarks>
+    CampaignSelection = 8,
 }
 
 /// <summary>

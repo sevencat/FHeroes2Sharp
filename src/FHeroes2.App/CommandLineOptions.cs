@@ -17,8 +17,8 @@ namespace FHeroes2.App;
 ///                 [--key-at &lt;frame:Key[;...]&gt;]
 ///                 [--freeze-animation]
 ///                 [--system-info]
-///                 [--open-scenario] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
-///                 [--skip-turns &lt;n&gt;] [--view-world] [--sphinx-riddle] [--adventure-window &lt;name&gt;] [--cast-spell &lt;name&gt;] [--battle|--battle-siege|--battle-auto|--battle-only] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
+///                 [--open-new-game] [--open-scenario] [--campaign &lt;id&gt;] [--scenario-select &lt;n&gt;] [--enter-map] [--map &lt;file&gt;]
+///                 [--skip-turns &lt;n&gt;] [--view-world] [--complete-campaign-scenario] [--sphinx-riddle] [--adventure-window &lt;name&gt;] [--cast-spell &lt;name&gt;] [--battle|--battle-siege|--battle-auto|--battle-only] [--enter-town] [--town-select &lt;n&gt;] [--town-build &lt;name&gt;]
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
@@ -190,11 +190,29 @@ public sealed class CommandLineOptions
     public bool SystemInfo { get; private set; }
 
     /// <summary>
+    /// Opens the new game menu of the main menu at start up (<c>--open-new-game</c>). The New Game
+    /// sign does the same; the flag exists because a screenshot of the window otherwise needs a real
+    /// mouse click.
+    /// </summary>
+    public bool OpenNewGame { get; private set; }
+
+    /// <summary>
     /// Opens the scenario selection window of the main menu at start up (<c>--open-scenario</c>).
     /// The New Game sign does the same; the flag exists because a screenshot of the dialog
     /// otherwise needs a real mouse click.
     /// </summary>
     public bool OpenScenario { get; private set; }
+
+    /// <summary>
+    /// Opens the selection screen of a campaign at start up (<c>--campaign &lt;id&gt;</c>), the ids being the
+    /// ones of <c>CampaignId</c>: 0 Roland, 1 Archibald, 2 Price of Loyalty and the four expansion campaigns
+    /// after it.
+    /// </summary>
+    /// <remarks>
+    /// 参考里这张屏的前一步是影片选择屏（<c>CHOOSE.SMK</c> 点两半，<c>X_IVY</c> 点四块），端口还没做，
+    /// 所以战役号暂时由命令行给出；选择屏补上之后，这个开关就和 <c>--open-scenario</c> 一样只用于截图。
+    /// </remarks>
+    public int? Campaign { get; private set; }
 
     /// <summary>
     /// Index of the map to select when the scenario window opens (<c>--scenario-select</c>), zero
@@ -226,6 +244,22 @@ public sealed class CommandLineOptions
     public string? MapFile { get; private set; }
 
     /// <summary>
+    /// Reopens this save file instead of showing the main menu (<c>--load &lt;file.sav&gt;</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 等价于在主菜单点 LOAD GAME 再在列表里挑中它，只是跳过了两个窗口：读档要经过的规则一条不少——
+    /// <see cref="GameSave.Load"/>（世界、王国、英雄、迷雾与当前地图头）之后走
+    /// <c>AdventureMapScene.TryCreateLoaded</c>，也就是 <c>Game::LoadGame()</c> 拿到文件名之后的那一段。
+    /// </para>
+    /// <para>
+    /// 存档窗口自己压帧、自己收事件，冒烟脚本没法稳定地往里点（脚本点击只在帧边界重放）；这条选项让「读回一个
+    /// 写出去的存档」能进自动化，窗口本身留给玩家。
+    /// </para>
+    /// </remarks>
+    public string? LoadFile { get; private set; }
+
+    /// <summary>
     /// Ends the human turn this many times right after the map opens (<c>--skip-turns &lt;n&gt;</c>).
     /// </summary>
     /// <remarks>
@@ -241,6 +275,21 @@ public sealed class CommandLineOptions
     /// screenshotted and smoke tested without a mouse.
     /// </summary>
     public bool ViewWorld { get; private set; }
+
+    /// <summary>
+    /// Declares the campaign scenario won as soon as its map is up (<c>--complete-campaign-scenario</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 战役的一关要靠打赢才结束，而战役地图的胜利条件通常要打几十个回合：截图与冒烟等不起。开关跳过战斗，
+    /// 直接进 <c>Game::CompleteCampaignScenario()</c> 那一段（记账、写「下一关」存档、回选关屏），
+    /// 所以它验的是结算与写档，不是胜负判定本身（胜负判定由 <c>GameOverResult</c> 的单测覆盖）。
+    /// </para>
+    /// <para>
+    /// 与 <c>--enter-town</c> 同类：都是「替玩家把某个窗口/状态开出来」，走的仍是真实入口。
+    /// </para>
+    /// </remarks>
+    public bool CompleteCampaignScenario { get; private set; }
 
     /// <summary>
     /// Opens the adventure options dialog as soon as the adventure map is up
@@ -615,8 +664,23 @@ public sealed class CommandLineOptions
                     options.OpenSettings = true;
                     break;
 
+                case "--open-new-game":
+                    options.OpenNewGame = true;
+                    break;
+
                 case "--open-scenario":
                     options.OpenScenario = true;
+                    break;
+
+                case "--campaign":
+                    string rawCampaign = RequireValue(arguments, ref i, argument);
+                    if (!int.TryParse(rawCampaign, out int campaignId) || campaignId < 0)
+                    {
+                        throw new ArgumentException(
+                            $"'{argument}' expects a campaign index, got '{rawCampaign}'.");
+                    }
+
+                    options.Campaign = campaignId;
                     break;
 
                 case "--scenario-select":
@@ -642,6 +706,10 @@ public sealed class CommandLineOptions
                     options.MapFile = RequireValue(arguments, ref i, argument);
                     break;
 
+                case "--load":
+                    options.LoadFile = RequireValue(arguments, ref i, argument);
+                    break;
+
                 case "--skip-turns":
                     string rawTurns = RequireValue(arguments, ref i, argument);
                     if (!int.TryParse(rawTurns, out int turns) || turns <= 0)
@@ -654,6 +722,10 @@ public sealed class CommandLineOptions
 
                 case "--view-world":
                     options.ViewWorld = true;
+                    break;
+
+                case "--complete-campaign-scenario":
+                    options.CompleteCampaignScenario = true;
                     break;
 
                 case "--adventure-options":
@@ -851,7 +923,9 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --freeze-animation  Keeps the lantern on its first frame (reproducible screenshots).");
         Console.WriteLine("  --system-info       Paints the clock and FPS in the bottom left corner (the reference's F1 overlay).");
         Console.WriteLine("  --open-settings     Opens the settings dialog of the main menu at start up.");
+        Console.WriteLine("  --open-new-game     Opens the new game menu of the main menu (New Game).");
         Console.WriteLine("  --open-scenario     Opens the scenario selection of the main menu (New Game).");
+        Console.WriteLine("  --campaign <id>     Opens the selection screen of a campaign (0 Roland, 1 Archibald, ...).");
         Console.WriteLine("  --scenario-select <n>  Opens the scenario selection and selects map n (0 based).");
         Console.WriteLine("  --enter-map         Starts the selected scenario and opens its adventure map.");
         Console.WriteLine("  --map <file>        Opens this map file on the adventure map, skipping the menu.");

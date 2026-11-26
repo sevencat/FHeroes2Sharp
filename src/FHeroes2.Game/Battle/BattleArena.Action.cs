@@ -53,6 +53,43 @@ public sealed partial class BattleArena
     }
 
     /// <summary>
+    /// Lowers the drawbridge when the unit needs it for the cell it is about to step on, part of <c>moveUnit</c>.
+    /// </summary>
+    /// <param name="unit">The unit about to move.</param>
+    /// <param name="cellIndex">The cell it is stepping onto (the head cell for a flyer's landing).</param>
+    /// <param name="tailIndex">The tail cell of a wide flyer's landing, or -1 when there is none.</param>
+    /// <remarks>
+    /// 逐格循环里的桥段（<c>battle_action.cpp:333-350</c>）。参考把它混在 <c>moveUnit</c> 的循环里，端口有两处调用者：
+    /// 无界面时是 <see cref="MoveUnit"/> 自己挪格子，有界面时是 <c>BattleFieldPainter</c> 的移动播放（它逐格
+    /// <c>SetPosition</c>，走完竞技场只补模式位，见 ADR-245）。所以这段逻辑不能只留在 <see cref="MoveUnit"/> 里，
+    /// 否则有观战者的攻城永远不放下吊桥（ADR-246）。
+    /// </remarks>
+    public void LowerBridgeForStep(BattleUnit unit, int cellIndex, int tailIndex = -1)
+    {
+        ArgumentNullException.ThrowIfNull(unit);
+
+        if (_bridge == null)
+        {
+            return;
+        }
+
+        if (_bridge.NeedDown(unit, cellIndex) || (tailIndex >= 0 && _bridge.NeedDown(unit, tailIndex)))
+        {
+            _bridge.ActionDown();
+        }
+    }
+
+    /// <summary>Raises the drawbridge again once a step is done, part of <c>moveUnit</c>.</summary>
+    /// <remarks>桥没放下、断了，或者还压在人和尸体上时什么也不做（<c>Bridge::AllowUp()</c>）。</remarks>
+    public void RaiseBridgeAfterStep()
+    {
+        if (_bridge != null && _bridge.AllowUp)
+        {
+            _bridge.ActionUp();
+        }
+    }
+
+    /// <summary>
     /// Walks a unit to a cell, <c>Arena::moveUnit()</c> (<c>battle_action.cpp:278-365</c>).
     /// </summary>
     /// <param name="unit">The unit to move.</param>
@@ -96,22 +133,11 @@ public sealed partial class BattleArena
             }
 
             // Lower the bridge if the unit needs to land on it, then raise it again behind the unit.
-            if (_bridge != null)
-            {
-                int destinationTail = unit.IsWide ? position.TailIndex : -1;
-
-                if (_bridge.NeedDown(unit, position.HeadIndex) || (unit.IsWide && _bridge.NeedDown(unit, destinationTail)))
-                {
-                    _bridge.ActionDown();
-                }
-            }
+            LowerBridgeForStep(unit, position.HeadIndex, unit.IsWide ? position.TailIndex : -1);
 
             unit.SetPosition(position);
 
-            if (_bridge != null && _bridge.AllowUp)
-            {
-                _bridge.ActionUp();
-            }
+            RaiseBridgeAfterStep();
         }
         else
         {
@@ -125,10 +151,7 @@ public sealed partial class BattleArena
 
             foreach (int cellIndex in path)
             {
-                if (_bridge != null && _bridge.NeedDown(unit, cellIndex))
-                {
-                    _bridge.ActionDown();
-                }
+                LowerBridgeForStep(unit, cellIndex);
 
                 if (unit.IsWide && unit.TailIndex == cellIndex)
                 {
@@ -141,10 +164,7 @@ public sealed partial class BattleArena
                     unit.SetPosition(cellIndex);
                 }
 
-                if (_bridge != null && _bridge.AllowUp)
-                {
-                    _bridge.ActionUp();
-                }
+                RaiseBridgeAfterStep();
             }
 
             // The path names head cells; the last two entries decide the final facing.
@@ -284,6 +304,18 @@ public sealed partial class BattleArena
         }
 
         RefreshBridgePassability(unit);
+
+        // 界面层可能已经把这一趟走完了：BattleFieldPainter 的 MovePlayback 每播完一格就 SetPosition，播到终点
+        // 时单位就站在命令指定的格子上（参考把这套阻塞循环放在 ApplyActionMove 里，见 battle_action.cpp:278-365；
+        // 端口拆成「先播、后结算」，见 battle_interface.cpp:4524-4830 的对应段）。
+        // 拆开之后「已经在终点」不是非法参数，而是另一半已经做完：补上模式位收工，不要再走一次、也不要再校验一次
+        // ——CheckMoveParams 会把「原地移动」判成非法，那正是这里的情形。
+        if (unit.HeadIndex == destination)
+        {
+            unit.SetModes(BattleMonsterState.Moved);
+
+            return;
+        }
 
         if (!CheckMoveParams(unit, destination))
         {

@@ -732,7 +732,7 @@ public sealed class AdventureMapDialogs
     /// 收进 <see cref="KingdomOverviewWindow.Requests"/>,在这里兑现能兑现的部分:弹窗提示、英雄与城堡的快速信息、
     /// 英雄窗口。城堡窗口要 <see cref="CastleScreenView"/> 与 <see cref="CastleScreenArtwork"/> 的整套装配、军队条
     /// 还没有输入、收入与灯塔窗口要 <c>RESOURCE.ICN</c> 与 <c>OBJNMUL2.ICN</c> 的自定义元素,这几类留给后续;
-    /// <c>NeedFadeIn</c> 与淡入淡出同样属于场景的绘制节奏。
+    /// <c>NeedFadeIn</c> 只设置淡入标志,真正逐帧播放在场景的 <c>DrawFrame</c> 与宿主之间（<c>6y3.9</c>）。
     /// </para>
     /// <para>
     /// 当前玩家取 <c>Settings::CurrentColor()</c>,端口即 <see cref="Players.CurrentColor"/>
@@ -783,6 +783,10 @@ public sealed class AdventureMapDialogs
 
             requests.Clear();
         }
+
+        // 参考在窗口 Show() 之后、函数返回前调 Game::setDisplayFadeIn()（kingdom_overview.cpp:874）：总览窗
+        // 关掉后地图要整屏淡回来，和盗贼公会那份报告一样。
+        GameDisplayFadeIn.SetDisplayFadeIn();
     }
 
     /// <summary>
@@ -1530,9 +1534,13 @@ public sealed class AdventureMapDialogs
     /// Asks which game to load, <c>Dialog::SelectFileLoad()</c> (<c>dialog_selectfile.cpp:754-766</c>).
     /// </summary>
     /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <param name="keepRunning">
+    /// Optional check of whether the client is still running; see <see cref="SelectFileDialog.Show"/>. The main menu
+    /// passes it because a headless run there has no scene loop to stop the window on its own.
+    /// </param>
     /// <returns>The chosen path, or <see langword="null"/> when the player closed the window.</returns>
-    public string? SelectLoadFile(LocalEvent? events = null) =>
-        ShowSelectFile("File to Load:", GameSave.LastSaveName, isEditing: false, events);
+    public string? SelectLoadFile(LocalEvent? events = null, Func<bool>? keepRunning = null) =>
+        ShowSelectFile("File to Load:", GameSave.LastSaveName, isEditing: false, events, keepRunning);
 
     /// <summary>
     /// Asks for a name and writes the game, <c>Interface::AdventureMap::EventSaveGame()</c>
@@ -1755,13 +1763,15 @@ public sealed class AdventureMapDialogs
     /// <param name="lastFile">The file to preselect, <c>lastFile</c> of the reference.</param>
     /// <param name="isEditing">Whether the name can be typed into, i.e. whether the game is being saved.</param>
     /// <param name="events">Event state to pull from; <see cref="LocalEvent.Current"/> when omitted.</param>
+    /// <param name="keepRunning">Optional check of whether the client is still running; see <see cref="SelectFileDialog.Show"/>.</param>
     /// <returns>The chosen path, or <see langword="null"/> when the player closed the window.</returns>
     /// <remarks>
     /// 参考的排序标记取 <c>ICN::CELLWIN</c> / <c>ICN::CELLWINE</c>，而 <c>CELLWINE.ICN</c> 在 <c>AGG</c> 里并不存在：
     /// fheroes2 是在 <c>game_assets.cpp</c> 里拿 <c>CELLWIN.ICN</c> 的前 19 帧套 <c>GOOD_TO_EVIL_INTERFACE</c> 调色板现算出来的。
     /// 端口还没有调色板合成这一层，于是两种界面都用 <c>CELLWIN.ICN</c>——勾选框是单色小图，差别只在界面主题，不影响操作。
     /// </remarks>
-    private string? ShowSelectFile(string header, string? lastFile, bool isEditing, LocalEvent? events)
+    private string? ShowSelectFile(
+        string header, string? lastFile, bool isEditing, LocalEvent? events, Func<bool>? keepRunning = null)
     {
         Settings settings = Settings.Get();
         SaveFileSortingMethod sorting = settings.SaveFileSortType;
@@ -1808,7 +1818,7 @@ public sealed class AdventureMapDialogs
             return null;
         }
 
-        return SelectFileDialog.Show(_display, view, header, lastFile, isEditing, files, events);
+        return SelectFileDialog.Show(_display, view, header, lastFile, isEditing, files, events, keepRunning);
     }
 
     /// <summary>Composes a standard message box, or returns <see langword="null"/> when its artwork is missing.</summary>

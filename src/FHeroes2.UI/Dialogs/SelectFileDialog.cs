@@ -227,11 +227,16 @@ public static class SelectFileDialog
     /// that the headers are parsed once.
     /// </param>
     /// <param name="events">Input source; defaults to <see cref="LocalEvent.Current"/>.</param>
+    /// <param name="keepRunning">
+    /// Optional check of whether the client is still running. The window owns its own frame loop, so without it a
+    /// headless run that waits on a click the script never sends can only be killed from outside.
+    /// </param>
     /// <returns>The chosen file path, or <see langword="null"/> when the player cancelled.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="target"/> or <paramref name="view"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">There is no event engine to run the loop on.</exception>
     public static string? Show(PixelBuffer target, SelectFileView view, string header, string? lastFile,
-        bool isEditing, IReadOnlyList<SaveFileEntry>? files = null, LocalEvent? events = null)
+        bool isEditing, IReadOnlyList<SaveFileEntry>? files = null, LocalEvent? events = null,
+        Func<bool>? keepRunning = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(view);
@@ -266,7 +271,7 @@ public static class SelectFileDialog
             view.CursorPosition = view.FileName.Length;
         }
 
-        while (eventState.HandleEvents(sleepAfterEventProcessing: false))
+        while ((keepRunning is null || keepRunning()) && eventState.HandleEvents(sleepAfterEventProcessing: false))
         {
             ButtonHotKey? hotKey = eventState.IsKeyPressed(Key.Enter) ? ButtonHotKey.Okay
                 : eventState.IsKeyPressed(Key.Escape) ? ButtonHotKey.Cancel

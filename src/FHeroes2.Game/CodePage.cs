@@ -6,8 +6,9 @@ namespace FHeroes2.Game;
 /// </summary>
 /// <remarks>
 /// 字体按代码页生成（<c>ui_font.cpp</c>），语言相同代码页的可以复用同一套字形，所以参考在
-/// <c>getSupportedLanguages()</c> 里按代码页分组以避免反复重建字体资源。端口还没有按代码页生成字形的能力
-/// （<c>ui_font.cpp</c> 未移植），这里只保留枚举本身，供语言元数据与将来的字形生成使用。
+/// <c>getSupportedLanguages()</c> 里按代码页分组以避免反复重建字体资源。端口在
+/// <see cref="Gui.FontAlphabet"/> / <see cref="Gui.ButtonFont"/> 里生成各代码页的字形，由
+/// <see cref="Gui.FontGlyphTable"/> 按语言挑一份；这里保留枚举本身，供语言元数据与字形生成共用。
 /// </remarks>
 public enum CodePage : byte
 {

@@ -3,6 +3,7 @@ using FHeroes2.Game.Army;
 using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
+using FHeroes2.Game.System;
 using Xunit;
 
 using ArmyStack = FHeroes2.Game.Army.Army;
@@ -15,9 +16,16 @@ namespace FHeroes2.Game.Tests;
 /// before it joins, charges or runs.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The campaign-award block in front of the strength ratio is not ported, so no test here produces
 /// <see cref="NeutralMonsterJoiningReason.Alliance"/> or <see cref="NeutralMonsterJoiningReason.Bane"/>.
+/// </para>
+/// <para>
+/// 控制方住在 <see cref="Players"/> 这张进程级的表里（<see cref="Hero.GetControl"/> 问它），所以本类挂到
+/// <see cref="SettingsSingletonCollection"/> 上与其它动全局单例的测试串行。
+/// </para>
 /// </remarks>
+[Collection(SettingsSingletonCollection.Name)]
 public sealed class ArmyJoinSolutionTests
 {
     [Fact]
@@ -57,21 +65,24 @@ public sealed class ArmyJoinSolutionTests
         Hero hero = MakeStrongHero();
         Tile tile = MakeMonsterTile(world, MonsterType.Ghost, 5);
 
-        // A wandering ghost is marked SKIP when it is placed, whatever else the tile says.
+        // A wandering ghost is marked SKIP when it is placed, whatever else the tile says. 一支强五倍的人类英雄
+        // 走过去，怪就直接四散（见 RunAway 那一支），所以这里落地的是 RunAway，不是加入。
         NeutralMonsterJoiningCondition condition =
             ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
 
-        Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+        Assert.Equal(NeutralMonsterJoiningReason.RunAway, condition.Reason);
         Assert.Equal(0u, condition.MonsterCount);
     }
 
     [Fact]
-    public void AFiveTimesStrongerAiHeroIsFledFrom()
+    public void AFiveTimesStrongerHumanHeroScaresThemAway()
     {
         World world = MakeWorld();
         Hero hero = MakeStrongHero();
-        hero.IsControlHuman = false;
         Tile tile = MakeMonsterTile(world, MonsterType.Goblin, 5);
+
+        // 参考的条件是 !isControlAI()（army.cpp:1725）：人类英雄比怪强五倍，怪就吓得四散。
+        Assert.False(hero.GetControl().IsAi());
 
         NeutralMonsterJoiningCondition condition =
             ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
@@ -81,19 +92,33 @@ public sealed class ArmyJoinSolutionTests
     }
 
     [Fact]
-    public void AFiveTimesStrongerHumanHeroIsNotFledFrom()
+    public void AFiveTimesStrongerComputerHeroIsNotFledFrom()
     {
         World world = MakeWorld();
         Hero hero = MakeStrongHero();
-        Tile tile = MakeMonsterTile(world, MonsterType.Goblin, 5);
+        hero.SetColor(PlayerColor.Blue);
 
-        Assert.True(hero.IsControlHuman);
+        Settings settings = Settings.Get();
+        settings.Players.Init(PlayerColor.Blue);
 
-        NeutralMonsterJoiningCondition condition =
-            ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
+        try
+        {
+            Players.SetPlayerControl(PlayerColor.Blue, PlayerControl.Ai);
 
-        // The monsters would have joined for money if they could, but the hero has no diplomacy.
-        Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+            Assert.True(hero.GetControl().IsAi());
+
+            Tile tile = MakeMonsterTile(world, MonsterType.Goblin, 5);
+
+            NeutralMonsterJoiningCondition condition =
+                ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
+
+            // 电脑英雄不会被自己的兵力吓到：怪只肯为钱加入，而他没有外交术。
+            Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+        }
+        finally
+        {
+            settings.Players.Init(PlayerColor.None);
+        }
     }
 
     [Fact]
@@ -114,7 +139,8 @@ public sealed class ArmyJoinSolutionTests
         NeutralMonsterJoiningCondition condition =
             ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
 
-        Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+        // 满编接不下这支怪，所以它们不能加入；强五倍的人类英雄又让它们四散。
+        Assert.Equal(NeutralMonsterJoiningReason.RunAway, condition.Reason);
     }
 
     [Fact]
@@ -151,7 +177,9 @@ public sealed class ArmyJoinSolutionTests
         NeutralMonsterJoiningCondition condition =
             ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world);
 
-        Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+        // 没有王国就付不出钱，怪不肯卖；强五倍的人类英雄于是把它们吓跑。
+        Assert.NotEqual(NeutralMonsterJoiningReason.ForMoney, condition.Reason);
+        Assert.Equal(NeutralMonsterJoiningReason.RunAway, condition.Reason);
     }
 
     [Fact]
@@ -168,7 +196,8 @@ public sealed class ArmyJoinSolutionTests
         NeutralMonsterJoiningCondition condition =
             ArmyStack.GetJoinSolution(hero, tile, tile.GetTroop(world), world, kingdom);
 
-        Assert.Equal(NeutralMonsterJoiningReason.None, condition.Reason);
+        Assert.NotEqual(NeutralMonsterJoiningReason.ForMoney, condition.Reason);
+        Assert.Equal(NeutralMonsterJoiningReason.RunAway, condition.Reason);
     }
 
     private static World MakeWorld()

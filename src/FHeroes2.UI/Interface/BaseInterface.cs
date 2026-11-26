@@ -163,11 +163,17 @@ public abstract class BaseInterface
     /// Clears a pending fade-in and paints the whole frame, <c>validateFadeInAndRender()</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// 参考（<c>gui/interface_base.cpp:40-50</c>）：有待播的淡入就整屏淡入、再排一次地图区的重画；否则只
     /// <c>Display::render()</c> 把当前帧推上屏。端口的呈现归宿主，后一支无事可做；前一支同样是把淡入交给
     /// <see cref="TakePendingFadeIn"/>。
+    /// </para>
+    /// <para>
+    /// 参考在 <c>HumanTurn()</c> 每帧 <c>redraw(0)</c> 之后紧接着调它（<c>game_startgame.cpp:1580</c>），
+    /// 端口的地图场景因此也能从外面调：它自己没有 <c>HumanTurn</c> 那道循环，画完这一帧就在这里取淡入。
+    /// </para>
     /// </remarks>
-    protected void ValidateFadeInAndRender()
+    public void ValidateFadeInAndRender()
     {
         if (!GameDisplayFadeIn.ValidateDisplayFadeIn())
         {

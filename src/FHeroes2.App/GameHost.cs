@@ -9,6 +9,7 @@ using FHeroes2.App.Fonts;
 using FHeroes2.App.Graphics;
 using FHeroes2.App.Input;
 using FHeroes2.App.Localization;
+using FHeroes2.App.Modals;
 using FHeroes2.App.Scenes;
 using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
@@ -19,6 +20,7 @@ using FHeroes2.Core.Timing;
 using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Ai;
+using FHeroes2.Game.Campaign;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Cursor;
 using FHeroes2.Game.Editor;
@@ -82,6 +84,33 @@ public sealed class GameHost : IDisposable
     private IScene? _scene;
     private IScene? _drawnScene;
     private IModalScreen? _modal;
+
+    /// <summary>
+    /// The standard OKAY / CANCEL / YES / NO buttons, loaded once for the boxes the campaign flow puts up
+    /// (<see cref="ShowCampaignYesNo"/>).
+    /// </summary>
+    private SystemButtonArtwork? _systemButtons;
+
+    /// <summary>
+    /// The fade-in being played over the frames, <c>fheroes2::fadeInDisplay()</c> of the reference.
+    /// </summary>
+    /// <remarks>
+    /// 参考的淡入阻塞跑完六帧、每帧自己 <c>Display::render()</c>；端口把呈现拆开：场景在
+    /// <see cref="IScene.DrawFrame"/> 里把待播的淡入交出来，<see cref="Draw"/> 在推上屏之前播一帧。
+    /// 播完就丢，一次请求只对应一轮六帧（约 100 毫秒，<see cref="DisplayFade.ScreenFadeTimeMs"/>）。
+    /// </remarks>
+    private DisplayFade? _fadeIn;
+
+    /// <summary>
+    /// Whether the Load Game file list is on screen, the one blocking window that is not an
+    /// <see cref="IModalScreen"/> (<see cref="SelectFileDialog.Show"/> owns its own frame loop).
+    /// </summary>
+    /// <remarks>
+    /// 主菜单开着读档窗口时，脚本点击不能再打回菜单：那会重新打开一次窗口，栈里套栈无限递归。
+    /// <see cref="ReplayScriptedInput"/> 见到它就把点击推进 <see cref="LocalEvent"/>，和冒险地图一样。
+    /// </remarks>
+    private bool _loadDialogOpen;
+
     private MainMenuScene? _menu;
     private DiagnosticsScene? _diagnostics;
     private AdventureMapScene? _adventure;
@@ -157,6 +186,23 @@ public sealed class GameHost : IDisposable
     /// run their own loops, so they need the renderer the loop installs on its first frame.
     /// </summary>
     private FHeroes2.Game.Spells.SpellType? _pendingSpellCast;
+
+    /// <summary>
+    /// The campaign <c>--campaign</c> still has to start, for the same reason as <see cref="_pendingSphinxRiddle"/>:
+    /// the selection screen runs its own loop and paints the scene behind itself.
+    /// </summary>
+    private int? _pendingCampaign;
+
+    /// <summary>
+    /// True when the finished campaign scenario has been accounted for and the selection screen has to come back,
+    /// the <c>SELECT_CAMPAIGN_SCENARIO</c> that <c>Game::CompleteCampaignScenario()</c> returns
+    /// (<c>game_campaign.cpp:1281</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="_pendingCampaign"/> 同样是「等下一帧」：结算发生在冒险地图的 <c>Update</c> 里，那一帧还没画完，
+    /// 选关屏要等主循环把地图换成主菜单之后再开。
+    /// </remarks>
+    private bool _pendingCampaignSelection;
 
     /// <summary>
     /// Whether the frame being handled belongs to the main loop's own <c>HandleEvents</c>, see
@@ -624,6 +670,21 @@ public sealed class GameHost : IDisposable
                 AskSphinxRiddle();
             }
 
+            // --campaign 的选关屏同理：它是阻塞式模态，开在主循环的帧里。
+            if (_pendingCampaign is { } campaignId)
+            {
+                _pendingCampaign = null;
+                StartNewCampaign(campaignId);
+            }
+
+            // 战役一关打完之后，参考回到 SELECT_CAMPAIGN_SCENARIO，主循环接着开选关屏
+            // （game_mainmenu.cpp:205-206 → 202-204）。这一屏同样是阻塞式模态，所以也排到帧里。
+            if (_pendingCampaignSelection)
+            {
+                _pendingCampaignSelection = false;
+                RunCampaignScenarioSelection(CampaignSaveData.Get());
+            }
+
             // --adventure-window 同理。
             if (_pendingAdventureWindow is { } window)
             {
@@ -678,7 +739,10 @@ public sealed class GameHost : IDisposable
             return _running;
         }
 
-        if (!_mainLoopFrame)
+        // 读档窗口是从主循环的事件处理里开出来的（点标牌的那么一下就在 HandleEvents 之内），它的帧跑在这一层
+        // 里面，_mainLoopFrame 仍是 true。不把它算成「界面自己的循环」，冒烟预算就永远扣不掉，脚本不给它第二下
+        // 点击时窗口就再也退不出来。
+        if (!_mainLoopFrame || _loadDialogOpen)
         {
             // 界面内的阻塞循环：没有 Update，帧号与预算都得在这里补，截图也只能在这里拍。
             double now = _frameClock.Elapsed.TotalSeconds;
@@ -690,7 +754,7 @@ public sealed class GameHost : IDisposable
 
         ReplayScriptedInput();
 
-        if (_mainLoopFrame)
+        if (_mainLoopFrame && !_loadDialogOpen)
         {
             return _running;
         }
@@ -840,6 +904,16 @@ public sealed class GameHost : IDisposable
                 modal.SetCursor(click.Point);
                 modal.SetLeftButton(down: true);
                 _pendingModalClick = modal;
+            }
+
+            // 读档窗口也是阻塞的（它自己压帧读 LocalEvent），而且它开在主菜单之上：点击再交给菜单就会重新
+            // 打开一次窗口，栈里套栈一直递归下去。所以这条分支排在菜单之前，点击像冒险地图那样推进 LocalEvent，
+            // 窗口的列表与按钮才收得到。
+            else if (_loadDialogOpen)
+            {
+                _le.OnMouseMotion(click.Point);
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                _pendingClickRelease = click.Point;
             }
 
             // A town screen swallows the replay: it is modal, and its EXIT is the one click worth
@@ -1658,6 +1732,15 @@ public sealed class GameHost : IDisposable
     /// <summary>Reacts to the choice of a main menu sign; returns <see langword="true"/> to stop.</summary>
     private bool HandleMenuAction(MainMenuAction action)
     {
+        // The LOAD GAME sign asks for a save file and reopens it, Game::LoadGame() (game_loadgame.cpp:91-101) with
+        // Game::LoadStandard() behind it. The Standard / Campaign / Multi-Player sub-menu of the reference is not
+        // drawn yet: the standard list is the only one that has saves to show.
+        if (action == MainMenuAction.LoadGame)
+        {
+            OpenLoadGame();
+            return false;
+        }
+
         // The editor sign opens the editor's own main menu, the window `Editor::menuMain()` of
         // editor_mainmenu.cpp shows; the map is picked there, not by the game main menu.
         if (action == MainMenuAction.Editor)
@@ -2222,6 +2305,10 @@ public sealed class GameHost : IDisposable
             return;
         }
 
+        // 从主菜单点进来的这一路就是参考的 Game::NewStandard()：玩法类型在开工前定成单图（game_newgame.cpp:149-157），
+        // 存档的扩展名与头里的类型都跟着它走。
+        Settings.Get().SetGameType(GameTypes.Standard);
+
         AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, map, out string? error);
         if (scene is null)
         {
@@ -2229,18 +2316,441 @@ public sealed class GameHost : IDisposable
             return;
         }
 
-        scene.ExitEvent = LeaveAdventureMap;
+        ShowAdventureScene(scene);
+    }
 
-        // 人类英雄打起来的仗要借主循环的一段帧（参考在这里是阻塞的，heroes_action.cpp）：把宿主的帧泵接上。
-        // 城堡屏也一样：进城之后英雄动作停在那里，屏本身由冒险地图造（与地图点进城同一个 CastleScene）。
-        if (scene.HeroActionHost is { } host)
+    /// <summary>
+    /// Starts a campaign from its first scenario, <c>Game::NewSuccessionWarsCampaign()</c> and
+    /// <c>Game::NewPriceOfLoyaltyCampaign()</c> up to the point where the scenario is chosen
+    /// (<c>game_newgame.cpp:178-286</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这之前还有两段选择屏：原版是 <c>CHOOSE.SMK</c> 里点 Roland 或 Archibald，资料片是
+    /// <c>X_IVY</c> 上点四个战役之一。它们都是「影片/整屏 + 可点区域」，端口还没做，所以这里先由调用方给出战役号；
+    /// 选择屏补上之后，这个参数就由它来。
+    /// </para>
+    /// <para>
+    /// 存档对象是全局单例：开新战役先 <see cref="CampaignSaveData.Reset"/>，再把当前关卡设成第 0 关，
+    /// 与参考的 <c>SaveData::Get().Reset()</c> 加 <c>setCurrentScenarioInfo</c> 一致。
+    /// </para>
+    /// </remarks>
+    /// <param name="campaignId">The campaign to start, one of <see cref="CampaignId"/>.</param>
+    private void StartNewCampaign(int campaignId)
+    {
+        if (_assets is null || _fonts is null)
         {
-            host.RunModal = RunModal;
-            host.OpenCastleScreen = scene.TryOpenCastle;
+            GameLog.Warn("The campaign needs the game data and the fonts, neither of which is loaded.");
+
+            return;
         }
 
-        _adventure = scene;
-        _scene = scene;
+        CampaignSaveData saveData = CampaignSaveData.Get();
+        saveData.Reset();
+        saveData.SetCurrentScenarioInfo(new ScenarioInfoId(campaignId, 0));
+
+        RunCampaignScenarioSelection(saveData);
+    }
+
+    /// <summary>
+    /// Writes the text support block of the selection screen,
+    /// <c>outputCampaignScenarioInfoInTextSupportMode()</c> (<c>game_campaign.cpp:1084-1138</c>).
+    /// </summary>
+    /// <param name="saveData">The campaign being selected.</param>
+    /// <param name="allowToRestart">Whether the screen restarts the current scenario instead of starting it.</param>
+    /// <remarks>
+    /// 这一屏要引用的键名在 UI 层的 <see cref="GameHotKeys"/>，Game 层拿不到，所以由这里打包传进去。
+    /// 模式位在 <see cref="Settings.IsTextSupportMode"/>，输出通道在 <see cref="TextSupport"/>，两者由
+    /// <see cref="Settings.SetTextSupportMode"/> 一起翻。
+    /// </remarks>
+    private static void WriteCampaignSelectionTextSupport(CampaignSaveData saveData, bool allowToRestart)
+    {
+        if (!TextSupport.IsEnabled)
+        {
+            return;
+        }
+
+        CampaignScenarioTextSupport.Write(
+            saveData,
+            allowToRestart,
+            new CampaignScenarioTextSupportKeys(
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignSelectFirstBonus),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignSelectSecondBonus),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignSelectThirdBonus),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignRestartScenario),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.DefaultOkay),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignViewIntro),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.CampaignSelectDifficulty),
+                GameHotKeys.GetHotKeyNameByEventId(HotKeyEvent.DefaultCancel)));
+    }
+
+    /// <summary>
+    /// Runs the campaign selection of <c>Game::SelectCampaignScenario()</c> until the player starts a scenario or
+    /// leaves, one modal per step.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把这条循环写在一个函数里，难度窗、帮助窗、播片都在循环内部同步等待。端口只允许一层模态
+    /// （<see cref="RunModal"/>），所以「选关屏」关掉之后按 <see cref="CampaignScenarioSelectionScreen.Result"/>
+    /// 决定下一步：开难度窗、播片、还是重新开一屏。存档里的奖励与难度都活在 <see cref="CampaignSaveData"/> 上，
+    /// 重开一屏不丢状态。
+    /// </para>
+    /// <para>
+    /// 「换一关」这一支不重开循环：对话框已经把新的关卡写进存档，下一圈 <see cref="CampaignScenarioSelectionScreen.TryCreate"/>
+    /// 就按新关卡重建。
+    /// </para>
+    /// <para>
+    /// <c>allowToRestart</c> 只有冒险地图的「Scenario Information」入口传 true（<c>interface_events.cpp:378</c>）；
+    /// 主菜单与读档都是 false。为真时：不播本关开场（<c>:1305</c>）、奖励必须已经选过（<c>:1402-1405</c>）、
+    /// 按钮由 OKAY 换成 RESTART（<c>:1420-1429</c>）、点它要再确认一次（<c>:1598-1602</c>）。
+    /// </para>
+    /// </remarks>
+    /// <param name="saveData">The save of the campaign being selected.</param>
+    /// <param name="allowToRestart">
+    /// True when the running scenario may be restarted instead of starting a new one,
+    /// the <c>allowToRestart</c> of <c>Game::SelectCampaignScenario()</c> (<c>game_campaign.cpp:1284</c>).
+    /// </param>
+    private void RunCampaignScenarioSelection(CampaignSaveData saveData, bool allowToRestart = false)
+    {
+        if (_assets is not { } assets || _fonts is not { } fonts)
+        {
+            return;
+        }
+
+        if (_menu is not { } menu)
+        {
+            GameLog.Warn("The campaign selection needs the main menu, which owns the translations.");
+
+            return;
+        }
+
+        if (assets.DataDirectory is not { } dataDirectory)
+        {
+            GameLog.Warn("The campaign selection needs the game data directory.");
+
+            return;
+        }
+
+        List<string> roots = [dataDirectory];
+        IReadOnlyList<string> mapDirectories = MapCatalog.FindDirectories(roots);
+        var screenSize = new Size(_frame.Pixels.Width, _frame.Pixels.Height);
+
+        // game_campaign.cpp:1305-1307：进选关屏先放本关的开场，重开模式（allowToRestart）不播。
+        // 放在循环外，换关重建屏幕时不重放——参考也只在这一处播。
+        if (!allowToRestart)
+        {
+            PlayCampaignVideos(CampaignVideoPlayback.GetCurrentScenarioVideoFiles(saveData));
+        }
+
+        // :1309：text support 模式下把这一屏的信息写成裸文本行，块首尾各有一行短横线。
+        WriteCampaignSelectionTextSupport(saveData, allowToRestart);
+
+        // :1311：选关屏的主题曲。罗兰与阿基巴德各一首，价格联盟那几套没有专属曲，返回 null 就不动当前音乐。
+        if (CampaignMusic.GetSelectionTrack(saveData.CampaignId) is { } theme)
+        {
+            _audio?.PlayMusic(theme);
+        }
+
+        // 参考把难度存在循环内的局部变量里（game_campaign.cpp:1513 的 currentDifficulty），
+        // 挑难度只改它、不写档；写档要等到点 OK 开局（:1643）。放在循环外，「换一关」重建屏幕时不丢。
+        int campaignDifficulty = saveData.Difficulty;
+
+        while (true)
+        {
+            CampaignScenarioSelectionScreen? screen = CampaignScenarioSelectionScreen.TryCreate(
+                assets, menu.Text, fonts, saveData, mapDirectories, screenSize, allowToRestart, out string? error);
+
+            if (screen is null)
+            {
+                GameLog.Warn($"The campaign selection cannot be shown: {error}");
+
+                return;
+            }
+
+            // 冒烟要点中奖励单选，得知道它落在哪；参考没有这条日志，但主菜单的「signs at [...]」是同一性质。
+            GameLog.Info(
+                $"The campaign selection shows scenario '{screen.Dialog.ScenarioInfoId}' with bonus areas " +
+                $"[{string.Join(", ", screen.Dialog.BonusAreas)}].");
+
+            RunModal(screen);
+
+            if (!screen.IsFinished)
+            {
+                return;
+            }
+
+            switch (screen.Result)
+            {
+                case CampaignSelectionAction.Cancel:
+                    GameLog.Info("Left the campaign selection.");
+
+                    return;
+
+                case CampaignSelectionAction.ChooseDifficulty:
+                    campaignDifficulty = ChooseCampaignDifficulty(campaignDifficulty, menu.Text, fonts, screenSize);
+
+                    break;
+
+                case CampaignSelectionAction.ViewIntro:
+                    // game_campaign.cpp:1675-1689：先放上一关的结尾，再放本关的开场。
+                    PlayCampaignVideos(CampaignVideoPlayback.GetPreviousScenarioVideoFiles(saveData));
+                    PlayCampaignVideos(CampaignVideoPlayback.GetCurrentScenarioVideoFiles(saveData));
+
+                    break;
+
+                case CampaignSelectionAction.StartScenario:
+                    // :1589-1596：不是新开局（或允许重开）又改过难度，先问一句；NO 就留在这一屏。
+                    if ((!saveData.IsStarting || allowToRestart) && campaignDifficulty != saveData.Difficulty
+                        && !ShowCampaignYesNo(
+                            "Difficulty",
+                            "You have changed the campaign difficulty. The final high score will be calculated " +
+                            "based solely on the lowest difficulty level for a completed scenario during the " +
+                            "campaign. Do you want to proceed?"))
+                    {
+                        GameLog.Info("The campaign difficulty change was cancelled; the scenario is not started.");
+
+                        continue;
+                    }
+
+                    // :1598-1602：重开再来一次确认。重开模式下 OKAY 是隐藏的（:1420-1429），能走到这里的
+                    // StartScenario 只可能是那一颗 RESTART，所以用 allowToRestart 就能分辨。
+                    if (allowToRestart
+                        && !ShowCampaignYesNo("Restart", "Are you sure you want to restart this scenario?"))
+                    {
+                        GameLog.Info("The scenario restart was cancelled.");
+
+                        continue;
+                    }
+
+                    StartCampaignScenarioMap(
+                        saveData, mapDirectories, screen.Dialog.SelectedBonusIndex, campaignDifficulty,
+                        resetMinDifficulty: saveData.IsStarting && !allowToRestart);
+
+                    return;
+
+                default:
+                    // SelectOtherScenario 已经把新关卡写进存档，重开一屏即可。
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens the difficulty window of the campaign selection and hands back the pick,
+    /// <c>Game::setCampaignDifficulty()</c> (<c>game_campaign.cpp:912-1082</c>).
+    /// </summary>
+    /// <remarks>
+    /// 这个函数**不写存档**：参考把选择放回选关屏的局部变量 <c>currentDifficulty</c>
+    /// （<c>game_campaign.cpp:1513</c>、<c>:1698-1699</c>），点 OK 开局时才 <c>setDifficulty</c>（<c>:1643</c>）。
+    /// 挑一次就写的话，下面的「难度变了没有」永远为假，确认框也就永远不会出现。
+    /// </remarks>
+    /// <param name="currentDifficulty">The difficulty the selection screen holds.</param>
+    /// <param name="text">Translations of the labels of the window.</param>
+    /// <param name="fonts">The fonts of the window.</param>
+    /// <param name="screenSize">The size of the screen the window is centred on.</param>
+    /// <returns>The picked difficulty, or <paramref name="currentDifficulty"/> when the window cannot open.</returns>
+    private int ChooseCampaignDifficulty(int currentDifficulty, GameText text, GameFonts fonts, Size screenSize)
+    {
+        CampaignDifficultyScreen? screen =
+            CampaignDifficultyScreen.TryCreate(fonts, screenSize, currentDifficulty, text);
+
+        if (screen is null)
+        {
+            return currentDifficulty;
+        }
+
+        RunModal(screen);
+
+        GameLog.Info($"The campaign difficulty selection is {screen.CurrentDifficulty}.");
+
+        return screen.CurrentDifficulty;
+    }
+
+    /// <summary>
+    /// Asks a yes/no question on top of the campaign selection,
+    /// <c>fheroes2::showStandardTextMessage( …, Dialog::YES | Dialog::NO )</c>.
+    /// </summary>
+    /// <param name="header">Title of the box.</param>
+    /// <param name="body">The question.</param>
+    /// <returns>
+    /// <see langword="true"/> when YES was pressed. A box that cannot be shown also answers YES: the reference only
+    /// aborts on NO, so treating a missing button set as NO would silently swallow the player's click.
+    /// </returns>
+    private bool ShowCampaignYesNo(string header, string body)
+    {
+        if (_assets is not { } assets || _fonts is not { } fonts)
+        {
+            GameLog.Warn($"The question \"{body}\" needs the game data; it is taken as YES.");
+
+            return true;
+        }
+
+        _systemButtons ??= SystemButtonArtwork.TryCreate(assets);
+
+        if (_systemButtons is not { } buttons)
+        {
+            GameLog.Warn($"The question \"{body}\" needs the standard buttons; it is taken as YES.");
+
+            return true;
+        }
+
+        MessageBoxModal box = MessageBoxModal.Create(
+            header, body, fonts.Yellow, fonts.White, DialogButton.Yes | DialogButton.No, buttons);
+
+        RunModal(box);
+
+        return box.Answer == DialogButton.Yes;
+    }
+
+    /// <summary>
+    /// Plays campaign clips one after another, <c>Video::ShowVideo()</c> as <c>game_campaign.cpp</c> uses it.
+    /// </summary>
+    /// <param name="files">The clips in playback order, from <see cref="CampaignVideoPlayback"/>.</param>
+    /// <remarks>
+    /// 冒烟与截图是脚本，不是一局游戏：影片会停在模态窗口里等按键，把预算耗在一段与要截的画面无关的动画上，
+    /// 所以和启动 logo 同一条判据跳过（<see cref="PlayStartupVideos"/>），只留一行日志说明本来要播什么。
+    /// </remarks>
+    private void PlayCampaignVideos(IReadOnlyList<string> files)
+    {
+        foreach (string file in files)
+        {
+            if (_options.SmokeFrames is not null || _options.ScreenshotPath is not null)
+            {
+                GameLog.Info($"Skipping the campaign video '{file}' because the run is scripted.");
+
+                continue;
+            }
+
+            PlayVideo(file);
+        }
+    }
+
+    /// <summary>
+    /// Loads the map of the selected campaign scenario and shows it, <c>game_campaign.cpp:1656-1710</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 顺序与参考一致：先处理「必须在读地图之前生效」的两条（起始种族、叛变关清空奖励，<c>:1631-1640</c>），
+    /// 再按关卡取地图（战役地图要在读入时就补上版本差异）、把地图记进 <see cref="Settings"/>、玩法类型定成
+    /// <see cref="GameTypes.Campaign"/>，然后才建场景。其余奖励需要实际的世界与英雄，所以放在场景建好之后，
+    /// 最后才把选中的奖励编号记进存档（<c>:1665-1671</c>）。
+    /// </para>
+    /// <para>
+    /// 奖励编号传进来而不是从存档读：存档里那个是「上一次这一关选的」，本次的选择还没写进去。
+    /// </para>
+    /// </remarks>
+    /// <param name="saveData">The save whose current scenario is started.</param>
+    /// <param name="mapDirectories">Where the campaign maps live.</param>
+    /// <param name="bonusIndex">The bonus the player picked on the selection screen, -1 for none.</param>
+    /// <param name="difficulty">The difficulty the selection screen holds, written to the save once the map is up.</param>
+    /// <param name="resetMinDifficulty">
+    /// Whether the lowest difficulty starts over, <c>campaignSaveData.isStarting() &amp;&amp; !allowToRestart</c>
+    /// of <c>game_campaign.cpp:1643</c>.
+    /// </param>
+    private void StartCampaignScenarioMap(
+        CampaignSaveData saveData, IReadOnlyList<string> mapDirectories, int bonusIndex, int difficulty,
+        bool resetMinDifficulty)
+    {
+        CampaignData campaignData = CampaignData.GetCampaignData(saveData.CampaignId);
+
+        if (saveData.CurrentScenarioId < 0 || saveData.CurrentScenarioId >= campaignData.AllScenarios.Count)
+        {
+            GameLog.Warn($"The campaign {saveData.CampaignId} has no scenario {saveData.CurrentScenarioId}.");
+
+            return;
+        }
+
+        ScenarioData scenario = campaignData.AllScenarios[saveData.CurrentScenarioId];
+        ScenarioInfoId scenarioInfo = saveData.CurrentScenarioInfoId;
+
+        bool hasBonus = bonusIndex >= 0 && bonusIndex < scenario.Bonuses.Count;
+        ScenarioBonusData bonus = hasBonus ? scenario.Bonuses[bonusIndex] : new ScenarioBonusData();
+
+        // :1631-1635 起始种族（含「种族 + 部队」那一档）必须在读地图、玩家定阵容之前定下来。
+        if (bonus.Type is ScenarioBonusData.BonusType.StartingRace or ScenarioBonusData.BonusType.StartingRaceAndArmy)
+        {
+            CampaignBonuses.SetStartingRaceBonus(
+                new ScenarioBonusData(ScenarioBonusData.BonusType.StartingRace, bonus.SubType, bonus.Amount));
+        }
+
+        // :1638-1640 叛变关（Rolebert）把之前攒的奖励全没收。
+        if (CampaignData.IsBetrayalScenario(scenarioInfo))
+        {
+            saveData.RemoveAllAwards();
+        }
+
+        Mp2FileInfo? mapInfo = scenario.LoadPlayableMap(mapDirectories);
+
+        if (mapInfo is null)
+        {
+            GameLog.Warn($"The map file of the scenario '{scenario.ScenarioName}' is not in the game data.");
+
+            return;
+        }
+
+        // :1643 地图读到了才动存档：地图不在时参考也不会改难度。最低难度只有新战役第一关才重置
+        // （isStarting() && !allowToRestart，端口 allowToRestart 恒为 false）。
+        saveData.SetDifficulty(difficulty, resetMinDifficulty);
+
+        GameLog.Info(
+            $"The campaign difficulty is {saveData.Difficulty} with a minimum of {saveData.MinDifficulty}.");
+
+        Settings settings = Settings.Get();
+        settings.SetCurrentMapFileInfo(mapInfo);
+
+        // 战役与单图在存档的扩展名和存档头里的类型上分家（game_io.cpp:227-231），开局前必须定下来。
+        settings.SetGameType(GameTypes.Campaign);
+
+        AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"The campaign scenario '{scenario.ScenarioName}' cannot be started: {error}");
+
+            return;
+        }
+
+        ApplyCampaignStartBonuses(scene.World, saveData, bonus, hasBonus);
+
+        // :1671 选中的编号最后才记账：它会跟着「完成这一关」一起进 _bonusesForFinishedMaps。
+        saveData.SetCurrentScenarioInfo(scenarioInfo, hasBonus ? bonusIndex : -1);
+
+        ShowAdventureScene(scene);
+
+        GameLog.Info(
+            $"Started the campaign scenario '{scenario.ScenarioName}' (campaign {saveData.CampaignId}, " +
+            $"scenario {saveData.CurrentScenarioId}, bonus {(hasBonus ? $"{bonusIndex} '{bonus.GetName()}'" : "none")}).");
+
+        // --complete-campaign-scenario：把这一关直接宣布为打赢，替玩家跳过整场战斗。走的仍是真实的结算
+        // 与写档那一段，只是不经过战斗（战役地图的胜利条件要打几十回合，截图与冒烟等不起）。
+        if (_options.CompleteCampaignScenario)
+        {
+            GameLog.Info("--complete-campaign-scenario: the scenario is declared won right away.");
+            CompleteCampaignScenario();
+        }
+    }
+
+    /// <summary>
+    /// Applies the bonus the player picked for the scenario and the awards earlier scenarios handed out,
+    /// <c>Campaign::applyObtainedCampaignAwards</c> and <c>Campaign::setScenarioBonus</c>
+    /// (<c>game_campaign.cpp:1664-1669</c>).
+    /// </summary>
+    /// <param name="world">The world of the scenario just built.</param>
+    /// <param name="saveData">The save that holds the awards.</param>
+    /// <param name="bonus">The bonus picked on the selection screen, ignored when <paramref name="hasBonus"/> is false.</param>
+    /// <param name="hasBonus">Whether <paramref name="bonus"/> is a real choice.</param>
+    private static void ApplyCampaignStartBonuses(
+        World world, CampaignSaveData saveData, ScenarioBonusData bonus, bool hasBonus)
+    {
+        // 纯「起始种族」那一档在读地图之前已经设过（:1631-1635），这里跳过；「种族 + 部队」要再走一遍，
+        // 因为部队得等英雄就位才发得出来（:1665 的条件只排除 STARTING_RACE）。
+        if (hasBonus && bonus.Type != ScenarioBonusData.BonusType.StartingRace)
+        {
+            CampaignBonuses.SetScenarioBonus(world, saveData.CurrentScenarioInfoId, bonus);
+        }
+
+        CampaignBonuses.ApplyObtainedCampaignAwards(
+            world, saveData.CurrentScenarioInfoId, saveData.GetObtainedCampaignAwards());
     }
 
     /// <summary>
@@ -2276,6 +2786,10 @@ public sealed class GameHost : IDisposable
 
         _castle = null;
         _scene = (IScene?)_battle ?? _adventure ?? (IScene?)_menu ?? _diagnostics;
+
+        // 参考离开城堡屏回地图时调 Game::setDisplayFadeIn()（game_startgame.cpp:376）：城堡屏是整屏窗口，
+        // 关掉之后地图要淡回来。没有地图可回（主菜单）时标志留着不用，主菜单还没有淡入。
+        GameDisplayFadeIn.SetDisplayFadeIn();
     }
 
     /// <summary>
@@ -2297,6 +2811,10 @@ public sealed class GameHost : IDisposable
         _scene = _adventure ?? (IScene?)_menu ?? _diagnostics;
 
         GameLog.Info("The battle is over; the adventure map is back.");
+
+        // 参考的战果窗关掉之后调 Game::setDisplayFadeIn()（battle_interface.cpp:1534）：战场先淡出成黑，
+        // 地图再淡回来。召唤它的是 heroes_action 那 12 处 renderWithFadeInOrPlanRender。
+        GameDisplayFadeIn.SetDisplayFadeIn();
 
         // --battle-only 是一场打完就收工：无人值守跑一趟、结果留在日志里，不必再靠 --smoke-frames 掐停。
         if (_options.BattleOnly)
@@ -2328,7 +2846,13 @@ public sealed class GameHost : IDisposable
         // settings there (scenarioinfo.cpp): the save writer refuses to write without it, and the AI's territory
         // planning, the spells of a hero and the map-version checks all read it back. A map opened with --map has to
         // look like a chosen one, otherwise it cannot be saved at all.
-        Settings.Get().SetCurrentMapFileInfo(mapInfo);
+        Settings settings = Settings.Get();
+        settings.SetCurrentMapFileInfo(mapInfo);
+
+        // 玩法类型也得先定下来，参考是在开工之前由 Game::NewStandard() 设的（game_newgame.cpp:149-157）。它不只是
+        // 存档扩展名的输入，还写进存档头；留着 TYPE_MENU（0）写出的档是 .savm、头里类型 0，读档的类型校验
+        // （game_io.cpp:227-231）连自己写的档都会拒掉。
+        settings.SetGameType(GameTypes.Standard);
 
         AdventureMapScene? scene = AdventureMapScene.TryCreate(_frame, _assets, _fonts, mapInfo, out string? error);
         if (scene is null)
@@ -2338,7 +2862,28 @@ public sealed class GameHost : IDisposable
             return;
         }
 
+        ShowAdventureScene(scene);
+    }
+
+    /// <summary>
+    /// Makes <paramref name="scene"/> the adventure map on screen and wires the host side of its turn loop.
+    /// </summary>
+    /// <param name="scene">The map to show.</param>
+    private void ShowAdventureScene(AdventureMapScene scene)
+    {
         scene.ExitEvent = LeaveAdventureMap;
+
+        // L 的确认框答 YES 之后，参考只是把 LOAD_GAME 交回 StartGame()，主循环随后进读档屏
+        // （game_startgame.cpp:1166-1168 → game_mainmenu.cpp:154-155）：地图先离开，列表画在主菜单背景上。
+        scene.LoadGameEvent = LeaveAdventureMapForLoadGame;
+
+        // 战役的一关打赢之后，参考把 COMPLETE_CAMPAIGN_SCENARIO 交回主循环，由 CompleteCampaignScenario()
+        // 记账（game_mainmenu.cpp:205-206）。结算要世界与存档，所以只有宿主能接。
+        scene.CampaignScenarioCompleted = CompleteCampaignScenario;
+
+        // 战役局里的 Scenario Information 开的是同一张选关屏，只是 allowToRestart 为真
+        // （interface_events.cpp:366-396 → game_campaign.cpp:1284）。取消就留在图上，重启则在里面重开这一关。
+        scene.CampaignSelectionRequested = () => RunCampaignScenarioSelection(CampaignSaveData.Get(), allowToRestart: true);
 
         if (scene.HeroActionHost is { } host)
         {
@@ -2348,6 +2893,216 @@ public sealed class GameHost : IDisposable
 
         _adventure = scene;
         _scene = scene;
+    }
+
+    /// <summary>
+    /// Asks for a save file and reopens it, <c>Game::LoadGame()</c> with <c>Game::LoadStandard()</c> behind it
+    /// (<c>game_loadgame.cpp:91-125</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的 LOAD GAME 先弹 Standard / Campaign / Multi-Player 子菜单，端口还没有那个子菜单：这里直接进「标准
+    /// 游戏」的存档列表 <c>Dialog::SelectFileLoad()</c>，那是唯一有存档可显示的一类。
+    /// </para>
+    /// <para>
+    /// 读档窗口是阻塞的（<see cref="SelectFileDialog.Show"/> 自己画帧、自己收事件），与参考的
+    /// <c>Dialog::SelectFileLoad()</c> 同形。读档成功后不再 <c>LoadMap</c>：世界已经在
+    /// <see cref="GameSave.Load"/> 里恢复成存档那一刻，场景只负责把地图文件重新画出来。
+    /// </para>
+    /// </remarks>
+    private void OpenLoadGame()
+    {
+        if (_assets is null)
+        {
+            // 没有素材就画不出列表窗；参考在没有游戏数据时根本起不来。
+            GameLog.Warn("The save file list needs the game assets; the Load Game sign does nothing.");
+
+            return;
+        }
+
+        // 参考的 Game::LoadStandard() 先把玩法类型设成单图再列档（game_loadgame.cpp:209-213）：列表按它筛扩展名，
+        // 读回时存档头也拿它比对（game_io.cpp:227-231）。端口还没有 Standard / Campaign / Multi-Player 子菜单，
+        // 所以这里就是「标准游戏」那一路。
+        Settings.Get().SetGameType(GameTypes.Standard);
+
+        // 窗口是阻塞的：它自己压帧、自己读 LocalEvent。这段里脚本点击不能再打回主菜单，否则就是
+        // OnFrameEnded → OpenLoadGame → 窗口 → OnFrameEnded 的无限递归（见 ReplayScriptedInput 的分支）。
+        AdventureMapDialogs dialogs = new(_frame.Pixels, _assets);
+        string? file;
+
+        _loadDialogOpen = true;
+
+        try
+        {
+            // 窗口自己压帧：把「客户端还在跑」交给它，冒烟预算耗尽时窗口才能跟着退出。
+            file = dialogs.SelectLoadFile(keepRunning: () => _running);
+        }
+        finally
+        {
+            _loadDialogOpen = false;
+        }
+
+        if (file is null)
+        {
+            GameLog.Info("No save file was chosen, staying in the main menu.");
+
+            return;
+        }
+
+        if (!OpenLoadFile(file))
+        {
+            dialogs.ShowMessage(string.Empty, "The save file could not be loaded.");
+        }
+    }
+
+    /// <summary>
+    /// Reopens the save file <paramref name="file"/>, the half of <c>Game::LoadGame()</c> that runs once a file has
+    /// been chosen (<c>game_io.cpp:299-311</c>).
+    /// </summary>
+    /// <param name="file">The save file to read.</param>
+    /// <returns><see langword="true"/> when the map of the save is on screen.</returns>
+    private bool OpenLoadFile(string file)
+    {
+        // 读档的类型校验发生在 Load 的最前面（game_io.cpp:227-231）：类型没定下来（TYPE_MENU，0）就什么都读不了。
+        // 菜单那一路已经由主菜单的 LOAD GAME 设好，--load 没有那道工序，就按扩展名反推——反推表与写档时的
+        // GameSave.GetSaveFileExtension 成对，.savm 兜住的网络/单场战斗档端口还不能读，所以在这里就停。
+        Settings settings = Settings.Get();
+
+        if (settings.GameType == GameTypes.None && !TrySetGameTypeFromSaveFile(file))
+        {
+            GameLog.Warn($"The save file '{file}' is not one this client can load.");
+
+            return false;
+        }
+
+        if (!GameSave.Load(file))
+        {
+            GameLog.Warn($"The save file '{file}' could not be loaded.");
+
+            return false;
+        }
+
+        // Load() 恢复了存档里的地图头；没有它就没有 FilePath，地图文件读不出来。
+        if (Settings.Get().CurrentMapFileInfo is not { } mapInfo)
+        {
+            GameLog.Warn($"The save file '{file}' does not name a map.");
+
+            return false;
+        }
+
+        // 一条「上一关刚打完」的战役存档不该在旧地图上接着打：参考在这里把 GameMode 换成
+        // COMPLETE_CAMPAIGN_SCENARIO_FROM_LOAD_FILE（game_io.cpp:261-265，判据是「不是开局」且「当前关就是最后完成的那关」），
+        // 主循环随即调 CompleteCampaignScenario( true )：不重复记账、只补发奖励，然后回选关屏
+        // （game_mainmenu.cpp:208-213）。
+        if (Settings.Get().GameType == GameTypes.Campaign)
+        {
+            CampaignSaveData campaign = CampaignSaveData.Get();
+
+            if (!campaign.IsStarting && campaign.CurrentScenarioInfoId == campaign.GetLastCompletedScenarioInfoId())
+            {
+                GameLog.Info($"The save file '{file}' ends a campaign scenario, so the campaign returns to its scenario list.");
+
+                CampaignProgress.CollectScenarioAwards(World.Current);
+                CampaignProgress.AdvanceScenario(shouldSave: false);
+
+                ReturnToMenu();
+                _pendingCampaignSelection = true;
+
+                return true;
+            }
+        }
+
+        // 存档头里只留地图的文件名（maps_fileinfo.cpp:666-667），参考靠 Settings::GetLastFile( "maps", name )
+        // 在数据目录里把它还原成完整路径（game_io.cpp:275）。端口还没有那张表，就照它探的两处找：数据目录本身与
+        // 它下面的 maps（MapCatalog.FindDirectories 就是这两处的端口版）。找不到就照旧报错，不猜。
+        if (!File.Exists(mapInfo.FilePath) && ResolveMapFile(mapInfo.FilePath) is { } mapPath)
+        {
+            mapInfo = mapInfo with { FilePath = mapPath };
+            Settings.Get().SetCurrentMapFileInfo(mapInfo);
+        }
+
+        AdventureMapScene? scene = AdventureMapScene.TryCreateLoaded(_frame, _assets, _fonts, mapInfo, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"The loaded game cannot be shown: {error}");
+
+            return false;
+        }
+
+        GameLog.Info($"Loaded the game from '{file}'.");
+        ShowAdventureScene(scene);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Sets the type of game from the extension of a save file, the port's stand-in for the Standard / Campaign /
+    /// Multi-Player choice in front of <c>Dialog::SelectFileLoad()</c> (<c>game_loadgame.cpp:68-78,209-213</c>).
+    /// </summary>
+    /// <param name="file">The save file about to be read.</param>
+    /// <returns><see langword="true"/> when the extension names a type this client can play.</returns>
+    /// <remarks>
+    /// 三档的对应关系与写档时的 <see cref="GameSave.GetSaveFileExtension(GameTypes)"/> 成对：<c>.sav</c> 单图、
+    /// <c>.savc</c> 战役、<c>.savh</c> 热座。<c>.savm</c> 是那一档的兜底，参考用它装网络、单场战斗与自动试玩，
+    /// 端口都还不能继续玩，所以这里返回失败而不是猜一个类型。
+    /// </remarks>
+    private static bool TrySetGameTypeFromSaveFile(string file)
+    {
+        GameTypes gameType;
+
+        switch (Path.GetExtension(file).ToLowerInvariant())
+        {
+            case ".sav":
+                gameType = GameTypes.Standard;
+                break;
+
+            case ".savc":
+                gameType = GameTypes.Campaign;
+                break;
+
+            case ".savh":
+                gameType = GameTypes.HotSeat;
+                break;
+
+            default:
+                return false;
+        }
+
+        Settings.Get().SetGameType(gameType);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Finds the map file a save names by its bare file name, <c>Settings::GetLastFile( "maps", name )</c>
+    /// (<c>settings.cpp:754-758</c>).
+    /// </summary>
+    /// <param name="fileName">The name stored in the save header, possibly already a full path.</param>
+    /// <returns>The full path of an existing map file, or <see langword="null"/> when nothing matches.</returns>
+    /// <remarks>
+    /// 参考在所有「根目录 + <c>maps</c>」里找同名文件，端口能问的根目录只有素材目录，探法交给
+    /// <see cref="MapCatalog.FindDirectories"/>。找不到就是「这张图不在本机」，由调用方报错——猜一个相近的名字
+    /// 会让读档进到另一张图上，比失败更糟。
+    /// </remarks>
+    private string? ResolveMapFile(string fileName)
+    {
+        if (_assets?.DataDirectory is not { } dataDirectory)
+        {
+            return null;
+        }
+
+        foreach (string directory in MapCatalog.FindDirectories([dataDirectory]))
+        {
+            string candidate = Path.Combine(directory, fileName);
+
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -2361,6 +3116,83 @@ public sealed class GameHost : IDisposable
         ReturnToMenu();
 
         return AdventureEventResult.Cancel;
+    }
+
+    /// <summary>
+    /// Accounts for a finished campaign scenario, <c>Game::CompleteCampaignScenario( false )</c>
+    /// (<c>game_campaign.cpp:1160-1282</c>), and decides where the player goes next.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 四步按参考的顺序做：记完成与天数、写「下一关」存档、发本关奖励、挪到下一关并决定去向。
+    /// 写档夹在第二与第三步之间不是笔误——参考正是在这里写（<c>:1169-1171</c>），此时存档里的
+    /// <c>CurrentScenarioInfoId</c> 还等于 <c>GetLastCompletedScenarioInfoId</c>，读档时靠这个判据认出
+    /// 「这一关已经打完」（<c>game_io.cpp:261-265</c>）；奖励写在它之后，所以存档里不含本关奖励，读档时补发。
+    /// </para>
+    /// <para>
+    /// 存档还必须在离开地图之前写：文件名与存档头都取自 <see cref="Settings.CurrentMapFileInfo"/> 与
+    /// <see cref="Settings.GameType"/>，一旦换了场景这两样就变了。
+    /// </para>
+    /// <para>
+    /// 去向照参考：非最后一关回选关屏（<c>game_campaign.cpp:1279-1281</c>），最后一关进片尾与战役高分榜
+    /// （<c>:1242-1277</c>）。片尾与高分榜端口还没有（P5 结局屏），所以最后一关先停在主菜单。
+    /// </para>
+    /// </remarks>
+    private void CompleteCampaignScenario()
+    {
+        World world = World.Current;
+
+        bool shouldSave = CampaignProgress.RecordFinishedScenario(world);
+
+        if (shouldSave && !GameSave.SaveCompletedCampaignScenario())
+        {
+            GameLog.Warn("The inter-scenario save of the campaign could not be written.");
+        }
+
+        CampaignProgress.CollectScenarioAwards(world);
+
+        // game_campaign.cpp:1240：发完奖励先放刚打完这一关的结尾，再判断是不是最后一关。
+        PlayCampaignVideos(CampaignVideoPlayback.GetPreviousScenarioVideoFiles(CampaignSaveData.Get()));
+
+        CampaignScenarioCompletion completion = CampaignProgress.AdvanceScenario(shouldSave);
+
+        GameLog.Info(
+            $"The campaign scenario is complete: campaign {CampaignSaveData.Get().CampaignId}, " +
+            $"{(completion.IsCampaignFinished ? "the campaign is finished" : $"next scenario {completion.NextScenario}")}.");
+
+        ReturnToMenu();
+
+        if (completion.IsCampaignFinished)
+        {
+            GameLog.Info("The campaign is over; the credits and the campaign high score are not ported yet.");
+
+            return;
+        }
+
+        // 选关屏要等主循环的下一帧：这一帧还在地图的 Update 里，换场景由 ReturnToMenu() 刚刚做完。
+        _pendingCampaignSelection = true;
+    }
+
+    /// <summary>
+    /// Answers the map's confirmed load request: the map is dropped and the save file list opens, the two steps
+    /// <c>StartGame()</c> and the main loop take on a <c>GameMode::LOAD_GAME</c>
+    /// (<c>game_startgame.cpp:1166-1168</c>, <c>game_mainmenu.cpp:154-155</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 顺序与参考一致：先离开地图，再把列表画在主菜单背景上（<c>game_loadgame.cpp:215-246</c> 的
+    /// <c>drawMainMenuScreen()</c> 加 <c>Dialog::SelectFileLoad()</c>）。确认框已经说过「当前游戏会丢」，
+    /// 所以取消列表也不会回地图——参考的列表取消回到 Load Game 子菜单，那个子菜单端口还没有，这里停在主菜单。
+    /// </para>
+    /// <para>
+    /// 这一段跑在地图的 <see cref="AdventureMapScene.Update"/> 里面，窗口的帧由
+    /// <see cref="OnFrameEnded"/> 里 <see cref="_loadDialogOpen"/> 那条分支照常计时并回放脚本输入。
+    /// </para>
+    /// </remarks>
+    private void LeaveAdventureMapForLoadGame()
+    {
+        ReturnToMenu();
+        OpenLoadGame();
     }
 
     /// <summary>Leaves the adventure map and goes back to the main menu.</summary>
@@ -2454,6 +3286,27 @@ public sealed class GameHost : IDisposable
         _systemInfo?.Draw(_frame.Bounds, _frame.Pixels);
 
         _modal?.Draw(_frame);
+
+        // 淡入压在最后一层上，再推上屏：参考的 fadeInDisplay() 也是画完这一帧之后才叠上去
+        // （gui/interface_base.cpp:28-50）。场景每帧把该遮的遮好、该留的留好，这里只负责按帧推进。
+        if (_scene.TakePendingFadeIn() is { } fadeIn)
+        {
+            _fadeIn = fadeIn;
+
+            // 和 "Drawing the 'X'." 同一类诊断：没有这一行，冒烟脚本分不清「淡入播了」与「标志设了没人取」。
+            GameLog.Info($"Fading the screen in over {fadeIn.FrameCount} frames, {fadeIn.Roi.Width}x{fadeIn.Roi.Height}.");
+        }
+
+        if (_fadeIn is not null)
+        {
+            // 淡入直接改索引像素，脏区上报不了自己。
+            _frame.InvalidateAll();
+
+            if (!_fadeIn.TryAdvance(_palette))
+            {
+                _fadeIn = null;
+            }
+        }
 
         _presenter.Upload(_frame);
 
@@ -2588,6 +3441,11 @@ public sealed class GameHost : IDisposable
                     _menu.OpenSettings();
                 }
 
+                if (_options.OpenNewGame)
+                {
+                    _menu.OpenNewGameMenu();
+                }
+
                 if (_options.OpenScenario || _options.ScenarioSelection is not null)
                 {
                     if (_menu.OpenScenario() && _options.ScenarioSelection is { } selection)
@@ -2643,6 +3501,12 @@ public sealed class GameHost : IDisposable
         if (!string.IsNullOrWhiteSpace(_options.MapFile))
         {
             OpenMapFile(_options.MapFile);
+        }
+
+        // --load 跳过主菜单与存档列表，直接重开一个存档：走的还是读档的那一段（Load 之后 TryCreateLoaded）。
+        if (!string.IsNullOrWhiteSpace(_options.LoadFile))
+        {
+            OpenLoadFile(_options.LoadFile);
         }
 
         // --skip-turns 在开机时就把回合推着往前走：轮到电脑时直接跑一整个电脑回合，轮到人类时直接结束，
@@ -2835,6 +3699,12 @@ public sealed class GameHost : IDisposable
         if (_options.CastSpell is { } castSpell && _adventure is not null)
         {
             _pendingSpellCast = castSpell;
+        }
+
+        // --campaign 的选关屏同理：它画在场景之上，还要读输入，只能由主循环开。
+        if (_options.Campaign is { } campaign)
+        {
+            _pendingCampaign = campaign;
         }
 
         GameLog.Info(_menu is null

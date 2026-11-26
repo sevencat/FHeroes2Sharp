@@ -63,13 +63,21 @@ public sealed class HumanHeroMovementHandlerTests : IDisposable
 
     /// <summary>Landing next to guards starts the fight and pays its spoils — the battle really ran.</summary>
     /// <remarks>
+    /// <para>
     /// 断言经验而不是 <see cref="Hero.AttackedMonsterTileIndex"/>：战斗结束那一支会把它复位成 -1
-    /// （<c>HeroActions.Battle.cs:252</c>），而这场 10 农民打 1 农民会真的打完、真的给经验（<c>214</c>）。
+    /// （<c>HeroActions.Battle.cs:252</c>），而这场的兵力比让守卫既不肯加入也不逃跑，会真的打完、真的给经验
+    /// （<c>214</c>）。
+    /// </para>
+    /// <para>
+    /// 两边的兵力要挑：<c>Army::GetJoinSolution()</c> 在英雄是人类、兵力比大于 5 时判守卫逃跑、大于 2 时判加入
+    /// （<c>army.cpp:1690-1729</c>），两条都不会开战，也就没有经验。2 农民对 1 农民的比值正好是 2，落在
+    /// 「既不加入也不逃跑」那一段。
+    /// </para>
     /// </remarks>
     [Fact]
     public void AGuardOnTheDestinationPullsTheHeroIntoTheFight()
     {
-        (World world, _, Hero hero) = CreateWorld();
+        (World world, _, Hero hero) = CreateWorld(peasants: 2);
         PutMonster(world, ResourceTile);
         hero.Path.SetPath([new RouteStep(ResourceTile, HeroTile, Direction.Right, 100)]);
 
@@ -92,7 +100,8 @@ public sealed class HumanHeroMovementHandlerTests : IDisposable
     }
 
     /// <summary>A 5 × 5 grassland with a human blue kingdom, a hero on tile 12 and five wood on tile 13.</summary>
-    private static (World World, PlayerKingdom Kingdom, Hero Hero) CreateWorld()
+    /// <param name="peasants">Size of the hero's only stack, see <see cref="AGuardOnTheDestinationPullsTheHeroIntoTheFight"/>.</param>
+    private static (World World, PlayerKingdom Kingdom, Hero Hero) CreateWorld(uint peasants = 10)
     {
         var world = new World();
         world.GenerateUninitializedMap(MapSize);
@@ -121,7 +130,7 @@ public sealed class HumanHeroMovementHandlerTests : IDisposable
         hero.MovementHandler = new HumanHeroMovementHandler(world);
 
         // 空军队一开战就判负，还会在 BattleLose 里撞上「被解散的英雄必须有理由」的断言。
-        hero.Army.JoinTroop(MonsterType.Peasant, 10);
+        hero.Army.JoinTroop(MonsterType.Peasant, peasants);
 
         Tile resource = world.GetTile(ResourceTile);
         resource.SetMainObjectPart(new ObjectPart(ObjectLayerType.Object, 1, Mp2ObjectIcnType.ObjnRsrc, 1));

@@ -913,7 +913,26 @@ public sealed partial class AdventureMap
 
         WorldMap world = WorldMap.Current;
 
-        if (hero.Move(Settings.Get().HeroesMoveSpeed == 10, world))
+        bool arrived = hero.Move(Settings.Get().HeroesMoveSpeed == 10, world);
+
+        if (hero.MapIndex < 0)
+        {
+            // 输掉战斗的人会被 Dismiss 掉（heroes.cpp:1959-2002）：MapIndex 变 -1、移动状态清空、路径收起。
+            // 参考走完这一步紧接着问 hero->isAction() 并判整局胜负（game_startgame.cpp:1521-1529），
+            // 输了最后一个英雄就直接回主菜单，根本走不到 SetCenter() 与 updateCursor()；端口还没有那一步，
+            // 所以这里认出「人已经离场」就收工：不拿 -1 去居中，也不让下一帧用站不在图上的焦点英雄重算寻路
+            // （World.GetPath() 会以「The hero stands outside the map」拒绝它）。
+            // 重新挑焦点用的正是 ResetFocus(HEROES) 里写明的那条「当前英雄可能刚输掉战斗、已不在英雄列表里」。
+            _isHeroMoving = false;
+            _stopHero = false;
+
+            ResetFocus((int)GameFocus.Heroes, true);
+            GetGameArea().SetUpdateCursor();
+
+            return AdventureEventResult.Cancel;
+        }
+
+        if (arrived)
         {
             // 参考用 hero->GetCenter() 把视口对到英雄的像素中心；端口没有对象像素中心，改用瓦片居中。
             GetGameArea().SetCenter(new Point(hero.MapIndex % world.Width, hero.MapIndex / world.Width));

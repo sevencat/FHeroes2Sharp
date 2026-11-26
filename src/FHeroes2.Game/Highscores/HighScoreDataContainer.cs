@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using FHeroes2.Core.Io;
+using FHeroes2.Game.Campaign;
 using FHeroes2.Game.Monsters;
 
 namespace FHeroes2.Game.Highscores;
@@ -241,16 +242,20 @@ public sealed class HighScoreDataContainer
         uint currentTime = HighscoreData.GenerateCompletionTime();
         const string lang = HighscoreData.EnglishLanguageAbbreviation;
 
-        RegisterScoreCampaign(new HighscoreData(lang, "Antoine", "Roland", currentTime, 600, 600, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Astra", "Archibald", currentTime, 650, 650, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Agar", "Roland", currentTime, 700, 700, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Vatawna", "Archibald", currentTime, 750, 750, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Vesper", "Roland", currentTime, 800, 800, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Ambrose", "Archibald", currentTime, 850, 850, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Troyan", "Roland", currentTime, 900, 900, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Jojosh", "Archibald", currentTime, 1000, 1000, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Wrathmont", "Roland", currentTime, 2000, 2000, 0));
-        RegisterScoreCampaign(new HighscoreData(lang, "Maximus", "Archibald", currentTime, 3000, 3000, 0));
+        // :367-376 用的是 Campaign::getCampaignName()，不是写死的字符串。
+        string roland = CampaignAwardData.GetCampaignName(CampaignId.Roland);
+        string archibald = CampaignAwardData.GetCampaignName(CampaignId.Archibald);
+
+        RegisterScoreCampaign(new HighscoreData(lang, "Antoine", roland, currentTime, 600, 600, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Astra", archibald, currentTime, 650, 650, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Agar", roland, currentTime, 700, 700, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Vatawna", archibald, currentTime, 750, 750, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Vesper", roland, currentTime, 800, 800, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Ambrose", archibald, currentTime, 850, 850, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Troyan", roland, currentTime, 900, 900, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Jojosh", archibald, currentTime, 1000, 1000, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Wrathmont", roland, currentTime, 2000, 2000, 0));
+        RegisterScoreCampaign(new HighscoreData(lang, "Maximus", archibald, currentTime, 3000, 3000, 0));
     }
 
     /// <summary>

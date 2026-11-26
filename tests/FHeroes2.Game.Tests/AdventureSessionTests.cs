@@ -354,6 +354,73 @@ public sealed class AdventureSessionTests
         Assert.IsType<AiHeroMovementHandler>(green.MovementHandler);
     }
 
+    [Fact]
+    public void ResumePicksTheSavedTurnUpWithoutRollingANewDay()
+    {
+        (World world, Mp2FileInfo info) = Load(
+            PlayerColor.Blue | PlayerColor.Red,
+            PlayerColor.Green,
+            GameTypes.HotSeat);
+
+        // 热座：蓝先走，交棒给红，这一天停在这里——存档就是这一刻。
+        AdventureSession session = AdventureSession.Start(world, info)!;
+
+        session.EndTurn();
+
+        Assert.Equal(PlayerColor.Red, session.CurrentColor);
+        Assert.Equal(1u, session.DayCount);
+
+        // 红的当天收入已经在 BeginTurn 里发过；读档若重算一遍，每次读档就白送一天的钱。
+        KingdomType red = world.Kingdoms.GetKingdom(PlayerColor.Red);
+        int goldOnSave = red.GetFunds().Gold;
+
+        // 存档记着「轮到谁」：场景每次换人都会把它写进 Players（AdventureMapScene 的换人处），
+        // 存档读回时也恢复这一位（Players.Persistence.cs:65）。会话层自己不管这张表。
+        Settings.Get().Players.SetCurrentColor(PlayerColor.Red);
+
+        AdventureSession? resumed = AdventureSession.Resume(world, info);
+
+        Assert.NotNull(resumed);
+
+        // StartGame() 的 isLoadedFromSave 分支不调 world.NewDay()（game_startgame.cpp:791-793）。
+        Assert.Equal(1u, resumed.DayCount);
+        Assert.Equal(PlayerColor.Red, resumed.CurrentColor);
+        Assert.False(resumed.IsAiTurn);
+
+        // 从存档停下的那位继续（skipTurns，:818-832）：焦点还是红，蓝不会再来一次。
+        Assert.Equal(RedHeroTile, resumed.FocusHero!.MapIndex);
+        Assert.Equal(goldOnSave, red.GetFunds().Gold);
+
+        resumed.EndTurn();
+
+        Assert.Equal(PlayerColor.Green, resumed.CurrentColor);
+        Assert.True(resumed.IsAiTurn);
+        Assert.Equal(1u, resumed.DayCount);
+    }
+
+    [Fact]
+    public void ResumeKeepsTheFogTheSaveWasMadeWith()
+    {
+        (World world, Mp2FileInfo info) = Load(PlayerColor.Blue, PlayerColor.Green | PlayerColor.Red);
+
+        // 开局之后就清过迷雾了（game_startgame.cpp:766-777）；到了第二天，读档不该再清一遍。
+        AdventureSession session = AdventureSession.Start(world, info)!;
+
+        session.EndTurn();
+        session.EndTurn();
+        session.EndTurn();
+
+        Assert.Equal(2u, session.DayCount);
+
+        int fogged = world.Fog!.CountFogged();
+
+        AdventureSession? resumed = AdventureSession.Resume(world, info);
+
+        Assert.NotNull(resumed);
+        Assert.Equal(2u, resumed.DayCount);
+        Assert.Equal(fogged, world.Fog!.CountFogged());
+    }
+
     /// <summary>
     /// Answers every question the same way and opens nothing — enough to tell the human handler from the fog one.
     /// </summary>

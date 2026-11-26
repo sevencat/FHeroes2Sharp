@@ -2162,7 +2162,7 @@ public sealed class BattleFieldPainter
             _plan = plan;
             _state = state;
             _arena = arena;
-            _stepIndex = -1;
+            _stepIndex = 0;
 
             uint delay = GameDelays.ApplyBattleSpeed(state.MoveSpeed);
 
@@ -2235,7 +2235,13 @@ public sealed class BattleFieldPainter
         {
             if (!_plan.IsFlight && !Current.IsTurnOnly)
             {
+                // 参考把吊桥的收放混在 moveUnit 的逐格循环里（battle_action.cpp:333-350），而这里正是端口的
+                // 那一格：走完竞技场只会补模式位（ADR-245），所以桥得由播放自己动（ADR-246）。
+                _arena.LowerBridgeForStep(_plan.Unit, Current.CellIndex);
+
                 _plan.Unit.SetPosition(Current.CellIndex);
+
+                _arena.RaiseBridgeAfterStep();
             }
 
             ++_stepIndex;
@@ -2263,7 +2269,7 @@ public sealed class BattleFieldPainter
                     {
                         // The unit is already on its cell when it lands, so the landing frames correct
                         // against it rather than sliding in from the start (battle_interface.cpp:4816).
-                        _plan.Unit.SetPosition(_plan.Destination);
+                        Land();
 
                         if (_arena.Board.GetCell(_plan.Destination) is { } landing)
                         {
@@ -2298,11 +2304,29 @@ public sealed class BattleFieldPainter
         {
             if (_plan.IsFlight)
             {
-                _plan.Unit.SetPosition(_plan.Destination);
+                Land();
             }
 
             IsFinished = true;
             _state.SwitchAnimation(MonsterAnimationType.Static);
+        }
+
+        /// <summary>Puts a flyer down on its destination, turning the drawbridge around the landing.</summary>
+        /// <remarks>
+        /// 顺序与 <c>Arena::moveUnit()</c> 的飞行分支一致：先看落点（宽单位连尾巴）要不要放下桥，落位之后再看能不能
+        /// 升起（<c>battle_action.cpp:278-365</c>）。
+        /// </remarks>
+        private void Land()
+        {
+            int tail = _plan.Unit.IsWide
+                ? BattlePosition.GetReachable(_arena, _plan.Unit, _plan.Destination).TailIndex
+                : -1;
+
+            _arena.LowerBridgeForStep(_plan.Unit, _plan.Destination, tail);
+
+            _plan.Unit.SetPosition(_plan.Destination);
+
+            _arena.RaiseBridgeAfterStep();
         }
     }
 

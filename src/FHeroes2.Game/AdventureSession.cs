@@ -69,8 +69,8 @@ public sealed class AdventureSession
     /// <remarks>
     /// <para>
     /// <c>world.NewDay()</c> 在这里调，对应 <c>StartGame()</c> 循环的第一句
-    /// （<c>game_startgame.cpp:739</c>）。参考对新游戏与读档分开处理（读档时日期已经在对的位置），
-    /// 端口还没有读档，所以只有一条路。
+    /// （<c>game_startgame.cpp:791-793</c>）。读档走 <see cref="Resume"/>：那边日期已经在对的位置，
+    /// 参考用 <c>isLoadedFromSave</c> 把两条路分开。
     /// </para>
     /// <para>
     /// 没有人类玩家的地图（全是电脑，或者一个色都没有）返回 <see langword="null"/>：这时没有什么可
@@ -92,6 +92,50 @@ public sealed class AdventureSession
     /// </exception>
     public static AdventureSession? Start(World world, Mp2FileInfo info, IHeroActionHost? host = null)
     {
+        return Create(world, info, host, loadedFromSave: false);
+    }
+
+    /// <summary>
+    /// Picks a started game up where its save left off, <c>StartGame()</c>'s <c>isLoadedFromSave</c> branch
+    /// (<c>game_startgame.cpp:755-832</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="Start"/> 只差参考自己用 <c>isLoadedFromSave</c> 分开的三件事：
+    /// </para>
+    /// <list type="number">
+    /// <item>不调 <c>world.NewDay()</c>——日期、收入、当天事件都已经在存档里（<c>:791-793</c>）。</item>
+    /// <item>
+    /// 不清迷雾，除非存档停在第一天（<c>:766-777</c>）：存档里的迷雾就是玩家上次看到的世界，重清一遍等于
+    /// 把已探索的区域再揭开一次。
+    /// </item>
+    /// <item>
+    /// 从 <c>conf.CurrentColor()</c> 那位玩家接着走，而不是从轮转表第一位（<c>skipTurns</c>，<c>:818-832</c>）。
+    /// 存档只可能停在人类玩家的回合，而人类玩家排在表的前面，所以那位一定在表里。
+    /// </item>
+    /// </list>
+    /// <para>
+    /// 读档时<b>不</b>再做当天收入结算：参考的人类分支里没有 <c>ActionNewDayResourceUpdate()</c>，只有
+    /// <c>ActionBeforeTurn()</c>（<c>:877-882</c>）。重复结算会让每次读档白送一天的收入。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">已经从存档读入的世界。</param>
+    /// <param name="info">该地图的文件头，用来重建玩家槽位。</param>
+    /// <param name="host">
+    /// The interface layer that answers the human hero's actions, or <see langword="null"/> for
+    /// <see cref="NullHeroActionHost"/>.
+    /// </param>
+    /// <returns>The session, or <see langword="null"/> when the saved map has no human player.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="world"/> or <paramref name="info"/> is <see langword="null"/>.
+    /// </exception>
+    public static AdventureSession? Resume(World world, Mp2FileInfo info, IHeroActionHost? host = null)
+    {
+        return Create(world, info, host, loadedFromSave: true);
+    }
+
+    private static AdventureSession? Create(World world, Mp2FileInfo info, IHeroActionHost? host, bool loadedFromSave)
+    {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(info);
 
@@ -101,8 +145,17 @@ public sealed class AdventureSession
         // 参考里这一步属于剧本选择（players.cpp:487 的 SetStartGame()），紧挨着 World::LoadMap。端口把它放在
         // 「开一局」这里：槽位表是进程级的静态表，Hero.GetControl() 与以后的 AI 都问它，但地图本身不该因为
         // 被读进来就改写全局状态（两个世界同时装载时会互相覆盖，测试正是这样）。
+        // Init() 会 Clear() 整张表（Players.cs:99），当前色跟着被清成 None；读档要的那一位得先记住再放回去，
+        // 否则「从存档停下的玩家继续」会退化成从轮转表第一位继续。
+        PlayerColor savedCurrent = loadedFromSave ? Settings.Get().Players.CurrentColor : PlayerColor.None;
+
         Settings.Get().Players.Init(info);
         Settings.Get().Players.SetStartGame();
+
+        if (loadedFromSave)
+        {
+            Settings.Get().Players.SetCurrentColor(savedCurrent);
+        }
 
         var humans = new List<PlayerColor>();
         var computers = new List<PlayerColor>();
@@ -127,22 +180,42 @@ public sealed class AdventureSession
         // 人类在前、电脑在后（参考的 SortPlayers()），两段内部保持颜色序。
         var session = new AdventureSession(world, [.. humans, .. computers], humans);
 
-        // 开局清一遍迷雾，而且对<b>每个</b>玩家都清（game_startgame.cpp:769-781）。
+        // 开局清一遍迷雾，而且对<b>每个</b>玩家都清（game_startgame.cpp:766-777）。读档时只在天数还是 1 时清。
         // 这不只是给人类看的：AI 的 Planner::ScanMap() 用 tile.isFog( color ) 过滤瓦片
         // （ai_planner_kingdom.cpp:430），只清人类的话电脑英雄在满屏大雾里找不到任何目标，
         // 回合空转、原地不动。参考在这里清的是英雄、城堡与矿场的周围（World::ClearFog）。
-        foreach (PlayerColor color in session._players)
+        if (!loadedFromSave || world.DayCount == 1)
         {
-            world.ClearFog(color);
+            foreach (PlayerColor color in session._players)
+            {
+                world.ClearFog(color);
+            }
         }
 
         // 参考在 world_loadmap.cpp 里给每位英雄装上侦察回调（开图），而「走到对象上之后做什么」的分岔在
         // Heroes::Action() 里按 GetKingdom().isControlAI() 做（heroes_action.cpp:3778-3785）。端口把这道分岔
         // 放到安装时：装了界面宿主的人类英雄装 HumanHeroMovementHandler（动作表照抄 heroes_action.cpp，要问
         // 玩家的点交给 World.HeroActionHost），没有宿主的仍只开图，电脑英雄装 AI 版。
+        // 读档同样要装：存档里没有处理器，不装的话英雄走到哪儿都动不了。
         foreach (Hero hero in world.Heroes)
         {
             AttachMovementHandler(world, hero);
+        }
+
+        if (loadedFromSave)
+        {
+            // skipTurns（game_startgame.cpp:818-832）：跳过当前色之前的玩家，从存档停下的那位继续。
+            int start = IndexOfColor(session._players, Settings.Get().Players.CurrentColor);
+
+            for (int index = 0; index < start; ++index)
+            {
+                session._acted[index] = true;
+            }
+
+            session._current = start;
+            session.BeginTurn(skipDayResourceUpdate: true);
+
+            return session;
         }
 
         world.NewDay();
@@ -150,6 +223,19 @@ public sealed class AdventureSession
         session.BeginTurn();
 
         return session;
+    }
+
+    private static int IndexOfColor(IReadOnlyList<PlayerColor> players, PlayerColor color)
+    {
+        for (int index = 0; index < players.Count; ++index)
+        {
+            if (players[index] == color)
+            {
+                return index;
+            }
+        }
+
+        return 0;
     }
 
     /// <summary>
@@ -436,16 +522,27 @@ public sealed class AdventureSession
     /// 焦点跟着回合走：轮到谁，焦点就是他的第一个英雄 —— 参考的 <c>_statusPanel.SetHero( ... )</c> 在
     /// 换人时也要重新挑一个，否则画面上会留着上一位玩家的英雄。
     /// </para>
+    /// <para>
+    /// 读档时 <paramref name="skipDayResourceUpdate"/> 为真：那位玩家的当天收入与事件在存档里已经结算过，
+    /// 参考的 <c>isLoadedFromSave</c> 分支也只调 <c>ActionBeforeTurn()</c>（<c>game_startgame.cpp:925-929</c>
+    /// 是电脑分支，人类分支从头到尾都没有这一句）。
+    /// </para>
     /// </remarks>
-    private void BeginTurn()
+    /// <param name="skipDayResourceUpdate">
+    /// Whether the day's income and events were already settled, which is what a loaded save sees.
+    /// </param>
+    private void BeginTurn(bool skipDayResourceUpdate = false)
     {
         KingdomRealm kingdom = Kingdom;
 
-        kingdom.ActionNewDayResourceUpdate(
-            _world.DayCount,
-            resourceType => _world.CountCapturedMines(resourceType, kingdom.Color),
-            _world.GetEventsDate(kingdom.Color),
-            isAiControlled: !kingdom.IsControlHuman);
+        if (!skipDayResourceUpdate)
+        {
+            kingdom.ActionNewDayResourceUpdate(
+                _world.DayCount,
+                resourceType => _world.CountCapturedMines(resourceType, kingdom.Color),
+                _world.GetEventsDate(kingdom.Color),
+                isAiControlled: !kingdom.IsControlHuman);
+        }
 
         kingdom.ActionBeforeTurn(_world);
 

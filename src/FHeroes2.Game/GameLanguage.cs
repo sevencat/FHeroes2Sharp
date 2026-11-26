@@ -18,7 +18,9 @@ namespace FHeroes2.Game;
 /// 未移植的两个：<c>getSupportedLanguages()</c>（<c>ui_language.cpp:114-160</c>）靠 <c>setGameLanguage()</c>
 /// 的返回值判断某语言的翻译是否存在，端口的翻译表在 App 层（<c>GameText.LoadAll</c>），Game 层拿不到，语言选择
 /// 已由 <c>LanguageSelectionDialog</c> 用 App 给出的清单实现；<c>updateAlphabet()</c>（<c>ui_language.cpp:291-311</c>）
-/// 要调 <c>Assets::updateLanguageDependentResources</c> 按代码页重建字体，属未移植的 <c>ui_font.cpp</c>。
+/// 的对应物是 <c>Assets::updateLanguageDependentResources</c>，即按代码页重建字体——字形生成已经搬了
+/// （<see cref="Gui.FontGlyphTable"/> 挑一份 <see cref="Gui.FontAlphabet"/> / <see cref="Gui.ButtonFont"/>），
+/// 缺的是「运行中换资材语言就重建一遍」这个入口。
 /// </para>
 /// </remarks>
 public static class GameLanguage
