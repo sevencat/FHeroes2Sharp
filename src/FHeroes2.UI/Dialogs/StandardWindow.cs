@@ -384,7 +384,106 @@ public sealed class StandardWindow
         return new Point(x, y);
     }
 
-    /// the tiled interior, the four borders with their dithered seams and, last of all, the shadow.
+    /// <summary>
+    /// Places a button made of given sprites inside <see cref="ActiveArea"/>, casts its shadow and draws
+    /// it, the <c>renderButton()</c> of <c>ui_window.cpp:433-444</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考按 <c>ICN</c> 编号取图，端口把两帧图直接递进来：这个仓库没有全局图形库，素材一律由调用方从
+    /// <see cref="GameAssets.Current"/> 里取好再传。
+    /// </para>
+    /// <para>
+    /// 顺序不能换：先按新尺寸定位，再画阴影（阴影用的是「释放态」的样子），最后画按钮本身。参考在这三步里
+    /// 都读写同一个 <c>_output</c>，所以按钮投在背景上的阴影与按钮的重叠处是阴影在下。
+    /// </para>
+    /// </remarks>
+    /// <param name="button">Button to place and draw.</param>
+    /// <param name="output">Frame the shadow and the button go into.</param>
+    /// <param name="released">Released look, frame 0 of the artwork.</param>
+    /// <param name="pressed">Pressed look, frame 1 of the artwork.</param>
+    /// <param name="offset">Distance from the edge or the centre, <c>offset</c> of the reference.</param>
+    /// <param name="padding">Which edge or corner to align to.</param>
+    /// <exception cref="ArgumentNullException">The button, the frame or a sprite is missing.</exception>
+    public void RenderButton(ButtonSprite button, PixelBuffer output, Sprite released, Sprite pressed,
+        Point offset, WindowPadding padding)
+    {
+        ArgumentNullException.ThrowIfNull(button);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(released);
+        ArgumentNullException.ThrowIfNull(pressed);
+
+        Point position = RenderPosition(offset, new Size(released.Width, released.Height), padding);
+
+        button.SetSprite(released, pressed);
+        button.SetPosition(position.X, position.Y);
+
+        ImageOps.AddGradientShadow(released, output, button.Area.Position, new Point(-5, 5));
+        button.Draw(output);
+    }
+
+    /// <summary>
+    /// Places the small OKAY and EXIT buttons in the bottom corners, the
+    /// <c>renderOkayCancelButtons()</c> of <c>ui_window.cpp:446-457</c>.
+    /// </summary>
+    /// <remarks>
+    /// 两个按钮都离边缘 20 像素、离底边 7 像素。参考各自按界面主题取 <c>BUTTON_SMALL_*</c>，端口由调用方递图。
+    /// </remarks>
+    /// <param name="okay">OKAY button, placed in the bottom left corner.</param>
+    /// <param name="cancel">EXIT button, placed in the bottom right corner.</param>
+    /// <param name="output">Frame the buttons go into.</param>
+    /// <param name="okayReleased">Released OKAY look.</param>
+    /// <param name="okayPressed">Pressed OKAY look.</param>
+    /// <param name="cancelReleased">Released EXIT look.</param>
+    /// <param name="cancelPressed">Pressed EXIT look.</param>
+    /// <exception cref="ArgumentNullException">A button, the frame or a sprite is missing.</exception>
+    public void RenderOkayCancelButtons(ButtonSprite okay, ButtonSprite cancel, PixelBuffer output,
+        Sprite okayReleased, Sprite okayPressed, Sprite cancelReleased, Sprite cancelPressed)
+    {
+        Point gapsFromEdges = new(20, 7);
+
+        RenderButton(okay, output, okayReleased, okayPressed, gapsFromEdges, WindowPadding.BottomLeft);
+        RenderButton(cancel, output, cancelReleased, cancelPressed, gapsFromEdges, WindowPadding.BottomRight);
+    }
+
+    /// <summary>
+    /// Builds a button whose plate is stretched around its label and places it, the
+    /// <c>renderTextAdaptedButtonSprite()</c> of <c>ui_window.cpp:459-474</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 尺寸来自 <see cref="ButtonFactory.GetTextAdaptedSprite"/>，也就是参考的 <c>getTextAdaptedSprite()</c>：
+    /// 文字多宽，板就多宽。编辑器那几个窗里的 SET SPELLS / RESTRICT 都走这条。
+    /// </para>
+    /// <para>
+    /// 阴影用的是刚生成的那块板，所以要在 <see cref="ButtonSprite.SetSprite"/> 之后、<see cref="ButtonBase.Draw"/>
+    /// 之前画；透明角要靠 <paramref name="background"/> 填上，否则阴影会从四个角漏出来。
+    /// </para>
+    /// </remarks>
+    /// <param name="button">Button to resize, place and draw.</param>
+    /// <param name="output">Frame the shadow and the button go into.</param>
+    /// <param name="text">Label of the button; <c>\n</c> starts a new line.</param>
+    /// <param name="offset">Distance from the edge or the centre, <c>offset</c> of the reference.</param>
+    /// <param name="padding">Which edge or corner to align to.</param>
+    /// <param name="isEvilInterface">Whether the gray plates and lettering are used.</param>
+    /// <param name="background">Texture for the transparent corners, usually the interior artwork.</param>
+    /// <exception cref="ArgumentNullException">The button, the frame or <paramref name="text"/> is missing.</exception>
+    public void RenderTextAdaptedButtonSprite(ButtonSprite button, PixelBuffer output, string text, Point offset,
+        WindowPadding padding, bool isEvilInterface = false, Sprite? background = null)
+    {
+        ArgumentNullException.ThrowIfNull(button);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(text);
+
+        (Sprite released, Sprite pressed) = ButtonFactory.GetTextAdaptedSprite(
+            text, isEvilInterface ? DialogButtonTemplate.Evil : DialogButtonTemplate.Good, background);
+
+        RenderButton(button, output, released, pressed, offset, padding);
+    }
+
+    /// <summary>
+    /// Draws the window: the corners, the tiled interior, the four borders with their dithered seams and,
+    /// last of all, the shadow.
     /// </summary>
     /// <param name="target">Indexed frame buffer of the scene.</param>
     /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>

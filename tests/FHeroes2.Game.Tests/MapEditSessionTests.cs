@@ -1,4 +1,4 @@
-using FHeroes2.Assets.Maps;
+﻿using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Editor;
@@ -181,14 +181,20 @@ public sealed class MapEditSessionTests
     {
         MapEditSession session = CreateSession();
 
+        // 用一个真物件而不是手搭的字节：橡皮按目录分组认物件，认不出的一格按参考的做法跳过。
+        Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.HasGroundPart);
+
+        session.SelectObject(preset);
+
         for (int y = 1; y <= 2; ++y)
         {
             for (int x = 1; x <= 2; ++x)
             {
-                session.Map.SetTile(x, y, Tile(Grass) with { ObjectType = Mp2ObjectType.TreasureChest, ObjectName1 = 7 });
+                Assert.True(session.PlaceObject(new Point(x, y)));
             }
         }
 
+        session.SetTool(EditorTool.Erase);
         session.SetBrushSize(BrushSize.Medium);
         Assert.True(session.EraseObject(new Point(1, 1)));
 
@@ -196,7 +202,11 @@ public sealed class MapEditSessionTests
         {
             for (int x = 1; x <= 2; ++x)
             {
-                Assert.Equal(Mp2ObjectType.None, session.Map.Tile(x, y).ObjectType);
+                Mp2TileInfo tile = session.Map.Tile(x, y);
+
+                Assert.Equal(Mp2ObjectType.None, tile.ObjectType);
+                Assert.False(tile.HasGroundObject);
+                Assert.False(tile.HasTopObject);
             }
         }
 
@@ -484,7 +494,7 @@ public sealed class MapEditSessionTests
         Mp2ObjectPreset preset = Mp2ObjectPresets.All.First(candidate => candidate.AddonCount > 0);
 
         Assert.True(session.SelectObject(preset));
-        Assert.Equal(EditorTool.Object, session.Tool);
+        Assert.Equal(EditorTool.LandscapeObjects, session.Tool);
         Assert.True(session.PlaceObject(new Point(1, 1)));
 
         Mp2TileInfo tile = session.Map.Tile(1, 1);
@@ -601,10 +611,10 @@ public sealed class MapEditSessionTests
         MapEditSession session = CreateSession();
 
         Assert.False(session.SetTool(EditorTool.Terrain));
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetTool((EditorTool)7));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetTool((EditorTool)9));
 
         session.CycleObject(1);
-        Assert.Equal(EditorTool.Object, session.Tool);
+        Assert.Equal(EditorTool.LandscapeObjects, session.Tool);
         Assert.Same(Mp2ObjectPresets.All[1], session.ObjectBrush);
 
         // Cycling wraps around in both directions.
@@ -787,3 +797,4 @@ public sealed class MapEditSessionTests
             Level2ObjectUid = 0,
         };
 }
+

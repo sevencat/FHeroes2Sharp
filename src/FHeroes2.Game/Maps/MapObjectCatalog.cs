@@ -44,6 +44,13 @@ public static partial class MapObjectCatalog
     /// </summary>
     private static readonly Dictionary<(Mp2ObjectIcnType IcnType, uint IcnIndex), ObjectPartInfo> ObjectInfoByIcn = [];
 
+    /// <summary>
+    /// The group that registered a given ICN image, built in the same pass and with the same "first wins" rule as
+    /// <see cref="ObjectInfoByIcn"/>. The editor needs it to name what a tile holds: a tile stores an ICN type and a
+    /// sprite index, not a group.
+    /// </summary>
+    private static readonly Dictionary<(Mp2ObjectIcnType IcnType, uint IcnIndex), ObjectGroup> GroupByIcn = [];
+
     static MapObjectCatalog() => PopulateObjectData();
 
     /// <summary>
@@ -100,6 +107,29 @@ public static partial class MapObjectCatalog
     /// <returns>The object type of the part, or <see cref="Mp2ObjectType.None"/>.</returns>
     public static Mp2ObjectType GetObjectTypeByIcn(Mp2ObjectIcnType icnType, uint icnIndex) =>
         GetObjectPartByIcn(icnType, icnIndex)?.ObjectType ?? Mp2ObjectType.None;
+
+    /// <summary>
+    /// The editor group that draws a given ICN image. A tile stores the ICN type and the sprite index of its two
+    /// object parts and nothing else, so this is how the editor names what is on it — the eraser asks it which group
+    /// a tile belongs to, and the reference asks the same question of its object records.
+    /// </summary>
+    /// <param name="icnType">ICN resource of the part.</param>
+    /// <param name="icnIndex">Sprite index inside the resource.</param>
+    /// <returns>The group of the first object that registered the image, or <see cref="ObjectGroup.None"/>.</returns>
+    public static ObjectGroup GetObjectGroupByIcn(Mp2ObjectIcnType icnType, uint icnIndex) =>
+        GroupByIcn.TryGetValue((icnType, icnIndex), out ObjectGroup group) ? group : ObjectGroup.None;
+
+    /// <summary>The group of the ground part of a tile, <see cref="ObjectGroup.None"/> when it has no known part.</summary>
+    /// <param name="tile">Tile to look at.</param>
+    /// <returns>The group of the part drawn at ground level.</returns>
+    public static ObjectGroup GetGroundGroup(Mp2TileInfo tile) =>
+        tile.HasGroundObject ? GetObjectGroupByIcn(tile.GroundIcnType, tile.BottomIcnImageIndex) : ObjectGroup.None;
+
+    /// <summary>The group of the top part of a tile, <see cref="ObjectGroup.None"/> when it has no known part.</summary>
+    /// <param name="tile">Tile to look at.</param>
+    /// <returns>The group of the part drawn on the top level.</returns>
+    public static ObjectGroup GetTopGroup(Mp2TileInfo tile) =>
+        tile.HasTopObject ? GetObjectGroupByIcn(tile.TopIcnType, tile.TopIcnImageIndex) : ObjectGroup.None;
 
     /// <summary>
     /// Tile offsets that an object occupies, <c>getGroundLevelOccupiedTileOffset</c>: only parts on the
@@ -195,18 +225,22 @@ public static partial class MapObjectCatalog
 
         PopulateExtraBoatDirections(ObjectData[(int)ObjectGroup.MapExtras]);
 
-        foreach (List<ObjectInfo> objects in ObjectData)
+        for (int group = 0; group < ObjectData.Length; ++group)
         {
-            foreach (ObjectInfo objectInfo in objects)
+            ObjectGroup groupId = (ObjectGroup)group;
+
+            foreach (ObjectInfo objectInfo in ObjectData[group])
             {
                 foreach (LayeredObjectPartInfo part in objectInfo.GroundLevelParts)
                 {
                     ObjectInfoByIcn.TryAdd((part.IcnType, part.IcnIndex), part);
+                    GroupByIcn.TryAdd((part.IcnType, part.IcnIndex), groupId);
                 }
 
                 foreach (ObjectPartInfo part in objectInfo.TopLevelParts)
                 {
                     ObjectInfoByIcn.TryAdd((part.IcnType, part.IcnIndex), part);
+                    GroupByIcn.TryAdd((part.IcnType, part.IcnIndex), groupId);
                 }
             }
         }

@@ -47,6 +47,21 @@ public sealed class StatusBar
     public void SetRoi(Rect roi) => _roi = roi;
 
     /// <summary>
+    /// Forgets what was painted last so that the next <see cref="ShowMessage"/> repaints even an unchanged
+    /// message.
+    /// </summary>
+    /// <remarks>
+    /// 参考的状态栏是贴在画面上的活动物件，只有 <c>updateMessage()</c> 自己会改那块像素，所以记住上一条消息就够了。
+    /// 端口没有这一层：调用方每帧整块重绘窗口，状态栏底下的 <c>CASLBAR</c> 也被重画一遍，此时缓存必须作废，
+    /// 否则同一条消息第二次就画不出来。
+    /// </remarks>
+    public void Reset()
+    {
+        _previousMessage = string.Empty;
+        _previousMessageRoi = Rect.Empty;
+    }
+
+    /// <summary>
     /// Paints a message and reports what has to be redrawn, <c>StatusBar::ShowMessage()</c> (<c>statusbar.cpp:70-78</c>).
     /// </summary>
     /// <param name="message">The message.</param>

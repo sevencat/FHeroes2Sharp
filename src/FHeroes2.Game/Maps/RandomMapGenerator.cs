@@ -30,13 +30,36 @@ public static class RandomMapGenerator
     /// <returns>The map, or <see langword="null"/> when the configuration or the size cannot be used.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="config"/> is <see langword="null"/>.</exception>
     public static Mp2Map? Generate(
-        RandomMapConfig config, int width, int height, out RandomMapTerrain? terrain)
+        RandomMapConfig config, int width, int height, out RandomMapTerrain? terrain) =>
+        Generate(config, width, height, out terrain, out _);
+
+    /// <summary>
+    /// Generates a map and reports the seed it actually used, which is what names the saved file.
+    /// </summary>
+    /// <param name="config">The configuration the map is generated from.</param>
+    /// <param name="width">Edge length of the map.</param>
+    /// <param name="height">Edge length of the map.</param>
+    /// <param name="terrain">
+    /// The laid out terrain, for the caller's logging, or <see langword="null"/> when nothing was generated.
+    /// </param>
+    /// <param name="seed">
+    /// The seed that was used: the configured one, or the one drawn in its place when the configuration left it at
+    /// <c>0</c>.
+    /// </param>
+    /// <returns>The map, or <see langword="null"/> when the configuration or the size cannot be used.</returns>
+    /// <remarks>
+    /// 种子要单独回报，因为地图名字段只有 16 字节（ADR-283）：<c>Random map 20261126</c> 存下来只剩 <c>Random map 2026</c>，
+    /// 从名字里读回去会读错。存档用它命名文件。
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="config"/> is <see langword="null"/>.</exception>
+    public static Mp2Map? Generate(
+        RandomMapConfig config, int width, int height, out RandomMapTerrain? terrain, out uint seed)
     {
         ArgumentNullException.ThrowIfNull(config);
 
         terrain = null;
 
-        uint seed = config.Seed > 0 ? (uint)config.Seed : (uint)Rand.Get(999999);
+        seed = config.Seed > 0 ? (uint)config.Seed : (uint)Rand.Get(999999);
 
         GameLog.Info($"Generating a random map with seed {seed}, {width}x{height} tiles.");
 

@@ -597,6 +597,119 @@ public static class RandomMapObjectWriter
     private static bool WithinMap(Mp2Map map, in Point point) =>
         point.X >= 0 && point.Y >= 0 && point.X < map.Width && point.Y < map.Height;
 
+    /// <summary>
+    /// Builds the tile and the add-on chain a catalogue object would occupy, without writing anything.
+    /// </summary>
+    /// <param name="info">The catalogue object.</param>
+    /// <param name="template">The tile of the anchor, with its two sprites and the object type.</param>
+    /// <param name="addons">The extra pieces of the object, in catalogue order.</param>
+    /// <returns><see langword="false"/> when the object has no part at all.</returns>
+    /// <remarks>
+    /// <para>
+    /// 编辑器要的是「这件物件单独放在一张空地上长什么样」，也就是 <see cref="TryWrite"/> 在空瓦片上会写出来的东西。两者
+    /// 用同一套 <see cref="Collect"/> 与面片换算，所以编辑器摆出的物件与生成器摆出的完全一致——少写一份换算表，
+    /// 也少一处对不齐的机会。
+    /// </para>
+    /// <para>
+    /// UID 一律写 <c>0</c>：模板只是形状，真正的编号由落子时领。地形图索引也是 0，落子时用的是目标格自己的地面。
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="info"/> is <see langword="null"/>.</exception>
+    public static bool TryBuildTemplate(
+        ObjectInfo info, out Mp2TileInfo template, out IReadOnlyList<Mp2AddonInfo> addons)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        template = default;
+        addons = [];
+
+        if (info.IsEmpty)
+        {
+            return false;
+        }
+
+        List<GroundPiece> ground = [];
+        List<TopPiece> top = [];
+        List<Mp2AddonInfo> chain = [];
+
+        // 锚点那一格的面片进记录本身，其余格子的面片按目录顺序接成附加链。
+        foreach (TileCells cell in Collect(new Point(0, 0), info))
+        {
+            bool isAnchor = cell.Point.X == 0 && cell.Point.Y == 0;
+
+            foreach (LayeredObjectPartInfo part in cell.Ground)
+            {
+                GroundPiece piece = new(part.LayerType, part.IcnType, (byte)part.IcnIndex, 0, part.ObjectType);
+
+                if (isAnchor)
+                {
+                    ground.Add(piece);
+                }
+                else
+                {
+                    chain.Add(GroundAddon(piece));
+                }
+            }
+
+            foreach (ObjectPartInfo part in cell.Top)
+            {
+                TopPiece piece = new(part.IcnType, (byte)part.IcnIndex, 0, part.ObjectType);
+
+                if (isAnchor)
+                {
+                    top.Add(piece);
+                }
+                else
+                {
+                    chain.Add(TopAddon(piece));
+                }
+            }
+        }
+
+        if (ground.Count == 0 && top.Count == 0)
+        {
+            return false;
+        }
+
+        ground.Sort((left, right) => left.Layer.CompareTo(right.Layer));
+
+        GroundPiece? mainGround = ground.Count > 0 ? ground[0] : null;
+        TopPiece? mainTop = top.Count > 0 ? top[0] : null;
+
+        // 锚点那一格剩下的面片也要进链，否则多部件的物件会缺口。
+        for (int index = 1; index < ground.Count; ++index)
+        {
+            chain.Add(GroundAddon(ground[index]));
+        }
+
+        for (int index = 1; index < top.Count; ++index)
+        {
+            chain.Add(TopAddon(top[index]));
+        }
+
+        uint metadata = MetadataOf(info) ?? 0;
+
+        template = new Mp2TileInfo
+        {
+            TerrainImageIndex = 0,
+            ObjectName1 = mainGround is { } written ? PackIcnType(written.Icn) : (byte)0,
+            BottomIcnImageIndex = mainGround is { } bottom ? bottom.Index : Mp2TileInfo.EmptyImageIndex,
+            Quantity1 = (byte)((mainGround is { } layer ? (byte)layer.Layer : 0) | PackMetadataLow(metadata)),
+            Quantity2 = PackMetadataHigh(metadata),
+            ObjectName2 = mainTop is { } upper ? PackIcnType(upper.Icn) : (byte)0,
+            TopIcnImageIndex = mainTop is { } topIndex ? topIndex.Index : Mp2TileInfo.EmptyImageIndex,
+            TerrainFlags = 0,
+            ObjectType = DecideObjectType(default, ground, top),
+            NextAddonIndex = 0,
+            Level1ObjectUid = 0,
+            Level2ObjectUid = 0,
+        };
+
+        addons = chain;
+
+        return true;
+    }
+
     /// <summary>Whether a tile already carries an action object, the first guard of <c>putObjectOnMap()</c>.</summary>
     /// <param name="map">The map, needed for the add-on chain.</param>
     /// <param name="tile">The tile to test.</param>

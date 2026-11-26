@@ -43,6 +43,14 @@ namespace FHeroes2.App.Scenes;
 /// </para>
 ///
 /// <para>
+/// The eraser deletes eleven kinds of object, the way the erase page of the reference's panel does: the
+/// page lists them as check marks and a click on one turns that kind on or off, so an author can clear
+/// the roads and keep the trees. Every kind starts checked, and a tile whose part belongs to no
+/// catalogue group is left alone, which is what the reference does with objects it cannot name. See
+/// <see cref="EditorEraseType"/> for the bits and <see cref="MapEditSession.EraseTypes"/> for the state.
+/// </para>
+///
+/// <para>
 /// The minimap in the top right corner is the radar of the reference and takes the pointer the same
 /// way: a press on it centres the map on the tile under the pointer and keeps centring while the
 /// button is held (one branch for the click and for the drag, as in
@@ -688,6 +696,12 @@ public sealed class EditorScene : IScene
             return false;
         }
 
+        // 细节仪器不走笔画：它的按下与松开要么开一个物件窗口，要么搬一件东西，中间不改编地图。
+        if (_edits.Tool == EditorTool.Detail)
+        {
+            return PressDetail(down);
+        }
+
         if (down)
         {
             _painting = true;
@@ -699,6 +713,52 @@ public sealed class EditorScene : IScene
         _painting = false;
 
         if (!_edits.EndStroke())
+        {
+            return false;
+        }
+
+        RebuildMinimap();
+        return true;
+    }
+
+    /// <summary>
+    /// Runs the left button of the detail instrument, which neither paints a ground nor keeps a stroke
+    /// open (<c>editor_interface.cpp:1675-1780</c> and <c>2906-2935</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 三个模式就是参考的三条路：编辑模式左键点在有物件的格子上打开窗；移动与复制都是一按一放，按下用
+    /// <see cref="MapEditSession.GrabObject"/> 记下格子，松开用 <see cref="MapEditSession.ReleaseObject"/> 落子。
+    /// 一格的地面层与顶层可以分属两个物件，参考也是按「这一格里有没有东西」判定，端口照此。
+    /// </para>
+    /// <para>
+    /// 端口的物件属性窗还没移植（城堡、事件等窗口在后面的 issue 里），编辑模式打开的是物件信息框：入口与时机相同，
+    /// 只是内容少一层，等属性窗落地后再接进来。
+    /// </para>
+    /// </remarks>
+    /// <param name="down">Whether the left button is now held.</param>
+    /// <returns>Whether the map changed.</returns>
+    private bool PressDetail(bool down)
+    {
+        if (_edits.DetailMode == EditorDetailMode.Editing)
+        {
+            if (!down || _editor.HoverTile is not { } tile)
+            {
+                return false;
+            }
+
+            Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
+
+            return (info.HasGroundObject || info.HasTopObject) && ShowObjectInfo(tile);
+        }
+
+        if (down)
+        {
+            _edits.GrabObject(_editor.HoverTile);
+            return false;
+        }
+
+        if (!_edits.ReleaseObject(_editor.HoverTile))
         {
             return false;
         }
@@ -789,18 +849,12 @@ public sealed class EditorScene : IScene
             return EditorPanelHit.None;
         }
 
-        EditorPanelHit hit = _panelView.HitTest(screen, _edits.Tool);
+        EditorPanelHit hit = _panelView.HitTest(screen, PanelState);
 
         switch (hit.Kind)
         {
             case EditorPanelHitKind.Tool:
-                // The second row of instruments is drawn but not ported: clicking one of those
-                // buttons keeps the tool that is in use, as the reference would if the instrument
-                // had nothing to paint with.
-                if (EditorPanel.ToolAt(hit.Index) is { } tool)
-                {
-                    _edits.SetTool(tool);
-                }
+                _edits.SetTool(EditorPanel.ToolAt(hit.Index));
 
                 break;
 
@@ -808,12 +862,24 @@ public sealed class EditorScene : IScene
                 _edits.SetBrush(EditorPanel.Grounds[hit.Index]);
                 break;
 
+            case EditorPanelHitKind.BrushKind:
+                _edits.SelectBrushKind(hit.Index);
+                break;
+
             case EditorPanelHitKind.Object:
-                _edits.SelectObject(Mp2ObjectPresets.All[hit.Index]);
+                _edits.SelectBrushObject(hit.Index);
                 break;
 
             case EditorPanelHitKind.BrushSize:
                 _edits.SetBrushSize((BrushSize)hit.Index);
+                break;
+
+            case EditorPanelHitKind.EraseType:
+                _edits.ToggleEraseType(EditorEraseTypes.Buttons[hit.Index]);
+                break;
+
+            case EditorPanelHitKind.DetailMode:
+                _edits.SetDetailMode(EditorDetailModes.All[hit.Index]);
                 break;
 
             case EditorPanelHitKind.System:
@@ -827,6 +893,11 @@ public sealed class EditorScene : IScene
 
         return hit;
     }
+
+    /// <summary>What the instrument panel draws and accepts a click on, read off the edit session.</summary>
+    private EditorPanelState PanelState => new(
+        _edits.Tool, _edits.Brush, _edits.BrushSize, _edits.BrushKinds, _edits.BrushKind, _edits.BrushObjects,
+        _edits.BrushObjectIndex, _edits.EraseTypes, _edits.DetailMode);
 
     /// <summary>
     /// Runs one of the six system buttons of the panel. Undo and redo are the two that the port can
@@ -1140,14 +1211,7 @@ public sealed class EditorScene : IScene
                 ImageOps.FillRect(_frame.Pixels, _panel, _dark);
             }
 
-            _panelView.Draw(
-                _frame.Pixels,
-                _fonts.Small,
-                _edits.Tool,
-                _edits.Brush,
-                _edits.ObjectBrush,
-                _edits.BrushSize,
-                _bright);
+            _panelView.Draw(_frame.Pixels, _fonts.Small, PanelState, _bright);
 
             return;
         }
@@ -1208,8 +1272,13 @@ public sealed class EditorScene : IScene
 
         Line(_edits.Tool switch
         {
-            EditorTool.Object => FormattableString.Invariant($"object {_edits.ObjectBrush.Name}"),
             EditorTool.Erase => "erase",
+            EditorTool.Detail => FormattableString.Invariant($"detail {EditorDetailModes.Name(_edits.DetailMode)}"),
+            EditorTool.Stream => "stream",
+            EditorTool.Road => "road",
+            EditorTool.LandscapeObjects or EditorTool.AdventureObjects or EditorTool.KingdomObjects
+                or EditorTool.Monsters => FormattableString.Invariant(
+                    $"object {_edits.SelectedBrushObject?.Name ?? "none"}"),
             _ => FormattableString.Invariant($"ground {_edits.Brush}"),
         });
 

@@ -221,4 +221,24 @@ public static class OptionItem
     public static void DrawLanguage(
         PixelBuffer display, in Rect optionArea, Sprite icon, string languageName, int textMaxWidth) =>
         Draw(display, optionArea, icon, "Language", languageName, textMaxWidth);
+
+    /// <summary>Object animation option, <c>drawAnimationOptions()</c> of the editor's options.</summary>
+    /// <param name="display">Frame buffer to draw into.</param>
+    /// <param name="optionArea">Area of the icon.</param>
+    /// <param name="icon"><c>ESPANEL</c> frame 1 when on, 0 when off.</param>
+    /// <param name="isEnabled">Whether objects are animated.</param>
+    /// <param name="textMaxWidth">Widest line of the texts.</param>
+    public static void DrawAnimation(
+        PixelBuffer display, in Rect optionArea, Sprite icon, bool isEnabled, int textMaxWidth) =>
+        Draw(display, optionArea, icon, "Animation", isEnabled ? "On" : "Off", textMaxWidth);
+
+    /// <summary>Passability overlay option, <c>drawPassabilityOptions()</c> of the editor's options.</summary>
+    /// <param name="display">Frame buffer to draw into.</param>
+    /// <param name="optionArea">Area of the icon.</param>
+    /// <param name="icon"><c>ESPANEL</c> frame 5 when shown, 4 when hidden.</param>
+    /// <param name="isEnabled">Whether the passability overlay is shown.</param>
+    /// <param name="textMaxWidth">Widest line of the texts.</param>
+    public static void DrawPassability(
+        PixelBuffer display, in Rect optionArea, Sprite icon, bool isEnabled, int textMaxWidth) =>
+        Draw(display, optionArea, icon, "Passability", isEnabled ? "Show" : "Hide", textMaxWidth);
 }

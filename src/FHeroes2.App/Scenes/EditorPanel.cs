@@ -10,6 +10,10 @@ using FHeroes2.UI.Dialogs;
 
 namespace FHeroes2.App.Scenes;
 
+using FHeroes2.Assets.Maps;
+using FHeroes2.Game.Editor;
+using FHeroes2.Game.Maps;
+
 /// <summary>What a click on the editor panel hit.</summary>
 internal enum EditorPanelHitKind
 {
@@ -22,11 +26,22 @@ internal enum EditorPanelHitKind
     /// <summary>One of the nine terrain buttons; the index is the entry of <see cref="EditorPanel.Grounds"/>.</summary>
     Ground,
 
-    /// <summary>One of the object presets; the index is the entry of <see cref="Mp2ObjectPresets.All"/>.</summary>
+    /// <summary>One of the brush kinds of the current instrument; the index is the entry of <see cref="EditorPanelState.BrushKinds"/>.</summary>
+    BrushKind,
+
+    /// <summary>One of the objects of the picked brush kind; the index is the entry of <see cref="EditorPanelState.BrushObjects"/>.</summary>
     Object,
 
     /// <summary>One of the four brush size buttons; the index is the <see cref="BrushSize"/>.</summary>
     BrushSize,
+
+    /// <summary>
+    /// One of the eleven cells of the erase page; the index is the entry of <see cref="EditorEraseTypes.Buttons"/>.
+    /// </summary>
+    EraseType,
+
+    /// <summary>One of the three cells of the detail page; the index is the entry of <see cref="EditorDetailModes.All"/>.</summary>
+    DetailMode,
 
     /// <summary>One of the six system buttons; the index is the entry of <see cref="EditorSystemButton"/>.</summary>
     System,
@@ -67,6 +82,29 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 }
 
 /// <summary>
+/// What the panel draws and what it accepts a click on: the state of the editor the bay mirrors.
+/// </summary>
+/// <param name="Tool">The instrument in use, which the pressed button and the picker follow.</param>
+/// <param name="Brush">The ground of the terrain brush.</param>
+/// <param name="BrushSize">The size of the terrain and eraser brushes.</param>
+/// <param name="BrushKinds">The brush kinds the instrument offers, empty for the instruments that place no object.</param>
+/// <param name="BrushKind">The picked brush kind, <c>-1</c> while the kind page is still open.</param>
+/// <param name="BrushObjects">The objects of the picked kind, empty while no kind is picked.</param>
+/// <param name="BrushObject">The picked object, <c>-1</c> while the object page is still open.</param>
+/// <param name="EraseTypes">The types the eraser deletes, the checkboxes of its page.</param>
+/// <param name="DetailMode">What a click of the detail instrument does, the three buttons of its page.</param>
+internal readonly record struct EditorPanelState(
+    EditorTool Tool,
+    MapGround Brush,
+    BrushSize BrushSize,
+    IReadOnlyList<ObjectGroup> BrushKinds,
+    int BrushKind,
+    IReadOnlyList<Mp2ObjectPreset> BrushObjects,
+    int BrushObject,
+    EditorEraseType EraseTypes,
+    EditorDetailMode DetailMode);
+
+/// <summary>
 /// The instrument panel of the map editor, the counterpart of <c>Editor::EditorPanel</c>: three rows of
 /// tool buttons, the picker below them, the row of brush sizes under the picker and the two rows of
 /// system buttons at the bottom.
@@ -75,10 +113,11 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 /// <remarks>
 /// <para>
 /// The reference has nine instruments (terrain, landscape objects, detail, adventure objects, kingdom
-/// objects, monsters, stream, road, erase). This port only carries the terrain, the landscape objects
-/// and the eraser, but all nine buttons are drawn in their cells, with the artwork the reference
-/// assembles for the five that the game does not have (<see cref="EditorButtonSet"/>); clicking one of
-/// the five that are not ported does not change the tool.
+/// objects, monsters, stream, road, erase), and all nine buttons are drawn in their cells, with the
+/// artwork the reference assembles for the five the game does not ship (<see cref="EditorButtonSet"/>).
+/// Every cell selects its instrument; what the page below shows is the instrument's own: the terrain
+/// grid, the two level object page of the four object instruments, the eleven erase types, or the two
+/// lines of a hint for the detail brush and the two that lay a path.
 /// </para>
 /// <para>
 /// The picker is the one of the reference down to the pixel offsets: nine 27x27 images cut out of
@@ -97,8 +136,9 @@ internal readonly record struct EditorPanelHit(EditorPanelHitKind Kind, int Inde
 /// buttons, as it does there.
 /// </para>
 /// <para>
-/// The object picker has no artwork to reuse: the nine presets are entries of the map format, not
-/// icons. It lists them by name, which is what the panel shows until an object catalogue exists.
+/// The two level object page of the reference is a set of icons; this port has none, so it lists the
+/// groups and then the objects of the picked group by name — the names are entries of the map format,
+/// not pictures, and a name is enough to tell "a mine" from "a treasure".
 /// </para>
 /// </remarks>
 internal sealed class EditorPanel
@@ -117,6 +157,12 @@ internal sealed class EditorPanel
     /// <c>StandardWindow::renderBackgroundImage()</c> in <c>makeInstrumentPanelBackground()</c>.
     /// </summary>
     public const string BackgroundFileName = "STONEBAK.ICN";
+
+    /// <summary>
+    /// File the check mark of a selected erase type comes from, the <c>TOWNWIND</c> frame 11 the reference blits over
+    /// a checked cell (<c>editor_interface_panel.cpp:628</c>).
+    /// </summary>
+    public const string EraseMarkFileName = "TOWNWIND.ICN";
 
     /// <summary>The nine grounds of the picker, in the order the reference draws them.</summary>
     public static readonly IReadOnlyList<MapGround> Grounds =
@@ -170,24 +216,56 @@ internal sealed class EditorPanel
 
     private int BrushTop => Math.Min(PickerHeight - 27, 135);
 
+    // The erase page: eleven 27x27 icons four to a row with a 33 pixel step, a 30 pixel row step and the
+    // last row shifted right by half a step, i.e. the geometry of the reference's _eraseButtonsRect
+    // (editor_interface_panel.cpp:436-447, the steps of a 480 pixel display).
+    private const int EraseLeft = 9;
+    private const int EraseTop = 24;
+    private const int EraseStepX = 33;
+    private const int EraseStepY = 30;
+    private const int EraseCellSize = 27;
+    private const int EraseColumns = 4;
+
+    /// <summary>
+    /// The icons of the erase page, in the order of <see cref="EditorEraseTypes.Buttons"/>: <c>EDITPANL</c> frames 6,
+    /// 7, 8, 10, 13, 16 and 17, and four 27x27 crops of frame 1 for the towns, the pickable adventure objects, the
+    /// monsters and the heroes (<c>editor_interface_panel.cpp:600-627</c>). A crop of <c>(0, 0)</c> means the frame is
+    /// the icon itself.
+    /// </summary>
+    private static readonly (int Frame, int CropX, int CropY)[] EraseIconSources =
+    [
+        (6, 0, 0),
+        (7, 0, 0),
+        (8, 0, 0),
+        (10, 0, 0),
+        (13, 0, 0),
+        (1, 44, 68),
+        (1, 102, 96),
+        (1, 73, 68),
+        (1, 102, 68),
+        (16, 0, 0),
+        (17, 0, 0),
+    ];
+
     private const int RowLeft = 6;
     private const int RowTop = 4;
     private const int RowHeight = 13;
 
     /// <summary>
-    /// The nine instrument buttons in the cells the reference lays them out in: the tool each one
-    /// selects, or <see langword="null"/> for the five that are drawn but not ported.
+    /// The nine instrument buttons in the cells the reference lays them out in, in the reference's own order
+    /// (<c>editor/editor_interface_panel.h:171-186</c>): the order is the order of the artwork, so a cell and the
+    /// instrument it selects must not be reordered independently.
     /// </summary>
-    private static readonly (EditorTool? Tool, int Column, int Row, int Frame)[] Tools =
+    private static readonly (EditorTool Tool, int Column, int Row, int Frame)[] Tools =
     [
         (EditorTool.Terrain, 0, 0, EditorButtonSet.TerrainFrame),
-        (EditorTool.Object, 1, 0, EditorButtonSet.LandscapeObjectsFrame),
-        (null, 2, 0, EditorButtonSet.DetailFrame),
-        (null, 0, 1, EditorButtonSet.AdventureObjectsFrame),
-        (null, 1, 1, EditorButtonSet.KingdomObjectsFrame),
-        (null, 2, 1, EditorButtonSet.MonstersFrame),
-        (null, 0, 2, EditorButtonSet.StreamFrame),
-        (null, 1, 2, EditorButtonSet.RoadFrame),
+        (EditorTool.LandscapeObjects, 1, 0, EditorButtonSet.LandscapeObjectsFrame),
+        (EditorTool.Detail, 2, 0, EditorButtonSet.DetailFrame),
+        (EditorTool.AdventureObjects, 0, 1, EditorButtonSet.AdventureObjectsFrame),
+        (EditorTool.KingdomObjects, 1, 1, EditorButtonSet.KingdomObjectsFrame),
+        (EditorTool.Monsters, 2, 1, EditorButtonSet.MonstersFrame),
+        (EditorTool.Stream, 0, 2, EditorButtonSet.StreamFrame),
+        (EditorTool.Road, 1, 2, EditorButtonSet.RoadFrame),
         (EditorTool.Erase, 2, 2, EditorButtonSet.EraseFrame),
     ];
 
@@ -207,14 +285,28 @@ internal sealed class EditorPanel
     private readonly Sprite _picker;
     private readonly Sprite? _selection;
     private readonly Sprite? _background;
+    private readonly IReadOnlyList<(Sprite Sprite, Rect Source)?> _eraseIcons;
+    private readonly Sprite? _eraseMark;
+    private readonly IReadOnlyList<(Sprite Sprite, Rect Source)?> _detailIcons;
 
-    private EditorPanel(Rect area, EditorButtonSet buttons, Sprite picker, Sprite? selection, Sprite? background)
+    private EditorPanel(
+        Rect area,
+        EditorButtonSet buttons,
+        Sprite picker,
+        Sprite? selection,
+        Sprite? background,
+        IReadOnlyList<(Sprite Sprite, Rect Source)?> eraseIcons,
+        Sprite? eraseMark,
+        IReadOnlyList<(Sprite Sprite, Rect Source)?> detailIcons)
     {
         _area = area;
         _buttons = buttons;
         _picker = picker;
         _selection = selection;
         _background = background;
+        _eraseIcons = eraseIcons;
+        _eraseMark = eraseMark;
+        _detailIcons = detailIcons;
     }
 
     /// <summary>The rectangle the panel draws into, <see cref="EditorScene.PanelArea"/>.</summary>
@@ -254,7 +346,97 @@ internal sealed class EditorPanel
             ? stone.Sprites[0]
             : null;
 
-        return new EditorPanel(area, buttons, pickers.Sprites[0], selection, background);
+        // The mark the reference blits over a checked erase type, TOWNWIND frame 11. Without it the checked cells are
+        // outlined instead, which reads the same on the stone texture.
+        Sprite? mark = assets.TryReadIcn(EraseMarkFileName) is { Sprites.Count: > 11 } wind
+            ? wind.Sprites[11]
+            : null;
+
+        return new EditorPanel(
+            area,
+            buttons,
+            pickers.Sprites[0],
+            selection,
+            background,
+            CreateEraseIcons(pickers.Sprites),
+            mark,
+            CreatePickedIcons(pickers.Sprites, DetailModeFrames, CellSize));
+    }
+
+    /// <summary>
+    /// The frames of <c>EDITPANL</c> the three detail modes are drawn from, in the order of
+    /// <see cref="EditorDetailModes.All"/>: the edit, the move and the copy icon, the
+    /// <c>i + 18</c> of <c>editor_interface_panel.cpp:525</c>.
+    /// </summary>
+    private static readonly int[] DetailModeFrames = [18, 19, 20];
+
+    /// <summary>
+    /// Reads whole frames of <c>EDITPANL</c>: the icons of the pages the reference draws straight
+    /// from the sheet. A frame the archive does not have stays <see langword="null"/>, so a partial
+    /// sheet still gives a usable page.
+    /// </summary>
+    /// <param name="pickers">The frames of <c>EDITPANL</c>.</param>
+    /// <param name="frames">The frames to read, in the order of the page.</param>
+    /// <param name="size">Side of the cell the frame must fit into.</param>
+    /// <returns>One entry per frame, in the same order.</returns>
+    private static IReadOnlyList<(Sprite Sprite, Rect Source)?> CreatePickedIcons(
+        IReadOnlyList<Sprite> pickers,
+        IReadOnlyList<int> frames,
+        int size)
+    {
+        (Sprite Sprite, Rect Source)?[] icons = new (Sprite Sprite, Rect Source)?[frames.Count];
+
+        for (int i = 0; i < frames.Count; ++i)
+        {
+            if (frames[i] < 0 || frames[i] >= pickers.Count)
+            {
+                continue;
+            }
+
+            Sprite sprite = pickers[frames[i]];
+            Rect source = sprite.Image.Bounds;
+
+            if (source.Width == size && source.Height == size)
+            {
+                icons[i] = (sprite, source);
+            }
+        }
+
+        return icons;
+    }
+
+    /// <summary>
+    /// Reads the eleven icons of the erase page out of <c>EDITPANL</c>. An entry the archive cannot provide stays
+    /// <see langword="null"/> and that cell is drawn empty, so a partial sheet still gives a usable page.
+    /// </summary>
+    /// <param name="pickers">The frames of <c>EDITPANL</c>.</param>
+    /// <returns>One entry per <see cref="EditorEraseTypes.Buttons"/>, in the same order.</returns>
+    private static IReadOnlyList<(Sprite Sprite, Rect Source)?> CreateEraseIcons(IReadOnlyList<Sprite> pickers)
+    {
+        (Sprite Sprite, Rect Source)?[] icons = new (Sprite Sprite, Rect Source)?[EraseIconSources.Length];
+
+        for (int i = 0; i < EraseIconSources.Length; ++i)
+        {
+            (int frame, int cropX, int cropY) = EraseIconSources[i];
+
+            if (frame < 0 || frame >= pickers.Count)
+            {
+                continue;
+            }
+
+            Sprite sprite = pickers[frame];
+
+            Rect source = cropX == 0 && cropY == 0
+                ? sprite.Image.Bounds
+                : new Rect(cropX, cropY, EraseCellSize, EraseCellSize);
+
+            if (source.Right <= sprite.Width && source.Bottom <= sprite.Height)
+            {
+                icons[i] = (sprite, source);
+            }
+        }
+
+        return icons;
     }
 
     /// <summary>
@@ -271,10 +453,7 @@ internal sealed class EditorPanel
     public void Draw(
         PixelBuffer target,
         IGlyphSource font,
-        EditorTool tool,
-        MapGround brush,
-        Mp2ObjectPreset objectBrush,
-        BrushSize size,
+        EditorPanelState state,
         byte highlight)
     {
         if (_background is not null)
@@ -285,11 +464,11 @@ internal sealed class EditorPanel
             ImageOps.BlitSprite(target, new Point(_area.X, _area.Y), _background);
         }
 
-        foreach ((EditorTool? item, int column, int row, int frame) in Tools)
+        foreach ((EditorTool item, int column, int row, int frame) in Tools)
         {
             // The frame pairs of EDITBTNS are (released, pressed): the tool in use shows its pressed
             // frame, the others their released one.
-            int index = frame + (item is not null && item == tool ? 1 : 0);
+            int index = frame + (item == state.Tool ? 1 : 0);
 
             if (_buttons[index] is { } button)
             {
@@ -302,20 +481,40 @@ internal sealed class EditorPanel
 
         DrawPickerBackground(target);
 
-        switch (tool)
+        switch (state.Tool)
         {
             case EditorTool.Terrain:
-                DrawTerrainPicker(target, brush);
-                DrawBrushRow(target, size);
+                DrawTerrainPicker(target, state.Brush);
+                DrawBrushRow(target, state.BrushSize);
                 break;
 
-            case EditorTool.Object:
-                DrawObjectPicker(target, font, objectBrush, highlight);
+            case EditorTool.LandscapeObjects or EditorTool.AdventureObjects or EditorTool.KingdomObjects
+                or EditorTool.Monsters:
+                // 两级页面照参考：先选「哪一类」，页面里才有物件。类别还没选时列类别，选了就列物件。
+                if (state.BrushKind < 0)
+                {
+                    DrawKindPicker(target, font, state, highlight);
+                }
+                else
+                {
+                    DrawObjectPicker(target, font, state, highlight);
+                }
+
+                break;
+
+            case EditorTool.Erase:
+                DrawErasePicker(target, font, state, highlight);
+                DrawBrushRow(target, state.BrushSize);
+                break;
+
+            case EditorTool.Detail:
+                DrawDetailPicker(target, font, state, highlight);
+                DrawBrushRow(target, state.BrushSize);
                 break;
 
             default:
-                DrawEraseHint(target, font);
-                DrawBrushRow(target, size);
+                DrawToolHint(target, font, state.Tool);
+                DrawBrushRow(target, state.BrushSize);
                 break;
         }
 
@@ -435,7 +634,7 @@ internal sealed class EditorPanel
     /// <param name="screen">Pointer in logical pixels.</param>
     /// <param name="tool">The tool in use, the picker of the bay depends on it.</param>
     /// <returns>What the point hits, <see cref="EditorPanelHit.None"/> when nothing.</returns>
-    public EditorPanelHit HitTest(Point screen, EditorTool tool)
+    public EditorPanelHit HitTest(Point screen, EditorPanelState state)
     {
         if (!_area.Contains(screen))
         {
@@ -446,7 +645,7 @@ internal sealed class EditorPanel
 
         for (int i = 0; i < Tools.Length; i++)
         {
-            (EditorTool? _, int column, int row, int _) = Tools[i];
+            (EditorTool _, int column, int row, int _) = Tools[i];
 
             if (new Rect(column * ButtonWidth, row * ButtonHeight, ButtonWidth, ButtonHeight).Contains(local))
             {
@@ -475,7 +674,7 @@ internal sealed class EditorPanel
             return EditorPanelHit.None;
         }
 
-        switch (tool)
+        switch (state.Tool)
         {
             case EditorTool.Terrain:
                 for (int i = 0; i < Grounds.Count; i++)
@@ -488,25 +687,62 @@ internal sealed class EditorPanel
 
                 break;
 
-            case EditorTool.Object:
-                for (int i = 0; i < Mp2ObjectPresets.Count; i++)
+            case EditorTool.LandscapeObjects or EditorTool.AdventureObjects or EditorTool.KingdomObjects
+                or EditorTool.Monsters:
+                // 类别页与物件页共用同一批行：先有类别、后有物件，所以两张表不会同时被点到。
+                if (state.BrushKind < 0)
                 {
-                    if (Row(i).Contains(picker))
+                    for (int i = 0; i < state.BrushKinds.Count; i++)
                     {
-                        return new EditorPanelHit(EditorPanelHitKind.Object, i);
+                        if (Row(i).Contains(picker))
+                        {
+                            return new EditorPanelHit(EditorPanelHitKind.BrushKind, i);
+                        }
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < state.BrushObjects.Count; i++)
+                    {
+                        if (Row(i).Contains(picker))
+                        {
+                            return new EditorPanelHit(EditorPanelHitKind.Object, i);
+                        }
                     }
                 }
 
                 break;
 
             case EditorTool.Erase:
+                for (int i = 0; i < EditorEraseTypes.Buttons.Count; ++i)
+                {
+                    if (EraseCell(i).Contains(picker))
+                    {
+                        return new EditorPanelHit(EditorPanelHitKind.EraseType, i);
+                    }
+                }
+
+                break;
+
+            case EditorTool.Detail:
+                for (int i = 0; i < EditorDetailModes.All.Count; ++i)
+                {
+                    if ((HasDetailIcons ? Cell(i) : Row(i)).Contains(picker))
+                    {
+                        return new EditorPanelHit(EditorPanelHitKind.DetailMode, i);
+                    }
+                }
+
+                break;
+
             default:
                 break;
         }
 
         // The brush row comes last: the nine rows of the object picker reach down to it, and the
-        // object tool has no brush sizes to pick (an object is as big as its own artwork).
-        if (tool is EditorTool.Terrain or EditorTool.Erase)
+        // object instruments have no brush sizes to pick (an object is as big as its own artwork).
+        if (state.Tool is EditorTool.Terrain or EditorTool.Erase or EditorTool.Detail
+            or EditorTool.Stream or EditorTool.Road)
         {
             for (int i = 0; i < BrushSizeExtensions.All.Count; i++)
             {
@@ -521,12 +757,11 @@ internal sealed class EditorPanel
     }
 
     /// <summary>
-    /// The tool of the instrument button at <paramref name="index"/> of the tool table, or
-    /// <see langword="null"/> when the button belongs to an instrument that is not ported.
+    /// The instrument the button at <paramref name="index"/> of the tool table selects.
     /// </summary>
     /// <param name="index">Entry of the tool table.</param>
-    /// <returns>The tool the button selects, if it selects one.</returns>
-    public static EditorTool? ToolAt(int index) => Tools[index].Tool;
+    /// <returns>The instrument of that cell.</returns>
+    public static EditorTool ToolAt(int index) => Tools[index].Tool;
 
     /// <summary>The system button at <paramref name="index"/> of the system table.</summary>
     /// <param name="index">Entry of the system table.</param>
@@ -605,10 +840,9 @@ internal sealed class EditorPanel
         }
     }
 
-    private void DrawObjectPicker(PixelBuffer target, IGlyphSource font, Mp2ObjectPreset brush, byte highlight)
+    private void DrawObjectPicker(PixelBuffer target, IGlyphSource font, EditorPanelState state, byte highlight)
     {
-        IReadOnlyList<Mp2ObjectPreset> presets = Mp2ObjectPresets.All;
-        int selected = Mp2ObjectPresets.IndexOf(brush);
+        IReadOnlyList<Mp2ObjectPreset> presets = state.BrushObjects;
 
         for (int i = 0; i < presets.Count; i++)
         {
@@ -617,7 +851,7 @@ internal sealed class EditorPanel
             // The rows have no artwork behind them — the presets are entries of the map format, not
             // icons — so the selection is marked with the outline of the frame instead of the yellow
             // rectangle of TERRAINS.ICN, which is 30x30 and does not fit a 132x13 row.
-            if (i == selected)
+            if (i == state.BrushObject)
             {
                 ImageOps.DrawRect(
                     target,
@@ -636,16 +870,229 @@ internal sealed class EditorPanel
         }
     }
 
-    private void DrawEraseHint(PixelBuffer target, IGlyphSource font)
+    /// <summary>
+    /// Paints the page of the brush kinds, the first level of an object instrument.
+    /// </summary>
+    /// <remarks>
+    /// 参考那一页用的是一组图标（山、石头、树……）；端口没有那套图，就用分组名当条目——名字本身足以让作者认出
+    /// 「这一页是地形物件还是冒险物件」，而把资源留给真正需要图像的地方（地形格、物件精灵）。
+    /// </remarks>
+    private void DrawKindPicker(PixelBuffer target, IGlyphSource font, EditorPanelState state, byte highlight)
+    {
+        for (int i = 0; i < state.BrushKinds.Count; i++)
+        {
+            Rect row = Row(i);
+
+            if (i == state.BrushKind)
+            {
+                ImageOps.DrawRect(
+                    target,
+                    new Rect(_area.X + row.X, _area.Y + PickerTop + row.Y, row.Width, row.Height),
+                    highlight);
+            }
+
+            Point position = new(_area.X + row.X + 3, _area.Y + PickerTop + row.Y + 1);
+
+            GlyphText.DrawLine(
+                font,
+                target,
+                position,
+                FormattableString.Invariant($"{i + 1} {KindName(state.BrushKinds[i])}"),
+                new Rect(position.X, position.Y, RowWidth, RowHeight));
+        }
+    }
+
+    /// <summary>A group's name without the <c>LANDSCAPE_</c> / <c>ADVENTURE_</c> prefix, for the brush page.</summary>
+    /// <param name="group">The catalogue group.</param>
+    /// <returns>The short name the panel shows.</returns>
+    private static string KindName(ObjectGroup group)
+    {
+        string name = group.ToString();
+
+        int separator = name.IndexOf('_', StringComparison.Ordinal);
+
+        return separator >= 0 && separator + 1 < name.Length ? name[(separator + 1)..] : name;
+    }
+
+    /// <summary>
+    /// Draws the erase page: the eleven object types the eraser can delete, a checked one marked the way the reference
+    /// marks it, plus the size row the reference shows for this instrument too.
+    /// </summary>
+    /// <remarks>
+    /// 十一个图标就是参考的十一个按钮（见 <see cref="EraseIconSources"/>），勾中的那一格再盖一个 TOWNWIND 第 11 帧的勾。
+    /// 整张表都缺图时退回两行说明文字，页面不至于空白——那正是没有 <c>EDITPANL</c> 时的情况，只是那时连面板都不存在。
+    /// </remarks>
+    /// <param name="target">The frame buffer.</param>
+    /// <param name="font">Font of the fallback hint.</param>
+    /// <param name="state">The editor state, whose <see cref="EditorPanelState.EraseTypes"/> says which cells are checked.</param>
+    /// <param name="highlight">Palette index of the outline a checked cell gets when the check mark is missing.</param>
+    private void DrawErasePicker(PixelBuffer target, IGlyphSource font, EditorPanelState state, byte highlight)
+    {
+        bool drawn = false;
+
+        for (int i = 0; i < EditorEraseTypes.Buttons.Count; ++i)
+        {
+            Rect cell = EraseCell(i);
+
+            if (i < _eraseIcons.Count && _eraseIcons[i] is { } icon)
+            {
+                // BlitSprite() adds the source rectangle to the destination point, so the point is biased by it to
+                // make the cell the top left corner of the icon.
+                ImageOps.BlitSprite(
+                    target,
+                    new Point(
+                        _area.X + cell.X - icon.Source.X,
+                        _area.Y + PickerTop + cell.Y - icon.Source.Y),
+                    icon.Sprite,
+                    icon.Source);
+
+                drawn = true;
+            }
+
+            if ((state.EraseTypes & EditorEraseTypes.Buttons[i]) == 0)
+            {
+                continue;
+            }
+
+            Point mark = new(_area.X + cell.X + 10, _area.Y + PickerTop + cell.Y + 11);
+
+            if (_eraseMark is not null)
+            {
+                ImageOps.BlitSprite(target, mark, _eraseMark);
+            }
+            else
+            {
+                ImageOps.DrawRect(
+                    target,
+                    new Rect(_area.X + cell.X, _area.Y + PickerTop + cell.Y, cell.Width, cell.Height),
+                    highlight);
+            }
+        }
+
+        if (!drawn)
+        {
+            DrawToolHint(target, font, EditorTool.Erase);
+        }
+    }
+
+    /// <summary>Cell of one erase type inside the picker, the 27x27 icon of the reference.</summary>
+    /// <param name="index">Entry of <see cref="EditorEraseTypes.Buttons"/>.</param>
+    /// <returns>The rectangle in picker coordinates.</returns>
+    private static Rect EraseCell(int index) => new(
+        EraseLeft + ((index % EraseColumns) * EraseStepX) + (index > 7 ? EraseStepX / 2 : 0),
+        EraseTop + ((index / EraseColumns) * EraseStepY),
+        EraseCellSize,
+        EraseCellSize);
+
+    /// <summary>
+    /// Draws the detail page: the three modes, the one in use marked the way the reference marks it
+    /// (<c>editor_interface_panel.cpp:523-529</c>).
+    /// </summary>
+    /// <remarks>
+    /// 三个图标就是参考的三个按钮（<c>EDITPANL</c> 第 18、19、20 帧），排在与地形格同一套 36x33 网格的前三格里，
+    /// 选中的那一格盖一个 TERRAINS 第 9 帧的黄框。仓库里那套 EDITPANL 只有六页（地形、擦除图标、Cell Details、
+    /// Streams、Roads、Erase），没有这三帧，于是这一页退回三行文字：与物件选择页同一套行布局，选中的那行加框，
+    /// 面板的热区也跟着换成行。
+    /// </remarks>
+    /// <param name="target">The frame buffer.</param>
+    /// <param name="font">Font of the rows.</param>
+    /// <param name="state">The editor state, whose <see cref="EditorPanelState.DetailMode"/> is the pressed cell.</param>
+    /// <param name="highlight">Palette index of the outline a selected cell gets when the yellow rectangle is missing.</param>
+    private void DrawDetailPicker(PixelBuffer target, IGlyphSource font, EditorPanelState state, byte highlight)
+    {
+        int selected = EditorDetailModes.IndexOf(state.DetailMode);
+
+        if (!HasDetailIcons)
+        {
+            for (int i = 0; i < EditorDetailModes.All.Count; ++i)
+            {
+                Rect row = Row(i);
+
+                if (i == selected)
+                {
+                    ImageOps.DrawRect(
+                        target,
+                        new Rect(_area.X + row.X, _area.Y + PickerTop + row.Y, row.Width, row.Height),
+                        highlight);
+                }
+
+                EditorDetailMode mode = EditorDetailModes.All[i];
+                Point position = new(_area.X + row.X + 3, _area.Y + PickerTop + row.Y + 1);
+
+                GlyphText.DrawLine(
+                    font,
+                    target,
+                    position,
+                    FormattableString.Invariant($"{i + 1} {EditorDetailModes.Name(mode)}"),
+                    new Rect(position.X, position.Y, RowWidth, RowHeight));
+            }
+
+            return;
+        }
+
+        for (int i = 0; i < _detailIcons.Count; ++i)
+        {
+            Rect cell = Cell(i);
+
+            if (_detailIcons[i] is not { } icon)
+            {
+                continue;
+            }
+
+            ImageOps.BlitSprite(
+                target,
+                new Point(
+                    _area.X + cell.X - icon.Source.X,
+                    _area.Y + PickerTop + cell.Y - icon.Source.Y),
+                icon.Sprite,
+                icon.Source);
+        }
+
+        if (selected < 0)
+        {
+            return;
+        }
+
+        Rect frame = Cell(selected);
+        Rect box = new(_area.X + frame.X, _area.Y + PickerTop + frame.Y, frame.Width, frame.Height);
+
+        if (_selection is not null)
+        {
+            // The rectangle is 30x30 and the reference centres it on a 27x27 image, i.e. at -2.
+            ImageOps.BlitSprite(target, new Point(box.X - 2, box.Y - 2), _selection);
+        }
+        else
+        {
+            ImageOps.DrawRect(target, box, highlight);
+        }
+    }
+
+    /// <summary>
+    /// Whether the sheet has the three icons of the detail page. Without them the page is three rows of
+    /// text, and <see cref="HitTest"/> answers the rows instead of the cells.
+    /// </summary>
+    private bool HasDetailIcons => _detailIcons.Any(icon => icon is not null);
+
+    /// <summary>
+    /// Two lines naming what an instrument does, for the pages the port has no artwork for: the two that lay a path,
+    /// and the pages whose icons are missing from the sheet.
+    /// </summary>
+    /// <param name="target">The frame buffer.</param>
+    /// <param name="font">Font of the hint.</param>
+    /// <param name="tool">The instrument whose page is empty.</param>
+    private void DrawToolHint(PixelBuffer target, IGlyphSource font, EditorTool tool)
     {
         Point position = new(_area.X + BrushLeft, _area.Y + PickerTop + 16);
 
-        GlyphText.DrawLine(font, target, position, "click to clear the");
+        string[] lines = tool switch
+        {
+            EditorTool.Detail => ["click an object to", "edit its properties"],
+            EditorTool.Stream => ["drag to lay a", "stream"],
+            EditorTool.Road => ["drag to lay a", "road"],
+            _ => ["click to clear the", "objects under it"],
+        };
 
-        GlyphText.DrawLine(
-            font,
-            target,
-            new Point(position.X, position.Y + font.LineHeight),
-            "objects under it");
+        GlyphText.DrawLine(font, target, position, lines[0]);
+        GlyphText.DrawLine(font, target, new Point(position.X, position.Y + font.LineHeight), lines[1]);
     }
 }

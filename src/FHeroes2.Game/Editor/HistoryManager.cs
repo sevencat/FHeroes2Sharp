@@ -8,6 +8,14 @@ namespace FHeroes2.Game.Editor;
 /// </summary>
 public abstract class MapAction
 {
+    /// <summary>
+    /// Captures the state after the change, <c>prepare()</c>
+    /// (<c>src/fheroes2/editor/history_manager.h:97-188</c>).
+    /// </summary>
+    /// <param name="lastObjectUid">The UID counter of the map; the snapshot action keeps it, the others ignore it.</param>
+    /// <returns>False when the action cannot be committed, which makes the creator revert it instead.</returns>
+    public abstract bool Prepare(uint lastObjectUid);
+
     /// <summary>Re-applies the change, <c>redo()</c>.</summary>
     /// <returns>False when the change could not be applied.</returns>
     public abstract bool Redo();
@@ -235,7 +243,7 @@ internal sealed class SnapshotMapAction : MapAction
     /// </summary>
     /// <param name="lastObjectUid">The UID counter of the changed map.</param>
     /// <returns>False when the snapshot could not be taken.</returns>
-    public bool Prepare(uint lastObjectUid)
+    public override bool Prepare(uint lastObjectUid)
     {
         _after = _provider.Capture();
         _lastObjectUidAfter = lastObjectUid;
@@ -267,7 +275,7 @@ internal sealed class SnapshotMapAction : MapAction
 public sealed class MetadataMapAction<T> : MapAction
 {
     /// <summary>The dictionary the action works on, <c>_metadata</c>.</summary>
-    private readonly Dictionary<uint, T> _metadata;
+    private readonly IDictionary<uint, T> _metadata;
 
     /// <summary>Its content before the change, <c>_beforeMetadata</c>.</summary>
     private readonly Dictionary<uint, T> _before;
@@ -279,7 +287,7 @@ public sealed class MetadataMapAction<T> : MapAction
     /// Snapshots the dictionary, the reference constructor (<c>history_manager.cpp:128-134</c>).
     /// </summary>
     /// <param name="metadata">The dictionary to track; the action keeps a reference to it.</param>
-    public MetadataMapAction(Dictionary<uint, T> metadata)
+    public MetadataMapAction(IDictionary<uint, T> metadata)
     {
         ArgumentNullException.ThrowIfNull(metadata);
 
@@ -290,8 +298,9 @@ public sealed class MetadataMapAction<T> : MapAction
     /// <summary>
     /// Captures the state after the change, <c>prepare()</c> (<c>history_manager.cpp:136-140</c>).
     /// </summary>
+    /// <param name="lastObjectUid">Ignored: a metadata action moves no object.</param>
     /// <returns>Always true: copying a dictionary cannot fail.</returns>
-    public bool Prepare()
+    public override bool Prepare(uint lastObjectUid)
     {
         _after = new Dictionary<uint, T>(_metadata);
 
@@ -389,24 +398,21 @@ public sealed class ActionCreator : IDisposable
     /// </summary>
     /// <param name="manager">The history manager.</param>
     /// <param name="provider">The editor's map access, used by the generic action.</param>
+    /// <param name="metadata">The per-object metadata tables of the map, used by every other action type.</param>
     /// <param name="lastObjectUid">The UID counter of the map.</param>
     /// <param name="type">One of <see cref="ActionType"/>.</param>
-    public ActionCreator(HistoryManager manager, IMapSnapshotProvider provider, uint lastObjectUid, int type = ActionType.Generic)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="type"/> is not one of <see cref="ActionType"/>.</exception>
+    public ActionCreator(
+        HistoryManager manager, IMapSnapshotProvider provider, MapObjectMetadataStore metadata, uint lastObjectUid, int type = ActionType.Generic)
     {
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(metadata);
 
         _manager = manager;
 
-        if (type == ActionType.Generic)
-        {
-            _action = new SnapshotMapAction(provider, lastObjectUid);
-            return;
-        }
-
-        // 元数据动作要拿到地图里对应的那本字典；端口的地图格式还没有这套「按对象编号存的数据表」，
-        // 所以除整图之外的粒度暂时只能由调用方直接构造 MetadataMapAction。
-        throw new NotImplementedException("The map format of the port has no per-object metadata tables yet.");
+        // 整图快照与「只动一本元数据表」是同一份历史的两种粒度：前者存两份压缩的地图，后者只存一本表的前后副本。
+        _action = type == ActionType.Generic ? new SnapshotMapAction(provider, lastObjectUid) : metadata.CreateAction(type);
     }
 
     /// <summary>
@@ -415,11 +421,13 @@ public sealed class ActionCreator : IDisposable
     /// <param name="lastObjectUidAfter">The UID counter of the changed map.</param>
     public void Commit(uint lastObjectUidAfter)
     {
-        if (_action is SnapshotMapAction snapshot && snapshot.Prepare(lastObjectUidAfter))
+        if (_action is null || !_action.Prepare(lastObjectUidAfter))
         {
-            _manager.Add(snapshot);
+            // 没准备好就留在手上：松开 <see cref="Dispose"/> 会把它撤回去，与参考的析构一样。
+            return;
         }
 
+        _manager.Add(_action);
         _action = null;
     }
 

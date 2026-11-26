@@ -1,13 +1,5 @@
 {
   "mcpServers": {
-    "sqlite-tracker": {
-      "command": "npx.exe",
-      "args": [
-        "-y",
-        "mcp-server-sqlite-npx",
-        "./project_state.db"
-      ],
-      "disabled": true
-    }
+   
   }
 }

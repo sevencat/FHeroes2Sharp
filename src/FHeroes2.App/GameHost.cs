@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Audio;
+using FHeroes2.Assets.Icn;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Assets.Video;
 using FHeroes2.App.Audio;
@@ -104,6 +105,12 @@ public sealed class GameHost : IDisposable
     /// (<see cref="ShowCampaignYesNo"/>).
     /// </summary>
     private SystemButtonArtwork? _systemButtons;
+
+    /// <summary>
+    /// The configuration the editor's random map dialog was last accepted with, <c>EditorInterface::_randomMapConfig</c>
+    /// of the reference: the next dialog opens on it instead of on the defaults.
+    /// </summary>
+    private RandomMapConfig _randomMapConfig = new();
 
     /// <summary>
     /// The fade-in being played over the frames, <c>fheroes2::fadeInDisplay()</c> of the reference.
@@ -2197,6 +2204,14 @@ public sealed class GameHost : IDisposable
         if (request.Action == EditorMenuAction.NewRandomMap)
         {
             scene = CreateRandomMapScene(edgeLength);
+
+            if (scene is null)
+            {
+                // 玩家在配置对话框里按了 CANCEL（或美术缺件）：回到主菜单，不拿空白图顶替。
+                GameLog.Info("The random map was cancelled; the editor main menu stays open.");
+
+                return;
+            }
         }
 
         string? error = null;
@@ -2222,40 +2237,48 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
-    /// Builds the editor scene of a freshly generated map, <c>Maps::generateRandomMap()</c>
-    /// (<c>map_random_generator.cpp:621-981</c>).
+    /// Asks for a configuration and builds the editor scene of the map it generates, the
+    /// <c>Maps::updateRandomMapConfiguration()</c> + <c>Maps::generateRandomMap()</c> pair of the reference
+    /// (<c>editor_interface.cpp</c>, <c>map_random_generator.cpp:621-981</c>).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 参考先开配置对话框（<c>Maps::updateRandomMapConfiguration()</c>）再生成；端口还没有那个对话框（`bd 4f2.2`），
-    /// 所以这里用默认配置：两名玩家、无水、镜像布局、正常资源与正常怪物，种子取自时钟——同一张图不会每次都一样。
+    /// 参考把配置留在 <c>EditorInterface</c> 里，第二次打开对话框时还是上次那一份；端口把同一份存在
+    /// <see cref="_randomMapConfig"/> 里。种子按配置里的写法交给生成器（0 表示现摇）。
     /// </para>
     /// <para>
-    /// 地形与区域这一段（参考步 1-4）已经完整；物件那一段还没做（`bd 4f2.1.3`），所以生成的是一张只有地形的图：
-    /// 编辑器里可以直接涂改、可以保存成 .mp2。
+    /// <b>三处「没有结果」</b>都返回 <see langword="null"/>，由调用方停在主菜单：玩家按了 CANCEL、配置对话框的美术
+    /// 缺件（<see cref="RandomMapGeneratorView.TryCreate"/> 给 <see langword="null"/>），以及生成失败。
     /// </para>
     /// </remarks>
     /// <param name="size">Edge length of the map in tiles.</param>
-    /// <returns>The scene, or <see langword="null"/> when generation or the terrain tiles fail.</returns>
+    /// <returns>The scene, or <see langword="null"/> when nothing was generated.</returns>
     private EditorScene? CreateRandomMapScene(int size)
     {
-        // 种子留 0 表示「每次都要新图」，生成器自己摇一个并写进日志（参考的规矩）。
-        RandomMapConfig config = new() { Seed = 0 };
+        RandomMapGeneratorDialog dialog = RandomMapGeneratorDialog.Create(_randomMapConfig, size);
 
-        Mp2Map? map = RandomMapGenerator.Generate(config, size, size, out RandomMapTerrain? terrain);
+        if (TryShowRandomMapDialog(dialog) is not { } config)
+        {
+            return null;
+        }
+
+        _randomMapConfig = config;
+
+        Mp2Map? map = RandomMapGenerator.Generate(config, size, size, out RandomMapTerrain? terrain, out uint seed);
 
         if (map is null || terrain is null)
         {
-            GameLog.Warn(
-                $"The random map generator cannot fill a {size}x{size} map; a blank one is created instead.");
+            GameLog.Warn($"The random map generator cannot fill a {size}x{size} map.");
 
             return null;
         }
 
         GameLog.Info(
             $"The generated map has "
-            + $"{terrain.Regions.Count(region => region.Type == RandomMapRegionType.Starting)} player starts; "
-            + "the object phase is not ported yet, so the map holds terrain only.");
+            + $"{terrain.Regions.Count(region => region.Type == RandomMapRegionType.Starting)} player starts and "
+            + $"{map.Castles.Count} castles.");
+
+        PublishRandomMap(map, seed);
 
         EditorScene? scene = EditorScene.CreateFromMap(_frame, _assets, _fonts, map, out string? error);
 
@@ -2265,6 +2288,151 @@ public sealed class GameHost : IDisposable
         }
 
         return scene;
+    }
+
+    /// <summary>
+    /// Saves a generated map into the <c>maps</c> folder and lets the main menu rescan it, so that the map can be
+    /// picked from the scenario list right afterwards.
+    /// </summary>
+    /// <param name="map">The generated map.</param>
+    /// <param name="seed">The seed the generator used, which names the file.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>种子从生成器拿，不从名字里读</b>：地图名字段只有 16 字节，<c>Random map 20261126</c> 存下来只剩
+    /// <c>Random map 2026</c>，读回去会读错（ADR-283）。
+    /// </para>
+    /// <para>
+    /// 保存失败不影响生成：图已经在内存里、编辑器照常打开，只是这一张不会出现在选关列表里。只读安装或目录不可写时
+    /// 就是这样，所以这里只记警告。
+    /// </para>
+    /// </remarks>
+    private void PublishRandomMap(Mp2Map map, uint seed)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        if (_assets?.DataDirectory is not { } dataDirectory)
+        {
+            GameLog.Warn("The generated map cannot be saved: the game data directory is unknown.");
+
+            return;
+        }
+
+        if (RandomMapArchive.ResolveDirectory(dataDirectory) is not { } directory)
+        {
+            GameLog.Warn(
+                $"The generated map cannot be saved: '{Path.Combine(dataDirectory, RandomMapArchive.DirectoryName)}' "
+                + "cannot be created.");
+
+            return;
+        }
+
+        try
+        {
+            string filePath = RandomMapArchive.Save(map, directory, seed);
+
+            GameLog.Info($"Random map saved: {RandomMapArchive.Describe(map, filePath)}");
+
+            // 主菜单缓存着地图列表：不失效的话，回到主菜单点「新游戏」看不到这张刚存下的图。
+            _menu?.InvalidateMapList();
+        }
+        catch (Exception exception) when (exception is IOException or BinaryFormatException
+                                              or UnauthorizedAccessException)
+        {
+            GameLog.Warn($"The generated map cannot be saved: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Runs the configuration dialog on the display, <c>fheroes2::randomMapGeneratorDialog()</c>.
+    /// </summary>
+    /// <param name="dialog">The model to edit.</param>
+    /// <returns>The accepted configuration, or <see langword="null"/> when the dialog was cancelled or cannot be drawn.</returns>
+    private RandomMapConfig? TryShowRandomMapDialog(RandomMapGeneratorDialog dialog)
+    {
+        if (_assets is null || _fonts is null)
+        {
+            GameLog.Warn("The random map generator dialog has no artwork to draw; generating with the current settings.");
+
+            dialog.Accept();
+
+            return dialog.Result;
+        }
+
+        RandomMapGeneratorArtwork? artwork = LoadRandomMapGeneratorArtwork(_assets);
+
+        if (artwork is null)
+        {
+            return null;
+        }
+
+        RandomMapGeneratorView? view = RandomMapGeneratorView.TryCreate(
+            dialog, RandomMapGeneratorDialogText.Default, artwork, _fonts.SmallWhite, _fonts.SmallWhite,
+            _frame.Bounds.Size);
+
+        if (view is null)
+        {
+            GameLog.Warn("The random map generator dialog is missing ICN frames; the editor menu stays open.");
+
+            return null;
+        }
+
+        return RandomMapGeneratorView.Show(_frame.Pixels, view, _le);
+    }
+
+    /// <summary>Reads the five ICN tables the random map generator dialog is drawn from.</summary>
+    /// <param name="assets">The archives.</param>
+    /// <returns>The artwork, or <see langword="null"/> when one of the tables is missing.</returns>
+    private static RandomMapGeneratorArtwork? LoadRandomMapGeneratorArtwork(AssetBundle assets)
+    {
+        IcnSpriteFile? background = TryReadDialogIcn(assets, "STONEBAK.ICN");
+        IcnSpriteFile? titleBox = TryReadDialogIcn(assets, "METALLIC_BORDERED_TEXTBOX_GOOD.ICN");
+        IcnSpriteFile? slider = TryReadDialogIcn(assets, "TRADPOST.ICN");
+        IcnSpriteFile? value = TryReadDialogIcn(assets, "TOWNWIND.ICN");
+        IcnSpriteFile? droplist = TryReadDialogIcn(assets, "DROPLISL.ICN");
+        SettingsArtwork? buttons = SettingsArtwork.TryCreate(assets);
+
+        if (background is null || titleBox is null || slider is null || value is null || droplist is null
+            || buttons is null)
+        {
+            GameLog.Warn("The random map generator dialog is missing one of its ICN tables.");
+
+            return null;
+        }
+
+        return new RandomMapGeneratorArtwork
+        {
+            BackgroundFrames = background.Sprites,
+            TitleBoxFrames = titleBox.Sprites,
+            SliderFrames = slider.Sprites,
+            ValueFrames = value.Sprites,
+            DroplistFrames = droplist.Sprites,
+            Buttons = buttons,
+        };
+    }
+
+    /// <summary>Reads one ICN table, logging the reason it could not be read.</summary>
+    /// <param name="assets">The archives.</param>
+    /// <param name="fileName">Name of the entry.</param>
+    /// <returns>The table, or <see langword="null"/> when it is missing or malformed.</returns>
+    private static IcnSpriteFile? TryReadDialogIcn(AssetBundle assets, string fileName)
+    {
+        try
+        {
+            IcnSpriteFile? icn = assets.TryReadIcn(fileName);
+
+            if (icn is null)
+            {
+                GameLog.Warn($"The archive has no '{fileName}'.");
+            }
+
+            return icn;
+        }
+        catch (Exception exception) when (exception is BinaryFormatException or ArgumentException)
+        {
+            GameLog.Warn($"'{fileName}' could not be read: {exception.Message}");
+
+            return null;
+        }
     }
 
     /// <summary>

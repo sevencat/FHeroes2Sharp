@@ -2,6 +2,7 @@ using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Maps;
 
 namespace FHeroes2.Game.Editor;
 
@@ -63,6 +64,47 @@ public sealed class MapEditSession
     private Mp2ObjectPreset _object = Mp2ObjectPresets.All[0];
 
     /// <summary>
+    /// What the eraser deletes; every type until the author unchecks some on the erase page of the panel,
+    /// <c>_eraseTypes{ ObjectErasureType::ERASE_ALL_OBJECTS }</c> of <c>editor_interface_panel.h:337</c>.
+    /// </summary>
+    private EditorEraseType _eraseTypes = EditorEraseType.AllObjects;
+
+    /// <summary>Groups the checked types cover, rebuilt when the checks change: the erase loop asks per tile.</summary>
+    private IReadOnlySet<ObjectGroup>? _eraseGroups;
+
+    /// <summary>
+    /// What the detail instrument does with a click, the
+    /// <c>_selectedDetailBrushType{ DetailBrushType::EDITING }</c> of
+    /// <c>editor_interface_panel.h:336</c>: the properties of an object until a button picks another mode.
+    /// </summary>
+    private EditorDetailMode _detailMode = EditorDetailMode.Editing;
+
+    /// <summary>
+    /// Tile an object was taken from by a press of the detail instrument in <see cref="EditorDetailMode.Moving"/>
+    /// or <see cref="EditorDetailMode.Copying"/>: the release drops it. <c>null</c> while nothing is held.
+    /// </summary>
+    /// <remarks>
+    /// 参考把这件事放在 <c>EditorInterface::_movableObjectInfo</c> 里，端口放进会话：按下与松开之间没有任何别的东西要读它，
+    /// 而放进会话就能在没有窗口的测试里把一次拖放走完一整遍。
+    /// </remarks>
+    private Point? _detailSource;
+
+    /// <summary>
+    /// Per brush, the entry of <see cref="EditorObjectBrushes"/> kind the author picked, or <c>-1</c> while the page
+    /// of that brush is still empty.
+    /// </summary>
+    /// <remarks>
+    /// 参考给每一把刷子一个「上一页的选中项」：从地形物件跳到冒险物件再跳回来，原来的选择还在。数组的下标是
+    /// <see cref="EditorTool"/> 的值，所以只有四个物件仪器占位置，别的仪器永远不会被读。
+    /// </remarks>
+    private readonly int[] _brushKind = Enumerable.Repeat(-1, (int)EditorTool.Erase + 1).ToArray();
+
+    /// <summary>
+    /// Per brush, the entry of the picked group's catalogue, or <c>-1</c> while nothing was picked.
+    /// </summary>
+    private readonly int[] _brushObject = Enumerable.Repeat(-1, (int)EditorTool.Erase + 1).ToArray();
+
+    /// <summary>
     /// Whether the add-on table grew during this session. Tiles alone no longer describe the file
     /// then: a tile of a placed multi piece object points at an add-on the file it was read from does
     /// not have, so the save has to write every section instead of patching the tile area.
@@ -98,6 +140,18 @@ public sealed class MapEditSession
 
     /// <summary>The object the object tool places.</summary>
     public Mp2ObjectPreset ObjectBrush => _object;
+
+    /// <summary>What the eraser deletes, the eleven checkboxes of its page in the instrument panel.</summary>
+    public EditorEraseType EraseTypes => _eraseTypes;
+
+    /// <summary>What a click of the detail instrument does, the three buttons of its page.</summary>
+    public EditorDetailMode DetailMode => _detailMode;
+
+    /// <summary>
+    /// Tile whose object a press of the detail instrument took, or <c>null</c> while nothing is held.
+    /// The tile is written only by a release, so the map still shows the object where it was.
+    /// </summary>
+    public Point? DetailSource => _detailSource;
 
     /// <summary>Whether a stroke is in progress, i.e. the button is still held.</summary>
     public bool IsPainting => _stroke is not null;
@@ -178,6 +232,80 @@ public sealed class MapEditSession
         }
 
         _tool = tool;
+
+        // 换了工具，手上拿着的东西就不算数了：参考在 `EditorInterface::setInstrument` 里同样把
+        // `_movableObjectInfo` 清掉，否则松开时会用旧工具的对象去改新工具下的格子。
+        _detailSource = null;
+        return true;
+    }
+
+    /// <summary>Selects what a click of the detail instrument does, the three buttons of its page.</summary>
+    /// <param name="mode">The mode to use.</param>
+    /// <returns>Whether the mode changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a mode.</exception>
+    public bool SetDetailMode(EditorDetailMode mode)
+    {
+        if (!Enum.IsDefined(mode))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown detail mode.");
+        }
+
+        if (mode == _detailMode)
+        {
+            return false;
+        }
+
+        _detailMode = mode;
+
+        // 切到别的模式时，手上那次按下属于旧模式，丢掉：参考每按一次按钮都 `_resetMovableObjectInfo()`。
+        _detailSource = null;
+        return true;
+    }
+
+    /// <summary>Replaces the set of types the eraser deletes, the eleven checkboxes of its page.</summary>
+    /// <param name="types">The types to delete, any combination of <see cref="EditorEraseTypes.Buttons"/>.</param>
+    /// <returns>Whether the set changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="types"/> has a bit that is not a type.</exception>
+    public bool SetEraseTypes(EditorEraseType types)
+    {
+        if ((types & ~EditorEraseType.AllObjects) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(types), types, "Unknown erase type.");
+        }
+
+        if (types == _eraseTypes)
+        {
+            return false;
+        }
+
+        _eraseTypes = types;
+        _eraseGroups = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Turns one type of the eraser on or off, the left click on its button
+    /// (<c>_eraseTypes ^= _eraseButtonObjectTypes[i]</c>, <c>editor_interface_panel.cpp:1383</c>).
+    /// </summary>
+    /// <param name="type">One of <see cref="EditorEraseTypes.Buttons"/>.</param>
+    /// <returns>Whether the set changed.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="type"/> is not a single type.</exception>
+    public bool ToggleEraseType(EditorEraseType type)
+    {
+        if (!EditorEraseTypes.IsButton(type))
+        {
+            throw new ArgumentOutOfRangeException(nameof(type), type, "Not a single erase type.");
+        }
+
+        EditorEraseType next = _eraseTypes ^ type;
+
+        if (next == _eraseTypes)
+        {
+            return false;
+        }
+
+        _eraseTypes = next;
+        _eraseGroups = null;
         return true;
     }
 
@@ -192,11 +320,92 @@ public sealed class MapEditSession
     {
         ArgumentNullException.ThrowIfNull(preset);
 
-        bool changed = !ReferenceEquals(preset, _object) || _tool != EditorTool.Object;
+        bool changed = !ReferenceEquals(preset, _object) || _tool != EditorTool.LandscapeObjects;
 
         _object = preset;
-        _tool = EditorTool.Object;
+        _tool = EditorTool.LandscapeObjects;
         return changed;
+    }
+
+    /// <summary>The brushes the current instrument offers, empty for the instruments that place no object.</summary>
+    public IReadOnlyList<ObjectGroup> BrushKinds => EditorObjectBrushes.For(_tool);
+
+    /// <summary>The brush kind the current instrument has picked, or <c>-1</c> while its page is empty.</summary>
+    public int BrushKind => _brushKind[(int)_tool];
+
+    /// <summary>The object the current instrument has picked, or <c>-1</c> while its page is empty.</summary>
+    public int BrushObjectIndex => _brushObject[(int)_tool];
+
+    /// <summary>
+    /// The objects of the current instrument's picked brush kind, in catalogue order.
+    /// </summary>
+    /// <remarks>
+    /// 还没挑类别时返回空表：参考的物件页也是这样——先选「山、石头、树……」这一层，页面里才有东西。
+    /// </remarks>
+    public IReadOnlyList<Mp2ObjectPreset> BrushObjects
+    {
+        get
+        {
+            IReadOnlyList<ObjectGroup> kinds = BrushKinds;
+
+            if (kinds.Count == 0)
+            {
+                return [];
+            }
+
+            int kind = _brushKind[(int)_tool];
+
+            return kind < 0 || kind >= kinds.Count ? [] : MapObjectCatalogPresets.For(kinds[kind]);
+        }
+    }
+
+    /// <summary>Selects a brush kind of the current instrument, which empties the object page below it.</summary>
+    /// <param name="kind">Entry of <see cref="BrushKinds"/>.</param>
+    /// <returns>Whether the selection changed.</returns>
+    /// <remarks>
+    /// 换类别要清掉下一层的选择：上一条目属于旧类别，留着就成了「类别显示宝物、落子却是棵树」。
+    /// </remarks>
+    public bool SelectBrushKind(int kind)
+    {
+        if (kind < 0 || kind >= BrushKinds.Count || _brushKind[(int)_tool] == kind)
+        {
+            return false;
+        }
+
+        _brushKind[(int)_tool] = kind;
+        _brushObject[(int)_tool] = -1;
+        return true;
+    }
+
+    /// <summary>Selects an object of the current brush kind's page, which makes the object tool the active one.</summary>
+    /// <param name="index">Entry of <see cref="BrushObjects"/>.</param>
+    /// <returns>Whether the selection changed.</returns>
+    public bool SelectBrushObject(int index)
+    {
+        IReadOnlyList<Mp2ObjectPreset> objects = BrushObjects;
+
+        if (index < 0 || index >= objects.Count)
+        {
+            return false;
+        }
+
+        bool changed = _brushObject[(int)_tool] != index;
+
+        _brushObject[(int)_tool] = index;
+        _object = objects[index];
+        return changed;
+    }
+
+    /// <summary>The object the current brush would place, or <see langword="null"/> when nothing was picked yet.</summary>
+    public Mp2ObjectPreset? SelectedBrushObject
+    {
+        get
+        {
+            IReadOnlyList<Mp2ObjectPreset> objects = BrushObjects;
+            int index = _brushObject[(int)_tool];
+
+            return index >= 0 && index < objects.Count ? objects[index] : null;
+        }
     }
 
     /// <summary>
@@ -293,7 +502,7 @@ public sealed class MapEditSession
         int next = ((current + delta) % count + count) % count;
 
         _object = Mp2ObjectPresets.All[next];
-        _tool = EditorTool.Object;
+        _tool = EditorTool.LandscapeObjects;
         return _object;
     }
 
@@ -498,14 +707,84 @@ public sealed class MapEditSession
     /// <summary>
     /// Runs the active tool on <paramref name="tile"/>, the one entry point a click and a drag share.
     /// </summary>
+    /// <remarks>
+    /// 四个物件仪器走同一条落子路径：它们只差「页面里能选哪些条目」，落子本身都是「把选中的那一件放到格子上」。
+    /// 没有选中任何物件时什么也不做——参考的落子也要求先有 <c>_selectedObjectType != -1</c>。
+    /// </remarks>
+    /// <remarks>
+    /// 细节仪器（<see cref="EditorTool.Detail"/>）不在这条路上：它的一次操作要么是打开物件的信息（由界面做），
+    /// 要么是一按一放（<see cref="GrabObject"/> 与 <see cref="ReleaseObject"/>），拖到一半不该改编地图。
+    /// </remarks>
     /// <param name="tile">Tile under the pointer, ignored when outside the map.</param>
     /// <returns>Whether the tile changed.</returns>
     public bool Apply(Point? tile) => _tool switch
     {
-        EditorTool.Object => PlaceObject(tile),
+        EditorTool.LandscapeObjects or EditorTool.AdventureObjects or EditorTool.KingdomObjects
+            or EditorTool.Monsters => PlaceObject(tile),
         EditorTool.Erase => EraseObject(tile),
+        EditorTool.Detail => false,
+        EditorTool.Stream => LayStream(tile),
+        EditorTool.Road => LayRoad(tile),
         _ => Paint(tile),
     };
+
+    /// <summary>
+    /// Lays a road on <paramref name="tile"/>, one step of the road brush
+    /// (<see cref="EditorPaths.LayRoad"/>, the <c>setRoadOnTile</c> of the reference).
+    /// </summary>
+    /// <remarks>
+    /// A road is not a brush stroke over one tile: laying it redraws the roads around it, and taking an
+    /// old one apart touches the tiles it reached into. All of that shares the stroke of the drag, so a
+    /// drag from one end of a road to the other is one undo.
+    /// </remarks>
+    /// <param name="tile">Tile under the pointer, ignored when outside the map.</param>
+    /// <returns>Whether the map changed.</returns>
+    public bool LayRoad(Point? tile) => LayPath(tile, EditorPaths.LayRoad);
+
+    /// <summary>
+    /// Draws a stream on <paramref name="tile"/>, one step of the stream brush
+    /// (<see cref="EditorPaths.LayStream"/>, the <c>addStream</c> of the reference).
+    /// </summary>
+    /// <param name="tile">Tile under the pointer, ignored when outside the map.</param>
+    /// <returns>Whether the map changed.</returns>
+    public bool LayStream(Point? tile) => LayPath(tile, EditorPaths.LayStream);
+
+    /// <summary>Runs one road or stream step inside the stroke of the drag (or a stroke of its own).</summary>
+    /// <remarks>
+    /// 路面把接头面片塞进相邻格的附加链里，所以这一步之后存档不能再走「只补地形」的近路。
+    /// </remarks>
+    /// <param name="tile">Tile under the pointer.</param>
+    /// <param name="lay">The laying routine to run.</param>
+    /// <returns>Whether the map changed.</returns>
+    private bool LayPath(Point? tile, Func<Mp2Map, Point, MapStroke, bool> lay)
+    {
+        if (tile is not { } point || !WithinMap(point))
+        {
+            return false;
+        }
+
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        if (!lay(Map, point, _stroke!))
+        {
+            if (ownStroke)
+            {
+                _stroke = null;
+            }
+
+            return false;
+        }
+
+        _addonsChanged = true;
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Places <see cref="ObjectBrush"/> on <paramref name="tile"/>, one step of a stroke.
@@ -597,14 +876,258 @@ public sealed class MapEditSession
     }
 
     /// <summary>
+    /// Takes the object of <paramref name="tile"/> for a drag of the detail instrument, the press of
+    /// <c>EditorInterface::_tryToMoveObject</c> that fills <c>_movableObjectInfo</c>
+    /// (<c>editor_interface.cpp:2906-2935</c>).
+    /// </summary>
+    /// <remarks>
+    /// 只记下格子，不写地图：参考在按下时也只是把物件的 UID 记进 <c>_movableObjectInfo</c>，真正的搬运发生在松开。
+    /// 拖到地图外松开、或者按着的时候换了工具，移动就作废，地图一个字都不变。
+    /// </remarks>
+    /// <param name="tile">Tile under the press, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether an object was taken, i.e. whether there is something to drop.</returns>
+    public bool GrabObject(Point? tile)
+    {
+        _detailSource = null;
+
+        if (tile is not { } point || !WithinMap(point))
+        {
+            return false;
+        }
+
+        Mp2TileInfo info = Map.Tile(point.X, point.Y);
+
+        if (!info.HasGroundObject && !info.HasTopObject)
+        {
+            return false;
+        }
+
+        _detailSource = point;
+        return true;
+    }
+
+    /// <summary>
+    /// Drops the object taken by <see cref="GrabObject"/> on <paramref name="tile"/>, the release of a
+    /// detail drag: <see cref="MoveObject"/> or <see cref="CopyObject"/> depending on
+    /// <see cref="DetailMode"/>.
+    /// </summary>
+    /// <param name="tile">Tile under the release, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether the map changed.</returns>
+    public bool ReleaseObject(Point? tile)
+    {
+        if (_detailSource is not { } source)
+        {
+            return false;
+        }
+
+        _detailSource = null;
+
+        if (tile is not { } destination)
+        {
+            return false;
+        }
+
+        return _detailMode == EditorDetailMode.Copying
+            ? CopyObject(source, destination)
+            : MoveObject(source, destination);
+    }
+
+    /// <summary>
+    /// Moves the object of <paramref name="from"/> to <paramref name="to"/>, the edit
+    /// <c>DetailBrushType::MOVING</c> makes on a release (<c>editor_interface.cpp:1748-1780</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 搬运只是在两张格子记录之间搬部件：源格的地面层与顶层、层号、数量、物件类型原样写进目标格，源格清成空件，
+    /// 两张格子的地形图与地形位不动。宽度超过一格的物件在端口里本来就只占一张格子记录（其余格子的面片挂在附加链上，
+    /// 见 <see cref="PlaceObject"/>），所以整件东西跟着走。
+    /// </para>
+    /// <para>
+    /// 附加链不复制：搬走的物件仍用原来那条链，目标格直接指向它，链上的面片盖着的 UID 也没变；
+    /// 源格只是把 <see cref="Mp2TileInfo.NextAddonIndex"/> 清掉，链就归目标格所有了。
+    /// </para>
+    /// <para>
+    /// 目标格已经画着同样的东西时拒绝（参考的 "The same object exists on the tile."）：拖回原处、或者拖到另一棵同样的树上都不算编辑，
+    /// 否则一次误操作就把物件搬没了。
+    /// </para>
+    /// </remarks>
+    /// <param name="from">Tile holding the object, ignored when outside the map or <see langword="null"/>.</param>
+    /// <param name="to">Tile to move it to, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether the map changed.</returns>
+    public bool MoveObject(Point? from, Point? to) => TransferObject(from, to, copy: false);
+
+    /// <summary>
+    /// Copies the object of <paramref name="from"/> onto <paramref name="to"/>, the edit
+    /// <c>DetailBrushType::COPYING</c> makes (<c>editor_interface.cpp:1675-1745</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="MoveObject"/> 的差别只有两处：源格不动；目标格拿到新的 UID，附加链也整条复制一份（链上的面片各挂一个
+    /// 新 UID），否则两张格子会共用一条链，改其中一个的旗子会连带改另一个。
+    /// </remarks>
+    /// <param name="from">Tile holding the object, ignored when outside the map or <see langword="null"/>.</param>
+    /// <param name="to">Tile to copy it to, ignored when outside the map or <see langword="null"/>.</param>
+    /// <returns>Whether the map changed.</returns>
+    public bool CopyObject(Point? from, Point? to) => TransferObject(from, to, copy: true);
+
+    /// <summary>The body of <see cref="MoveObject"/> and <see cref="CopyObject"/>.</summary>
+    /// <param name="from">Tile holding the object.</param>
+    /// <param name="to">Tile to write the object to.</param>
+    /// <param name="copy">Whether the source stays as it is and the object gets new UIDs.</param>
+    /// <returns>Whether the map changed.</returns>
+    private bool TransferObject(Point? from, Point? to, bool copy)
+    {
+        if (from is not { } source || to is not { } destination)
+        {
+            return false;
+        }
+
+        if (!WithinMap(source) || !WithinMap(destination) || source == destination)
+        {
+            return false;
+        }
+
+        Mp2TileInfo carried = Map.Tile(source.X, source.Y);
+
+        if (!carried.HasGroundObject && !carried.HasTopObject)
+        {
+            return false;
+        }
+
+        Mp2TileInfo target = Map.Tile(destination.X, destination.Y);
+
+        if (SameObject(carried, target))
+        {
+            return false;
+        }
+
+        bool ownStroke = _stroke is null;
+        BeginStroke();
+
+        uint groundUid = carried.HasGroundObject ? (copy ? Map.TakeObjectUid() : carried.Level1ObjectUid) : 0;
+        uint topUid = carried.HasTopObject ? (copy ? Map.TakeObjectUid() : carried.Level2ObjectUid) : 0;
+        ushort chain = carried.NextAddonIndex;
+
+        if (copy && chain != 0)
+        {
+            uint pieceUid = groundUid != 0 ? groundUid : topUid;
+
+            // 链是先进后出的：照着原来的顺序反过来接，目标格的链首才是原来那条链的首。
+            List<Mp2AddonInfo> pieces = Map.EnumerateAddonChain(carried)
+                .Select(index => Map.Addons[index])
+                .ToList();
+
+            chain = 0;
+            for (int index = pieces.Count - 1; index >= 0; --index)
+            {
+                chain = (ushort)Map.AppendAddon(pieces[index] with
+                {
+                    NextAddonIndex = chain,
+                    Level1ObjectUid = pieceUid,
+                    Level2ObjectUid = 0,
+                });
+            }
+
+            _addonsChanged = true;
+        }
+
+        Mp2TileInfo placed = target with
+        {
+            ObjectName1 = carried.ObjectName1,
+            BottomIcnImageIndex = carried.BottomIcnImageIndex,
+            Quantity1 = carried.Quantity1,
+            Quantity2 = carried.Quantity2,
+            ObjectName2 = carried.ObjectName2,
+            TopIcnImageIndex = carried.TopIcnImageIndex,
+            ObjectType = carried.ObjectType,
+            NextAddonIndex = chain,
+            Level1ObjectUid = groundUid,
+            Level2ObjectUid = topUid,
+        };
+
+        bool changed = WriteObject(destination, placed);
+
+        if (!copy)
+        {
+            changed |= WriteObject(source, carried with
+            {
+                ObjectName1 = 0,
+                BottomIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+                Quantity1 = 0,
+                Quantity2 = 0,
+                ObjectName2 = 0,
+                TopIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+                ObjectType = Mp2ObjectType.None,
+                NextAddonIndex = 0,
+                Level1ObjectUid = 0,
+                Level2ObjectUid = 0,
+            });
+        }
+
+        if (ownStroke)
+        {
+            EndStroke();
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// Whether two tiles show the same object, the check behind the "The same object exists on the tile."
+    /// warning of a move or a copy.
+    /// </summary>
+    /// <remarks>
+    /// 比较的是画出来的东西（两个部件的类型与图号、物件类型），不是数量或元数据：参考拿物件目录里的组与序号比
+    /// （<c>_getSameObjectPresentOnTile</c>），数量属于同一个物件的状态，不构成「另一件」。
+    /// </remarks>
+    /// <param name="left">One tile.</param>
+    /// <param name="right">The other tile.</param>
+    /// <returns>Whether both tiles hold the same object and at least one of them holds something.</returns>
+    private static bool SameObject(Mp2TileInfo left, Mp2TileInfo right)
+        => (left.HasGroundObject || left.HasTopObject)
+           && left.ObjectType == right.ObjectType
+           && left.ObjectName1 == right.ObjectName1
+           && left.BottomIcnImageIndex == right.BottomIcnImageIndex
+           && left.ObjectName2 == right.ObjectName2
+           && left.TopIcnImageIndex == right.TopIcnImageIndex;
+
+    /// <summary>Writes one tile record into the map and the open stroke.</summary>
+    /// <param name="point">Tile to write, must be inside the map.</param>
+    /// <param name="after">The record to store.</param>
+    /// <returns>Whether the tile changed.</returns>
+    private bool WriteObject(Point point, Mp2TileInfo after)
+    {
+        Mp2TileInfo before = Map.Tile(point.X, point.Y);
+
+        if (after == before)
+        {
+            return false;
+        }
+
+        int index = Map.TileIndex(point.X, point.Y);
+        Map.SetTileAt(index, after);
+        _stroke!.Record(index, before, after);
+        return true;
+    }
+
+    /// <summary>
     /// Clears the objects under the brush and keeps their ground, the eraser of the editor.
     /// </summary>
     /// <remarks>
-    /// The result is the empty tile a shipped map stores: no ICN type, sprite index 255 on both
-    /// parts, a zeroed layer and metadata and UIDs of 0, with the terrain image and the terrain flags
-    /// untouched. Every tile of the brush area is cleared, not just the pointed one: the reference
-    /// applies <c>getBrushArea()</c> of the eraser too, which is what the size buttons of the panel
-    /// are for.
+    /// <para>
+    /// The result is the empty tile a shipped map stores: no ICN type, sprite index 255 on both parts, a zeroed
+    /// layer and metadata and UIDs of 0, with the terrain image and the terrain flags untouched. Every tile of the
+    /// brush area is cleared, not just the pointed one: the reference applies <c>getBrushArea()</c> of the eraser
+    /// too, which is what the size buttons of the panel are for.
+    /// </para>
+    /// <para>
+    /// 只删勾选的类别：参考把 <c>getEraseObjectGroups()</c> 一起交给 <c>_removeObjectsAsAction</c>，不在集合里的物件原样
+    /// 留着（<c>editor_interface.cpp:1856</c>）。端口没有「每格一张物件表」，类别只能从画出这一格的那个面片反查
+    /// （<see cref="MapObjectCatalog.GetGroundGroup"/>）；目录里查不到的部件按参考的做法跳过——参考同样只删它认得的物体。
+    /// </para>
+    /// <para>
+    /// 一格可以同时有地面层与顶层两个部件，两者的类别未必相同：只清掉勾中的那一半，另一半连同它的 UID 留着。地面部件被清掉时
+    /// 附加链的引用一并断开（链上的面片都盖着地面物件的 UID），物件类型按剩下的部件重算（<see cref="RemainingType"/>）。
+    /// </para>
     /// </remarks>
     /// <param name="tile">Tile under the pointer, ignored when outside the map or <see langword="null"/>.</param>
     /// <returns>Whether anything changed.</returns>
@@ -643,39 +1166,78 @@ public sealed class MapEditSession
         return true;
     }
 
-    /// <summary>Clears the object of one tile, the body of <see cref="EraseObject"/>.</summary>
+    /// <summary>The catalogue groups the checked types cover, built once per change of the checks.</summary>
+    private IReadOnlySet<ObjectGroup> EraseGroups => _eraseGroups ??= EditorEraseTypes.Groups(_eraseTypes);
+
+    /// <summary>Clears the parts of one tile whose group is checked, the body of <see cref="EraseObject"/>.</summary>
     /// <param name="point">Tile to clear, must be inside the map.</param>
     /// <returns>Whether the tile changed.</returns>
     private bool EraseTile(Point point)
     {
         Mp2TileInfo before = Map.Tile(point.X, point.Y);
 
-        if (!before.HasGroundObject
-            && !before.HasTopObject
-            && before.ObjectType == Mp2ObjectType.None
-            && before.NextAddonIndex == 0)
+        bool eraseGround = before.HasGroundObject && EraseGroups.Contains(MapObjectCatalog.GetGroundGroup(before));
+        bool eraseTop = before.HasTopObject && EraseGroups.Contains(MapObjectCatalog.GetTopGroup(before));
+
+        if (!eraseGround && !eraseTop)
         {
             return false;
         }
 
-        Mp2TileInfo after = before with
+        Mp2TileInfo after = before;
+
+        if (eraseGround)
         {
-            ObjectName1 = 0,
-            BottomIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
-            Quantity1 = 0,
-            Quantity2 = 0,
-            ObjectName2 = 0,
-            TopIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
-            ObjectType = Mp2ObjectType.None,
-            NextAddonIndex = 0,
-            Level1ObjectUid = 0,
-            Level2ObjectUid = 0,
-        };
+            after = after with
+            {
+                ObjectName1 = 0,
+                BottomIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+                Quantity1 = 0,
+                Quantity2 = 0,
+                NextAddonIndex = 0,
+                Level1ObjectUid = 0,
+            };
+        }
+
+        if (eraseTop)
+        {
+            after = after with
+            {
+                ObjectName2 = 0,
+                TopIcnImageIndex = Mp2TileInfo.EmptyImageIndex,
+                Level2ObjectUid = 0,
+            };
+        }
+
+        after = after with { ObjectType = RemainingType(after) };
+
+        if (after == before)
+        {
+            return false;
+        }
 
         int tileIndex = Map.TileIndex(point.X, point.Y);
         Map.SetTileAt(tileIndex, after);
         _stroke!.Record(tileIndex, before, after);
         return true;
+    }
+
+    /// <summary>
+    /// The object type a tile reports once one of its parts was erased: the ground part decides while it is there,
+    /// otherwise the top part does, and a tile with neither reports <see cref="Mp2ObjectType.None"/>.
+    /// </summary>
+    /// <param name="tile">The tile as the eraser left it.</param>
+    /// <returns>The type the map file would store.</returns>
+    private static Mp2ObjectType RemainingType(Mp2TileInfo tile)
+    {
+        if (tile.HasGroundObject)
+        {
+            return tile.ObjectType;
+        }
+
+        return tile.HasTopObject
+            ? MapObjectCatalog.GetObjectTypeByIcn(tile.TopIcnType, tile.TopIcnImageIndex)
+            : Mp2ObjectType.None;
     }
 
     /// <summary>Reverts the last stroke, or the stroke in progress first.</summary>

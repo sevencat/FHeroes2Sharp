@@ -4783,4 +4783,535 @@ MP2 字段是存档时由 `Map_Format` 的对象表反推的；端口没有 `Map
 生成的图上每一格的编号都等于按它现在的邻居算出来的那个，且至少有一格是真正的岔路口。
 
 
+## ADR-285：P7 随机地图：生成配置对话框（`4f2.2`）
+
+参考在生成前先开一个配置对话框（`Maps::updateRandomMapConfiguration()` → `fheroes2::randomMapGeneratorDialog()`），
+玩家调完参数才生成。这一刀把它搬过来：`UI/Dialogs/RandomMapGeneratorDialog.cs`（模型）与
+`UI/Dialogs/RandomMapGeneratorView.cs`（布局、输入、绘制），并在 `GameHost` 里接上编辑器的「新建随机地图」。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapGeneratorDialog` | `Configuration` 的六个旋钮 + 两条夹取规则（`:74-86`、`:216-227`） |
+| `RandomMapGeneratorView` | 六行的布局、三根滑块、种子框、两个按钮（`:96-195`） |
+| `RandomMapGeneratorView.ProcessEvents` / `Show` | 循环体与模态转帧（`:198-251`） |
+| `RandomMapGeneratorDialogText` | `_( "rmg|..." )` 那几句，默认英文、可按 msgid 覆盖 |
+| `GameHost.TryShowRandomMapDialog` | `EditorInterface::updateRandomMapConfiguration()` |
+
+**两条夹取是模型的事**：玩家数夹在 2…6；水量不超过 `calculateMaximumWaterPercentage( 玩家数, 边長 )`。玩家数一变，上限跟着变，
+水量再被夹一次、水量的滑块范围也一起改小——参考在 `playerCountSlider` 分支里同时做这三件事，端口把它们收进
+`SetPlayerCount`，界面只负责在值变了之后调 `SetRange`。
+
+**布局那一行照抄成「假的」**：参考画了 `DROPLISL` 的底与按钮，然后把整块压一层暗色并把按钮 `disable()`，因为生成器只会
+`MIRRORED`（`map_random_generator.cpp:658` 的 TODO）。端口一样画、一样暗、一样禁用；模型的 `SetLayout` 留着，等下拉框真的
+做出来再用。
+
+**一处行为改动**：以前「新建随机地图」失败会退化成一张空白图，现在对话框取消、美术缺件、生成失败三种情况都**停在主菜单**
+（`bd 4f2.1.3` 那次留下的空白图兜底不再需要）。生成失败本身就是「不该留下一张没法开局的图」的结论，拿空白图顶替反而是另一
+种错误。配置与参考一样在多次打开之间保留（`GameHost._randomMapConfig`）。
+
+**美术从归档读**：`STONEBAK`（石面）、`METALLIC_BORDERED_TEXTBOX_GOOD`（标题框）、`TRADPOST`（三根滑块）、`TOWNWIND`（种子框）、
+`DROPLISL`（布局那一行），按钮复用主菜单的 `SettingsArtwork`。缺任何一张就记一条警告并停在主菜单——`TryCreate` 给
+`null`，不会画出半个窗口。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6445 通过（295 + 441 + 1880 + 3829）。新增 15 条测试：玩家数夹取、
+水量不超过 36×36 的上限（53%）、玩家越多上限越小、连点玩家数滑块把水量上限与滑块范围一起推小、水量推到头正好是上限、
+取消没有配置、接受保留六个值、种子的上下界、缺帧就没有窗口、六行的偏移、两个按钮在两角、「没有引擎时窗口也画得出来」
+（有游戏数据的机器上才真跑）、ESC 取消、回车接受、布局那一行动不了。
+
+
+## ADR-286：P7 随机地图：存进 maps 目录并接进开局（`4f2.3`）
+
+生成的图要在选关列表里看得见、点得开，才算「生成完了」。参考的编辑器把新图写进 `maps` 目录，而
+`Maps::getValidMaps()` 每次都扫那个目录；端口的主菜单把列表缓存在内存里，所以存完还得让缓存失效。新增
+`Game/Maps/RandomMapArchive.cs`，并在 `GameHost` 里接上。
+
+| 新增 | 参考 |
+|---|---|
+| `RandomMapArchive.FileNameFor` / `Save` / `ResolveDirectory` | `World::saveMapMP2()` 的整份写 + `Settings::GetMapsDirectories()` |
+| `RandomMapArchive.Describe` | 编辑器存图后打的那行 `xx castle(s), yy add-on(s)` |
+| `RandomMapGenerator.Generate( …, out uint seed )` | `generateMap()` 里 `config.seed > 0 ? seed : Rand::Get( 999999 )` 的答案 |
+| `MainMenuScene.InvalidateMapList` | 参考每次开选关屏都重新扫目录 |
+
+**文件名带种子**：`random_map_<seed>.mp2`。同一个种子重新生成会覆盖自己（不会越存越多），不同种子互不干扰。种子由生成器
+回报（新增的 `out uint seed` 重载）——**不能从地图名字里读**，因为 MP2 的场景名字段只有 16 字节（ADR-283），
+`Random map 20261126` 存下来只剩 `Random map 2026`，读回去会读错、进而把两张不同的图写进同一个文件。
+
+**保存失败不影响生成**：目录不可写（只读安装）或写盘出错时只记一条警告，编辑器照常打开那张图——玩家至少还能在编辑器里
+继续改、另存到别处。图在内存里已经是完整的，磁盘只是它的第二个去处。
+
+**「可见」与「可开局」是两条链路**：可见走 `MapCatalog.Scan`（读文件头，按人数过滤），可开局走 `Mp2Map.Read` +
+`World.LoadMap`（建城镇、英雄与信息块）。两条都由测试钉住：`TheSavedMapIsVisibleInTheScenarioList` 用
+`MapCatalog.ReadAll` 验证前者，`TheSavedMapCanBeStarted` 从文件读回来喂给 `World`，断言两个玩家的王国都有城有英雄。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6453 通过（295 + 441 + 1880 + 3837）。新增 8 条测试：文件名格式、
+`maps` 目录的创建与幂等、存下来再读回（尺寸/城堡/名字一致）、出现在 `MapCatalog` 的列表里（含文件路径与两个玩家颜色）、
+读回来能 `World.LoadMap` 且两个玩家都有城有英雄、同种子覆盖同一文件、不同种子两个文件、描述里带上尺寸与文件名。
+
+
+
+
+
+
+## ADR-287：P8 编辑器：九个仪器与两级物件页（`a7l.1` 第一刀）
+
+参考的面板有九个仪器、四把物件刷子。这一刀先补齐这两件：`EditorTool` 从三个值扩到九个，面板的九个格子按参考的
+顺序（`editor/editor_interface_panel.h:171-186`，那里写着「这个枚举对应资产里图标的顺序，不要改」）逐个选中仪器。
+新增 `Game/Editor/EditorObjectBrushes.cs` 与 `Game/Editor/MapObjectCatalogPresets.cs`。
+
+| 新增 | 参考 |
+|---|---|
+| `EditorTool` 的九个值（Terrain…Erase） | `EditorPanel::Instrument`（`editor_interface_panel.h:171-186`） |
+| `EditorObjectBrushes.Landscape` / `Adventure` / `Kingdom` / `Monsters` | `LandscapeObjectBrush`、`AdventureObjectBrush`、`KingdomObjectBrush`（`:205-235`） |
+| `MapObjectCatalogPresets.For` | 按照分组填物件页的 `getObjectsByGroup()` |
+| `RandomMapObjectWriter.TryBuildTemplate` | 目录条目 → 落子模板（与生成器共用同一套面片换算） |
+
+**两级页面照参考**：物件仪器先选「哪一类」（山、石头、树……），页面里才有物件；换类别清掉下一层的选择，否则会
+「显示矿、落子却是宝物」。四把刷子各自记住自己的选择。
+
+**落子模板复用生成器**：`TryBuildTemplate` 把目录条目变成「放在空地上长什么样」的瓦片加附加链，走的是生成器的
+`Collect` 与面片换算，所以编辑器摆出的物件与生成器摆出的完全一致，不维护第二份换算表。模板按分组缓存：一个分组
+可以有几百个条目，每次画面板都重搭会明显拖帧。
+
+**验证**：构建 0 警告 0 错误；全量 6463 通过（295 + 441 + 1880 + 3847）。新增 10 条测试（`EditorInstrumentTests`）：
+仪器顺序、四族分组与参考一致、只有四个物件仪器有刷子、目录条目数与顺序、模板带对象类型、选类别清空下层、选物件
+成为刷子、越界选择不改状态、四把刷子各自记忆、任意族都能落子。
+
+
+## ADR-288：P8 编辑器：十一类擦除（`a7l.1` 第二刀）
+
+参考的橡皮不是一个「清空这一格」的开关：面板上有十一个格子，每一类物件可以单独排除（`ObjectErasureType`，
+`editor/editor_interface_panel.h:249-275`；点一下翻一位，`editor_interface_panel.cpp:1383`）。这一刀把「擦什么」
+从「全部」变成可勾选的十一位，擦除页也照参考画出来。
+
+| 新增 | 参考 |
+|---|---|
+| `EditorEraseType` / `EditorEraseTypes.Buttons` | `ObjectErasureType` 的十一位与 `_eraseButtonObjectTypes`（`:282-292`） |
+| `EditorEraseTypes.Groups` | `getEraseObjectGroups()`（`:268-320`） |
+| `EditorEraseTypes.Name` | `_getEraseObjectTypeName()`（`:902-930`） |
+| `MapObjectCatalog.GetObjectGroupByIcn` / `GetGroundGroup` / `GetTopGroup` | 参考按物件表查 `group`；端口只有面片，于是反查 |
+| `MapEditSession.EraseTypes` / `SetEraseTypes` / `ToggleEraseType` | `_eraseTypes`、`_eraseTypes ^= …`、默认 `ERASE_ALL_OBJECTS`（`:337`） |
+| `EditorPanel` 的擦除页（十一个 27×27 图标 + `TOWNWIND` 第 11 帧的勾） | `_eraseButtonsRect` 与那十一个图标的取法（`:436-447`、`:600-631`） |
+
+**一位不止一个分组**：`ERASE_LANDSCAPE` 管水面与杂物两个分组，`ERASE_ADVENTURE_NON_PICKABLE` 管五个，而
+`ADVENTURE_WATER` 同时属于「可捡」与「不可捡」——照参考原样重叠，全选是十七个分组而不是十一个。
+
+**类别从面片反查**：参考给每个物件记着 `group`，而 MP2 的瓦片只有 ICN 类型与精灵序号。`MapObjectCatalog` 在建
+`objectInfoByIcn` 的同一趟里多记一份「这张图属于哪个分组」（先注册者胜，与那个索引同一条规则），橡皮就按这一格的
+地面层、顶层面片各查一次。查不到分组的部件按参考的做法跳过——参考也只删它认得的物件。
+
+**一格两半**：一格可以同时有地面层与顶层部件，两者类别未必相同，所以只清掉勾中的那一半。清地面那一半时附加链的
+引用一并断开（链上的面片都盖着地面物件的 UID），物件类型按剩下的那一半重算。参考的编辑器模板只落地面层（顶层
+部件都在附加链里），因此这条路径真正管用的是从文件读进来的地图。
+
+**图标不另画**：十一个图标全部取自 `EDITPANL`——第 6、7、8、10、13、16、17 帧，以及第 1 帧上裁出的四块
+（城镇、可捡的冒险物件、怪物、英雄）；勾用 `TOWNWIND` 第 11 帧。与地形页、物件页同一个办法：只用资产里有的图，
+缺图就退回文字。
+
+**没做的**：右键提示与长按「只留这一类」（`editor_interface_panel.cpp:1386-1402`）没有对应的输入通道，先只做左键翻位。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；全量 6473 通过（295 + 441 + 1880 + 3857）。新增 10 条测试：位值与
+参考一致、页面顺序、十一类各覆盖哪些分组（含重叠与全集十七个）、名称、默认全选、翻位只翻一位、一位都不勾时什么也
+不删、只删勾中的类别（未勾时一步也不进撤销历史）、只清勾中的那一半、目录认不出的部件留着不动。另改一条旧测试：
+「橡皮按面积清格」改成先用真物件落子再擦，因为手搭的字节没有分组、按参考的做法不会再被删。
+
+## ADR-289：P8 编辑器：详情仪器的三个模式与搬移/复制（`a7l.1` 第三刀）
+
+参考的详情仪器不是「点开物件」一件事：面板上有三个模式，编辑（点开物件自己的窗）、搬移（按住拖走）、复制（按住拖出
+一份），`DetailBrushType`（`editor/editor_interface_panel.h:269-278`）。这一刀把三个模式和搬移、复制都落地。
+
+| 新增 | 参考 |
+|---|---|
+| `EditorDetailMode` / `EditorDetailModes` | `DetailBrushType` 与 `_getDetailModeTypeName` 的名字、说明文案 |
+| `MapEditSession.DetailMode` / `SetDetailMode` | `_selectedDetailBrushType`、三个详情按钮（`.cpp:1272-1280`） |
+| `MapEditSession.GrabObject` / `ReleaseObject` / `DetailSource` | `_movableObjectInfo` 的一按一放（`.cpp:2906-2935`） |
+| `MapEditSession.MoveObject` / `CopyObject` | `_tryToMoveObject` / `_tryToCopyObject`（`.cpp:1675-1780`） |
+| `EditorPanel` 的详情页（`EDITPANL` 18/19/20 + `TERRAINS` 第 9 帧黄框） | `.cpp:523-529` |
+
+**搬的是什么**：端口的一格有地面层与顶层两个部件、一段附加链、两个 UID，而参考的物件是一组「主格 + 附属格」。搬移就
+按格记录搬：两个部件的类型与图号、层号、数量、物件类型、UID 原样写进目标格，源格清成空件（`ObjectType` 也归
+`None`），两张格的地形图与地形位都不动。多格的物件在端口里本来就只占一张格记录（其余格子的面片挂在附加链上，见
+ADR-045），整件东西跟着走。
+
+**附加链：搬不复制，复制才复制**。搬移时目标格直接指向原来那条链，链上的面片一个不增——搬的是同一件东西，UID 不变，
+链仍旧属于它。复制时目标格拿新 UID，链整条按原顺序复制一份（每张面片挂新 UID），否则两张格会共用一条链，改其中
+一个的旗子会连带改另一个。
+
+**目标格已有同样的东西就拒绝**：参考在目标格找到同组同序号的物件时提示 "The same object exists on the tile." 并放弃。
+端口没有分组序号可比，比的是画出来的东西（两个部件的类型与图号、物件类型）；数量与元数据不比——那是同一件东西的
+状态，不构成「另一件」。拖回原格、拖到地图外、空格按下都算空操作，一个字节也不写。
+
+**一次搬移是一笔历史**：源格与目标格各自 `Record` 到同一条 stroke 里，撤销一次就把两格都还原。
+
+**详情页没有图**：参考画的那三帧（`EDITPANL` 18/19/20）在本仓库那套六页 `EDITPANL` 里不存在（地形、擦除图标、
+Cell Details、Streams、Roads、Erase），于是这一页退回三行文字（`1 Edit` / `2 Move` / `3 Copy`，选中行加框），热区
+同步换成行；拿到有那三帧的档案仍走图标。这与擦除页「缺图退回文字」是同一条规矩。
+
+**编辑模式开的是信息框**：参考左键点开物件自己的属性窗（城堡、事件等），那些窗口属于后面的 issue，端口先打开物件
+信息框——同样的时机、同样的入口，等属性窗落地再换。
+
+**没做的**：流与路的拖拽铺设（参考走 `Map_Format` 的物件模型与方向重算，端口只有 MP2 格记录，要先定道路/河流在端口
+里怎么表示）；系统按钮里的放大镜（View World）、规格、文件、菜单，分别属于 `a7l.2` / `a7l.3` / `a7l.5`。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；Core 295、Assets 441、Game 3868、UI 1879 通过（UI 的
+`SkillBarsTests.PrimaryFull_Redraw_PaintsThePlateOfEverySkill` 在全量并行跑时偶发失败一次，单跑通过，与本刀无关）。
+新增 `EditorDetailTests` 11 条：模式编号与顺序、名字与说明、默认编辑模式、`Apply` 不改编地图、空格抓不到东西、
+换工具/换模式丢掉手上的物件、搬移带附加链且地形不动、搬移是一笔撤销、复制拿新 UID 并复制整条链、同物件拒绝、
+地图外落空。像素基线 `tests/baselines/editor.png` 完全一致；`--editor-panel-click "121,24;72,122"` 的截图确认详情页
+画出来并选中 Move。
+
+## ADR-290：P8 编辑器：道路与河流两条仪器的拖拽铺设（`a7l.1` 第四刀）
+
+参考的 Roads / Streams 不是在格子上涂贴图，而是改地图的物件模型：一格有路，就把周围格的路按方向掩码重新排一遍
+（`getRoadObjectIndex` → `setRoadOnTile` → 对八个邻居 `updateRoadOnTile`），河流同理但只看四边（`getStreamDirecton`
+→ `addStream` → `updateStreamObjectOnMapTile`）。端口只有 MP2 格记录，所以先定死「路 / 河在端口里是什么」，再照
+参考的顺序改它。
+
+| 新增 | 参考 |
+|---|---|
+| `Editor/EditorPaths.cs` 的 `LayRoad` / `LayStream` | `setRoadOnTile` / `addStream`（`maps/map_format_helper.cpp`） |
+| `RoadObjectIndex` / `RedrawRoad` / `MatchesRoadLayout` | `getRoadObjectIndex` / `updateRoadOnTile` |
+| `StreamDirection` / `StreamSprite` / `RedrawStream` | `getStreamDirecton` / `getStreamIndex` / `updateStreamObjectOnMapTile` |
+| `MapEditSession.LayRoad` / `LayStream` / `LayPath` | 两条仪器的左键（`editor_interface_panel.cpp` 的 Roads / Streams 页） |
+
+**路在端口里就是一张地面面片**：`GroundIcnType = Road`，`BottomIcnImageIndex` 是物件索引 0..511 —— 索引本身就是八
+方向位掩码，表尾的 512 是城堡门口那条引道。一件路会把面片撒到相邻格去（接头），所以「这一格有路」不等于「这一格
+的记录里有 `Road`」，也不等于「只有这一格有这件的面片」。判定照参考的 `isSpriteRoad`：邻格伸过来的接头面片不算这一
+格自己有路，否则一条路会把整条街都点亮。
+
+**铺一格 = 写自己 + 重画邻居**：`LayRoad` 先按掩码给这一格挑一件写下去（掩码由周围八格有没有路算出来），再把八个
+邻居的路按新掩码拆了重铺，拆与铺用同一个 UID——路还是那条路，只是接头变了。河流只重画四边，因为它没有对角面片。
+
+**重铺之前先比整件**：掩码 0 与掩码 8 的锚点贴图都是第 2 帧，只比锚点会把「该补接头」误判成「已经对」。`MatchesRoadLayout`
+按格比整件：锚点周围 3x3 里属于这个 UID 的路面片（记录里那张加上附加链里的）要与目录里那一件的部件一一对上，多
+一张少一张都重铺。道路面片的偏移都在一格之内，扫 3x3 就够。
+
+**一次拖拽是一笔历史**：路面改的格子不只在指针下——拆旧路会扫全图，新铺的一件又只带一个 UID。所以每一步先按指针
+存下窗口（路 2 圈、河 1 圈），改完把窗口与改前比，差多少记多少；同一步里同一格被改两次也只留第一次的值。
+`LayPath` 把这一步塞进拖拽已经开着的那条 stroke，并置 `_addonsChanged`（路面往附加链里塞件，存盘不能走「只补地形」
+的近路）。
+
+**河只在旱地上走**：水格拒绝、已经有河的格子跳过，与参考一致。旱地上的花草石头会被抹掉——河把地形图换成「素」的
+那一张，参考是 `Ground::getRandomTerrainImageIndex(ground, false)`；端口取那张素图而不是随机挑一张，所以同一次拖拽
+画出来的图每次一样。
+
+**两处「随机」都取第一个**：参考每个掩码有变体、直段与孤头各有两个河图，端口一律取第一种，理由与地形变体一样——
+重画与撤销要能还原成同样的贴图。
+
+**没做的**：三角洲（delta）河段；`Map_Format` 物件模型里道路以外的连带（如 `isSpriteRoad` 之外的图块分类）。
+
+**验证**：构建 `FHeroes2Sharp.slnx` 0 警告 0 错误；Core 295、Assets 441、UI 1880、Game 3882 通过，合计 6498。
+新增 `EditorPathsTests` 14 条：空地第一段路的孤段贴图、两段并行互相接头、重画后 UID 不变、城堡门口的引道、
+引道旁边那条照常接、接头面片不算「这一格有路」、一条路一笔撤销（连伸进邻居的接头面片一起收回）、一次拖两格
+是一笔撤销、河流的孤段、两段并流成直段、水上不铺、已有河不重铺、河抹掉格上的花草石头、地图外落空。
+像素基线 `tests/baselines/editor.png` 一致（有一次跑到指针那一格带着画笔地形，重跑与手动同参渲染都与基线逐字节
+相同，判定为偶发，未再复现）。
+
+## ADR-291：P8 编辑器：历史管理器的元数据表与编辑器的选项窗（`a7l.2`）
+
+参考的 `HistoryManager` 有两级粒度：`GenericMapAction` 存整图的快照，`MetadataMapAction` 只存「某一本按对象编号
+存的数据表」的前后副本——改一个城堡的名字不必复制整张地图。端口的 `HistoryManager` 早就转完了，只有非整图那一支
+抛 `NotImplementedException`，因为 MP2 里没有这套表。这一刀把表补上，并把 `editor_options.cpp` 的选项窗转出来。
+
+| 新增 | 参考 |
+|---|---|
+| `Editor/MapObjectMetadata.cs`（九个结构与 `MapObjectMetadataStore`） | `Maps::Map_Format` 的九本 `*Metadata`（`map_format_info.h:62-419`） |
+| `ActionCreator` 的非整图分支 | `history_manager.cpp:167-202` 的 `switch` |
+| `UI/Dialogs/EditorOptionsDialog.cs` | `editor_options.cpp:113-233` 的 `openEditorOptionsDialog()` |
+| `OptionItem.DrawAnimation` / `DrawPassability` | `ui_option_item.cpp` 的 `drawAnimationOptions` / `drawPassabilityOptions` |
+
+**九本表照原样搬**：城堡、英雄、狮身人面像、路牌、地图事件、「几选一」物件、怪物堆、神器、资源堆，键都是物件 UID，
+与 `Mp2Map.TakeObjectUid` 同源。用有序字典而不是哈希表，跟参考的 `std::map` 一样按键遍历：存档要按编号顺序写，
+撤销要能稳定地比出前后两份。
+
+**只有四个结构比内容**：参考给城堡、英雄、狮身人面像、地图事件写了 `operator==`（容器逐元素比），其余五个没有。
+端口照办——那四个实现 `IEquatable` 并逐元素比、哈希也跟着一致，其余五个只做数据容器。窗口判断「作者到底改没改」
+靠的就是这层比较。
+
+**提交失败要留在手上**：`MapAction` 添了 `Prepare(uint)`，整图动作拿它存「改完」的快照并记下 UID 计数器，元数据动作
+忽略这个参数只拷贝字典。`Commit` 只有在 `Prepare` 成功时才把动作交给管理器，失败就留在手上等析构撤回——这是参考
+`commit()` 与析构的配合（`history_manager.cpp:205-217`），端口原来的写法失败时会把动作丢掉、什么都不撤回。
+
+**选项窗是九格三行**：语言、图形、音频；热键、对象动画、通行性；界面风格、光标、滚动速度。窗口 289×(77×3+52)，
+与系统选项窗同一套格子。四个「开一页」的（语言、图形、音频、热键）把动作交回调用方；另外五个也只上报，由调用方改
+设置再重画——参考在 `openEditorSettings()` 里正是这么做的，因为动画与通行性开关要重画地图、界面风格要重建面板。
+滚速的图标照参考写死成两格宽（`ui_option_item.cpp:63`），这一行偏偏是三格；顺手把参考的 `Passabiility` 拼写修正了。
+
+**没做的**：`openEditorSettings()` 的循环与面板系统按钮的接线。它要编辑器场景的事件泵与重画入口，跟另外三个系统
+按钮一起在 `a7l.7` 落；这一刀只交出窗口本身与它需要的两个绘制助手。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1888、Game 3885 通过，合计 6509。新增 `EditorOptionsDialogTests`
+8 条（缺帧不开窗、窗口尺寸、九格坐标与行距、四个开页动作、五项只上报不动设置、滚轮走档、回车/取消关门、右键说明），
+`EditorHistoryManagerTests` 增 3 条（九种动作各自进自己那本表并撤销重做、未知动作类型被拒、四个结构逐元素相等）。
+像素基线 `tests/baselines/editor.png` 一致。
+
+## ADR-292：P8 编辑器：物件说明弹窗的文字与第十本元数据表（`a7l.3` 第一刀）
+
+`a7l.3` 是三张窗：城堡详情（53 KB）、地图规格（119 KB）、物件说明（12 KB）。这一刀先做最小的那张——它不依赖另外
+两张，也不依赖城堡与地图窗口的组件。
+
+| 新增 | 参考 |
+|---|---|
+| `Editor/EditorObjectPopup.cs` | `editor_object_popup_window.cpp:57-267` |
+| `MapObjectMetadataStore.CapturableObjects` 与 `CapturableObjectMetadata` | `map_format_info.h:297-300` 的 `capturableObjectsMetadata` |
+
+**文字是「认领」出来的**：参考拿这一格的主部件去物件表里比对，认得资源堆就报「几个什么」，认得神器就报名字，认得
+矿洞就报矿种加归属，认不得就报物件类型名。端口的地图是 MP2 记录，一格里只有地面部件与顶层部件的 ICN 与图片号，认
+领的办法照旧，只是拿地面部件比；物件表还是同一份 `MapObjectCatalog`。
+
+**两边类型要抹平**：物件表记的是带动作位的类型（`ActionResource`、`ActionAlchemistLab`），MP2 格上记的是不带的那
+一个。直接比永远不相等，所以两边都过一遍 `Mp2ObjectTypes.NonActionType`。这一点是被用例逼出来的——第一版把类型当
+成相等，资源堆的用例得到的是「Resource」而不是「Wood」。
+
+**矿洞比最后一个部件**：矿洞的矿种写在背景层的最后一个部件上，参考比的就是它（`:159-160`）；其余物件比第一个。
+
+**没有「主格」这一步**：参考先算 `Tile::getIndexOfMainTile` 再到那一格上取文字，因为部件的偏移只存在运行时的瓦片
+里。端口的格式层没有偏移，但数量、归属、矿种都按物件 UID 取，同一件物件的每一格拿到的是同一份数据，所以直接描述被
+点的那一格；末尾的 `[x; y]` 本来也是被点的那一格。
+
+**认不出不抛**：参考在这里是 `assert(0)`，release 构建里断言是空的、于是退回物件类型名。端口按 release 走——弹窗
+是只读的帮手，不该因为目录里没有这件东西就让编辑器崩掉。
+
+**补上第十本表**：上一刀（ADR-291）说「九本表」，漏了 `capturableObjectsMetadata`。它没有动作类型，参考的注释写明
+了原因（`history_manager.h:80-82`）：改归属要连地图上的旗子一起重画，所以走整图快照那一档。端口照办：表在
+`MapObjectMetadataStore` 里，`ActionCreator` 不为它开分支。
+
+**没接线的**：显示层。参考在 `mouseCursorAreaPressRight` 里用 `displayStandardPopupWindow` 弹出这段文字；端口的
+编辑器右键现在是「平移 + 抬笔吸地形」，右键语义本身要等 `a7l.6`（编辑器输入收进 `LocalEvent`）一起改，所以这一刀
+只交出文字。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1888、Game 3895 通过，合计 6519。新增
+`EditorObjectPopupTests` 10 条：路与空地的说法、资源堆带不带数量、怪物单复数、怪物没记数量时退回类型加复数名、神器的
+两行、矿洞的矿种与归属、可占建筑的归属、关卡与帐篷的颜色名、其它物件退回类型名、地图重载与两个空参数。渲染未变动，
+未重跑像素基线。
+
+## ADR-293：P8 编辑器：城堡详情窗的一格（`a7l.3` 第二刀）
+
+参考的城堡详情窗 1065 行，最大的一块是「一格」——`BuildingData`（`:79-307`）：一条升级链的读写、点击怎么移动
+两个等级、这一格怎么画。窗口本体（网格布局、名字输入、英雄与军队、法师公会的法术表、两个子窗口）在下一刀。这一刀
+交出格子与它要的素材表。
+
+| 新增 | 参考 |
+|---|---|
+| `UI/Widgets/CastleBuildingCell.cs` | `BuildingData`（`editor_castle_details_window.cpp:79-307`） |
+| `UI/Widgets/CastleBuildingCellArtwork.cs` | `redraw()` 里那几张 `Assets::getImage()`（`:201-273`） |
+
+**两个等级都是 -1 起算**：`_builtId` / `_restrictedId` 是 `int8_t`，-1 表示「没有」，所以 0 是「第一级」。端口照搬，
+`BuiltLevel` 的判断是 `>= 0` 而不是 `!= 0`，`BuiltChain` 也按这条线展开。
+
+**掩码里禁了好几级时记最高那一级**：构造时从链的底往顶扫，每遇到一个在掩码里的就覆盖一次，所以给一本「第 2 级到第
+5 级都禁」的掩码，记下来的是第 5 级。这一条一开始写反了（以为是记最低的），被用例抓出来。
+
+**建与禁互相让路**：往上建时若顶到禁线，把禁线往上推一格（顶到链尾就取消禁）；往上禁时若压到已建，把已建压到禁线
+之下。这段就是参考 `queueEventProcessing()` 的两个分支，没有别的语义。
+
+**链走到底就停**：`getUpgradeForBuilding()` 约定「没有更高一级就返回自己」，所以循环条件直接比建筑本身。
+
+**用例挑法师公会当链**：骑士的第一住所（农民小屋）根本没有升级，用它会得到长度 1 的链、用例什么也证明不了；法师公会
+五级、每个种族一样，正好当长链。
+
+**两张灰图在素材表里一次压好**：参考每次重画都复制一张再 `ApplyPalette`（`:228-229`、`:251-253`），结果一样，省掉
+每次重画的两份复制。
+
+**画法没有单测**：这一格要出像素，靠 `tests/baselines/editor.png` 检查，等下一刀把它接进窗口时一起看。素材表是私有
+构造 + `required`，测试造不出假件，跟 `ConstructionArtwork` 一样。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1900、Game 3895 通过，合计 6531。新增
+`CastleBuildingCellTests` 12 条：链长与初值、掩码读最高一级（已建/已禁各一条）、两个掩码各归各的、往下建并回绕、
+往上禁并回绕、建不能越过禁（禁线被顶上去）、禁会压下已建、`Reset`、格子与两个半格的坐标、绘制拒绝空参数。
+渲染未变动，未重跑像素基线。
+
+## ADR-294：P8 编辑器：城堡元数据与军队、建筑掩码的换算（`a7l.3` 第三刀）
+
+上一刀交出了城堡详情窗里的一格，这一刀交出格子吃的东西：城堡与英雄的元数据怎么写进运行时对象、运行时对象又怎么写
+回去。参考在这块是 `maps/map_format_helper.cpp` 里的一串自由函数，端口一个都还没有。
+
+| 新增 | 参考 |
+|---|---|
+| `Game/Editor/MapFormatArmy.cs` | `getBuildingsFromVector`（`:1749-1757`）、`setDefaultCastleDefenderArmy`（`:1759-1767`）、`isDefaultCastleDefenderArmy`（`:1769-1772`）、`loadCastleArmy` / `saveCastleArmy`（`:1774-1787`）、`loadHeroArmy` / `saveHeroArmy`（`:1789-1803`）、`loadArmyFromMetadata` / `saveArmyToMetadata`（`:75-99`） |
+
+**两个「默认」哨兵不一样**：城堡的守军「类型全为负」表示按种族配，英雄的军队「类型全 `<= 0`」表示没改过——因为英雄
+那一排的 0 是空槽。这两个判断分开写，混用会让「作者清空了军队」和「作者没碰过」变成同一件事。
+
+**负数按空槽读，不断言**：参考在 `loadArmyFromMetadata` 里对着 `-1` 写 `assert`，端口把它当空槽——元数据可能来自手改
+过的地图，读的时候宽容一点比让编辑器崩掉好。
+
+**写回按排的长度走**：参考断言军队与两排等长；端口按排的长度遍历，军队更短时多出来的槽写 0。
+
+**类型名撞了命名空间**：`Army` 类在 `FHeroes2.Game.Army` 命名空间里，而 `FHeroes2.Game.Editor` 是同一个根的兄弟，
+裸写 `Army` 会先解析成命名空间。文件里用 `using ArmyStack = FHeroes2.Game.Army.Army;` 绕开，和 UI 那边处理同名类型
+的办法一致。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1900、Game 3906 通过，合计 6542。新增 `MapFormatArmyTests` 11
+条：建筑列表并为掩码、空列表、已建与禁用各取各的、新城堡不是默认守军、默认守军写 -1/0、默认守军不动军队、自定义守
+军逐槽装载、写回两排、负数按空槽、英雄无自定义军队不装、英雄军队往返。渲染未变动，未重跑像素基线。
+
+另记一笔：全量首轮跑时 `SkillBarsTests.PrimaryFull_Redraw_PaintsThePlateOfEverySkill` 偶发失败一次，单独跑与整库复跑
+均通过，与本刀改动无关（本刀只动了 Game 里的新文件）。
+
+## ADR-295：P8 编辑器：法师公会法术表与十九格布局（`a7l.3` 第四刀）
+
+这一刀把窗口本体里不依赖像素与事件的两块拆出来了：法师公会子窗的法术表，和十九格建筑的位置与显示开关。
+
+| 新增 | 参考 |
+|---|---|
+| `Game/Editor/MageGuildSpellTable.cs` | `mageGuildSpellsDialog()` 的表格与写回（`:340-361`、`:449-483`、`:487-529`、`:532-545`） |
+| `Game/Editor/CastleDetailsLabels.cs` | `getCastleName()`（`:309-316`）、`getMageGuildTitle()`（`:496-512`） |
+| `UI/Dialogs/CastleDetailsGrid.cs` | `buildings[]` 与它们的 `setPosition` / 显示开关（`:729-768`、`:645`、`:683`、`:670-675`） |
+
+**格子数只看种族能力**：参考传的是 `hasLibraryCapability`（法师族或随机族），不是「这张图上图书馆建了没有」，所以随机族
+的城堡在预览里也按六格排。端口 `Castle.HasLibraryCapability` 只认 `Wizard`，那是运行时城堡的语义（随机族早就定下来了），
+编辑器不能复用它——`MageGuildSpellTable` 自己按参考判 `Wizard or Random`。
+
+**占位符写回等于删除**：格子里是「第 N 级随机」时，参考在 OK 里把这格从 `mustHaveSpells` 删掉，而不是存一个占位符值；
+`Spell.Level()` 对占位符返回 0，正好是这条判据。
+
+**禁用列表是一串编号**：原存储不分等级，打开禁用子窗时才按等级摊成五个容器、确认后拼回一串。这个往返做成一对静态方法，
+子窗真的接进 UI 时直接用。
+
+**十九格里队长不在网格里**：前十八格三列六行、行距 75，第一行与第四行之后多 5 像素；队长单独钉在右侧面板
+`(438+33, 232)`。行距靠循环累加算，不写死成查表，免得以后改行高时表与代码对不上。
+
+**「town」是没建要塞的那个**：`isTown` 判的是 `builtBuildings` 里**没有** `BUILD_CASTLE`，同时决定名字框的占位提示、
+军队标题与「允许建城堡」勾选框；这条容易被读反，注释里写清了。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1909、Game 3919 通过，合计 6564。新增
+`MageGuildSpellTableTests` 13 条（格数随种族、每排格数、空表全是占位符、按元数据装、写回与幂等、取消钉选会删条目、
+禁用换占位符、同列表不算改动、禁用不影响别级、分组往返、非公会法术被忽略、名字占位、公会标题）与
+`CastleDetailsGridTests` 9 条（十九格与队长、亡灵神龛、行列坐标与两处 5 像素、越界、队长位置、两本掩码读数、
+town 判定、默认建筑开关、禁建要塞）。渲染未变动，未重跑像素基线。
+
+## ADR-299：城堡详情窗的整块绘制（`a7l.3.1` 第二刀）
+
+`a7l.3.1` 收尾：新增 `UI/Dialogs/CastleDetailsView.cs`，把 `castleDetailsDialog()` 的画面从背景到状态栏文字
+整个串起来（`:619-810`）。`CastleDetailsFrame` 继续管窗口壳与底部按钮，这一层管壳里的东西。
+
+| 新增 | 参考 |
+|---|---|
+| `Paint()` | 背景 → 名字 → SET SPELLS → 两个勾选框 → RESTRICT → 军队条 → 建筑格 → 底部按钮 → 状态栏文字 |
+| `PaintAllowCastle()` / `PaintDefaultBuildings()` / `PaintArmy()` | `:664-722` 的三个勾选框与 army bar |
+| `PaintBuildings()` | 19 格 + `BLDGXTRA` 队长框 `:751-768` |
+| `PaintStatusMessage()` | 状态栏消息 `:801-810` |
+| `CastleDetailsFrame.StatusBarMessageArea` | `statusBar.setRoi()` 那条没有高度的条 |
+| `StatusBar.Reset()` | 端口专用：整块重绘后作废消息缓存 |
+
+**最大的坑：那三个按钮在存档里根本不存在。** 我照着参考的 `ICN::BUTTON_OKAY_TOWN` / `BUTTON_GUILDWELL_EXIT` /
+`BUTTON_RESET_GOOD|EVIL` 去 `TryReadIcn`，四个全部返回空。它们在 `game_assets.cpp:933` 与 `:1886` 是**运行时合成**的：
+OKAY 与 EXIT 是 `EMPTY_GUILDWELL_BUTTON` + 文字，RESET 是 `EMPTY_GOOD/EVIL_BUTTON` + 文字、底纹取 `STONEBAK`。
+端口对应 `ButtonFactory.GetTextAdaptedSprite(text, DialogButtonTemplate.GuildWell | Good | Evil, stone)`。
+**以后遇到 `ICN::` 里带 `<按钮>` 字样的编号，先去 `game_assets.cpp` 确认它是不是现场合成的。**
+
+**这个坑被测试藏了一轮**：素材读不到时 `TryCreate` 返回 `null`，两处的辅助方法都写成「`TryCreate` 是 null 就跳过」，
+于是 8 条城堡详情用例静默通过。现在两个夹具都在「存档在、但拼不出来」时抛 `InvalidOperationException`——
+有数据却画不出窗口是真问题，不该当作「这台机器没装游戏」放过去。
+
+**三个测试侧的坑**（都是跑出来才发现的）：
+1. `Sprite.Transform[y * Width + x] == 1` 的像素不会被画上去，拿源图逐像素对拍时必须跳过，否则会拿透明色当期望值。
+2. 名字条盖住右侧面板头 19 行，抽行对拍右半时要避开，不然比的是 `CASLBAR`。
+3. `BOTTOM_RIGHT` 对齐的是**活动区底边**（`dialogRoi.y + dialogRoi.height - 24`），不是状态栏上沿；两者差一个
+   状态栏高度，我第一版按状态栏上沿写，差 19 像素。
+
+**`StatusBar.Reset()` 是端口专有的**：参考的状态栏贴在显示层上，只有它自己改那块像素，所以记住上一条消息就够；
+端口每帧整块重绘窗口，`CASLBAR` 会被重新盖一遍，缓存不作废的话同一条消息第二次就画不出来。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1937、Game 3919 通过，合计 6592（较上轮 +8，且这 8 条
+是真正执行过的——上一轮它们在静默跳过）。新增 `CastleDetailsViewTests` 8 条（三个勾选框的位置与「废墟没有
+Allow Castle」「已建要塞没有 Allow Castle」「有主城堡没有 Default Army」、名字写进名字条、状态栏消息在整块重绘后
+仍能重画、`SetMessage` 的内容真的落到条上）。
+
+## ADR-298：城堡详情窗的窗口框（`a7l.3.1` 第一刀）
+
+`a7l.3` 拆成六条子 issue 之后，先在 `a7l.3.1` 上把窗口的「壳」立起来：新增
+`UI/Dialogs/CastleDetailsArtwork.cs` 与 `UI/Dialogs/CastleDetailsFrame.cs`，对应
+`castleDetailsDialog()` 的 `:619-798` 里与具体控件无关的部分。
+
+| 新增 | 参考 |
+|---|---|
+| `CastleDetailsArtwork.TryCreate(assets, isEvil)` | `:625-643` 的取图 |
+| `CastleDetailsFrame.CreateWindow()` | `StandardWindow( 640, 480, false )` `:619` |
+| `PaintBackdrop` | 两半背景 + 两条分隔线 + 名字条 `:619-646` |
+| `PaintName` | `drawCastleName()` `:648-655` |
+| `PaintSpellsButton` / `PaintRestrictButton` | `:657-662`、`:685-689` |
+| `PaintBottomButtons` | 两个复位按钮 + OKAY/EXIT + 状态栏 `:770-798` |
+
+**满屏窗口 = 608x448 的活动区**：参考的 `StandardWindow( DEFAULT_WIDTH, DEFAULT_HEIGHT, false )` 给的是窗口尺寸，
+活动区要减掉两侧各 16 像素的边框。端口照此 `Create(new Rect(16,16,608,448), renderBackground:false)`，
+`NameArea`/`StatusBarArea` 都从这个活动区推，不硬编码 640/480。
+
+**两半背景用的不是同一种拷贝**：左半是 `Blit`（尊重透明），右半、两条分隔线与状态栏是 `Copy`（不透明）。
+端口分别对应 `ImageOps.BlitSpriteClipped` 与 `ImageOps.Blit(PixelBuffer, …)`。混用会让右半出现背景色透出来的洞。
+
+**状态栏必须最后画**：它填在 OKAY 与 EXIT 之间，画早了就被按钮盖住；参考的顺序也是先 `buttonOkay.draw()`、
+再 `Copy` 两段 `CASLBAR`。所以 `PaintBottomButtons` 把三件事绑在一起，不拆。
+
+**文字自适应按钮的板子只切一次**：切一次要读三份素材，循环里每帧重切太浪费；但每帧仍要走
+`StandardWindow.RenderButton` 重画（窗口每帧整块重绘，阴影不重画就丢了）。`Spells`/`Restrict` 的
+`ButtonSprite` 也只在第一次创建。
+
+**用例写法上的坑**：`PixelBuffer` 没有 `Get(x, y)`，读像素用索引器 `buffer[x, y]`。绘制用例是拿存档里的
+`CASLWIND`/`STONEBAK`/`CASLBAR` 逐像素对拍，比「和背景色不同」这类弱断言可靠得多（石头底本身几乎是一个颜色）。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1929、Game 3919 通过，合计 6584（较上轮 +8）。新增
+`CastleDetailsFrameTests` 8 条（满屏活动区、名字条与状态栏几何、两半拼在 438 列、两条 4 像素分隔线、名字条取
+`CASLBAR` 第 17 列、OKAY/EXIT 与两个复位按钮的位置、SET SPELLS 与 RESTRICT 的居中位置且不重复切板）。
+
+**仍未做**（同属 `a7l.3.1`）：四个勾选框与勾选标记、名字输入框、军队条与旗帜、十九个建筑格与队长框、状态栏
+提示文字、`PaintName` 之后的绘制顺序接线。事件循环在 `a7l.3.2`。
+
+## ADR-297：`StandardWindow` 的三个按钮渲染助手（`a7l.3` 第六刀）
+
+补齐 `ui_window.cpp:433-474` 里 `StandardWindow` 剩下的三个成员：
+
+| 新增 | 参考 |
+|---|---|
+| `RenderButton(button, output, released, pressed, offset, padding)` | `renderButton()` `:433-444` |
+| `RenderOkayCancelButtons(okay, cancel, output, 四张图)` | `renderOkayCancelButtons()` `:446-457` |
+| `RenderTextAdaptedButtonSprite(button, output, text, offset, padding, isEvil, background)` | `renderTextAdaptedButtonSprite()` `:459-474` |
+
+**为什么要先补这三个**：编辑器剩下的三个窗（城堡详情、法师公会、地图规格）都要在窗口里摆按钮——固定尺寸的
+OKAY/EXIT、名字与军队的复位小按钮、以及按文字宽度长出来的 SET SPELLS / RESTRICT。参考这三个助手都长在
+`StandardWindow` 上，端口一直缺。
+
+**素材由调用方递进来**：参考按 `ICN` 编号自己取图，这个仓库没有全局图形库，所以签名换成收 `Sprite`。文字自适应那个
+只需要「主题 + 可选背景纹理」，因为 `ButtonFactory.GetTextAdaptedSprite()` 已经把 `getTextAdaptedSprite()` 整个搬过来了。
+
+**三步的顺序不能换**：先 `SetSprite`（它按新尺寸重算命中区），再 `SetPosition`，再画阴影（用的是释放态的样子，
+偏移 `(-5,5)`），最后 `Draw`。参考在这三步里读写同一个 `_output`，阴影如果画在按钮之后就会被按钮盖掉一半。
+
+**用例踩到的算术坑**：`_getRenderPos()` 的底部对齐是 `Height - itemHeight - offset.Y`，所以 300x200 的活动区、
+27 高的按钮、7 像素的下边距落在 `y=306`，我第一版按 `140+200-27-7` 推成 313（把「减 27 再减 7」算成了「减 14」之外
+的东西），跑一遍才改对。底部对齐别再手推，直接照着公式写。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1921、Game 3919 通过，合计 6576（较上轮 +3）。新增
+`StandardWindowTests` 3 条（按 padding 定位、OKAY/EXIT 落在下两角、文字自适应按钮按标签长度长宽并落在指定偏移）。
+第一轮全量测试里 UI 有一条用例失败，随后的三次单跑与一次全量跑都通过，判为偶发（未留下用例名，无法复现）。
+
+## ADR-296：P8 编辑器：城堡详情的窗口状态与写回（`a7l.3` 第五刀）
+
+上一刀交出了格子的位置，这一刀交出窗口里会变的东西与它最后怎么写回地图：
+`UI/Dialogs/CastleDetailsState.cs`，对应 `castleDetailsDialog()` 的 `updateMetadata()`（`:810-842`）、
+「默认建筑」勾选框（`:927-950`）、「默认守军」勾选框（`:962-979`）与复位按钮（`:981-991`）。
+
+**状态必须搬出勾选标记**：参考的四个开关就是四个 `MovableSprite` 的显隐（`isHidden()`），勾选标记自己
+就是状态。端口没有 Display 层，勾选标记不能当状态用，所以开关搬进 `CastleDetailsState`，画的时候读它。
+
+**town 只判一次**：`isTown` 在参考 `:645` 用当时的已建掩码算一次，之后哪怕作者在格子里把要塞建起来也不重算，写回时
+照样塞 `BUILD_TENT`。这是参考的行为，照抄并在注释里写明，免得后来者「顺手修正」。
+
+**建筑两个列表是整体重建**：先清空，再放「town 的帐篷 / castle 的要塞」，再放禁建的要塞，最后仅当
+`CustomBuildings` 为真时追加每格的升级链与限制位——所以勾回「默认建筑」时元数据里只剩要塞那一条，这正是参考的意思。
+
+**两个勾选框切过去会顺手改东西**：切回「默认建筑」把十九格全部复位（回不到刚挑的建筑）；勾上「默认守军」把军队清空
+（地图里要存那串负数哨兵，军队那一排显示空槽才自洽）。取消勾选都不复原。
+
+**新元数据的守军不是「默认」**：`DefenderMonsterType` 初始是 0 而不是 -1，所以新城堡打开时「默认守军」是没勾的——
+一开始以为哨兵是默认值，用例先写错了一次，改成断言「没勾」。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1918、Game 3919 通过，合计 6573（较上轮 +9）。新增
+`CastleDetailsStateTests` 9 条（开关初值、要塞与有主、town 写回帐篷加禁建、castle 保留要塞、自定义建筑写链与限制、
+切回默认复位格子、勾默认守军清空军队、复位军队、十九格布局含队长）。
+
+**仍未做**：`castleDetailsDialog()` 的画与事件循环本身（背景拼接、军队条、名字输入、状态栏、OK/EXIT），
+`mageGuildSpellsDialog()` 的画与事件。两处都还有前置：前者要 `StandardWindow` 的全屏尺寸与按钮素材表装配，后者要
+`editor_spell_selection.cpp`（`Editor::openSpellSelectionWindow`，端口完全没有）与 `SpellsInOneRow` 控件。显示层仍等
+`a7l.6`。
 

@@ -40,7 +40,7 @@ public sealed class EditorHistoryManagerTests
         FakeMap map = new();
         HistoryManager manager = new();
 
-        using (ActionCreator creator = new(manager, map, 0))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0))
         {
             map.Content = "tile painted";
             creator.Commit(0);
@@ -68,7 +68,7 @@ public sealed class EditorHistoryManagerTests
         FakeMap map = new();
         HistoryManager manager = new();
 
-        using (ActionCreator creator = new(manager, map, 0))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0))
         {
             map.Content = "half done";
         }
@@ -85,7 +85,7 @@ public sealed class EditorHistoryManagerTests
         FakeMap map = new();
         HistoryManager manager = new();
 
-        using (ActionCreator creator = new(manager, map, 0))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0))
         {
             map.Content = "first";
             creator.Commit(0);
@@ -94,7 +94,7 @@ public sealed class EditorHistoryManagerTests
         Assert.True(manager.Undo());
         Assert.True(manager.IsRedoAvailable);
 
-        using (ActionCreator creator = new(manager, map, 0))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0))
         {
             map.Content = "second";
             creator.Commit(0);
@@ -117,7 +117,7 @@ public sealed class EditorHistoryManagerTests
 
         manager.SetStateCallback((canUndo, canRedo) => states.Add((canUndo, canRedo)));
 
-        using (ActionCreator creator = new(manager, map, 0))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0))
         {
             map.Content = "changed";
             creator.Commit(0);
@@ -142,7 +142,7 @@ public sealed class EditorHistoryManagerTests
         {
             string content = "state " + i;
 
-            using ActionCreator creator = new(manager, map, 0);
+            using ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 0);
             map.Content = content;
             creator.Commit(0);
         }
@@ -171,7 +171,7 @@ public sealed class EditorHistoryManagerTests
         metadata[1] = "after";
         metadata[2] = "new";
 
-        Assert.True(action.Prepare());
+        Assert.True(action.Prepare(0));
 
         Assert.True(action.Undo());
         Assert.Equal("before", metadata[1]);
@@ -183,12 +183,61 @@ public sealed class EditorHistoryManagerTests
     }
 
     [Fact]
+    public void EveryMetadataTypeGoesIntoItsOwnTable()
+    {
+        AssertMetadataRoundTrip(ActionCreator.ActionType.HeroMetadata, store => store.Heroes, new HeroMetadata { CustomName = "before" }, new HeroMetadata { CustomName = "after" });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.CastleMetadata, store => store.Castles, new CastleMetadata { CustomName = "before" }, new CastleMetadata { CustomName = "after" });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.SphinxMetadata, store => store.Sphinxes, new SphinxMetadata { Riddle = "before" }, new SphinxMetadata { Riddle = "after" });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.SignMetadata, store => store.Signs, new SignMetadata { Message = "before" }, new SignMetadata { Message = "after" });
+        AssertMetadataRoundTrip(
+            ActionCreator.ActionType.AdventureMapEventMetadata,
+            store => store.AdventureMapEvents,
+            new AdventureMapEventMetadata { Message = "before" },
+            new AdventureMapEventMetadata { Message = "after" });
+        AssertMetadataRoundTrip(
+            ActionCreator.ActionType.SelectionMetadata,
+            store => store.Selections,
+            new SelectionObjectMetadata { SelectedItems = { 1 } },
+            new SelectionObjectMetadata { SelectedItems = { 2 } });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.MonsterMetadata, store => store.Monsters, new MonsterMetadata { Count = 1 }, new MonsterMetadata { Count = 2 });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.ArtifactMetadata, store => store.Artifacts, new ArtifactMetadata { Radius = 1 }, new ArtifactMetadata { Radius = 2 });
+        AssertMetadataRoundTrip(ActionCreator.ActionType.ResourceMetadata, store => store.Resources, new ResourceMetadata { Count = 1 }, new ResourceMetadata { Count = 2 });
+    }
+
+    [Fact]
+    public void UnknownActionTypeIsRejected()
+    {
+        // 参考到这一支是 assert(0)；端口抛异常，免得新加一种动作类型时悄悄什么都不记。
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => _ = new ActionCreator(new HistoryManager(), new FakeMap(), new MapObjectMetadataStore(), 0, 42));
+    }
+
+    [Fact]
+    public void MetadataTypesCompareTheirCollectionsByValue()
+    {
+        CastleMetadata castle = new() { BuiltBuildings = [1, 2], CustomName = "Rook" };
+        CastleMetadata same = new() { BuiltBuildings = [1, 2], CustomName = "Rook" };
+        CastleMetadata longer = new() { BuiltBuildings = [1, 2, 3], CustomName = "Rook" };
+
+        // 参考给这几个结构写了 operator==（逐元素），端口照做：撤销前要比「元数据到底变没变」。
+        Assert.Equal(castle, same);
+        Assert.Equal(castle.GetHashCode(), same.GetHashCode());
+        Assert.NotEqual(castle, longer);
+
+        HeroMetadata hero = new() { ArmyMonsterType = [1, 0, 0, 0, 0], CustomLevel = 3 };
+        HeroMetadata otherHero = new() { ArmyMonsterType = [1, 0, 0, 0, 0], CustomLevel = 4 };
+
+        Assert.NotEqual(hero, otherHero);
+        Assert.Equal(hero, new HeroMetadata { ArmyMonsterType = [1, 0, 0, 0, 0], CustomLevel = 3 });
+    }
+
+    [Fact]
     public void SnapshotActionRestoresTheObjectUidCounter()
     {
         FakeMap map = new();
         HistoryManager manager = new();
 
-        using (ActionCreator creator = new(manager, map, 41))
+        using (ActionCreator creator = new(manager, map, new MapObjectMetadataStore(), 41))
         {
             map.Content = "with object";
             creator.Commit(42);
@@ -200,5 +249,36 @@ public sealed class EditorHistoryManagerTests
 
         Assert.True(manager.Redo());
         Assert.Equal("with object", map.Content);
+    }
+
+    /// <summary>Checks that an action of the given type only moves the table of that type.</summary>
+    /// <typeparam name="T">The metadata type of the table.</typeparam>
+    /// <param name="actionType">One of <see cref="ActionCreator.ActionType"/>.</param>
+    /// <param name="table">How to reach the table of that type.</param>
+    /// <param name="before">The metadata the object carried before the edit.</param>
+    /// <param name="after">The metadata the author set.</param>
+    private static void AssertMetadataRoundTrip<T>(int actionType, Func<MapObjectMetadataStore, IDictionary<uint, T>> table, T before, T after)
+        where T : class
+    {
+        HistoryManager manager = new();
+        MapObjectMetadataStore store = new();
+        IDictionary<uint, T> target = table(store);
+
+        target[7] = before;
+
+        using (ActionCreator creator = new(manager, new FakeMap(), store, 0, actionType))
+        {
+            target[7] = after;
+            creator.Commit(0);
+        }
+
+        Assert.Equal(1, manager.Count);
+        Assert.Equal(after, target[7]);
+
+        Assert.True(manager.Undo());
+        Assert.Equal(before, target[7]);
+
+        Assert.True(manager.Redo());
+        Assert.Equal(after, target[7]);
     }
 }

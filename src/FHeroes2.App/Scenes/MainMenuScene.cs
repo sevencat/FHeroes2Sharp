@@ -1283,6 +1283,21 @@ public sealed class MainMenuScene : IScene
     public ScenarioSelectionDialog? Scenario => _scenario;
 
     /// <summary>
+    /// Drops the cached map list so the next New Game scans the folders again, the reference's habit of asking
+    /// <c>Maps::getValidMaps()</c> every time the dialog opens.
+    /// </summary>
+    /// <remarks>
+    /// 生成器把新图写进 <c>maps</c> 目录之后调用它：不刷新的话，玩家回到主菜单点「新游戏」仍然看不到刚生成的那张图——
+    /// 目录里有了、列表里没有，是最难查的那种「刚才明明成功了」。
+    /// </remarks>
+    public void InvalidateMapList()
+    {
+        _maps = null;
+
+        GameLog.Info("Map catalog invalidated; the next scenario list re-reads the map folders.");
+    }
+
+    /// <summary>
     /// Whether a modal window owns the input: the settings dialog, the scenario list, the new game
     /// menu, or the language picker, greeting and resolution chooser of the first run.
     /// </summary>

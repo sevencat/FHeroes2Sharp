@@ -335,6 +335,51 @@ public sealed class StandardWindowTests
         return canvas;
     }
 
+    [Fact]
+    public void RenderButton_PlacesTheButtonByItsPadding()
+    {
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
+        PixelBuffer target = CreateCanvas();
+        ButtonSprite button = new(new Sprite(59, 27), new Sprite(59, 27));
+
+        window.RenderButton(button, target, new Sprite(59, 27), new Sprite(59, 27), new Point(20, 7),
+            WindowPadding.BottomRight);
+
+        // Bottom right: 20 pixels off the right edge and 7 off the bottom one.
+        Assert.Equal(new Rect(170 + 300 - 59 - 20, 140 + 200 - 27 - 7, 59, 27), button.Area);
+    }
+
+    [Fact]
+    public void RenderOkayCancelButtons_PutsThemInTheBottomCorners()
+    {
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
+        PixelBuffer target = CreateCanvas();
+        ButtonSprite okay = new(new Sprite(59, 27), new Sprite(59, 27));
+        ButtonSprite cancel = new(new Sprite(59, 27), new Sprite(59, 27));
+
+        window.RenderOkayCancelButtons(okay, cancel, target, new Sprite(59, 27), new Sprite(59, 27),
+            new Sprite(59, 27), new Sprite(59, 27));
+
+        Assert.Equal(new Rect(190, 306, 59, 27), okay.Area);
+        Assert.Equal(new Rect(391, 306, 59, 27), cancel.Area);
+    }
+
+    [Fact]
+    public void RenderTextAdaptedButtonSprite_GrowsThePlateAroundTheLabel() => Assert.True(TryWithArchives(() =>
+    {
+        StandardWindow window = StandardWindow.Create(new Rect(170, 140, 300, 200));
+        PixelBuffer target = CreateCanvas();
+        ButtonSprite button = new(new Sprite(1, 1), new Sprite(1, 1));
+
+        window.RenderTextAdaptedButtonSprite(button, target, "SET SPELLS", new Point(219, 78),
+            WindowPadding.TopCenter);
+
+        // The plate is as wide as the label plus its margins, and the button hangs where the padding says.
+        Assert.True(button.Area.Width > button.Area.Height);
+        Assert.Equal(170 + ((300 - button.Area.Width) / 2) + 219, button.Area.X);
+        Assert.Equal(140 + 78, button.Area.Y);
+    }));
+
     /// <summary>Opens the game data the window artwork is read from.</summary>
     /// <returns>The archives, or <see langword="null"/> when the machine has no game data.</returns>
     private static AssetBundle? OpenArchives() =>
