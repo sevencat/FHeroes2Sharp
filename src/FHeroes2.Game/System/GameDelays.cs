@@ -148,6 +148,16 @@ public static class GameDelays
     public const int ScrollDelayMilliseconds = 20;
 
     /// <summary>
+    /// Milliseconds between two steps of the adventure map object animation, the
+    /// <c>setDelay( DelayType::MAPS_DELAY, 250 )</c> of <c>game_delays.cpp:100</c>.
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ScrollDelayMilliseconds"/> 同理：谁的界面不按全局节拍走（编辑器按帧的 <c>dt</c> 自己累计，
+    /// 见 <c>EditorScene.AnimationInterval</c>），也要用表里的这个数字，别在视图层再抄一个 250。
+    /// </remarks>
+    public const int MapsDelayMilliseconds = 250;
+
+    /// <summary>
     /// <c>battleSpeedAdjustment</c> of <c>game_delays.cpp:38</c>: one step of the battle speed scale, chosen so that
     /// speed 1 takes six times as long as speed 10.
     /// </summary>
@@ -200,7 +210,7 @@ public static class GameDelays
         SetDelay(DelayType.ScrollStartDelay, ScrollDelayMilliseconds);
         SetDelay(DelayType.CursorBlinkDelay, 440);
         SetDelay(DelayType.MainMenuDelay, 250);
-        SetDelay(DelayType.MapsDelay, 250);
+        SetDelay(DelayType.MapsDelay, MapsDelayMilliseconds);
         SetDelay(DelayType.CastleTavernDelay, 75);
         SetDelay(DelayType.CastleAroundDelay, 200);
         SetDelay(DelayType.CastleItemUpdateDelay, 60);

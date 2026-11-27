@@ -203,6 +203,19 @@ public sealed class EditorMapSpecsWindow
     /// <summary>The day element of the loss panel, or <see langword="null"/> when the window has no font.</summary>
     public ValueSelectionElement? DaysValue => _daysValue;
 
+    /// <summary>
+    /// The number element a request of the page is about, so that the host can open the number pad on it
+    /// (<c>openVirtualNumpad( _value, _minimum, _maximum )</c> of <c>:1465</c> and <c>:1885</c>).
+    /// </summary>
+    /// <param name="field">Which element the page asked for.</param>
+    /// <returns>The element, or <see langword="null"/> when there is no such element on the page.</returns>
+    public ValueSelectionElement? GetValueElement(EditorMapSpecsValueField field) => field switch
+    {
+        EditorMapSpecsValueField.VictoryGold => _goldValue,
+        EditorMapSpecsValueField.LossDays => _daysValue,
+        _ => null,
+    };
+
     /// <summary>The OKAY button, bottom right (<c>:2215-2217</c>).</summary>
     public ButtonSprite Okay => _okay;
 

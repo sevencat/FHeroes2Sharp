@@ -14,6 +14,13 @@ namespace FHeroes2.UI.Tests;
 /// The random map generator dialog (<c>dialog_random_map_generator.cpp:72-251</c>): the clamping rules, the six rows and
 /// the answer it produces.
 /// </summary>
+/// <remarks>
+/// 这套用例有三条要真归档才画得出来（<see cref="TryWithArchives"/>），而它改的
+/// <see cref="GameAssets.Current"/> 是进程级的东西：不并进 <see cref="GlobalArchiveCollection"/> 的话，别的类正在
+/// 读素材时这里把它换成自己的归档或 null，那边就会读到空素材——这正是 ``bp7`` 里那条「偶发挂一条、没有错误信息」
+/// 的成因（断言像素的那几条挂了不会有异常信息）。同 ADR-318/330 的结论：动全局态就得串行。
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class RandomMapGeneratorDialogTests
 {
     private static readonly Size Screen = new(640, 480);
@@ -274,6 +281,8 @@ public sealed class RandomMapGeneratorDialogTests
             return true;
         }
 
+        AssetBundle? previous = GameAssets.Current;
+
         GameAssets.Current = assets;
 
         try
@@ -282,7 +291,8 @@ public sealed class RandomMapGeneratorDialogTests
         }
         finally
         {
-            GameAssets.Current = null;
+            // 还回原值，不是置空：置空会把别人装好的归档一起拆掉。
+            GameAssets.Current = previous;
         }
 
         return true;

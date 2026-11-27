@@ -450,6 +450,30 @@ public sealed class AdventureMapEventMetadata : IEquatable<AdventureMapEventMeta
 
         return hash.ToHashCode();
     }
+
+    /// <summary>
+    /// Makes a copy; the details window edits its own copy and hands it back when the author accepts.
+    /// </summary>
+    /// <returns>An independent copy of every field.</returns>
+    public AdventureMapEventMetadata Clone() => new()
+    {
+        Message = Message,
+        HumanPlayerColors = HumanPlayerColors,
+        ComputerPlayerColors = ComputerPlayerColors,
+        IsRecurringEvent = IsRecurringEvent,
+        Artifact = Artifact,
+        ArtifactMetadata = ArtifactMetadata,
+        Resources = Resources,
+        Attack = Attack,
+        Defense = Defense,
+        Knowledge = Knowledge,
+        SpellPower = SpellPower,
+        Experience = Experience,
+        SecondarySkill = SecondarySkill,
+        SecondarySkillLevel = SecondarySkillLevel,
+        MonsterType = MonsterType,
+        MonsterCount = MonsterCount
+    };
 }
 
 /// <summary>

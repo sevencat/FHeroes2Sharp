@@ -7,6 +7,8 @@ using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Maps;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Input;
+using FHeroes2.UI.Widgets;
 using GameAssets = FHeroes2.Game.Assets;
 
 using ArmyStack = FHeroes2.Game.Army.Army;
@@ -155,6 +157,86 @@ public sealed class CastleDetailsViewTests
             }
 
             Assert.True(anyInk);
+        }));
+
+    [Fact]
+    public void UpdateButtonPressStates_PressesTheButtonUnderTheHeldMouse() =>
+        Assert.True(TryWithView(new CastleMetadata(), PlayerColor.Red, view =>
+        {
+            view.Paint(CreateCanvas());
+
+            CastleDetailsFrame frame = view.Frame;
+            ButtonSprite okay = frame.Okay ?? throw new InvalidOperationException("OKAY was not painted.");
+            var local = new LocalEvent();
+
+            view.UpdateButtonPressStates(local);
+            Assert.False(okay.IsPressed);
+
+            Rect area = okay.Area;
+            var point = new Point(area.X + (area.Width / 2), area.Y + (area.Height / 2));
+
+            local.OnMouseButton(true, MouseButtonType.Left, point);
+            view.UpdateButtonPressStates(local);
+
+            // 按住 OKAY 时只有它自己按下；EXIT 那边光标不在，不受影响。
+            Assert.True(okay.IsPressed);
+            Assert.False(frame.Exit?.IsPressed ?? false);
+
+            local.OnMouseButton(false, MouseButtonType.Left, point);
+            view.UpdateButtonPressStates(local);
+
+            Assert.False(okay.IsPressed);
+        }));
+
+    [Fact]
+    public void UpdateButtonPressStates_KeepsRestrictPressedWhileTheModeIsOn() =>
+        Assert.True(TryWithView(new CastleMetadata(), PlayerColor.Red, view =>
+        {
+            view.Paint(CreateCanvas());
+
+            ButtonSprite restrict = view.Frame.Restrict ?? throw new InvalidOperationException("RESTRICT was not painted.");
+            var local = new LocalEvent();
+
+            view.UpdateButtonPressStates(local);
+            Assert.False(restrict.IsPressed);
+
+            // 参考让它一直亮着：buildingRestriction || isMouseLeftButtonPressedAndHeldInArea(...)（:876）。
+            view.State.BuildingRestriction = true;
+            view.UpdateButtonPressStates(local);
+
+            Assert.True(restrict.IsPressed);
+        }));
+
+    [Fact]
+    public void Paint_DrawsThePressedLookOfAHeldButton() =>
+        Assert.True(TryWithView(new CastleMetadata(), PlayerColor.Red, view =>
+        {
+            PixelBuffer released = CreateCanvas();
+            view.Paint(released);
+
+            ButtonSprite okay = view.Frame.Okay ?? throw new InvalidOperationException("OKAY was not painted.");
+            Rect area = okay.Area;
+            var point = new Point(area.X + (area.Width / 2), area.Y + (area.Height / 2));
+
+            var local = new LocalEvent();
+            local.OnMouseButton(true, MouseButtonType.Left, point);
+            view.UpdateButtonPressStates(local);
+
+            PixelBuffer pressed = CreateCanvas();
+            view.Paint(pressed);
+
+            // 按下态是另一帧图，还往右下挪了一像素，所以同一块区域里必然有像素不同。
+            bool anyDifference = false;
+
+            for (int y = area.Y; y < area.Bottom && !anyDifference; ++y)
+            {
+                for (int x = area.X; x < area.Right && !anyDifference; ++x)
+                {
+                    anyDifference = released[x, y] != pressed[x, y];
+                }
+            }
+
+            Assert.True(anyDifference);
         }));
 
     /// <summary>Creates a castle whose fort is already built.</summary>

@@ -105,6 +105,16 @@ public sealed class EditorScene : IScene
     /// </remarks>
     public const int EdgeScrollStep = 2 << 2;
 
+    /// <summary>
+    /// Seconds between two steps of the map object animation, <see cref="GameDelays.MapsDelayMilliseconds"/>.
+    /// </summary>
+    /// <remarks>
+    /// 参考在 <c>editor_interface.cpp:2017-2024</c> 里问 <c>Game::validateAnimationDelay( MAPS_DELAY )</c>，格子由
+    /// <see cref="GameDelays.InitAnimateDelays"/> 装成二百五十毫秒。与卷屏同样按帧的 <c>dt</c> 自己累计：全局节拍表是
+    /// 静态状态，用例里推动不了，画面也会随宿主帧率抖动。
+    /// </remarks>
+    public const double AnimationInterval = GameDelays.MapsDelayMilliseconds / 1000.0;
+
     private const int Padding = 6;
 
     /// <summary>
@@ -112,6 +122,12 @@ public sealed class EditorScene : IScene
     /// <c>elapsedSeconds</c>; without a cap the view would jump across the whole map at once.
     /// </summary>
     private const int MaxEdgeStepsPerUpdate = 4;
+
+    /// <summary>
+    /// Most animation index steps taken in one frame, the same protection as <see cref="MaxEdgeStepsPerUpdate"/>:
+    /// a long frame must not make the objects jump through their cycle.
+    /// </summary>
+    private const int MaxAnimationStepsPerUpdate = 4;
 
     private const int ScrollLeft = 1;
     private const int ScrollRight = 2;
@@ -138,12 +154,21 @@ public sealed class EditorScene : IScene
     private readonly GameFonts? _fonts;
     private readonly MapEditorView _editor;
     private readonly MapEditSession _edits;
-    private readonly MapFrame _mapFrame;
-    private readonly Rect _viewport;
-    private readonly PixelBuffer _viewportPixels;
-    private readonly Rect _radar;
-    private readonly Rect _panel;
-    private readonly EditorPanel? _panelView;
+
+    /// <summary>The archive the chrome is read from, kept so that a theme change can read it again.</summary>
+    private readonly AssetBundle? _assets;
+
+    /// <summary>
+    /// The frame of the interface, rebuilt when the theme changes: the chrome is the one thing of the layout that
+    /// differs between <c>ADVBORD</c> and <c>ADVBORDE</c>, the bays themselves stay where they are.
+    /// </summary>
+    private MapFrame _mapFrame;
+
+    private Rect _viewport;
+    private PixelBuffer _viewportPixels;
+    private Rect _radar;
+    private Rect _panel;
+    private EditorPanel? _panelView;
 
     /// <summary>Whether the archive can provide the message frame of the information box.</summary>
     private readonly bool _hasInfoFrame;
@@ -165,6 +190,14 @@ public sealed class EditorScene : IScene
 
     /// <summary>Baked colours of the map; rebuilt after a stroke because it does not read the tiles.</summary>
     private EditorRadar _minimap;
+
+    /// <summary>
+    /// The adventure map animation index the tiles are drawn with, <c>Game::getAdventureMapAnimationIndex()</c>.
+    /// </summary>
+    private uint _animationPhase;
+
+    /// <summary>Seconds accumulated since the last animation step, the <c>MAPS_DELAY</c> of the reference.</summary>
+    private double _animationElapsed;
 
     /// <summary>The information box the <c>I</c> key opens, kept between frames and rebuilt when stale.</summary>
     private MessageBox? _info;
@@ -223,6 +256,9 @@ public sealed class EditorScene : IScene
     /// <summary>The tile the object popup was built for, the log names it.</summary>
     private Point? _objectPopupTile;
 
+    /// <summary>What the scene asks of the host: the frame pump of its windows, <see langword="null"/> until wired.</summary>
+    private readonly EditorSceneHost _host;
+
     private EditorScene(
         ScreenBuffer frame,
         GameFonts? fonts,
@@ -232,17 +268,21 @@ public sealed class EditorScene : IScene
         MapFrame mapFrame,
         EditorPanel? panelView,
         bool hasInfoFrame,
-        Sprite? popupFrame)
+        Sprite? popupFrame,
+        EditorSceneHost host,
+        AssetBundle? assets)
     {
         _frame = frame;
         _fonts = fonts;
         _editor = editor;
         _edits = edits;
         _minimap = minimap;
+        _assets = assets;
         _mapFrame = mapFrame;
         _panelView = panelView;
         _hasInfoFrame = hasInfoFrame;
         _popupFrame = popupFrame;
+        _host = host;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
@@ -269,6 +309,15 @@ public sealed class EditorScene : IScene
     /// <summary>The scrolling view shared with the adventure map.</summary>
     public AdventureMapView View => _editor.Map;
 
+    /// <summary>
+    /// The animation index the last frame was drawn with, <c>Game::getAdventureMapAnimationIndex()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的这个值是全局的，端口的动画只服务于编辑器这一层（冒险地图的界面用的是 UI 那套 World 渲染），所以放在场景里，
+    /// 也不再改 <c>GameAnimation</c> 的静态计数器——那里推进一次会连带影响别的场景。
+    /// </remarks>
+    public uint AnimationPhase => _animationPhase;
+
     /// <summary>Name of the map, as stored in its header.</summary>
     public string MapName => Map.Info.Name;
 
@@ -280,6 +329,32 @@ public sealed class EditorScene : IScene
 
     /// <summary>Size of the logical frame the editor draws into.</summary>
     public Size FrameSize => _frame.Size;
+
+    /// <summary>
+    /// Runs a modal window of the editor to its end, the frame pump <c>GameHost</c> wires up right after the
+    /// scene is built; <see langword="null"/> while it is not, and then the windows the panel asks for log
+    /// their failure instead of opening.
+    /// </summary>
+    /// <remarks>
+    /// 参考的编辑器窗口都是阻塞的（<c>showStandardTextMessage</c> 之类），端口只有一条帧循环，所以窗口进宿主
+    /// 的内层循环，关掉才回到编辑器——与 <see cref="AdventureMapScene"/> 借 <c>AdventureHeroActionHost</c>
+    /// 弹窗是同一条缝。
+    /// </remarks>
+    public Action<IModalScreen>? RunModal
+    {
+        get => _host.RunModal;
+        set => _host.RunModal = value;
+    }
+
+    /// <summary>
+    /// Writes the preferences to the configuration file, the <c>conf.Save( configFileName )</c> of
+    /// <c>openEditorSettings()</c>; <see langword="null"/> when the host runs without a configuration file.
+    /// </summary>
+    /// <remarks>
+    /// 参考在选项循环里改完设置就 <c>conf.Save</c>，端口把「怎么落盘」留给 <c>GameHost</c>——配置文件是它的东西，
+    /// 编辑器不该知道路径。没接上时设置只留在内存里，和 <c>--no-config</c> 时的行为一样。
+    /// </remarks>
+    public Action? SavePreferences { get; set; }
 
     /// <summary>The tool in use, as the panel names it.</summary>
     public string Tool => _edits.Tool.ToString();
@@ -581,8 +656,9 @@ public sealed class EditorScene : IScene
         ScreenBuffer frame, GameFonts? fonts, Mp2Map map, TerrainTileSet tiles, AssetBundle? assets)
     {
         // The map only gets the area between the border and the radar column, as in the reference; the
-        // scene blits it into the frame at ViewportArea.
-        MapFrame mapFrame = new(frame.Size, MapFrame.Load(assets));
+        // scene blits it into the frame at ViewportArea. The chrome follows the interface set of the settings.
+        bool isEvilInterface = Settings.Get().IsEvilInterfaceEnabled;
+        MapFrame mapFrame = new(frame.Size, MapFrame.Load(assets, isEvilInterface));
 
         AdventureMapView view = new(
             map,
@@ -603,9 +679,11 @@ public sealed class EditorScene : IScene
             edits,
             EditorRadar.Build(map),
             mapFrame,
-            EditorPanel.TryCreate(mapFrame.Panel, assets),
+            EditorPanel.TryCreate(mapFrame.Panel, assets, isEvilInterface),
             HasInfoFrame(assets),
-            QuickInfoArtwork.TryCreate(assets));
+            QuickInfoArtwork.TryCreate(assets),
+            new EditorSceneHost(assets, fonts),
+            assets);
     }
 
     /// <summary>
@@ -627,7 +705,7 @@ public sealed class EditorScene : IScene
         return available;
     }
 
-    /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
+    /// <summary>Advances the edge scroll of the mouse and the object animation of the map.</summary>
     /// <remarks>
     /// The object popup of the right button counts down here: the reference waits for the button to be
     /// released inside <c>displayStandardPopupWindow()</c>, and the port cannot wait, so the popup has
@@ -638,6 +716,7 @@ public sealed class EditorScene : IScene
         ProcessEvents(LocalEvent.Current);
 
         UpdateEdgeScroll(elapsedSeconds);
+        UpdateAnimation(elapsedSeconds);
         _savedFlash = Math.Max(0.0, _savedFlash - elapsedSeconds);
 
         if (_objectPopup is not null)
@@ -745,7 +824,7 @@ public sealed class EditorScene : IScene
         _frame.Pixels.Clear();
         DrawFrameChrome();
 
-        _editor.Map.Draw(_viewportPixels);
+        _editor.Map.Draw(_viewportPixels, animationPhase: _animationPhase);
         ImageOps.Blit(_frame.Pixels, _viewport.Position, _viewportPixels, _viewportPixels.Bounds);
 
         DrawGrid();
@@ -1076,6 +1155,13 @@ public sealed class EditorScene : IScene
                 return false;
             }
 
+            // :1461-1479 —— 面板上的右键只弹提示：不平移，也不弹物件窗。
+            if (_screenCursor is { } panelPoint && _panel.Contains(panelPoint) && _panelView is not null &&
+                ShowSystemHint(_panelView.HitTest(panelPoint, PanelState)))
+            {
+                return false;
+            }
+
             if (!onRadar)
             {
                 if (_editor.HoverTile is { } tile)
@@ -1225,9 +1311,32 @@ public sealed class EditorScene : IScene
         _edits.BrushObjectIndex, _edits.EraseTypes, _edits.DetailMode);
 
     /// <summary>
-    /// Runs one of the six system buttons of the panel. Undo and redo are the two that the port can
-    /// answer; the magnifier needs a zoom, and the specifications, the file and the menu dialogs are
-    /// later milestones, so their buttons do nothing yet.
+    /// Shows the hint of a system button on the right button, the <c>showStandardTextMessage</c> calls of
+    /// <c>editor_interface_panel.cpp:1461-1479</c>.
+    /// </summary>
+    /// <param name="hit">What the point hits.</param>
+    /// <returns>
+    /// Whether the click was a system button, i.e. whether it was consumed; the other controls of the panel
+    /// keep their old behaviour, which is the pan the right button owns in the port.
+    /// </returns>
+    private bool ShowSystemHint(EditorPanelHit hit)
+    {
+        if (hit.Kind != EditorPanelHitKind.System)
+        {
+            return false;
+        }
+
+        (string Title, string Body) hint = EditorPanel.SystemHint(EditorPanel.SystemAt(hit.Index));
+
+        _host.ShowMessage(hint.Title, hint.Body);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Runs one of the six system buttons of the panel. Undo and redo are the two the port answers itself;
+    /// the magnifier needs a zoom, and the file menu is a later subtask, so their buttons do nothing yet.
+    /// The specifications button opens the page the port already has, the system button the options page.
     /// </summary>
     /// <param name="button">The button whose cell was clicked.</param>
     private void ClickSystemButton(EditorSystemButton button)
@@ -1242,7 +1351,174 @@ public sealed class EditorScene : IScene
                 Redo();
                 break;
 
+            case EditorSystemButton.Specs:
+                _host.RunMapSpecs(_edits, _frame.Palette);
+                break;
+
+            case EditorSystemButton.System:
+                OpenEditorOptions();
+                break;
+
+            case EditorSystemButton.File:
+                OpenFileMenu();
+                break;
+
             default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Re-skins the editor for the interface set the settings now hold, the <c>reset()</c> behind the reference's
+    /// <c>rebuildEditor( true )</c> (<c>editor_interface.cpp:1413-1470</c>, called from <c>editor_options.cpp:281-285</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考的边框、雷达与控制面板都是每帧现取界面图，换主题只要重算布局；端口把边框
+    /// （<see cref="MapFrame"/>）与面板（<see cref="EditorPanel"/>）的图缓存在场景里，所以要按新主题重读并换掉这两个
+    /// 对象。布局本身不随主题变——两块边框都是 640x480、边宽都是 16——所以地图视图、滚动位置与雷达底图都不用动；
+    /// <see cref="MapFrame.Viewport"/> 万一真的变了才换视口缓冲。
+    /// </remarks>
+    public void RebuildInterface()
+    {
+        bool isEvilInterface = Settings.Get().IsEvilInterfaceEnabled;
+        MapFrame mapFrame = new(_frame.Size, MapFrame.Load(_assets, isEvilInterface));
+
+        _mapFrame = mapFrame;
+        _viewport = mapFrame.Viewport;
+        _radar = mapFrame.Radar;
+        _panel = mapFrame.Panel;
+
+        if (_viewportPixels.Size != _viewport.Size)
+        {
+            _viewportPixels = new PixelBuffer(_viewport.Width, _viewport.Height);
+        }
+
+        _panelView = EditorPanel.TryCreate(mapFrame.Panel, _assets, isEvilInterface);
+
+        GameLog.Info($"The editor interface was rebuilt for the {(isEvilInterface ? "evil" : "good")} graphics.");
+    }
+
+    /// <summary>
+    /// The options page behind the system button, <c>openEditorSettings()</c> of
+    /// <c>editor_options.cpp:235-378</c>: run one turn of the page, apply the action, reopen until the author is done.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的循环里 <c>action = DialogAction::Configuration</c> 表示「还要再开一层」，关窗才是
+    /// <c>Close</c>；端口把「重开」直接写成循环。<c>saveConfiguration</c> 只在真改过设置时才置位，最后
+    /// 交给宿主落盘（<see cref="SavePreferences"/> 由 <c>GameHost</c> 接到它自己的配置文件上）。
+    /// </para>
+    /// <para>
+    /// 参考在这里还要 <c>redrawEditor</c> / <c>rebuildEditor</c>：通行性的叠层和对象动画都要重画地图，换界面风格
+    /// 更是要把边框、雷达、控制面板整套换皮。界面风格的换皮已经在 <see cref="RebuildInterface"/> 里接上；动画开关
+    /// 由 <see cref="UpdateAnimation"/> 每帧读设置，场景本来每帧整幅重画，所以开关一翻就生效，不需要额外的重画位；
+    /// 通行性叠层还没移植，挂在 <c>a7l.7.4.3.2</c> 上。
+    /// </para>
+    /// <para>
+    /// 四个子页（语言、图形、音频、热键）的窗口 UI 层都有，但各有自己的模态与请求循环，还都没接进 App
+    /// （<c>a7l.7.4.4</c>），所以现在只留日志。
+    /// </para>
+    /// </remarks>
+    public void OpenEditorOptions()
+    {
+        Settings settings = Settings.Get();
+        bool saveConfiguration = false;
+
+        while (true)
+        {
+            EditorOptionsAction action = _host.RunEditorOptionsDialog();
+
+            switch (action)
+            {
+                case EditorOptionsAction.Animation:
+                    settings.SetEditorAnimation(!settings.IsEditorAnimationEnabled);
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.Passability:
+                    settings.SetEditorPassability(!settings.IsEditorPassabilityEnabled);
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.InterfaceType:
+                    settings.SwitchToNextInterfaceType();
+                    RebuildInterface();
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.CursorType:
+                    settings.SetMonochromeCursor(!settings.IsMonochromeCursor);
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.ScrollSpeed:
+                    // 参考这颗是循环换档：越界回最低档（editor_options.cpp:292-296）。
+                    settings.SetScrollSpeed(((int)settings.ScrollSpeed + 1) %
+                                            ((int)AdventureMapScrollSpeed.VeryFast + 1));
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.IncreaseScrollSpeed:
+                    settings.SetScrollSpeed((int)settings.ScrollSpeed + 1);
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.DecreaseScrollSpeed:
+                    settings.SetScrollSpeed((int)settings.ScrollSpeed - 1);
+                    saveConfiguration = true;
+                    break;
+
+                case EditorOptionsAction.Language:
+                case EditorOptionsAction.Graphics:
+                case EditorOptionsAction.AudioSettings:
+                case EditorOptionsAction.HotKeys:
+                    GameLog.Warn($"The options page asked for {action}, and no window answers it yet.");
+                    break;
+
+                case EditorOptionsAction.Exit:
+                case EditorOptionsAction.None:
+                default:
+                    if (saveConfiguration)
+                    {
+                        SavePreferences?.Invoke();
+                    }
+
+                    return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The file menu behind the file button, <c>EditorInterface::eventFileDialog()</c> of
+    /// <c>editor_interface.cpp:2068-2181</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在循环里直接「存图 / 起新图 / 载图 / 开始地图 / 回主菜单 / 退出 / 自动测试」各开各的窗；端口这一轮只把
+    /// 菜单本身跑通（画、点、取消、右键说明），七个去向都没接：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>存图要 <c>saveMapToFile()</c>（保存窗、文件名输入、覆盖确认、落盘）——<c>a7l.7.3.2</c>。</item>
+    /// <item>新图/载图/主菜单/退出/开始地图/自动测试要各自的确认框与游戏模式切换，其中开始地图与自动测试还要
+    /// <c>World</c>——<c>a7l.7.3.3</c>。</item>
+    /// </list>
+    /// <para>
+    /// 现在这些按钮按下去只留一行日志：不静默，也不假装做成了。取消（含 ESC/回车）本来就没有后续动作，所以
+    /// 那里的日志是多余的，直接返回。
+    /// </para>
+    /// </remarks>
+    public void OpenFileMenu()
+    {
+        EditorFileResult result = _host.RunFileDialog();
+
+        switch (result)
+        {
+            case EditorFileResult.Cancel:
+            case EditorFileResult.None:
+                return;
+
+            default:
+                GameLog.Warn($"The editor file menu asked for {result}, and no action answers it yet.");
                 break;
         }
     }
@@ -1544,6 +1820,42 @@ public sealed class EditorScene : IScene
 
         // Drop the backlog of a long frame instead of turning it into a burst on the next ones.
         _edgeElapsed = Math.Min(_edgeElapsed, EdgeScrollInterval);
+    }
+
+    /// <summary>
+    /// Advances the object animation of the map, the <c>MAPS_DELAY</c> block of
+    /// <c>editor_interface.cpp:2017-2024</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考每过一次 <c>validateAnimationDelay( MAPS_DELAY )</c> 才推进一步，并且只在
+    /// <c>Settings::isEditorAnimationEnabled()</c> 为真时推进；标记重画的 <c>_redraw |= REDRAW_GAMEAREA</c> 在端口不需要，
+    /// 场景每帧整幅重画。关掉动画时索引停在原处而不是归零，与参考一致。
+    /// </para>
+    /// <para>
+    /// 参考这一支还有 <c>startColorCycling</c> / <c>stopColorCycling</c>：水面与城堡火焰靠调色板轮转动起来。端口没有轮转，
+    /// 合成表把轮转色并进了静态槽（<c>PaletteId.CyclingToStatic</c>），所以这里只剩帧索引这一半。
+    /// </para>
+    /// </remarks>
+    private void UpdateAnimation(double elapsedSeconds)
+    {
+        if (!Settings.Get().IsEditorAnimationEnabled)
+        {
+            return;
+        }
+
+        _animationElapsed += elapsedSeconds;
+
+        if (_animationElapsed < AnimationInterval)
+        {
+            return;
+        }
+
+        // One step per delay passed, capped like the edge scroll so a stalled frame cannot skip a whole cycle.
+        int steps = (int)Math.Min(_animationElapsed / AnimationInterval, MaxAnimationStepsPerUpdate);
+
+        _animationElapsed -= steps * AnimationInterval;
+        _animationPhase += (uint)steps;
     }
 
     /// <summary>Bits of the directions whose scroll region contains <paramref name="cursor"/>.</summary>

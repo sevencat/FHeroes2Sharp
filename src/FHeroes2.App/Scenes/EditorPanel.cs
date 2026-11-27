@@ -12,7 +12,10 @@ namespace FHeroes2.App.Scenes;
 
 using FHeroes2.Assets.Maps;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Gui;
 using FHeroes2.Game.Maps;
+
+using GameAssets = FHeroes2.Game.Assets;
 
 /// <summary>What a click on the editor panel hit.</summary>
 internal enum EditorPanelHitKind
@@ -321,10 +324,11 @@ internal sealed class EditorPanel
     /// </summary>
     /// <param name="area">The bay of the frame the panel fills.</param>
     /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
+    /// <param name="isEvilInterface">Whether the evil chrome is wanted, the reference's <c>_EVIL</c> tables.</param>
     /// <returns>The panel, or <see langword="null"/> when the archive lacks its artwork.</returns>
-    public static EditorPanel? TryCreate(in Rect area, AssetBundle? assets)
+    public static EditorPanel? TryCreate(in Rect area, AssetBundle? assets, bool isEvilInterface = false)
     {
-        if (EditorButtonSet.TryCreate(assets) is not { } buttons)
+        if (EditorButtonSet.TryCreate(assets, isEvilInterface) is not { } buttons)
         {
             GameLog.Warn($"'{ButtonsFileName}' is not available, the editor panel stays text only.");
             return null;
@@ -341,10 +345,13 @@ internal sealed class EditorPanel
             ? terrains.Sprites[9]
             : null;
 
-        // Same for the texture: without STONEBAK the scene paints the bay flat, the buttons still read.
-        Sprite? background = assets.TryReadIcn(BackgroundFileName) is { Count: > 0 } stone
-            ? stone.Sprites[0]
-            : null;
+        // Same for the texture: without STONEBAK the scene paints the bay flat, the buttons still read. The evil
+        // stone is a palette transform of the good one, so it has no archive entry of its own.
+        Sprite? background = isEvilInterface
+            ? GameAssets.GetImage(EvilInterfaceImages.StonebakEvilFileName, 0)
+            : assets.TryReadIcn(BackgroundFileName) is { Count: > 0 } stone
+                ? stone.Sprites[0]
+                : null;
 
         // The mark the reference blits over a checked erase type, TOWNWIND frame 11. Without it the checked cells are
         // outlined instead, which reads the same on the stone texture.
@@ -767,6 +774,29 @@ internal sealed class EditorPanel
     /// <param name="index">Entry of the system table.</param>
     /// <returns>The button the cell shows.</returns>
     public static EditorSystemButton SystemAt(int index) => SystemButtons[index].Button;
+
+    /// <summary>
+    /// The title and the body of the hint the right button shows on a system button, the
+    /// <c>showStandardTextMessage</c> calls of <c>editor_interface_panel.cpp:1461-1479</c>.
+    /// </summary>
+    /// <param name="button">The button under the pointer.</param>
+    /// <returns>The two lines of the box, in the order the reference passes them.</returns>
+    /// <remarks>
+    /// 参考的 <c>_queueEvent</c> 给仪器、地形、笔刷大小与系统按钮都配了提示；端口现在只做系统按钮这六条，
+    /// 文案照抄参考（原文用 <c>_()</c> 包着，端口的界面文字一律直接写英文）。
+    /// </remarks>
+    public static (string Title, string Body) SystemHint(EditorSystemButton button) => button switch
+    {
+        EditorSystemButton.Magnify => ("Magnify", "Change between zoom and normal view."),
+        EditorSystemButton.Undo => ("Undo", "Undo your last action."),
+        EditorSystemButton.Redo => ("Redo", "Redo the last undone action."),
+        EditorSystemButton.Specs => ("Specifications", "Edit map title, description, and other general information."),
+        EditorSystemButton.File => ("File Options",
+            "Open the file options menu, where you can save or load maps, or quit out of the editor."),
+        EditorSystemButton.System => ("System Options",
+            "View the editor system options, which let you customize the editor."),
+        _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Unknown editor system button."),
+    };
 
     /// <summary>
     /// Copies a part of the sheet to the frame. <see cref="ImageOps.BlitSprite(PixelBuffer, Point,

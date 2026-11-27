@@ -29,6 +29,12 @@ public sealed class MapFrame
     /// <summary>File of the interface frame, <c>ICN::ADVBORD</c>.</summary>
     public const string AssetName = "ADVBORD.ICN";
 
+    /// <summary>
+    /// File of the evil interface frame, <c>ICN::ADVBORDE</c>. Unlike the stone and the drop list this one is a
+    /// file of its own in the archives, so no palette work is needed to reach it.
+    /// </summary>
+    public const string EvilAssetName = "ADVBORDE.ICN";
+
     /// <summary>Width of the border between the frame edge and the map, <c>fheroes2::borderWidthPx</c>.</summary>
     public const int BorderWidth = 16;
 
@@ -101,13 +107,22 @@ public sealed class MapFrame
     public bool HasChrome => _chrome is not null;
 
     /// <summary>
-    /// Reads <c>ADVBORD.ICN</c>, the single image the reference blits along the edges of its display.
+    /// Reads <c>ADVBORD.ICN</c> (or <c>ADVBORDE.ICN</c>), the single image the reference blits along the edges of
+    /// its display.
     /// </summary>
     /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
+    /// <param name="isEvilInterface">Whether the evil chrome is wanted, the reference's <c>ADVBORDE</c>.</param>
     /// <returns>The image, or <see langword="null"/> when the archive does not have it.</returns>
-    public static Sprite? Load(AssetBundle? assets)
+    /// <remarks>
+    /// 参考不缓存这两张：每次 <c>Redraw</c> 都按 <c>Settings::Get().isEvilInterfaceEnabled()</c> 现取
+    /// （<c>interface_border.cpp</c> 的 <c>ICN::ADVBORD</c> / <c>ICN::ADVBORDE</c>），换主题不用重建布局。
+    /// 端口把图缓存在场景里，所以换主题时要拿这个重读一次再重建 <see cref="MapFrame"/>。
+    /// </remarks>
+    public static Sprite? Load(AssetBundle? assets, bool isEvilInterface = false)
     {
-        return assets?.TryReadIcn(AssetName) is { Count: > 0 } icn ? icn.Sprites[0] : null;
+        string fileName = isEvilInterface ? EvilAssetName : AssetName;
+
+        return assets?.TryReadIcn(fileName) is { Count: > 0 } icn ? icn.Sprites[0] : null;
     }
 
     /// <summary>

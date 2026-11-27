@@ -32,6 +32,12 @@
     <PackageReference Include="SDL3-CS.Native.Mixer" />
   </ItemGroup>
 
+  <!-- The App tests drive the host seams directly (EditorSceneHost, the modals): the scene only exposes the frame
+       pump wiring, and going through a whole scene to reach one window hides what is being tested. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="FHeroes2.App.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\FHeroes2.Core\FHeroes2.Core.csproj" />
     <ProjectReference Include="..\FHeroes2.Assets\FHeroes2.Assets.csproj" />

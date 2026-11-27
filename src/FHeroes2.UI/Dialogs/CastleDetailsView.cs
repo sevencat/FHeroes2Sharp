@@ -4,6 +4,7 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Gui;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Dialogs;
@@ -181,7 +182,8 @@ public sealed class CastleDetailsView
     /// </summary>
     /// <remarks>
     /// 每次都从 <see cref="CastleDetailsFrame.PaintBackdrop"/> 重画：参考靠显示层只刷脏区，端口没有这一层，
-    /// 所以按钮的阴影、勾选标记这些「叠上去」的东西都必须跟着重画。
+    /// 所以按钮的阴影、勾选标记这些「叠上去」的东西都必须跟着重画。按钮画的是此刻的状态，按压态由
+    /// <see cref="UpdateButtonPressStates"/> 事先设好——这里不读事件。
     /// </remarks>
     /// <param name="output">Frame the dialog goes into.</param>
     /// <exception cref="ArgumentNullException"><paramref name="output"/> is <see langword="null"/>.</exception>
@@ -203,6 +205,53 @@ public sealed class CastleDetailsView
 
         _frame.PaintBottomButtons(output);
         PaintStatusMessage(output, _message);
+    }
+
+    /// <summary>
+    /// Sets the pressed look of the six buttons from the frame's input, the six <c>drawOnState()</c> calls of
+    /// <c>:845-849</c> and <c>:876</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考把这一步夹在绘制与命中判定之间：每帧先 <c>drawOnState( isMouseLeftButtonPressedAndHeldInArea( area ) )</c>
+    /// 再 <c>MouseClickLeft</c>。端口的 <see cref="Paint"/> 只画、
+    /// <see cref="CastleDetailsInput.Process"/> 只判，所以按压态单拎出来：宿主每帧先调这里、再
+    /// <see cref="Paint"/>，<see cref="ButtonBase.UpdatePressState"/> 本来就只改状态不画。
+    /// </para>
+    /// <para>
+    /// RESTRICT 那颗不一样：限制模式开着的时候参考让它一直保持按下（<c>buildingRestriction || ...</c>，<c>:876</c>），
+    /// 所以这里不看鼠标，直接 <see cref="ButtonBase.Press"/>。
+    /// </para>
+    /// <para>
+    /// 六颗按钮都是第一次 <see cref="Paint"/> 时才造出来的，在那之前这里是空转。参考的按钮在循环之前就摆好了，
+    /// 不过第一帧之前也没有人在看画面，所以这一帧的差别看不出来。
+    /// </para>
+    /// </remarks>
+    /// <param name="events">Input state of the frame.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public void UpdateButtonPressStates(LocalEvent events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        _frame.Okay?.UpdatePressState(events);
+        _frame.Exit?.UpdatePressState(events);
+        _frame.ResetName?.UpdatePressState(events);
+        _frame.ResetArmy?.UpdatePressState(events);
+        _frame.Spells?.UpdatePressState(events);
+
+        if (_frame.Restrict is not { } restrict)
+        {
+            return;
+        }
+
+        if (_state.BuildingRestriction)
+        {
+            restrict.Press();
+
+            return;
+        }
+
+        restrict.UpdatePressState(events);
     }
 
     /// <summary>

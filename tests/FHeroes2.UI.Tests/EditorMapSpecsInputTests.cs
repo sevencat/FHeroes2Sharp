@@ -1,6 +1,9 @@
 using FHeroes2.Assets;
+using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
 using FHeroes2.Game.Editor;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Editor;
@@ -255,6 +258,168 @@ public sealed class EditorMapSpecsInputTests : IDisposable
         Assert.Equal(difficulty, input.Window.State.Difficulty);
     }
 
+    [Fact]
+    public void ClickingTheThreeSubWindowButtonsAsksForTheirWindows()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        Assert.Equal(EditorMapSpecsOutcome.None, input.Process(Click(Center(input.Window.Rumors.Area))));
+        Assert.Equal(EditorMapSpecsRequestKind.OpenRumors, input.Request.Kind);
+        Assert.Null(input.Request.Dialog);
+
+        input.Process(Click(Center(input.Window.Events.Area)));
+        Assert.Equal(EditorMapSpecsRequestKind.OpenDailyEvents, input.Request.Kind);
+
+        input.Process(Click(Center(input.Window.Language.Area)));
+        Assert.Equal(EditorMapSpecsRequestKind.OpenLanguage, input.Request.Kind);
+    }
+
+    [Fact]
+    public void ClickingAboutAsksForMultiLineCreatorNotes()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        Assert.Equal(EditorMapSpecsOutcome.None, input.Process(Click(Center(input.Window.About.Area))));
+        Assert.Equal(EditorMapSpecsRequestKind.EditCreatorNotes, input.Request.Kind);
+        Assert.Equal(EditorMapSpecsInput.ChangeCreatorNotesBody, input.Request.Body);
+
+        InputStringDialog dialog = Assert.IsType<InputStringDialog>(input.Request.Dialog);
+
+        Assert.True(dialog.IsMultiLine);
+        Assert.Equal(EditorMapSpecsInput.MessageCharLimit, dialog.CharacterLimit);
+        Assert.Equal(input.Window.State.CreatorNotes, dialog.InitialText);
+    }
+
+    [Fact]
+    public void ResolvingCreatorNotesWritesTheTextBack()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        input.Process(Click(Center(input.Window.About.Area)));
+
+        Assert.True(input.Resolve("Made for the test."));
+        Assert.Equal("Made for the test.", input.Window.State.CreatorNotes);
+        Assert.True(input.Request.IsNone);
+    }
+
+    [Fact]
+    public void ResolvingRumorsWritesTheListBack()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        input.Process(Click(Center(input.Window.Rumors.Area)));
+
+        // 取消：参考不动 mapFormat.rumors，端口也不写。
+        Assert.False(input.ResolveRumors(null));
+        Assert.Empty(input.Window.State.Rumors);
+        Assert.True(input.Request.IsNone);
+
+        input.Process(Click(Center(input.Window.Rumors.Area)));
+
+        Assert.True(input.ResolveRumors(["A rumor.", "Another one."]));
+        Assert.Equal(new[] { "A rumor.", "Another one." }, input.Window.State.Rumors);
+        Assert.True(input.Request.IsNone);
+    }
+
+    [Fact]
+    public void ResolvingDailyEventsWritesTheListBack()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        input.Process(Click(Center(input.Window.Events.Area)));
+
+        Assert.False(input.ResolveDailyEvents(null));
+        Assert.Empty(input.Window.State.DailyEvents);
+
+        input.Process(Click(Center(input.Window.Events.Area)));
+
+        MapDailyEvent dailyEvent = new()
+        {
+            FirstOccurrenceDay = 3,
+            RepeatPeriodInDays = 7,
+            Message = "The first day.",
+            HumanPlayerColors = PlayerColor.Blue,
+            ComputerPlayerColors = PlayerColor.Red,
+        };
+
+        Assert.True(input.ResolveDailyEvents([dailyEvent]));
+        Assert.Single(input.Window.State.DailyEvents);
+        Assert.Equal("The first day.", input.Window.State.DailyEvents[0].Message);
+    }
+
+    [Fact]
+    public void TheSubWindowFactoriesOnlyBuildForTheirOwnRequest()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        EditorListArtwork artwork = EditorListArtwork.TryCreate(isEvilInterface: false) ??
+            throw new InvalidOperationException("The installed game data has no editor list artwork.");
+
+        FakeGlyphSource font = new(112, 14);
+
+        // 还没请求：三个工厂都返回 null。
+        Assert.Null(input.CreateRumorWindow(artwork, font, font));
+        Assert.Null(input.CreateDailyEventsWindow(artwork, font, font));
+        Assert.Null(input.CreateLanguageWindow(artwork, font, font));
+
+        input.Process(Click(Center(input.Window.Rumors.Area)));
+        Assert.NotNull(input.CreateRumorWindow(artwork, font, font));
+        Assert.Null(input.CreateDailyEventsWindow(artwork, font, font));
+        Assert.Null(input.CreateLanguageWindow(artwork, font, font));
+
+        input.Process(Click(Center(input.Window.Events.Area)));
+        Assert.NotNull(input.CreateDailyEventsWindow(artwork, font, font));
+
+        input.Process(Click(Center(input.Window.Language.Area)));
+        Assert.NotNull(input.CreateLanguageWindow(artwork, font, font));
+    }
+
+    [Fact]
+    public void ResolveLanguageAppliesTheAcceptedChanges()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        EditorListArtwork artwork = EditorListArtwork.TryCreate(isEvilInterface: false) ??
+            throw new InvalidOperationException("The installed game data has no editor list artwork.");
+
+        FakeGlyphSource font = new(112, 14);
+
+        input.Process(Click(Center(input.Window.Language.Area)));
+
+        EditorLanguageWindow window = input.CreateLanguageWindow(artwork, font, font)!;
+
+        Assert.True(window.AddLanguage(SupportedLanguage.German));
+
+        // 列表是 [English, German]，选中第二行让 German 成为主语言。
+        window.Process(Click(Center(window.RowArea(1))));
+        window.Process(Click(Center(window.Okay.Area)));
+
+        Assert.True(input.ResolveLanguage(window));
+        Assert.Equal(SupportedLanguage.German, input.Window.State.Translations.MainLanguage);
+        Assert.True(input.Request.IsNone);
+    }
+
     private static void AssertMessage(EditorMapSpecsInput input, Rect area, string title, string body)
     {
         input.Process(RightPress(Center(area)));
@@ -315,5 +480,34 @@ public sealed class EditorMapSpecsInputTests : IDisposable
         events.OnKeyboard(key, KeyModifier.None, KeyboardEventState.Down);
 
         return events;
+    }
+
+    /// <summary>A glyph source with fixed metrics whose glyphs are solid blocks.</summary>
+    private sealed class FakeGlyphSource : IGlyphSource
+    {
+        private readonly Sprite _glyph;
+
+        public FakeGlyphSource(byte color, int lineHeight)
+        {
+            PixelBuffer image = new(6, lineHeight);
+            image.Fill(color);
+            _glyph = new Sprite(image, 0, 0);
+            LineHeight = lineHeight;
+        }
+
+        public int LineHeight { get; }
+
+        public int SpaceWidth => 6;
+
+        public bool IsAvailable(char character) => true;
+
+        public int GetAdvance(char character) => 6;
+
+        public bool TryGetGlyph(char character, out Sprite glyph)
+        {
+            glyph = _glyph;
+
+            return true;
+        }
     }
 }

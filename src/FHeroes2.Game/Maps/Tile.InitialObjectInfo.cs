@@ -71,7 +71,10 @@ public sealed partial class Tile
     /// </remarks>
     public void SetInitialObjectInfo(World world)
     {
-        MapVersion version = Hero.GetCurrentMapVersion();
+        // 参考取 Game::getVersion()（全局设置里的当前地图），端口改取这份地图自己的版本：
+        // 载入时 World.LoadMap 已经把 MapInfo 设成 map.Info，两者在游戏里相等，而读地图头不会被
+        // 另一个线程换地图带偏（并行测试曾因此偶发把随机神器读成 Unknown）。
+        MapVersion version = world.MapInfo?.Version ?? MapVersion.SuccessionWars;
 
         switch (GetNonActionObjectType(world))
         {
@@ -160,7 +163,11 @@ public sealed partial class Tile
                         }
                     }
 
-                    ArtifactType artifact = ArtifactMapSprites.FromMapIndex(artifactSpriteIndex, version, false);
+                    // 参考传 Settings::isPriceOfLoyaltySupported()（装没装扩展）；端口没有设置层，改由地图版本推断：
+                    // Price of Loyalty 与 Resurrection 的地图只可能来自扩展。传 false 会把扩展神器的索引
+                    // （172..205）当成没有神器——随机神器在 PoL 地图上恰好抽到扩展神器时就这样丢掉了。
+                    ArtifactType artifact = ArtifactMapSprites.FromMapIndex(artifactSpriteIndex, version,
+                        version != MapVersion.SuccessionWars);
                     if (artifact == ArtifactType.Unknown)
                     {
                         // The sprite names no artifact the port knows: leave the tile without one.
@@ -722,7 +729,9 @@ public sealed partial class Tile
                 _ => throw new NotSupportedException($"A random artifact type is missing here: {MainObjectType}."),
             };
 
-            artifact = ArtifactRandom.Next(artifactLevel, Hero.GetCurrentMapVersion());
+            // 同上：用这份地图的版本，不读全局的当前地图。
+            artifact = ArtifactRandom.Next(artifactLevel,
+                world.MapInfo?.Version ?? MapVersion.SuccessionWars);
         }
 
         if (artifact == ArtifactType.Unknown)

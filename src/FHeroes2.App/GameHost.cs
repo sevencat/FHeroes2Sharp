@@ -2216,6 +2216,12 @@ public sealed class GameHost : IDisposable
         _editorMenu = null;
         _editor = scene;
 
+        // 编辑器的窗口借这条帧泵进内层循环：与冒险地图给 AdventureHeroActionHost 接线是同一条缝。
+        scene.RunModal = RunModal;
+
+        // 选项页改完设置要落盘，配置文件归宿主管（参考在 openEditorSettings() 里直接 conf.Save）。
+        scene.SavePreferences = SaveSettings;
+
         if (_options.Cursor is { } cursor)
         {
             scene.SetCursor(cursor);
@@ -2451,6 +2457,11 @@ public sealed class GameHost : IDisposable
                 return;
             }
         }
+
+        // 帧泵在脚本交互之前就要接上：--editor-panel-click 能点到规格窗这类会开窗口的按钮，而窗口只在
+        // RunModal 接好之后才开得出来。
+        scene.RunModal = RunModal;
+        scene.SavePreferences = SaveSettings;
 
         // The synthetic pointer of a screenshot has to reach the editor as well, or the highlighted
         // tile and the hover text of the status bar would be missing from every baseline.

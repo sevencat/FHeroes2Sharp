@@ -124,8 +124,14 @@ public sealed class EditorButtonSet
     /// thirty five frames the panel cannot work without are missing.
     /// </summary>
     /// <param name="assets">The archive to read from, may be <see langword="null"/>.</param>
+    /// <param name="isEvilInterface">Whether the evil set is wanted, the reference's <c>ICN::EDITBTNS_EVIL</c>.</param>
     /// <returns>The buttons, or <see langword="null"/> when the archive lacks them.</returns>
-    public static EditorButtonSet? TryCreate(AssetBundle? assets)
+    /// <remarks>
+    /// <c>EDITBTNS_EVIL</c> 归档里没有条目：参考先把好界面的 45 帧全造完，再逐帧
+    /// <c>convertToEvilInterface()</c> 换色（<c>game_assets.cpp:3288-3296</c>）。顺序不能颠倒——后补的十帧
+    /// 里那几块石头面色（41 / 46）也是要一起换的，先换原料再画就等于漏掉它们。
+    /// </remarks>
+    public static EditorButtonSet? TryCreate(AssetBundle? assets, bool isEvilInterface = false)
     {
         if (assets is null)
         {
@@ -193,6 +199,16 @@ public sealed class EditorButtonSet
         ImageOps.DrawLine(frames[UndoFrame], new Point(33, 20), new Point(33, 21), 52);
         ImageOps.SetPixel(frames[UndoFrame + 1], 31, 20, 53);
         ImageOps.DrawLine(frames[UndoFrame + 1], new Point(32, 21), new Point(32, 22), 53);
+
+        if (isEvilInterface)
+        {
+            ReadOnlySpan<byte> palette = PaletteTable.Get(PaletteId.GoodToEvilInterface);
+
+            foreach (Sprite frame in frames)
+            {
+                ImageOps.ApplyPalette(frame.Image, palette);
+            }
+        }
 
         return new EditorButtonSet(frames) { Missing = cache.Missing };
     }

@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Geometry;
+using FHeroes2.Core.Imaging;
 using FHeroes2.Game.Editor;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Input;
@@ -33,7 +34,31 @@ public enum EditorMapSpecsRequestKind
     /// Type a number into one of the two number elements, the number pad the element opens on a click of its edit
     /// box (<c>ui_dialog.cpp:1007</c>); the host answers it through <see cref="EditorMapSpecsInput.ResolveValue"/>.
     /// </summary>
-    EditValue
+    EditValue,
+
+    /// <summary>
+    /// Edit the rumors of the map, <c>openRumorWindow</c> (<c>:2282-2289</c>); the host answers it through
+    /// <see cref="EditorMapSpecsInput.ResolveRumors"/>.
+    /// </summary>
+    OpenRumors,
+
+    /// <summary>
+    /// Edit the daily events, <c>openDailyEventsWindow</c> (<c>:2290-2297</c>); the host answers it through
+    /// <see cref="EditorMapSpecsInput.ResolveDailyEvents"/>.
+    /// </summary>
+    OpenDailyEvents,
+
+    /// <summary>
+    /// Edit the languages of the map, <c>openLanguageWindow</c> (<c>:2298-2311</c>); the host answers it through
+    /// <see cref="EditorMapSpecsInput.ResolveLanguage"/>.
+    /// </summary>
+    OpenLanguage,
+
+    /// <summary>
+    /// Edit the notes of the map maker, <c>:2370-2377</c>; the host answers it through
+    /// <see cref="EditorMapSpecsInput.Resolve"/> like the name and the description.
+    /// </summary>
+    EditCreatorNotes
 }
 
 /// <summary>Which of the two number elements of the map specifications window a request is about.</summary>
@@ -242,6 +267,40 @@ public sealed class EditorMapSpecsInput
     /// <summary>Body of the map description input, <c>:2328</c>.</summary>
     public const string ChangeMapDescriptionBody = "Change Map Description:";
 
+    /// <summary>Title of the RUMORS button's message, <c>:2385</c>.</summary>
+    public const string RumorsTitle = "Rumors";
+
+    /// <summary>Body of the RUMORS button's message, <c>:2385</c>.</summary>
+    public const string RumorsMessage = "Click to edit custom rumors.";
+
+    /// <summary>Title of the EVENTS button's message, <c>:2388</c>.</summary>
+    public const string EventsTitle = "Events";
+
+    /// <summary>Body of the EVENTS button's message, <c>:2388</c>.</summary>
+    public const string EventsMessage = "Click to edit daily events.";
+
+    /// <summary>Title of the LANGUAGE button's message, <c>:2391</c>.</summary>
+    public const string LanguageTitle = "Language";
+
+    /// <summary>Body of the LANGUAGE button's message, <c>:2391</c>.</summary>
+    public const string LanguageMessage = "Click to change the language of the map.";
+
+    /// <summary>Title of the ABOUT button's message, <c>:2394</c> (<c>_( "map|About" )</c>).</summary>
+    public const string AboutTitle = "About";
+
+    /// <summary>Body of the ABOUT button's message, <c>:2394-2396</c>.</summary>
+    public const string AboutMessage =
+        "Click to edit notes from the map creator. These notes are optional and do not appear during gameplay.";
+
+    /// <summary>Body of the creator notes input, <c>_( "map|About" ) + ':'</c> (<c>:2373</c>).</summary>
+    public const string ChangeCreatorNotesBody = "About:";
+
+    /// <summary>
+    /// Longest text the multi-line inputs accept, <c>Map_Format::messageCharLimit</c>
+    /// (<c>map_format_info.h:59</c>).
+    /// </summary>
+    public const int MessageCharLimit = 999;
+
     private readonly EditorMapSpecsWindow _window;
 
     private EditorMapSpecsRequestKind _pendingEdit = EditorMapSpecsRequestKind.None;
@@ -332,6 +391,32 @@ public sealed class EditorMapSpecsInput
             return EditorMapSpecsOutcome.None;
         }
 
+        // :2282-2289 —— 传闻窗：参考把 mapFormat.rumors 拷一份进去、确定后搬回来，端口的宿主照
+        // :2284-2286 的 if 做同一个判断（取消就丢掉窗口里的改动）。
+        if (events.MouseClickLeft(_window.Rumors.Area))
+        {
+            Request = OpenSubWindow(EditorMapSpecsRequestKind.OpenRumors);
+
+            return EditorMapSpecsOutcome.None;
+        }
+
+        // :2290-2297。
+        if (events.MouseClickLeft(_window.Events.Area))
+        {
+            Request = OpenSubWindow(EditorMapSpecsRequestKind.OpenDailyEvents);
+
+            return EditorMapSpecsOutcome.None;
+        }
+
+        // :2298-2311 —— 语言窗返回后参考重画名称、描述与两个条件面板；端口每帧都从状态重画，宿主只要
+        // 在 Accepted 时把列表写回状态（ResolveLanguage 代劳），下一帧就是新主语言的文本。
+        if (events.MouseClickLeft(_window.Language.Area))
+        {
+            Request = OpenSubWindow(EditorMapSpecsRequestKind.OpenLanguage);
+
+            return EditorMapSpecsOutcome.None;
+        }
+
         Rect mapNameRoi = _window.PageLayout.MapNameRoi;
 
         // :2312-2324。
@@ -369,7 +454,16 @@ public sealed class EditorMapSpecsInput
             return EditorMapSpecsOutcome.None;
         }
 
-        // :2378-2409 —— 右键提示，参考也是 else-if 链；四个子窗按钮的两条在 .3 补上。
+        // :2370-2377 —— 作者注记：多行输入，上限是 messageCharLimit。
+        if (events.MouseClickLeft(_window.About.Area))
+        {
+            Request = CreateTextInput(EditorMapSpecsRequestKind.EditCreatorNotes, ChangeCreatorNotesBody,
+                _window.State.CreatorNotes, MessageCharLimit, isMultiLine: true);
+
+            return EditorMapSpecsOutcome.None;
+        }
+
+        // :2378-2409 —— 右键提示，参考也是 else-if 链。
         if (events.IsMouseRightButtonPressedInArea(_window.Cancel.Area))
         {
             Request = ShowMessage(CancelTitle, CancelMessage);
@@ -377,6 +471,22 @@ public sealed class EditorMapSpecsInput
         else if (events.IsMouseRightButtonPressedInArea(_window.Okay.Area))
         {
             Request = ShowMessage(OkayTitle, OkayMessage);
+        }
+        else if (events.IsMouseRightButtonPressedInArea(_window.Rumors.Area))
+        {
+            Request = ShowMessage(RumorsTitle, RumorsMessage);
+        }
+        else if (events.IsMouseRightButtonPressedInArea(_window.Events.Area))
+        {
+            Request = ShowMessage(EventsTitle, EventsMessage);
+        }
+        else if (events.IsMouseRightButtonPressedInArea(_window.Language.Area))
+        {
+            Request = ShowMessage(LanguageTitle, LanguageMessage);
+        }
+        else if (events.IsMouseRightButtonPressedInArea(_window.About.Area))
+        {
+            Request = ShowMessage(AboutTitle, AboutMessage);
         }
         else if (events.IsMouseRightButtonPressedInArea(mapNameRoi))
         {
@@ -473,9 +583,76 @@ public sealed class EditorMapSpecsInput
 
                 return true;
 
+            case EditorMapSpecsRequestKind.EditCreatorNotes:
+                _window.State.CreatorNotes = text;
+
+                return true;
+
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Answers the rumors window the host was asked to run, the write-back of <c>:2284-2286</c>.
+    /// </summary>
+    /// <param name="rumors">The rumors the window ended up with, or <see langword="null"/> when it was cancelled.</param>
+    /// <returns>Whether the state changed and the page has to be repainted.</returns>
+    /// <remarks>取消时参考不动 <c>mapFormat.rumors</c>，端口同样不写。</remarks>
+    public bool ResolveRumors(IReadOnlyList<string>? rumors)
+    {
+        Request = EditorMapSpecsRequest.None;
+
+        if (rumors is null)
+        {
+            return false;
+        }
+
+        _window.State.SetRumors(rumors);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Answers the daily events window the host was asked to run, the write-back of <c>:2292-2294</c>.
+    /// </summary>
+    /// <param name="events">The events the window ended up with, or <see langword="null"/> when it was cancelled.</param>
+    /// <returns>Whether the state changed and the page has to be repainted.</returns>
+    public bool ResolveDailyEvents(IReadOnlyList<MapDailyEvent>? events)
+    {
+        Request = EditorMapSpecsRequest.None;
+
+        if (events is null)
+        {
+            return false;
+        }
+
+        _window.State.SetDailyEvents(events);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Answers the language window the host was asked to run, the <c>:2299-2310</c> block: the languages go back into
+    /// the state when the author accepted, and the name, the description and the two condition panels follow from it
+    /// on the next repaint.
+    /// </summary>
+    /// <param name="window">The window the host ran.</param>
+    /// <returns>Whether the state changed and the page has to be repainted.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="window"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// 参考在语言窗返回后无条件跑 <c>renderMapName()</c> / <c>renderMapDescription()</c> 与两次
+    /// <c>updateCondition()</c>，因为它的 <c>mapFormat</c> 可能已经被改了主语言。端口的窗口只在 Accepted 时把列表
+    /// 写回状态（<see cref="EditorLanguageWindow.ApplyTo(MapSpecsState)"/>），名字与描述本来就读自当前主语言的
+    /// 文本槽，条件面板每帧从状态重画，所以「重画」这一步在这里退化成一次重读。
+    /// </remarks>
+    public bool ResolveLanguage(EditorLanguageWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+
+        Request = EditorMapSpecsRequest.None;
+
+        return window.Result == EditorListOutcome.Accepted && window.ApplyTo(_window.State);
     }
 
     /// <summary>
@@ -577,6 +754,72 @@ public sealed class EditorMapSpecsInput
         IGlyphSource titleFont, IGlyphSource font, Size? screen = null) =>
         EditorMapSpecsTargetPicker.Create(
             _pendingTarget, _window.State, artwork, titleFont, font, _window.IsEvilInterface, screen);
+
+    /// <summary>
+    /// Builds the rumors window the last <see cref="EditorMapSpecsRequestKind.OpenRumors"/> asked for, the
+    /// <c>openRumorWindow( temp, mapFormat.mainLanguage )</c> of <c>:2282-2289</c>.
+    /// </summary>
+    /// <param name="artwork">Frames of the scroll bar and the four buttons.</param>
+    /// <param name="headerFont">Yellow font, <c>FontType::normalYellow()</c>.</param>
+    /// <param name="bodyFont">White font, <c>FontType::normalWhite()</c>.</param>
+    /// <param name="screen">Screen to centre the window on, the real one when omitted.</param>
+    /// <returns>
+    /// The window holding a copy of the current rumors, or <see langword="null"/> when the request is not
+    /// <see cref="EditorMapSpecsRequestKind.OpenRumors"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="artwork"/>, <paramref name="headerFont"/> or <paramref name="bodyFont"/> is <see langword="null"/>.
+    /// </exception>
+    public EditorRumorWindow? CreateRumorWindow(EditorListArtwork artwork, IGlyphSource headerFont,
+        IGlyphSource bodyFont, Size? screen = null) =>
+        Request.Kind == EditorMapSpecsRequestKind.OpenRumors
+            ? EditorRumorWindow.Create(screen ?? ScreenBuffer.DefaultSize, _window.State.Rumors, artwork, headerFont,
+                bodyFont)
+            : null;
+
+    /// <summary>
+    /// Builds the daily events window the last <see cref="EditorMapSpecsRequestKind.OpenDailyEvents"/> asked for, the
+    /// <c>openDailyEventsWindow( temp, ... )</c> of <c>:2290-2297</c>.
+    /// </summary>
+    /// <param name="artwork">Frames of the scroll bar and the four buttons.</param>
+    /// <param name="headerFont">Yellow font, <c>FontType::normalYellow()</c>.</param>
+    /// <param name="bodyFont">White font, <c>FontType::normalWhite()</c>.</param>
+    /// <param name="screen">Screen to centre the window on, the real one when omitted.</param>
+    /// <returns>
+    /// The window holding a copy of the current events, or <see langword="null"/> when the request is not
+    /// <see cref="EditorMapSpecsRequestKind.OpenDailyEvents"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="artwork"/>, <paramref name="headerFont"/> or <paramref name="bodyFont"/> is <see langword="null"/>.
+    /// </exception>
+    public EditorDailyEventsWindow? CreateDailyEventsWindow(EditorListArtwork artwork, IGlyphSource headerFont,
+        IGlyphSource bodyFont, Size? screen = null) =>
+        Request.Kind == EditorMapSpecsRequestKind.OpenDailyEvents
+            ? EditorDailyEventsWindow.Create(screen ?? ScreenBuffer.DefaultSize, _window.State.DailyEvents, artwork,
+                headerFont, bodyFont)
+            : null;
+
+    /// <summary>
+    /// Builds the language window the last <see cref="EditorMapSpecsRequestKind.OpenLanguage"/> asked for, the
+    /// <c>openLanguageWindow( mapFormat )</c> of <c>:2298-2311</c>.
+    /// </summary>
+    /// <param name="artwork">Frames of the scroll bar and the two small buttons.</param>
+    /// <param name="headerFont">Yellow font, <c>FontType::normalYellow()</c>.</param>
+    /// <param name="bodyFont">White font, <c>FontType::normalWhite()</c>.</param>
+    /// <param name="screen">Screen to centre the window on, the real one when omitted.</param>
+    /// <returns>
+    /// The window editing the languages of the state, or <see langword="null"/> when the request is not
+    /// <see cref="EditorMapSpecsRequestKind.OpenLanguage"/>.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="artwork"/>, <paramref name="headerFont"/> or <paramref name="bodyFont"/> is <see langword="null"/>.
+    /// </exception>
+    public EditorLanguageWindow? CreateLanguageWindow(EditorListArtwork artwork, IGlyphSource headerFont,
+        IGlyphSource bodyFont, Size? screen = null) =>
+        Request.Kind == EditorMapSpecsRequestKind.OpenLanguage
+            ? EditorLanguageWindow.Create(_window.State, artwork, screen ?? ScreenBuffer.DefaultSize, headerFont,
+                bodyFont)
+            : null;
 
     /// <summary>
     /// Writes the edited specifications back to the map, the <c>getConditionMetadata()</c> calls of
@@ -966,4 +1209,7 @@ public sealed class EditorMapSpecsInput
 
     private static EditorMapSpecsRequest ShowMessage(string title, string body) =>
         new(EditorMapSpecsRequestKind.ShowMessage, title, body, null);
+
+    private static EditorMapSpecsRequest OpenSubWindow(EditorMapSpecsRequestKind kind) =>
+        new(kind, string.Empty, string.Empty, null);
 }

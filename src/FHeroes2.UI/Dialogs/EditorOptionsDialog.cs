@@ -1,9 +1,12 @@
+using FHeroes2.Assets.Icn;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Game;
+using FHeroes2.Game.H2D;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
+using GameAssets = FHeroes2.Game.Assets;
 
 namespace FHeroes2.UI.Dialogs;
 
@@ -82,6 +85,104 @@ public sealed class EditorOptionsArtwork
     /// <summary>Whether every frame the window reads was supplied.</summary>
     public bool IsComplete =>
         SpanelFrames.Count > 21 && CspanelFrames.Count > 2 && GameOptionFrames.Count > 1 && EspanelFrames.Count > 5;
+
+    /// <summary>
+    /// Reads the four archives the page draws from out of the installed game data.
+    /// </summary>
+    /// <param name="buttons">Source of the OK button, which the host already has for its other windows.</param>
+    /// <returns>The artwork, or <see langword="null"/> when an archive or a frame is missing.</returns>
+    /// <remarks>
+    /// 依赖 <see cref="GameAssets.Current"/> 已指向游戏数据，同 <see cref="EditorSpellSelectionArtwork.TryCreate"/>。
+    /// 四个归档与界面主题无关（参考这里不管 <c>isEvilInterface</c>），所以只要按钮来源。
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="buttons"/> is <see langword="null"/>.</exception>
+    public static EditorOptionsArtwork? TryCreate(IDialogButtonArtworkSource buttons)
+    {
+        ArgumentNullException.ThrowIfNull(buttons);
+
+        if (ReadFrames(IcnType.Spanel, SpanelFrameCount) is not { } spanel ||
+            ReadFrames(IcnType.Cspanel, CspanelFrameCount) is not { } cspanel ||
+            ComposeGameOptionFrames() is not { } gameOptions ||
+            ReadFrames(IcnType.Espanel, EspanelFrameCount) is not { } espanel)
+        {
+            return null;
+        }
+
+        return new EditorOptionsArtwork
+        {
+            SpanelFrames = spanel,
+            CspanelFrames = cspanel,
+            GameOptionFrames = gameOptions,
+            EspanelFrames = espanel,
+            Buttons = buttons,
+        };
+    }
+
+    /// <summary>How many frames of <c>SPANEL</c> the page reads, the highest index plus one.</summary>
+    private const int SpanelFrameCount = 22;
+
+    /// <summary>How many frames of <c>CSPANEL</c> the page reads.</summary>
+    private const int CspanelFrameCount = 3;
+
+    /// <summary>How many frames of <c>ESPANEL</c> the page reads.</summary>
+    private const int EspanelFrameCount = 6;
+
+    /// <summary>Edge of the two icons the page composes, 65 by 65 in the reference.</summary>
+    private const int OptionIconSize = 65;
+
+    /// <summary>
+    /// Builds the two <c>GAME_OPTION_ICON</c> frames, the hotkeys and the graphics icons.
+    /// </summary>
+    /// <remarks>
+    /// 这两个图标不是归档里的帧，参考在载入时合成（<c>game_assets.cpp:5187-5203</c>）：从 <c>ESPANBKG</c> 的
+    /// (69, 47) 抠一块 65×65 的底，再把 <c>hotkeys_option_icon.image</c> / <c>graphics_option_icon.image</c>
+    /// 按它们自己的偏移贴上去。H2D 归档没加载时图标缺一块，底还在——参考的读取器在初始化之前也是这个行为。
+    /// </remarks>
+    private static IReadOnlyList<Sprite>? ComposeGameOptionFrames()
+    {
+        if (GameAssets.GetImage(GameAssets.GetFileName(IcnType.Espanbkg), 0) is not { } sheet)
+        {
+            return null;
+        }
+
+        var background = new Rect(69, 47, OptionIconSize, OptionIconSize);
+        string[] icons = ["hotkeys_option_icon.image", "graphics_option_icon.image"];
+        Sprite[] frames = new Sprite[icons.Length];
+
+        for (int i = 0; i < icons.Length; ++i)
+        {
+            var frame = new Sprite(OptionIconSize, OptionIconSize);
+
+            ImageOps.Copy(sheet, background, frame, new Point(0, 0));
+
+            if (H2DResources.TryReadCurrentImage(icons[i], out Sprite? icon))
+            {
+                ImageOps.BlitSprite(frame, new Point(icon.OffsetX, icon.OffsetY), icon);
+            }
+
+            frames[i] = frame;
+        }
+
+        return frames;
+    }
+
+    private static IReadOnlyList<Sprite>? ReadFrames(IcnType type, int count)
+    {
+        string fileName = GameAssets.GetFileName(type);
+        Sprite[] frames = new Sprite[count];
+
+        for (int i = 0; i < count; ++i)
+        {
+            if (GameAssets.GetImage(fileName, i) is not { } frame)
+            {
+                return null;
+            }
+
+            frames[i] = frame;
+        }
+
+        return frames;
+    }
 }
 
 /// <summary>

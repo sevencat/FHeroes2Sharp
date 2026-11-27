@@ -55,6 +55,12 @@ public sealed class InputStringWindow
     public Rect Area => _view.Area;
 
     /// <summary>
+    /// Area of the OKAY button; a multi line field is confirmed only by clicking it, since Enter is a newline there
+    /// (<c>InputStringView.ProcessHotKey</c>'s guard).
+    /// </summary>
+    public Rect OkayArea => _view.OkayArea;
+
+    /// <summary>
     /// Builds the window around <paramref name="dialog"/>.
     /// </summary>
     /// <param name="dialog">The texts and the limits.</param>

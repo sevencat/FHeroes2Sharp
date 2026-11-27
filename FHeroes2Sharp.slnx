@@ -8,6 +8,7 @@
     <Project Path="src/FHeroes2.UI/FHeroes2.UI.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/FHeroes2.App.Tests/FHeroes2.App.Tests.csproj" />
     <Project Path="tests/FHeroes2.Assets.Tests/FHeroes2.Assets.Tests.csproj" />
     <Project Path="tests/FHeroes2.Core.Tests/FHeroes2.Core.Tests.csproj" />
     <Project Path="tests/FHeroes2.Game.Tests/FHeroes2.Game.Tests.csproj" />

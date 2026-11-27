@@ -72,6 +72,12 @@ public sealed class AdventureMapView
     private readonly World? _world;
     private readonly Size _viewport;
 
+    /// <summary>
+    /// The animation phase of the last <see cref="Draw"/> call. Rendering-only state, set at the entry of the
+    /// draw pass so the private blitters do not have to carry it as a parameter.
+    /// </summary>
+    private uint _animationPhase;
+
     public AdventureMapView(
         Mp2Map map,
         TerrainTileSet tiles,
@@ -191,15 +197,27 @@ public sealed class AdventureMapView
     /// The adventure map leaves it off; only the View Towns and View All spells turn it on
     /// (<c>view_world.cpp:234-236</c>).
     /// </param>
+    /// <param name="animationPhase">
+    /// The adventure map animation index, <c>Game::getAdventureMapAnimationIndex()</c>. Animated object parts draw
+    /// one frame of their cycle on top of the base image, chosen by this value; zero is a normal phase, not "off".
+    /// </param>
     /// <remarks>
+    /// <para>
     /// The passes are per layer over the whole viewport, not per tile, which is what the reference
     /// does (<c>Interface::GameArea::Redraw()</c>): a sprite that reaches over a tile border is not
     /// covered by the terrain of the next tile, and an object of one layer is drawn above an object
     /// of an earlier pass even when that object sits on the next tile.
+    /// </para>
+    /// <para>
+    /// 参考在渲染里直接读全局的 <c>Game::getAdventureMapAnimationIndex()</c>；这里改成显式传进来，好让调用方
+    /// 决定节拍，也让截图与用例的结果不依赖全局状态。
+    /// </para>
     /// </remarks>
-    public void Draw(PixelBuffer target, bool drawTownsOverFog = false)
+    public void Draw(PixelBuffer target, bool drawTownsOverFog = false, uint animationPhase = 0)
     {
         ArgumentNullException.ThrowIfNull(target);
+
+        _animationPhase = animationPhase;
 
         DrawTerrain(target);
         DrawSprites(target);
@@ -668,7 +686,7 @@ public sealed class AdventureMapView
             // that has no boat sprites — the map editor of this port — keeps the editor frame.
             if (tile.GroundLayer == layer && !(_boats is not null && Mp2ObjectData.IsBoat(tile)))
             {
-                BlitPart(target, tile.GroundIcnType, tile.BottomIcnImageIndex, left, top);
+                BlitMainObject(target, tile, tile.GroundIcnType, tile.BottomIcnImageIndex, left, top);
             }
         }
     }
@@ -684,7 +702,7 @@ public sealed class AdventureMapView
         {
             if (tile.HasTopObject)
             {
-                BlitPart(target, tile.TopIcnType, tile.TopIcnImageIndex, left, top);
+                BlitMainObject(target, tile, tile.TopIcnType, tile.TopIcnImageIndex, left, top);
             }
 
             foreach (int index in _map.EnumerateAddonChain(tile))
@@ -717,18 +735,83 @@ public sealed class AdventureMapView
     }
 
     /// <summary>
-    /// Blits one object part, skipping the tile sets the object path must not draw
-    /// (<c>MINIHERO</c>, <c>MONS32</c>, …). Those objects have their own renderers, which ask for
-    /// their sprites through <see cref="IHeroSpriteSource"/> instead.
+    /// Blits one object part with its animation frame, the port of <c>renderObjectPart()</c>
+    /// (<c>maps_tiles_render.cpp:60-80</c>).
     /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="icnType">Tile set of the part.</param>
+    /// <param name="icnIndex">Frame of the part.</param>
+    /// <param name="left">Left pixel of the tile.</param>
+    /// <param name="top">Top pixel of the tile.</param>
+    /// <remarks>
+    /// 跳过的那些图集（<c>MINIHERO</c>、<c>MONS32</c> 等）走各自的渲染器，通过 <see cref="IHeroSpriteSource"/> 一类
+    /// 的接口取图，不走这条路径。
+    /// </remarks>
     private void BlitPart(PixelBuffer target, Mp2ObjectIcnType icnType, int icnIndex, int left, int top)
     {
-        if (!Mp2ObjectIcnTypes.IsDrawnAsObjectPart(icnType))
+        BlitAnimatedPart(target, icnType, icnIndex, left, top, isMainObject: false, metadata1: 0);
+    }
+
+    /// <summary>
+    /// Blits the main object standing on a tile, the port of <c>renderMainObject()</c>
+    /// (<c>maps_tiles_render.cpp:142-190</c>): the same two blits as a part plus one quirk of the original game.
+    /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="tile">The tile whose main object is drawn.</param>
+    /// <param name="icnType">Tile set of the main part.</param>
+    /// <param name="icnIndex">Frame of the main part.</param>
+    /// <param name="left">Left pixel of the tile.</param>
+    /// <param name="top">Top pixel of the tile.</param>
+    private void BlitMainObject(PixelBuffer target, Mp2TileInfo tile, Mp2ObjectIcnType icnType, int icnIndex, int left, int top)
+    {
+        BlitAnimatedPart(target, icnType, icnIndex, left, top, isMainObject: true, metadata1: tile.Quantity2);
+    }
+
+    /// <summary>
+    /// Blits an object part and, when the catalogue marks it animated, the one extra frame its cycle shows at
+    /// <see cref="_animationPhase"/> (<c>maps_tiles_render.cpp:70-80</c>).
+    /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="icnType">Tile set of the part.</param>
+    /// <param name="icnIndex">Base frame of the part.</param>
+    /// <param name="left">Left pixel of the tile.</param>
+    /// <param name="top">Top pixel of the tile.</param>
+    /// <param name="isMainObject">Whether this is the main object of its tile.</param>
+    /// <param name="metadata1">The second metadata byte of the tile, <c>quantity2</c>.</param>
+    /// <remarks>
+    /// 魔法花园（<c>maps_tiles_render.cpp:166-171</c>）被访问过（<c>metadata()[1] == 0</c>）时不是播动画，而是取整轮
+    /// 之后那一帧。参考只对主物件做这个判断，addon 链上的部件照常走 <see cref="BlitPart"/>。
+    /// </remarks>
+    private void BlitAnimatedPart(
+        PixelBuffer target,
+        Mp2ObjectIcnType icnType,
+        int icnIndex,
+        int left,
+        int top,
+        bool isMainObject,
+        byte metadata1)
+    {
+        if (!Mp2ObjectIcnTypes.IsDrawnAsObjectPart(icnType) || icnIndex is < 0 or Mp2TileInfo.EmptyImageIndex)
         {
             return;
         }
 
         BlitSprite(target, icnType, icnIndex, left, top);
+
+        if (MapObjectCatalog.GetObjectPartByIcn(icnType, (uint)icnIndex) is not { AnimationFrames: > 0 } part)
+        {
+            return;
+        }
+
+        int frame = icnIndex + (int)(_animationPhase % part.AnimationFrames) + 1;
+
+        if (isMainObject && metadata1 == 0
+            && part.ObjectType is Mp2ObjectType.MagicGarden or Mp2ObjectType.ActionMagicGarden)
+        {
+            frame = icnIndex + part.AnimationFrames + 1;
+        }
+
+        BlitSprite(target, icnType, frame, left, top);
     }
 
     /// <summary>

@@ -5799,4 +5799,741 @@ OKAY/CANCEL）与 `Dialogs/EditorRumorArtwork`，逐帧 `Process()` / `Draw()`�
 无选中时改写不做事、删选中行并选中邻居、无选中时删除不做事、删空列表、CANCEL/OKAY、五个按钮的右键说明、
 `SetEvents` 换内容并清选中、画一帧有像素变化。全量 6941 通过（UI +22），0 警告 0 错误。
 
+## ADR-315：每日事件规格窗是「两列面板 + 两个数字控件 + 两组颜色框」（`a7l.4.3`）
 
+`editor_daily_event_spec_window.cpp` 的 `editDailyEvent()` 拆成 `Dialogs/EditorDailyEventSpecWindow`（608×430 标准窗）、
+`Dialogs/EditorDailyEventSpecArtwork`（`TOWNWIND` 0..8、`BUTTON_SMALL_OKAY_*`/`BUTTON_SMALL_CANCEL_*` 0..1），
+以及模型上的 `MapDailyEvent.Clamp()`。
+
+**进来先规整**：`Clamp()` 干参考 `:70-77` 那四件事——两个颜色集与地图允许集求交、首次发生日收进
+`1..lastDayForEvents`(33600)、重复周期收到一年(336)。天数常量放在模型上（`DaysInYear`/`LastDayForEvents`），
+窗口与用例都引它。
+
+**布局照抄**：`WindowWidth = 640 - 2 * borderWidthPx`(608)、`WindowHeight = 210 + 220`(430)；左列消息区
+`active.x+9, y+9+行高+9`、`300×210`，奖励面板在消息区底边 + 18、`300×99`；右列从
+`active.x + 9 + 300 + 9` 起、宽 281，标签先按「不断缩窄到两行」求出宽度再整体居中，颜色框居中排、间距 32，
+首次日控件居中、底部 +10 之后是 35 像素的日期说明，再是重复周期控件。
+
+**控件都用现成的**：`ValueSelectionElement`（`TOWNWIND` 4..8 帧，1..33600 与 0..336）、
+`EditorUiHelper.CreateColorCheckboxes`、`EditorUiHelper.RenderResources`、`GameDate.Describe`、
+`SelectCountDialog`。复选框的方框画在一层常驻缓冲里每帧贴回、勾按状态单独贴；窗口没有 `ImageRestorer`，
+`Draw()` 整窗重画。
+
+**输入框/键盘/数量框交宿主**：参考在窗口里直接调 `Dialog::inputString`、`openVirtualNumpad`、
+`Dialog::SelectCount`，端口改成发 `MessageRequested`、`NumpadRequest`、`ResourceCountRequest`，宿主弹完再喂
+`SetMessage`、`SetValueField`、`SetResourceCount`。
+
+**偏差**：①参考「勾上就 `|=`、取消就 `^=`」的行为照抄（等价于集合增删）；②标签的两行逼宽循环遇到单个词会死循环，
+端口加了 `width > 1` 的护栏；③资源面板右键参考弹画着图标的 `showResourceMessage()`，端口还没有那个窗口，
+改成同一个提示里按文本列出金额；④`Text( ..., language )` 的语言整形端口没有。
+
+**用例**：`UI.Tests/EditorDailyEventSpecWindowTests` 25 条（23 事实 + 2 右键分例）与
+`Game.Tests/MapDailyEventTests` 6 条——建窗即规整、收副本、两列布局、颜色框摆法与初始勾选、点框改颜色、
+两个数字控件的初值/上下限/写回/越界收口、点编辑框要键盘、点消息区要输入框、消息截断到 999、点资源图标要数量框、
+写回金额、三个面板的右键说明、CANCEL/OKAY、画一帧有像素变化；模型的默认值、天数常量、`Clamp` 三项与 `Clone`。
+全量 6972 通过（UI +25、Game +6），0 警告 0 错误。
+
+## ADR-316：事件详情窗是「两列四段 + 三个元素 + 条件区」（`a7l.4.4`）
+
+`editor_event_details_window.cpp` 的 `eventDetailsDialog()` 拆成 `Dialogs/EditorEventDetailsWindow`（639×480 标准窗）
+与 `Dialogs/EditorEventDetailsArtwork`（`RESOURCE` 7、`EXPMRL` 4、`SECSKILL` 15/0、`ARTIFACT` 0、`CELLWIN` 1/2/17/18、
+`BUTTON_SMALL_OKAY_*`/`BUTTON_SMALL_CANCEL_*`），模型侧只给 `AdventureMapEventMetadata` 补了一个 `Clone()`。
+
+**布局照抄**：`sectionWidth = (640 - 3 * 9) / 2`(306)、窗宽 `306 * 2 + 27`(639)、高 480；左列消息区
+`active.x+9, y+9+标题行高+9+正文行高`、`306×207`，条件区在其下 +18：「Conditions:」、勾选框、人类颜色标签与框、
+电脑颜色标签与框（行距 35）；右列从 `active.x + 306 + 18` 起：先「Effects:」与 `306×99` 奖励面板，
+再是神器元素与删除按钮、技能元素（`(artifact.x + artifact.width + experience.x - width) / 2` 居中）与删除按钮、
+经验图标与底下的数值（删除按钮同高）。
+
+**三个元素直接用现成的**：`ArtifactDialogElement`、`ExperienceDialogElement`、`SecondarySkillDialogElement`；
+换神器/技能时重建元素（图标与提示随事件走）。右键提示走元素的 `ProcessEvents(events, offset).Popup`，
+没有元素覆盖的地方（空槽、删按钮、消息区、条件区、奖励面板、两个主按钮）给固定文案。
+
+**点击都交宿主**：参考在窗口里直接调 `Dialog::inputString`/`selectArtifact`/`selectSecondarySkill`/`SelectCount`，
+其中神器与技能的单选窗端口还没有，所以消息、神器、技能、经验、资源全部只发
+`MessageRequested`/`ArtifactRequested`/`SecondarySkillRequested`/`ExperienceRequest`/`ResourceCountRequest`，
+宿主弹完再喂 `SetMessage`/`SetArtifact`/`SetSecondarySkill`/`SetExperience`/`SetResourceCount`。
+
+**偏差**：①颜色位集「勾上 `|=`、取消 `&= ~`」（参考的 `^=` 只在勾选状态与位集一致时才等价，端口取更稳的写法）；
+②「首次访问后取消」的勾选框自己画（`CELLWIN` 1/2 从素材里取），不调 `EditorUiHelper.DrawCheckboxWithText`：
+那个每帧去归档现取两帧、用的是全局字体表，和窗口 `IGlyphSource` 量出来的区域对不上；
+③参考的 `CELLWIN_EVIL` 是启动期从 `CELLWIN` 生成的，生成器未移植，所以框、勾、删除按钮一律用普通版，
+`isEvilInterface` 只影响 OKAY/CANCEL；④OKAY 的可用性判断在参考 `:424` 就被注释掉了，端口照样一直可用；
+⑤奖励面板右键参考弹画着图标的 `showResourceMessage()`，端口改成同一提示里按文本列出金额。
+
+**用例**：`UI.Tests/EditorEventDetailsWindowTests` 35 条（31 事实 + 2 理论各 2 分例）——建窗颜色求交与收副本、
+两列布局、颜色框摆法与初始勾选、勾选框/颜色框的点击写回、消息截断到 999、七种点击要宿主弹窗（消息/资源/神器/
+技能/经验图标与数值）、写回与清空、经验与资源的越界收口、十条右键说明（空神器/有神器/空技能/有技能/勾选框/
+消息区/空面板/有资源面板/两个主按钮）、CANCEL/OKAY、画一帧有像素变化。
+全量 7007 通过（UI +35），0 警告 0 错误。
+
+## ADR-317：狮身人面像窗是「谜题 + 答案列表 + 奖励」，输入交宿主（`a7l.4.5`）
+
+`editor_sphinx_window.cpp` 的 `openSphinxWindow()` 拆成 `Dialogs/EditorSphinxWindow`（继承 `ListBox<string>`，550×400）
+与 `Dialogs/EditorSphinxArtwork`（借 `EditorListArtwork` 的滚动条/OKAY/CANCEL/三个小按钮，自己只加 `RESOURCE` 7 的
+神器槽与 `ARTIFACT` 图标）。
+
+**布局照抄**：`riddleArea` 250×180、`answerArea` 250×155、窗宽 `riddle.width + answer.width + 50`(550)、高 400；
+标题「Sphinx:」离顶 9 居中，两个标签与各自区域同高并列；「Reward:」在谜题区下方 +9，往下一行是神器槽（250 居中）与
+250×99 的资源面板；列表底下 5 像素是增/改/删三个 `CELLWIN` 小按钮（中间那个 `(width - 3*buttonWidth)/2 + buttonWidth`），
+删除神器按钮在槽下 5 像素居中。
+
+**答案列表**：`SetAreaItems(answerRoi - 8)`、`SetAreaMaxItems(10)`、滚动条槽在窗口右边缘；行文本 5 像素内缩、选中行用黄字、
+`FitToOneRow` 折到 `answerArea.width - 10`；双击的语义沿用 `ListBox`——第二下落在已选中的行上（`id == CurrentId`）。
+
+**点击都交宿主**：参考在窗口里调 `Dialog::inputString`/`selectArtifact`/`SelectCount`，端口只发
+`RiddleRequested`、`AnswerAddRequested`、`AnswerEditRequested`、`ArtifactRequested`、`ResourceCountRequest`，
+宿主弹完再喂 `SetRiddle`/`AddAnswer`/`ReplaceAnswer`/`SetArtifact`/`SetResourceCount`。答案的两条规矩放在 Setter 里：
+截到 64 字；与列表其它项重复就返回 `false` 并把「Answer / This answer exists in the list.」放进 `Popup`（改的那行与自身
+相同时不算重复，同参考 `:355`）。
+
+**偏差**：①滚动条槽照抄参考 `:206` 的 `answerRoi.width` 会从窗口右缘往外铺 250 宽，端口收在窗口内、只留 14 像素；
+②参考为法术卷轴神器再弹选法术窗，端口把这个选择也交给宿主；③资源面板右键参考弹画图标的 `showResourceMessage()`，
+端口在提示里按文本列出金额；④`CELLWIN_EVIL` 生成器未移植，小按钮用普通版。
+
+**用例**：`UI.Tests/EditorSphinxWindowTests` 35 条（28 事实 + 2 理论共 7 分例）——建窗收副本、两列布局与按钮摆法、
+谜题截断 999、答案新增/截断/查重、换行（未选中时拒绝、与其它行重复时拒绝、与自己相同允许）、删除选中行、
+神器写回与清空、资源写回与上限收口、七种点击要宿主弹窗（谜题/新增/修改/双击/删除/神器/资源）、九条右键说明
+（五个按钮/谜题/空神器/有神器/空资源/有资源）、CANCEL/OKAY、画一帧有像素变化。
+全量 7042 通过（UI +35），0 警告 0 错误。
+
+## ADR-318：地图载入不再读进程级「当前地图」，随机神器按地图自己的版本抽（`a7l.6.5`）
+
+**症状**：`dotnet test FHeroes2Sharp.slnx` 全量连跑偶尔有 1 条失败，单工程单跑不复现。抓到两条：
+`WorldLoadMapTests.LoadMapRollsARandomArtifactIntoARealOne`（抽到 Unknown）与
+`InterfaceSettingsDialogTests.ClickingTheScrollSpeedCyclesItInPlace`（期望 Fast 实得 Normal）。
+
+**根因一（版本错位）**：`Tile.SetInitialObjectInfo()` 与 `UpdateRandomArtifact()` 照参考读了
+`Hero.GetCurrentMapVersion()`，那是 `Settings.Get().CurrentMapFileInfo.Version` —— 全进程共享。并行测试里
+`SettingsTests` 会 `Settings.Reset()`、`GameSaveTests` 会 `SetCurrentMapFileInfo(PoL)`，于是同一个用例前半段按
+一个版本抽、后半段按另一个版本反推。
+
+**修复**：`World.LoadMap()` 本来就把 `MapInfo` 设成 `map.Info`，两处改读 `world.MapInfo?.Version ??
+MapVersion.SuccessionWars`。真实流程里两者恒等（参考的 `Game::LoadMaps` 会在载入前设当前地图），所以语义不变、
+并行时不被别人的地图带偏。
+
+**根因二（扩展神器）**：`ArtifactMapSprites.FromMapIndex(index, version, priceOfLoyaltySupported)` 的第三参在
+`Tile.InitialObjectInfo.cs` 里硬编码成 `false`（参考传 `Settings::isPriceOfLoyaltySupported()`）。随机神器在 PoL 地图上
+抽到扩展神器时帧号落进 172..205，反推时被当成「不是神器」→ `Unknown` → 元数据被清空。端口没有设置层，改成按地图
+版本推断：`version != MapVersion.SuccessionWars`（PoL / Resurrection 地图只可能来自扩展）。
+
+**根因三（UI 全局设置）**：`InterfaceSettingsDialogTests` 与 `EditorOptionsDialogTests` 都写全局
+`Settings.ScrollSpeed` 再读回断言，两类并行互踩。后者已在 `GlobalArchiveCollection`，前者并入同一集合串行。
+
+**回归用例**：`WorldLoadMapTests.LoadMapRollsTheRandomArtifactFromTheMapsOwnVersion` —— 把空白地图的版本改成
+Price of Loyalty，放一个随机神器对象，断言抽到的不为 `Unknown`、等级落在该版本的常规档、帧号按 PoL 布局反推回同一件。
+
+**验证**：连续 8 轮 `dotnet test FHeroes2Sharp.slnx`（含构建、四工程并行）无失败；修复前 10 轮里 2 轮各挂 1 条。
+全量 7043 通过（Game +1），0 警告 0 错误。
+
+## ADR-319：编辑器手感落回 App 层测试工程（`a7l.6.4`）
+
+**背景**：编辑器的手感（快击画一格、按住拖一串、拖拽阈值、边缘滚动节拍、滚轮整格、雷达点击、右键取色）在
+`a7l.6.1` 之后都汇总到 `EditorScene.ProcessEvents(LocalEvent)`，但 `EditorScene` 在 `FHeroes2.App` 里，
+`FHeroes2.UI.Tests` 引用不到（依赖方向是 App → UI）。手感一直靠 `--editor-paint` 之类的脚本动作与人工点验。
+
+**做法**：新建 `tests/FHeroes2.App.Tests`（`FHeroes2.Slnx` 的 `/tests/` 下），引用 App 工程，直接驱动场景：
+
+- 三处工程设置是必须的：`RuntimeIdentifier=win-x64`（App 是 RID 特定的可执行文件，引用它的工程要同名 RID）、
+  `AppendRuntimeIdentifierToOutputPath=false`（输出仍落 `bin/Debug/net10.0`，`dotnet test` 照常发现用例）、
+  程序集级 `SupportedOSPlatform("windows")`（`GameFonts` / 呈现层带该标注，否则每条用例都要挂 CA1416）。
+- 用例填 `LocalEvent.Current` 的 `OnMouseMotion` / `OnMouseButton` / `OnMouseWheel`，再交给
+  `ProcessEvents`（无时钟）或 `Update(dt)`（边缘滚动要时钟），与宿主每帧做的事一致；断言落在场景暴露的状态上
+  （`Edits.UndoDepth`、`Edits.Brush`、`View.Scroll`、`View.TileAt`）。
+- `LocalEvent.Current` 是全进程共享的，所以这些用例装在 `LocalEventCollection`（`DisableParallelization = true`）
+  里串行跑，否则两条用例的光标会互相踩——和 ADR-318 是同一类坑。
+- 素材照 UI 测试的老办法取 `AssetLocator.Resolve()`；机器上没有游戏数据时用例静默返回，不假装通过也不红。
+
+**用例**：`EditorSceneSmokeTests`（建图即开编辑器的冒烟）与 `EditorSceneInputTests` 十条——视口/面板与
+`MapFrame` 一致且 `DragThreshold=10`、`EdgeScrollStep=8`、`EdgeScrollInterval=20 ms`；同帧按下松开的快击画一格；
+跨格笔画只记一步撤销；拖拽 10 px 内不平移、11 px 起按整个偏移平移；边缘每 20 ms 一步、少半个间隔要攒、长帧最多
+四步且残留只保留一个间隔；滚轮整格；雷达点击改变滚动且不记笔画；右键取走指针下的地面。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7054 通过（Core 301 + Assets 441 + App 11 + UI 2283 + Game 4018），
+0 警告 0 错误。
+
+## ADR-320：地图翻译模型先做内存层，`.fh2m` 落盘另立（`a7l.5.3.1`）
+
+**背景**：语言窗（`editor_language_window.cpp`）操作的是 `BaseMapFormat::mainLanguage` 与 `translations`，可这两样在
+fheroes2 里只属于编辑器自有的 `.fh2m`（`map_format_info.h:375-386`）。端口只读写 MP2，`readMP2Map`
+（`maps_fileinfo.cpp:190` 起）根本不填 translations —— MP2 里只有一套文本。所以「补齐语言窗」实际要先用一套 `.fh2m`
+容器，那是 1000+ 行序列化加压缩容器的独立工程。
+
+**做法**：先把模型落成内存态，按参考的分工拆开：
+
+- `MapTranslationText` 对 `TranslationBaseMapMetadata`（`map_format_info.h:321-326`）：地图名、描述、创作者注记。
+  参考的 `TranslationFormat`（`:328-343`）还有每日事件、传闻、城镇 / 英雄自定义名、斯芬克斯谜题与答案、路牌、地图事件
+  的文本，端口编辑器尚未建模这些字段，等它们进来再接。
+- `MapTranslationState` 三件事照抄参考：`ChangeLanguage` 走 `changeLanguage`（`map_format_helper.cpp:1904`）的三步——
+  存旧主语言文本、载入目标语言存文本（空串也算有意留空，`:1991-1997`）、删掉目标语言槽再换主语言；`Add` 只入列留空文本
+  （窗口 ADD，`:267-270`）；`RemoveTranslation` 拒绝主语言（`:2080-2084`）。`Languages` 主语言在前、其余按
+  `SupportedLanguage` 枚举值升序，与参考的 `std::map` 一致。
+- `MapSpecsState` 的 `Name` / `Description` 改为托管在 `translations.Current` 上，规格窗照旧读写，`CreateInfo` 出去的是
+  当前主语言的文本。参考把这两样摊在 `MapFormat` 上，端口没有 `MapFormat`，只能这么落地。
+
+**代价**：窗口切出来的其它语言文本只在内存里，存 MP2 时只剩主语言。这条缺口单独开 `FHeroes2Sharp-lg0`（`.fh2m` 最小
+读写），不阻塞窗口本身。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7057 通过（Core 301 + Assets 441 + App 11 + UI 2283 + Game 4021），
+新增 `MapTranslationStateTests` 八条，0 警告 0 错误。
+
+## ADR-321：语言窗把「选语言」交回宿主，`ListBox<T>` 只收引用类型（`a7l.5.3.2`）
+
+**背景**：`Editor::openLanguageWindow()`（`editor_language_window.cpp:133-306`）内部直接调
+`fheroes2::selectLanguage()` 弹语言选择。端口的 `LanguageSelectionDialog` 是个需要事件循环的模态窗，而
+`EditorSphinxWindow` 这类窗口一律只发请求旗标（`AnswerEditRequested`）、由宿主开子窗——照这个规矩，语言窗点 ADD 只
+置 `LanguageAddRequested`，宿主拿去弹选择窗再喂回 `AddLanguage()`（`a7l.5.3.3` 接）。
+
+**两处实现细节**：
+
+- `ListBox<T>` 带 `where T : class`（`GetFromPosition` 要返回 `T?`），`SupportedLanguage` 是枚举，进不去。没去动共享
+  控件的约束——那会波及八个派生类与两处泛型转发——而是在窗口里套一层 `EditorLanguageWindow.Row`（一行一个语言）。
+- 写回照 `:222-241` 落在 `ApplyTo(MapTranslationState)` 上：列表没动且选中还是原主语言就直接返回；否则先把非当前项逐个
+  `ChangeLanguage`，再把选中项设成主语言，最后把原列表里消失的语言 `RemoveTranslation`。这样窗口自洽，宿主只负责
+  `Result == Accepted` 时调一次。
+
+**已知偏差**：参考把滚动条槽画成 `roi.width`（300 宽），照抄会整条压在窗外；端口按 `EditorSphinxWindow` 的先例把槽收成
+窗口内可用宽度。ADD/DELETE 按钮、标题居中、双击确定、三个右键说明文案都照参考。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7079 通过（Core 301 + Assets 441 + App 11 + UI 2300 + Game 4026），
+新增 `EditorLanguageWindowTests` 十七条（布局、行高、增删、去重、主语言不可加、双击确定、ADD 请求、写回顺序、无改动
+不写、消失的语言被删、绘制），0 警告 0 错误。
+
+## ADR-322：语言窗只做宿主桥，按钮接线留给规格窗任务（`a7l.5.3.3`）
+
+**背景**：`a7l.5.3.3` 原本写的是「编辑器菜单/地图规格窗加语言入口，并把 App 层 `EditorScene` 的窗口链路接上」。勘察
+后发现两件事：参考里语言窗**只能**从地图规格窗的 LANGUAGE 按钮进（`editor_map_specs_window.cpp:2297`），而端口的
+`EditorMapSpecsInput.Process` 明确把 RUMORS/EVENTS/LANGUAGE/ABOUT 四个按钮留给 `a7l.3.5.3.3`（那条被 `a7l.5` epic
+阻塞，只等语言窗关闭就绪）；`EditorScene` 至今没有对话框链路，也没有一句 `MapSpecsState` 在场，硬接等于先造一个
+不属于本任务的窗口系统。
+
+**做法**：本任务只补「语言窗这一侧」的宿主桥，把接线压到几十行：
+
+- `Create( MapSpecsState, ... )` 从规格状态直接建窗（内部走 `specs.Translations`），`ApplyTo( MapSpecsState )` 写回。
+  因为 `MapSpecsState.Name` / `Description` 已经托管在主语言的文本槽里（ADR-320），写回后规格窗**不用搬文本**，重读
+  一遍就是新主语言的内容——这一点与参考的 `renderMapName()` 等价，且有测试钉住。
+- `CreateLanguagePicker( Size )` 把 ADD 要弹的选择窗装配好：`SupportedLanguage` 全集、初始选中主语言、标题
+  `Select Language:`（对应 `selectLanguage( ..., isGameLanguage = false )`）、按钮组复用 `EditorListArtwork` 的
+  OKAY/CANCEL 帧（私有 `EditorButtonArtwork` 适配 `IDialogButtonArtworkSource`，不去碰 `SystemButtons`）。
+- 参考 `:253-256` 的「选回主语言直接忽略」仍由 `AddLanguage` 拒绝，选择窗无过滤，行为一致。
+
+**交接**：`a7l.3.5.3.3` 里只剩余「LANGUAGE 分支 → 自旋 → `AddLanguage` / `ApplyTo` → 重画名字描述」与 App 层 smoke，
+已用 `bd note` 把调用顺序写在那条 issue 上。MP2 存档只有主语言文本这条限制见 ADR-320 与 `FHeroes2Sharp-lg0`。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7083 通过（Core 301 + Assets 441 + App 11 + Game 4026 + UI 2304），
+`EditorLanguageWindowTests` 增至二十一条（新增从规格状态建窗、写回后名字跟着换主语言、选择窗全集与选中主语言、主语言
+不在首位时选中仍正确），0 警告 0 错误。
+
+
+
+## ADR-323：规格窗把四个子窗都交回宿主，注记与传闻先进状态（`a7l.3.5.3.3`）
+
+**背景**：参考的规格窗在事件循环里直接调 `openRumorWindow` / `openDailyEventsWindow` / `openLanguageWindow`
+并把 `mapFormat` 传进去就地改（`editor_map_specs_window.cpp:2282-2311`、`:2370-2377`）。端口的规矩相反：窗口只发
+请求、宿主开子窗（`EditorSphinxWindow` 的 `AnswerEditRequested` 就是这样）。于是这一层要补的不是「开窗」而是
+**请求种类 + 工厂 + 写回**三件套。
+
+**做法**：
+
+- `EditorMapSpecsRequestKind` 增加 `OpenRumors` / `OpenDailyEvents` / `OpenLanguage` / `EditCreatorNotes`。
+  前三个点击只置请求（`Body` 为空、`Dialog` 为 null），第四个与名称/描述同路：`CreateTextInput( ..., isMultiLine: true,
+  MessageCharLimit )`。
+- 工厂 `CreateRumorWindow` / `CreateDailyEventsWindow` / `CreateLanguageWindow` 只在 `Request.Kind` 对得上时返回
+  窗口，否则 null——宿主按请求种类 switch 一次，不用自己拼参数。`ScreenBuffer.DefaultSize` 是省略屏幕尺寸时的默认值。
+- 写回：`ResolveRumors( IReadOnlyList<string>? )` / `ResolveDailyEvents( ... )` 传 null 表示取消（参考取消时不动
+  `mapFormat`）；`ResolveLanguage( window )` 内部判 `Accepted` 再 `ApplyTo` 状态。三者都清空 `Request`。
+- 语言窗关掉后的「重画名称/描述/两个条件面板」在端口退化成一次重读：`MapSpecsState.Name`/`Description` 本来就存在
+  当前主语言的文本槽里（ADR-320），条件面板每帧从状态重画，所以 `ResolveLanguage` 返回的 bool 只用来触发整页重画。
+- 数据侧：`MapSpecsState` 增加 `CreatorNotes`（存在主语言文本槽，`CreateInfo` 带进 `Mp2FileInfo.CreatorNotes`，
+  MP2 的 428 字节头部不写它）、`Rumors` / `SetRumors`、`DailyEvents` / `SetDailyEvents`（存副本，窗口自己那条
+  再改不影响状态）。参考把传闻与每日事件按语言各存一份，端口的 `.fh2m` 还没做（`FHeroes2Sharp-lg0`），所以先只存
+  主语言那一份，注释里写明。
+
+**App 层为何没有 smoke**：`EditorScene` 至今不挂规格窗，也没有对话框链路；App 侧的入口是 `a7l.7`（面板四个系统按钮
+接线）。已经用 `bd note` 把宿主调用顺序写在那条 issue 上，本任务的测试覆盖到「点击 → 请求 → 工厂 → 写回 → 状态」整链。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7094 通过（Core 301 + Assets 441 + App 11 + Game 4030 + UI 2311）。
+UI 侧 `EditorMapSpecsInputTests` 增七条（三个按钮各自的请求、ABOUT 的多行输入与 999 上限、注记写回、传闻写回含取消、
+每日事件写回含取消、三个工厂只认自己的请求、`ResolveLanguage` 应用 Accepted 的主语言），Game 侧
+`MapSpecsStateTests` 增四条（新状态三样为空、传闻存副本、每日事件存副本、注记进头部），0 警告 0 错误。
+
+## ADR-324：编辑器场景有一条宿主缝，面板右键先用它弹提示（`a7l.7.1`）
+
+**背景**：参考的编辑器直接调阻塞窗口函数（`showStandardTextMessage`、`openMapSpecificationsDialog`、
+`eventFileDialog`、`openEditorSettings`），端口只有一条帧循环，窗口必须进内层循环。冒险地图早就这么干了
+（`AdventureHeroActionHost.RunModal` 由 `GameHost.cs:3257` 接上），编辑器场景却一直没有这条缝——四个系统按钮
+因此全空着。
+
+**做法**：
+
+- 新增 `EditorSceneHost`（`src/FHeroes2.App/Scenes/EditorSceneHost.cs`）：收下 `AssetBundle` 与 `GameFonts`，
+  暴露可设的 `RunModal`，以及 `ShowMessage( title, body )`——就是参考的 `showStandardTextMessage`，OK 单按钮，
+  按钮美术走 `SystemButtonArtwork.TryCreate`。缺帧泵、缺字体或缺按钮时只写一行 `GameLog.Warn` 并返回 false，
+  不抛异常：无数据环境下右键是安全的。
+- `EditorScene` 自己造宿主（`Assemble` 里已有 assets/fonts），以 `public Action<IModalScreen>? RunModal` 转出去，
+  `GameHost` 在两处 `_editor = scene;` 之后接 `RunModal`（新建地图、打开地图各一处）。之所以不用构造参数：
+  场景由静态工厂在宿主之外造出来，接缝只能后置。
+- 面板提示：`EditorPanel.SystemHint(EditorSystemButton)` 收六条文案（Magnify/Undo/Redo/Specifications/File Options/
+  System Options，文案照抄 `editor_interface_panel.cpp:1461-1479`）。`EditorScene.SetRightButton` 在物件窗之前先问面板：
+  命中系统按钮就弹提示、这一下右键到此为止；其余控件（仪器、地形、笔刷）保持端口原有行为（右键即平移），
+  参考给它们也配了提示，留待后补。
+
+**测试**：App.Tests 第一次能在没有 SDL 的情况下弹真窗口——`GameFonts.TryLoad( assets )` 不碰 SDL，消息框的样式框走
+`GameAssets.Current`（用例自己换上再换回），于是 `EditorPanelHintTests` 能造真场景、算六个按钮的像素中心、给
+`RunModal` 装一个只记数的假泵，逐个右键断言「一下一个框」；另一条用 `fonts: null` 断言缺字体时一个框也不弹。
+按钮中心按 48x36 与「面板底两行」算，和 `EditorPanel.HitTest` 的布局同源。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7096 通过（Core 301 + Assets 441 + App 13 + Game 4030 + UI 2311），
+0 警告 0 错误；`--scene editor --smoke-frames 30` 正常退出。
+
+## ADR-325：规格窗在宿主帧泵上跑，内层窗摞在自己的栈上（`a7l.7.2`）
+
+**背景**：`EditorMapSpecsInput`/`EditorMapSpecsWindow` 在 UI 层早就齐了（ADR-319~323），缺的只有 App 层的宿主：
+谁来开窗、谁来喂事件、关窗后谁来写回。参考里 `openMapSpecificationsDialog()` 是个阻塞函数，里面再用
+`Dialog::inputString` / `showStandardTextMessage` 套内层 while。
+
+**做法**：
+
+- `EditorSceneHost` 长出三个造窗口的方法：`TryCreateMessageBox`（OK 单按钮，`SystemButtonArtwork`）、
+  `TryCreateInput`（`InputStringWindow`，吃请求里带来的 `InputStringDialog`）、`RunMapSpecs(session, palette)`
+  （造 `EditorMapSpecsWindow` + `EditorMapSpecsInput` + 模态并跑到底，失败再弹错误框）。字体/按钮/页面美术的
+  取值都留在宿主，场景只留一句 `case EditorSystemButton.Specs: _host.RunMapSpecs(_edits, _frame.Palette)`。
+- `EditorMapSpecsModal`（`src/FHeroes2.App/Modals/`）：每帧读宿主那份 `LocalEvent.Current`——
+  和 `EditorScene` 读的是同一个单例，`GameHost.PumpEvents` 先填 `_le` 再转发模态，所以不必自己合成事件。
+  内层窗（消息框、文本输入，后面还有子窗）摞在模态自己的 `Stack<IModalScreen>` 上：栈上有窗口时这一帧只更新栈顶、
+  只把 `SetCursor`/`SetLeftButton` 转给栈顶，栈空了才轮到规格页的 `Process`。为什么不递归
+  `GameHost.RunModal`：那里 `_modal is not null` 就抛，参考的内层 while 在端口只能靠这一层栈表示。
+- 关窗两步照参考：`Accepted` 就 `EditorMapSpecsInput.Commit(session)` 把 `MapSpecsState` 写回地图，写不进去
+  （只有尺寸对不上）把消息留在 `Error` 上，宿主在模态结束后弹 `Error` 框；`Cancelled` 什么都不写。
+- `GameHost` 里那处 `scene.RunModal = RunModal` 从方法末尾挪到**脚本交互之前**：`--editor-panel-click` 点到的
+  按钮会开窗，帧泵没接上就只能写一行「no frame pump」。
+
+**测试**：`EditorMapSpecsModalTests` 三条，用例自己当帧泵（`scene.RunModal` 换成一段直接推进模态的代码，
+事件塞进 `LocalEvent.Current`，关闭用回车 / ESC——参考 `:2266-2272` 认的就是这两个键）：确定后
+`Edits.IsDirty` 变真、地图名不变；取消后 `IsDirty` 仍为假（顺带证明点面板没有误画到地图上）；帧泵没接上时点按钮
+什么都不发生。三条都要真数据与 `GameFonts.TryLoad`，没有就跳过；与 `EditorPanelHintTests` 一起放进
+`LocalEventCollection`，因为它们都改进程级的 `LocalEvent.Current` / `GameAssets.Current`。
+
+**已知缺口**（都建了 `discovered-from` 的 issue）：传闻/每日事件/语言三个子窗与其 Add/Edit 输入循环归 `qto`；
+条件的目标选择器与数值键盘（UI 层还没有这块窗）归 `n0d`；`OnFrameEnded` 在 `_modal` 非空时直接返回，导致
+`--screenshot-frame` 拍不到内层循环里的窗口，归 `74t`——所以这一层没有截图基线，只有 App 测试。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7099 通过（Core 301 + Assets 441 + App 16 + Game 4030 + UI 2311），
+0 警告 0 错误；`--scene editor --smoke-frames 30` 正常退出；`--editor-panel-click 24,302`（SPECS 格）会进规格窗，
+跑满预算后退出，日志里不再出现「no frame pump」。
+
+## ADR-326：法术选择窗的宿主与「换等级」的重开循环（`a7l.9.1`）
+
+**背景**：`EditorSpellSelectionWindow`/`EditorSpellSelectionInput` 在 UI 层齐了，缺的还是 App 层那句「谁来开窗、
+谁来喂事件、谁在换等级时重开」。参考里这是 `openSpellSelectionWindow()`：一个阻塞函数，循环里先认
+`DEFAULT_CANCEL` 再认 `DEFAULT_OKAY`（`editor_spell_selection.cpp:280-284`），等级键上直接 `break`
+（`:324-326`），重开的 `while` 在调用方（`editor_castle_details_window.cpp:515`）。
+
+**做法**：
+
+- `EditorSceneHost.RunSpellSelection(title, spellLevel, selectedSpells, isMultiLevelSelectionEnabled,
+  minimumEnabledSpells, pickDisabledSpells)` 返回 `EditorSpellSelectionDialogResult(Accepted, SpellLevel, Spells)`：
+  参考的 `bool`、被引用改写的 `spellLevel`、被写回的列表，三样都收进一个记录。参考的两层循环
+  （窗口 `break` + 调用方 `while`）合成宿主里的一个循环——换等级就按新等级重建窗口再跑一层，调用方只看结果。
+  「等级没变却说要换」当取消收场，避免死循环。
+- `EditorSpellSelectionModal`（`src/FHeroes2.App/Modals/`）：每帧先认两个热键、再交给
+  `EditorSpellSelectionInput.Process`——顺序与参考一致，右键提示那几处插在关窗之前。内层窗（说明框）摞在自己的
+  `Stack<IModalScreen>` 上，同 `EditorMapSpecsModal`，栈上有东西时这一帧只归栈顶。`Accepted` 时读
+  `GetSelectedSpells()`，`Cancelled` 与换等级都留空列表——参考在换等级前就 `break` 了，什么都没写回。
+- `FHeroes2.App.csproj` 加 `InternalsVisibleTo("FHeroes2.App.Tests")`：宿主与模态都是 App 的内部缝，走整个
+  场景去够一个窗口反而把被测的东西藏起来了。`EditorSceneHost` 保持 `internal`。
+
+**测试**：`EditorSpellSelectionModalTests` 三条，用例直接当帧泵喂宿主：ESC 取消（结果不接受、列表空、等级不变）、
+回车确定（先点掉一个法术，结果条数 = `Grid.Count - 1`，验的是「关掉的那个没被算进去」）、点等级键 2 之后
+宿主重开一层（级数 2、窗口开了两次、第二次的等级是 2）。用例自己确认数据真的在（`_assets`/`_fonts` 缺了就让路，
+和 smoke 测试一个风格）。
+
+**已知缺口**（都挂在 `a7l.9` 下）：`ShowSpell` 请求还没有法术说明窗可接（`a7l.9.2`）；两处真正的调用点
+（神殿/金字塔的物件元数据、城堡详情的禁法 `while`）要等各自的窗移植（`a7l.9.3`）——这层现在只有接口与测试。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7102 通过（Core 301 + Assets 441 + App 19 + Game 4030 + UI 2311），
+`dotnet build FHeroes2Sharp.slnx` 0 警告 0 错误；`--scene editor --smoke-frames 30` 正常退出（74.3 FPS）。
+
+## ADR-327：按压态与绘制、判定分开（`bpn.1`）
+
+**背景**：参考的城堡详情窗在同一个 `while` 里依次做三件事：`drawOnState( isMouseLeftButtonPressedAndHeldInArea( area ) )`
+（`:845-849`，RESTRICT 那颗是 `buildingRestriction || ...`，`:876`）、`MouseClickLeft` 判定、`display.render()`。
+端口早先把窗口拆成三块：`CastleDetailsView` 只画、`CastleDetailsInput` 只判、`CastleDetailsState` 只存。
+
+**做法**：按压态单独一个入口 `CastleDetailsView.UpdateButtonPressStates(LocalEvent)`，六颗按钮各
+`ButtonBase.UpdatePressState(events)`（本来就只改状态不画），RESTRICT 在 `State.BuildingRestriction` 为真时直接
+`Press()`。`Paint` 不读事件，画的是「此刻的状态」，所以宿主每帧的顺序是 `UpdateButtonPressStates` → `Paint` →
+`Input.Process`。
+
+**为什么不给 `Paint` 加一个 `LocalEvent` 参数**：那样绘制就同时依赖输入，六颗按钮的状态要在 Frame 的三个
+`Paint*Button` 里各算一次，按钮还得先造好（现在是第一次 `Paint` 才造）；`Paint` 的六个现有调用点也都要改。
+分开之后 `UpdateButtonPressStates` 在按钮造出来之前是空转，第一帧的差别看不出来（参考的按钮在循环之前就摆好，
+但第一帧之前没人看画面）。
+
+**测试**：`CastleDetailsViewTests` 三条——按住 OKAY 只有它按下、RESTRICT 在限制模式下不看鼠标也亮、
+按下态确实进画面（两帧同一区域像素不同；状态没传下去这条会自己失败）。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7105 通过（Core 301 + Assets 441 + App 19 + Game 4030 + UI 2314），
+0 警告 0 错误。
+
+## ADR-328：编辑器选项页的三层——一轮的模态、宿主的窗口、场景的循环（`a7l.7.4.1`）
+
+**背景**：`EditorOptionsDialog`（UI，455 行）早就齐了，缺的是「谁来开它、谁来喂事件、动作回来之后谁去改设置并重开」。
+参考是 `openEditorSettings()`（`editor_options.cpp:235-378`）：一个 `while`，每圈 `openEditorOptionsDialog()`
+阻塞跑完、关窗则跳出，动作则改设置（并 `redrawEditor`/`rebuildEditor`），最后按需 `conf.Save`。
+
+**做法**：
+
+- **一轮 = 一个模态**。`EditorSceneHost.RunEditorOptionsDialog()` 建美术、建页、跑一层 `EditorOptionsModal`，
+  返回 `EditorOptionsAction`。参考的「重开一层」没有塞进宿主——宿主只管窗口。
+- **循环在场景里**。`EditorScene.OpenEditorOptions()` 才是 `openEditorSettings()` 的对应物：五个开关
+  （动画、通行性、界面风格、指针、滚动速度）改完 `Settings` 再来一层，`Exit` 时按需
+  `SavePreferences?.Invoke()`。放在场景里的原因：参考循环体里那两个 `redrawEditor`/`rebuildEditor` 是地图与
+  面板的活，放进宿主就要给宿主塞两三个回调。
+- **落盘留给宿主**。`SavePreferences` 是个 `Action?`，`GameHost` 在两处场景装配点上接 `SaveSettings`；
+  没接上时设置只留在内存里，和 `--no-config` 一样。编辑器不该知道配置文件的路径。
+- **右键说明摞在模态自己的栈上**，同 `EditorMapSpecsModal`：`EditorOptionsDialog.TakePopup()` 拿到的说明用
+  `EditorSceneHost.TryCreateMessageBox` 建窗，栈上有东西时这一帧只归栈顶。
+
+**美术的真相比预期麻烦**：`GAME_OPTION_ICON` 不是归档里的帧——参考在载入时用 `ESPANBKG` 的 (69, 47) 那块
+65×65 的底加 H2D 的 `hotkeys_option_icon.image`/`graphics_option_icon.image` 合成
+（`game_assets.cpp:5187-5203`）。这一层于是也照做（`ComposeGameOptionFrames`），H2D 没加载时留底不报错。
+
+**测试**：`EditorOptionsModalTests` 六条，用真归档打：四个归档读得全；ESC 退出；点通行性报 `Passability`；
+右键说明摞在上面（页面既不结束也不产出动作，关掉说明框后 ESC 才结束）；`System` 按钮走完整循环（窗口开两次、
+设置翻转、落盘一次）；什么都没改就关窗不落盘。
+
+**已知缺口**（都挂在 `a7l.7.4` 下）：换界面风格只改了设置位，面板与边框没有换皮（`a7l.7.4.2`）；通行性叠层与
+对象动画在编辑器渲染里根本不存在，两个开关现在只翻位（`a7l.7.4.3`）；语言/图形/音频/热键四个子页的窗 UI 层都有
+但没有模态（`a7l.7.4.4`）。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7111 通过（Core 301 + Assets 441 + App 25 + Game 4030 + UI 2314），
+`dotnet build` 0 警告 0 错误，`--scene editor --smoke-frames 30` 正常（75.9 FPS）。
+`--editor-panel-click` 点 System 按钮那条路在 smoke 里开不出窗（`RunModal` 的循环要求 `_running`，脚本点击
+发生在主循环之前），和规格窗一样只能靠 App 测试验证。
+
+## ADR-329：编辑器文件菜单是一块自己排版的窗（`a7l.7.3`）
+
+**背景**：参考的 `EditorInterface::eventFileDialog()`（`editor_interface.cpp:2068-2181`）用 `StandardWindow`
+把七颗 `BUTTONS_EDITOR_FILE_DIALOG` 摆成三列，底边中上方 11 像素挂一颗小取消，然后一个 `while` 认九处右键、
+五组热键、七颗按钮，最后回一个 `GameMode`。端口的 `DialogButton` 是 `Dialog::Button` 的照搬，没有
+「开始地图 / 主菜单 / 自动测试」三个位；`IcnType` 里也没有 `ButtonsEditorFileDialogGood`——那是参考在载入时用
+`makeSymmetricBackgroundSprites` 把标签压进底图现做的（`game_assets.cpp:1579-1593`）。
+
+**做法**：
+
+- **窗只管排版与判定**（`EditorFileDialog`）。它不读归档、不认设置：十四块牌子与两帧取消键由调用方给。这与
+  `FileOptionsView` 对游戏那张文件菜单的处理一致，只是这边取消键照参考取 `BUTTON_SMALL_CANCEL` 的 0/1 帧
+  （`:2090`），游戏那张取 `SYSTEM.ICN` 的 3/4 帧。
+- **`DialogButton` 补三个位**（`EditorStartMap` / `EditorToMainMenu` / `EditorAutoPlaytest`），新图/载图/
+  存图/退出复用上面已有的四个位——语义本来就一样。参考这一处是按序号认按钮的，端口没有序号通道，所以只能把
+  这三颗补进位集。
+- **热键拿这一帧的事件比**，不是 `GameHotKeys.HotKeyPressEvent`（那个读全局输入单例）。同
+  `AdventureMap.Turn.HotKeyPressed`：`events.IsAnyKeyPressed && events.PressedKeyValue == GetHotKeyForEvent(id)`。
+  好处是窗口在测试里能被喂事件；`EditorOptionsDialog` 的 OK/CANCEL 也是这个路子。
+- **模态照 a7l.7.4 的分层**：`EditorFileModal` 每帧 `ProcessEvents` 一次、拿到结论就收摊，右键说明摞在它自己的栈
+  上；存图前要 `hideWindow()` 这一步留给调用方——模态结束的那一帧菜单就没了，下一帧重画场景，保存窗自然压不着它。
+
+**测试**：`EditorFileDialogTests` 十三条（三列排布、次序、取消键位置、四种残缺输入、八次点击、按下落在别的按钮上
+不算、七组热键、八处右键说明、`FromDialogButton` 映射、真路径合成七块牌子、绘制）；`EditorFileMenuModalTests`
+六条（七块牌子由真字体压出来且取消键落在窗内、SAVE MAP 与 QUIT 与取消各自报得出来、右键说明摞在上面不关菜单、
+字体缺失时压根不开窗）。
+
+**这次的缺口**（都记成了 `discovered-from`）：存图链路 `fsk`（`EditorSaveMapWindow` 的 App 模态、文件名、
+覆盖确认、落盘）；其余六颗 `beb`（确认框、开始地图与自动测试要 World、主菜单与退出要与编辑器的退出确认打通）。
+`EditorScene.OpenFileMenu()` 现在对这六个动作留一行 `Warn`——不静默，也不假装做成了。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7130 通过（Core 301 + Assets 441 + App 31 + Game 4030 + UI 2327），
+`dotnet build` 0 警告 0 错误，`--scene editor --smoke-frames 30` 正常（78.0 FPS）。
+
+## ADR-330：动 `GameAssets.Current` 的用例必须并进串行集合（`bp7`）
+
+**现象**：`dotnet test FHeroes2Sharp.slnx`（五工程一起跑）时，UI.Tests 约每 3~5 轮挂一条，**没有 Error Message**。
+
+**查法**：先按 `bp7` 的建议连跑全量抓 `[FAIL]`——13 轮全绿（每轮 UI.Tests 2327），单跑更不会挂；再挂 4 个
+忙循环制造 CPU 压力跑 3 轮，还是全绿。靠运气抓不到，于是改成静态审计全局态：
+
+- `GameAssets.Current` 是进程级静态槽。`GlobalArchiveCollection` 的定义带 `DisableParallelization = true`，
+  也就是进这个 collection 的类既不互相并行，也不和别的 collection 并行。
+- 扫全部 160 个 UI.Tests 文件：**唯一**一个「改 `GameAssets.Current` 却没进 collection」的是
+  `RandomMapGeneratorDialogTests`。它的 `TryWithArchives` 自己 `AssetBundle.Open`、装进 `Current`、
+  跑完 `= null`。并行池里别的用例（尤其断言像素那几条）恰好在这一小段里读素材，就会读到别人的归档或者空槽
+  ——像素断言挂了本来就不带异常信息，正好对上「无 Error Message」。
+
+**改法**：
+
+1. `RandomMapGeneratorDialogTests` 加 `[Collection(GlobalArchiveCollection.Name)]`。改完再扫一遍，**全装配里
+   已经没有不串行的全局态写入者**（App.Tests 那边八个类本来就都并进了 `LocalEventCollection`）。
+2. `TryWithArchives` 的 `finally` 从 `GameAssets.Current = null` 改成还回原值——置空会把别人装好的归档
+   一起拆掉，就算以后并行策略变了也不该这样。
+3. 新增 `GlobalStateUsageTests`：用 `[CallerFilePath]` 找到本目录源码，扫 `GameAssets.Current =` 却没带
+   `[Collection(` 的文件，报出来。这条规则以前只靠自觉，现在有测试守。用一个临时的犯规文件验证过它真的会红
+   （跑完即删）。
+
+**为什么用源码扫描**：「有没有挂 attribute」是编译期事实，反射看不出来。用例在源码目录不在时直接跳过，读 160 个
+文件 33 毫秒。
+
+**没做到的诚实交代**：这条偶发失败本身**没能复现**（16 轮全量，含 3 轮带 CPU 压力）。上面那条竞态是审计出来的、
+确实存在、确实符合症状，但它是「最可能」而不是「已证实」的成因。若再出现，抓 `[FAIL]` 行即可（`-v n` 的日志
+里有用例名，`bp7` 当初没抓到是因为没存日志）。
+
+**验证**：`dotnet test FHeroes2Sharp.slnx` 全量 7131 通过（Core 301 + Assets 441 + App 31 + Game 4030 +
+UI 2328），`dotnet build` 0 警告 0 错误。
+
+## ADR-331：传闻子窗摞在规格页上，输入框再摞在传闻窗上（`qto.1`）
+
+**参考**：`editor_map_specs_window.cpp:2282-2288` 里 `RUMORS` 一段调 `openRumorWindow()`，那是个阻塞循环
+（`editor_rumor_window.cpp:135-305`）：加一条、改一条各在循环里 `Dialog::inputString` 再阻塞一层，重复了
+`showStandardTextMessage` 骂一句（`:237`、`:261`），最后 `return true` 才写回。三层嵌套，端口只有一层栈。
+
+**做法**：
+
+1. `EditorRumorModal : IModalScreen` 包住 `EditorRumorWindow`，自己再持一个 `Stack<IModalScreen>`。栈上有窗口时
+   这一帧只推进它，`EditorRumorWindow.Process` 一个事件都不读——同 `EditorMapSpecsModal` 的规矩。
+2. 列表自己举旗（`AddRequested` / `EditRequested` / `Popup`），这里只答：加/改开
+   `InputStringDialog.Create(InputTitle, InputBody, LongestRumor, isMultiLine: true, ...)`，答案喂
+   `TryAddRumor` / `TryReplaceSelected`，被拒就把列表刚设好的 `Popup` 用 `MessageBoxModal` 弹出来。
+3. `AcceptedRumors` 只在 OKAY 时非 null，取消就是参考的 `return false`——`EditorMapSpecsModal.Resolve` 拿它
+   喂 `ResolveRumors(null)`，地图不动。
+4. 宿主新增 `TryCreateListArtwork()` 与 `TryGetFonts(out GameFonts?)`：三个列表窗共用同一份
+   `EditorListArtwork`（`TryCreate(IsEvilInterfaceEnabled)`），字体从既有 `_fonts` 借。
+
+**踩到的坑（写进测试）**：多行输入框**回车不能收窗**——`InputStringView.ProcessHotKey` 里
+`case ButtonHotKey.Okay when !_dialog.IsMultiLine`，参考多行输入里 Enter 是换行，只能点 OKAY。为此给
+`InputStringWindow` 加了 `OkayArea`（`EditorRumorWindow` 早就把 `Okay` / `Cancel` 摆出来了）。另外内层窗
+不吃 `LocalEvent`：宿主的 `SetCursor` / `SetLeftButton` 才是它的点击路径，用例里两种点击分开写。
+
+**验证**：`EditorRumorModalTests` 六条——打字确认后列表多一条并写回、取消不写、取消输入框不动列表、重复条目弹
+提示且列表不长、改选中的那条（退三格再打一个字母）换掉整条、以及从面板 SPECS 一路点到传闻窗（`TopWindow is
+EditorRumorModal`）再两层 ESC 退出、地图未变脏。全量 7137 通过（Core 301 + Assets 441 + App 37 + Game 4030 +
+UI 2328），`dotnet build` 0 警告 0 错误，`--scene editor --smoke-frames 30` 正常（67.5 FPS）。
+
+**没接的**：每日事件窗与语言窗（`qto.2` / `qto.3`，已带依赖排在后面），条件的目标选择器仍走 `Warn`。
+
+## ADR-332：每日事件窗摞进规格页，事件窗再摞消息输入框（`qto.2`）
+
+**参考**：`editor_map_specs_window.cpp:2290-2297` 的 `EVENTS` 一段调 `openDailyEventsWindow()`
+（`editor_daily_events_window.cpp:160-318`）；它的加/改都走 `editDailyEvent()`（`:252-281`），那个函数自己阻塞开
+608×430 的事件窗（`editor_daily_event_spec_window.cpp:67-372`），事件窗里点消息区再阻塞开 `Dialog::inputString`
+（`:332-344`）。三层嵌套。
+
+**做法**：
+
+1. `EditorDailyEventsModal` 包列表窗，自持一层栈；栈上非空这一帧只推进栈顶，列表不读事件。
+   `AddRequested` 开空事件、`EditRequested` 开选中项的副本（`SelectedEvent.Clone()`），
+   换/加在事件窗点头之后（`:254-261`、`:273-278`），取消就什么都不写。
+2. `EditorDailyEventSpecModal` 包事件窗，自己再持一层栈：`MessageRequested` 摞 `InputStringDialog.Create(
+   "", "Message:", MessageCharLimit, isMultiLine: true, 当前消息)`，答完 `SetMessage`（`:337`）。
+   `ResourceCountRequest`（`SelectCountDialog`）与 `NumpadRequest` 宿主还没有窗口，落 `GameLog.Warn`。
+3. 事件窗的颜色集交给 `EditorDailyEventSpecWindow.Create` 的 `Clamp`，`EditorMapSpecsModal` 只把
+   `State.HumanPlayers` / `ComputerPlayers` 递下去（参考 `:71-72`）。
+4. 宿主新增 `TryCreateDailyEventArtwork()`，与 `_listArtwork` 一样按界面风格缓存一次。
+
+**踩到的坑**：内层窗的点击要等外层 `Update` 把栈弹掉才生效——测试里 `AcceptInput` 之后必须 `Pump` 一帧，
+再断言 `HasInnerWindow`；否则 `ClickLeft` 已经关了输入框，但事件窗还压着它，消息也没回写。这条写进了用例注释。
+
+**验证**：`EditorDailyEventsModalTests` 六条——加一条原样收下、取消事件窗不加、取消列表不写、
+消息区打字的字落到事件上、改选中那条（退三格再打一个字母）换掉整条、从面板 SPECS 点 EVENTS 后
+`TopWindow is EditorDailyEventsModal` 再两层 ESC 退出且地图不变脏。全量 **7143 通过**（Core 301 + Assets 441 +
+App 43 + Game 4030 + UI 2328），0 警告 0 错误，编辑器冒烟 75.6 FPS。
+
+**拆出去的**：`7we`——每日事件窗的数量窗与数字键盘（与 `n0d` 的 `EditValue` 同类）。
+**没接的**：语言窗（`qto.3`，已带依赖排在后面），条件的目标选择器仍走 `Warn`。
+
+## ADR-333：语言窗摞进规格页，ADD 的语言选择器再摞一层（`qto.3`）
+
+**参考**：`editor_map_specs_window.cpp:2298-2311` 的 `LANGUAGE` 一段调 `openLanguageWindow()`
+（`editor_language_window.cpp:133-306`）；它的 ADD 里阻塞调 `fheroes2::selectLanguage( ..., isGameLanguage = false )`
+（`:253-269`），选中的语言再 `languageList.Add()`，重复的骂一句（`:261`）。
+
+**做法**：
+
+1. `EditorLanguageModal` 包 `EditorLanguageWindow`，自持一层栈：`LanguageAddRequested` 摞
+   `LanguagePickerModal`（包 `EditorLanguageWindow.CreateLanguagePicker` 造的 `LanguageSelectionDialog`），
+   点头后 `AddLanguage`；被拒且 `Popup` 非空时再摞 `MessageBoxModal`（与 `EditorRumorModal` 同一手法，
+   在 `Resolve` 里立刻读 `Popup`，不等下一帧 `Process` 把它清掉）。
+2. `LanguagePickerModal` 是 `IModalScreen` 的最小包装：`LanguageSelectionDialog` 只吃
+   `SetCursor` / `SetLeftButton` / `ProcessHotKey`，不读 `LocalEvent`，所以当内层窗正合适；
+   索引到 `SupportedLanguage` 的映射与 `CreateLanguagePicker` 造名字时用的 `Enum.GetValues` 同一顺序。
+3. 写回仍交给 `EditorMapSpecsInput.ResolveLanguage(window)`：它读 `window.Result` 与 `ApplyTo`，
+   所以 `EditorMapSpecsModal.Resolve` 只加一个 `EditorLanguageModal` 分支。
+
+**验证**：`EditorLanguageModalTests` 七条——加一门进列表、取消选择器不加、选主语言静默忽略、重复加弹提示、
+接受后 `ApplyTo` 写回两门、取消不写、从面板 SPECS 点 LANGUAGE 加一门再两层 OKAY 且地图被标脏
+（证明 `ResolveLanguage` 真被走到）。全量 **7150 通过**（Core 301 + Assets 441 + App 50 + Game 4030 + UI 2328），
+0 警告 0 错误，编辑器冒烟 80.9 FPS。
+
+**收尾**：`qto` 三个子窗（传闻 / 每日事件 / 语言）到此全部接进 App；剩下的条件目标选择器与数值输入在 `n0d`，
+每日事件的数量窗与数字键盘在 `7we`。
+
+## ADR-334：法术选择窗的右键说明框（`a7l.9.2`）
+
+**参考**：`editor_spell_selection.cpp:155` 右键点法术那一格调 `SpellDialogElement( ... ).showPopup( Dialog::ZERO )`；
+`ui_dialog.cpp:543-546` 的实现是 `showStandardTextMessage( _spell.GetName(), getSpellDescription( _spell, _hero ), buttons, { this } )`——
+标题黄字是法术名、正文白字是说明、元素就是法术自己（图标 + 小字名），一个 OKAY 关掉。
+
+**做法**：
+
+1. UI 层新增 `SpellDescriptionDialog.Create(spell, icon, headerFont, bodyFont, labelFont, buttonArtwork, screen?)`：
+   把参考那四个参数凑成 `MessageBox.Create(名字, 说明, 黄, 白, [new SpellDialogElement(icon, spell, 0, 小字白)], buttons: Ok)`。
+   排版复用 `MessageBox`（它本来就把元素单独排一行放在文字下面），不新造布局。
+2. 宿主新增 `TryCreateSpellInfo(SpellType)`：字体缺失、按钮美术缺失、`ICN::SPELLS` 缺帧时各自 `GameLog.Warn` 返回 null；
+   图标下标与参考同一个 `Spell::IndexSprite()`，按需从归档取，不缓存整份法术美术。
+3. `EditorSpellSelectionModal.Open` 改成 switch：`ShowMessage` 走消息框、`ShowSpell` 走说明框，谁也给不出才落 Warn。
+   `MessageBoxModal` 加 `Box` 属性，`EditorSpellSelectionModal` 加 `HasInnerWindow` / `TopWindow`，供测试与后续子窗复用。
+
+**验证**：`EditorSpellSelectionModalTests` 四条（新增 `RightClickingASpellShowsItsDescription`）——右键第一格弹出
+`MessageBoxModal`，标题等于 `new Spell(type).GetName()`、正文等于 `GetDescription()`、框里正好一个元素、按钮行非空；
+回车关掉说明框后选择窗还在，ESC 退出且 `Accepted` 为假。全量 **7151 通过**（Core 301 + Assets 441 + App 51 +
+Game 4030 + UI 2328），0 警告 0 错误，编辑器冒烟 84.6 FPS。
+
+**口径**：右键判定是「按住且在区域内」，测试里右键那一帧只按下，抬起留到帧后补——左键的 `MouseClickLeft` 是边沿触发，
+两者不能共用同一个 helper。
+
+## ADR-335：条件目标选择器接进规格页（`n0d.1`）
+
+**参考**：条件面板的行被点中后调 `selectItems` 风格的模态（`editor_map_specs_window.cpp:1252-1264`）：
+`SelectMapCastle` / `SelectMapHero` 把候选列成 `ItemSelectionWindow`，阻塞跑完再拿 `GetCenter()` 写回条件目标，
+取消时那几个写回被 `if` 挡掉。
+
+**拆分**：`n0d` 升级为 epic。原先一条 issue 里塞了两件互不依赖的事，数字键盘那半还有一层新窗口要造，
+所以拆成 `n0d.1`（本 ADR）与 `n0d.2`（`EditValue` 的数字键盘，UI 层已有 `VirtualKeyboardView.TryCreateNumpad` /
+`ReadNumpad`，差 App 侧接线）。
+
+**做法**：
+
+1. 宿主新增 `TryCreateItemSelectionArtwork()`：`new IcnViewWorldSpriteSource(_assets)` 交给
+   `ItemSelectionWindowArtwork.TryCreate`，缓存在 `_itemSelectionArtwork` / `_sprites` 两个字段里，
+   坏界面按 `Settings.Get().IsEvilInterfaceEnabled` 走；缺归档或缺帧都 `Warn` 返回 null。
+2. 新增 `EditorMapSpecsTargetModal`（`IModalScreen`）包 `EditorMapSpecsTargetPicker`：
+   `Update` 把 `LocalEvent.Current` 交给 `ProcessEvents`，`IsFinished` 取窗口的 `IsClosed`，
+   `SelectedPosition` 只在 `Result == Ok` 时给坐标——取消与「列表空」都落成 null，正好对上参考的 `if` 门槛。
+   `SetCursor` / `SetLeftButton` / `SetRightButton` 不做转发：列表窗本来就直接读 `LocalEvent`。
+3. 热键不能当场交给窗口，否则同一帧的鼠标被读两遍（列表的一次单击会变成双击），所以 `HotKey` 只记下，
+   下一次 `Update` 连同鼠标一起交过去。
+4. `EditorMapSpecsModal` 的 switch 加 `PickConditionTarget` 分支（`TryCreateTargetPicker`），
+   `Resolve` 加 `EditorMapSpecsTargetModal` 分支（`_input.ResolveTarget(SelectedPosition)`）。
+
+**验证**：新增 `EditorMapSpecsTargetModalTests` 六条——宿主能从真实归档造出列表美术；两座城堡都在列表里且
+起始选中当前目标；OKAY 交回 `state.VictoryTarget`；点第二行再 OKAY 交回第二座城的格子；CANCEL 交回 null；
+回车接受、ESC 取消。全量 **7163 通过**（Core 301 + Assets 441 + App 57 + Game 4030 + UI 2328），
+0 警告 0 错误，编辑器冒烟 77.2 FPS。
+
+**遗留**：`EditorMapSpecsInput.ResolveTarget` 的写回语义由既有 UI 测试盯着（`TheTownPickerHandsTheNewTargetBackToTheInput`）；
+App 侧这条分支走 compile-time switch，新建地图没有城堡，端到端要等有城镇的地图夹具再补。
+
+## ADR-336：数值输入的数字键盘接进规格页（`n0d.2`）
+
+**参考**：`openVirtualNumpad( value, minimum, maximum )`（`ui_keyboard.cpp:1295-1370`）是一个阻塞循环——
+`while ( action != DialogAction::Close )` 里只驱动键盘本身；关窗（点确定，或 `Game::HotKeyCloseWindow()`，
+回车与 ESC 都算）之后才 `std::stoi` 并比范围，打不成数字就 `showStandardTextMessage` 说「invalid」，
+越界就说「out of range」，然后把 action 改回 `DoNothing`——**键盘不关、数字不清，可以接着改**。
+金币与「失城/超时」两处分别调它（`:1465`、`:1885`），上限下限就是元素自己的 `_minimum` / `_maximum`。
+
+**做法**：
+
+1. 宿主新增 `TryCreateNumpad(value, minimum, maximum)`：`VirtualKeyboardArtwork.TryCreate` 的四张帧
+   （`STONEBKG` 底、`REQBKG` 输入条、`SPANBTN` 0/1 帧的确定键）按 `IsEvilInterfaceEnabled` 选坏界面那套，
+   缓存在 `_keyboardArtwork`；缺帧就不调工厂（`TryCreate` 的参数非空，先各自判空），
+   然后 `VirtualKeyboardView.TryCreateNumpad(artwork, ScreenBuffer.DefaultSize, ..., minimum < 0, isEvil)`
+   ——负下限才给正负号键，与参考 `( minValue < 0 )` 一致。
+2. 新增 `EditorMapSpecsValueModal`（`IModalScreen`）包键盘：`Update` 把 `LocalEvent.Current` 交给
+   `ProcessEvents`，`HotKey` 里 `Okay` / `Cancel` 都折成 `closeRequested`（参考没有「取消」这条出口）；
+   关窗后 `ReadNumpad` 校验——Valid 才置 `Value` 并收尾，Invalid / OutOfRange 各自摞一个错误框
+   （`Labels.ErrorTitle` / `Labels.InvalidValue` / `Labels.GetOutOfRangeMessage(min, max)`），键盘留着。
+   错误框自己一层栈（`_inner`），与 `EditorMapSpecsModal` 同一个思路：`HotKey` / `PressKey` / `SetCursor` /
+   鼠标按键在有内层窗时全归内层，关掉再接着打。
+3. 元素与字段的对应下沉到 `EditorMapSpecsWindow.GetValueElement(field)`：宿主与模态都不该知道私有字段名，
+   `EditorMapSpecsModal.TryCreateValuePad` 只是「取元素 → 造键盘 → 包模态」。
+4. `EditorMapSpecsModal` 的 switch 加 `EditValue` 分支，`Resolve` 加 `EditorMapSpecsValueModal` 分支
+   （`_input.ResolveValue(Value)`；没通过校验时窗还开着，走不到这里）。
+
+**与 issue 描述的两处出入**：issue 写「越界或非法照参考弹 Error 消息框且不关窗」——照做了；但 issue 还写「Cancel 写回 null」，
+参考的键盘**没有取消**：`Game::HotKeyCloseWindow()` 把 `DEFAULT_CANCEL` 也算关窗，一样走校验。端口按参考来，
+ESC 与回车交出同一个数，`Value` 只在校验通过时有值。
+
+**验证**：新增 `EditorMapSpecsValueModalTests` 六条——宿主按范围造键盘（`500` 无符号、`-100..100` 有符号）；
+点确定交回 500；回车与 ESC 都交回 500；打成 `1009`（上限 199）后点确定会摞错误框、`Value` 还空着、数字不被清掉，
+关掉错误框键盘仍开着；退成空串后弹的是 invalid 那条；规格页点金币数字框发出 `EditValue/VictoryGold`，
+`GetValueElement` 取到的元素值就是键盘首显值，`ResolveValue` 写回 `VictoryGoldInThousands`。
+全量 **7163 通过**（Core 301 + Assets 441 + App 63 + Game 4030 + UI 2328），0 警告 0 错误，编辑器冒烟 72.5 FPS。
+
+**坑两处**：① 写测试时窗口要传调色板——`_gamePalette` 为空时 `DrawVictory` 直接返回，金币元素根本不会被建出来；
+② 金币上限是 `1_000_000 / GoldThousand`（=1000 千），写回会被元素夹到上限，用例别挑 1234 这种超界值。
+
+## ADR-337：换界面风格要重建编辑器的边框与面板（`a7l.7.4.2`）
+
+**参考**：选项页的 `InterfaceType` 那一档在 `editor_options.cpp:281-285` 里 `Settings::Get().setBattleInterfaceType()` 之后调
+`Editor::Interface::reset()`（`editor_interface.cpp:1413-1470`，同一函数也供 `rebuildEditor( true )` 用）——重算雷达、
+控制面板与地图区的位置，保留地图中心再夹一次边界。**参考不需要重读任何图**：边框、雷达、面板的图本来就每帧现取
+（`interface_border.cpp` 按 `isEvilInterfaceEnabled()` 取 `ICN::ADVBORD` / `ICN::ADVBORDE`），换主题下一帧自然就换了。
+端口把边框缓存在 `MapFrame`、把按钮与面板底缓存在 `EditorPanel`，所以换主题必须换对象。
+
+**做法**：
+
+1. `MapFrame.Load(assets, isEvilInterface = false)`：坏界面走归档里独立的 `ADVBORDE.ICN`（`EvilAssetName`），
+   不是换色算出来的。布局常量与主题无关，两块边框都是 640x480、边宽 16。
+2. `EditorButtonSet.TryCreate(assets, isEvilInterface = false)`：参考的 `ICN::EDITBTNS_EVIL` 归档里**没有条目**——
+   `game_assets.cpp:3288-3296` 是先把好界面 45 帧全生成完，再整体 `convertToEvilInterface()`。端口照抄这个顺序
+   （先建表，再对全部 45 帧跑 `PaletteTable.Get(PaletteId.GoodToEvilInterface)`）——反过来的话，后补那十帧里的石头面色
+   41/46 会漏掉。
+3. `EditorPanel.TryCreate(area, assets, isEvilInterface = false)`：按钮集跟着走；面板底在坏界面下取
+   `EvilInterfaceImages.StonebakEvilFileName`（`STONEBAK_EVIL` 同样是现算的合成表，归档里没有）。
+4. `EditorScene` 新增 `_assets` 字段与 `RebuildInterface()`：按当前 `Settings` 重读边框、重建 `MapFrame` 与
+   `EditorPanel`，重算 `_viewport` / `_radar` / `_panel`；`_viewportPixels` 只在视口尺寸真的变了才换缓冲
+   （主题不影响尺寸，这条是保险）。地图视图、滚动位置、雷达底图都不动——与参考 `reset()` 保留中心一致。
+5. `OpenEditorOptions()` 的 `InterfaceType` 分支在 `SwitchToNextInterfaceType()` 之后调 `RebuildInterface()`。
+
+**没做**：`Dynamic` 档只在 `IsEvilInterfaceEnabled` 里按语言解析，重建时读的就是解析后的结果，循环顺序仍是
+`Good → Evil → Dynamic`。
+
+**验证**：新增 `EditorSceneInterfaceRebuildTests` 两条——好界面画一帧记下顶边框与面板区的像素指纹，切到坏界面
+`RebuildInterface()` 再画：`PanelArea` 与 `View.Scroll` 一丝不动，两处指纹都变了；另一条确认坏按钮集 45 帧齐全、
+尺寸不变而像素不同，且坏面板 `HasBackground` 为真（`STONEBAK_EVIL` 真取得到）。全量 **7165 通过**
+（Core 301 + Assets 441 + App 65 + Game 4030 + UI 2328），0 警告 0 错误，编辑器冒烟 77.7 FPS。
+
+**坑一处**：`EditorPanel` 在坏界面下用 `GameAssets.GetImage` 取合成石头，这条依赖 `Assets.Current` 已被宿主设好；
+用例里必须先设 `GameAssets.Current` 再建面板，否则 `HasBackground` 是假、面板回落成平色。
+
+## ADR-338：编辑器对象动画接进 Mp2 渲染器（`a7l.7.4.3.1`）
+
+**任务拆分**：`a7l.7.4.3` 原本把「通行性叠层」与「对象动画」写在一起。开工发现两者前置条件不同：动画只差渲染侧那一帧，
+通行性却要每个地块的方向通行性，而端口的 `Tile.GetTileIndependentPassability()` / `UpdatePassability()` 都挂在
+`World` 上、编辑器没有 World。按「发现隐藏依赖就拆」的规矩，`a7l.7.4.3` 升成 Epic，拆出：
+
+- `a7l.7.4.3.1`（本次完成）：对象动画。
+- `a7l.7.4.3.2`：通行性叠层，先要定「把当前 Mp2Map 装成只读 World 镜像」（`a7l.7.5` View World 也要）还是另写一条
+  只吃 `Mp2TileInfo` + `MapObjectCatalog` 的通行性计算；标记贴图也不能借用 UI 的 `TileRendering`（Game 不能引 UI）。
+
+**参考**：
+
+- 节拍：`editor_interface.cpp:2017-2024` —— 每 `Game::validateAnimationDelay( MAPS_DELAY )` 一次，若
+  `conf.isEditorAnimationEnabled()` 就 `Game::updateAdventureMapAnimationIndex()`；同支的 `_redraw |= REDRAW_GAMEAREA`
+  端口不需要（场景每帧整幅重画）。
+- 画：`maps_tiles_render.cpp:60-80`（`renderObjectPart`）与 `:142-190`（`renderMainObject`）在
+  `objectInfo->animationFrames > 0` 时再画一帧 `icnIndex + (animationIndex % frames) + 1`；魔法花园被访问过
+  （`objectType == OBJ_MAGIC_GARDEN && metadata()[1] == 0`）取整轮之后那帧 `icnIndex + frames + 1`，且只对主物件判断。
+- 颜色轮转（`RenderProcessor::startColorCycling` / `stopColorCycling`）在端口没有对应物，也不需要：合成表把轮转色并进
+  了静态槽（`PaletteId.CyclingToStatic`），水面与火焰本就是死图。这条差异写进了代码注释。
+
+**做法**：
+
+1. `AdventureMapView.Draw(target, drawTownsOverFog, animationPhase = 0)`：相位显式传入（参考读全局），存进私有
+   `_animationPhase` 供 blitter 用——用例与截图因此不依赖全局计数器。
+2. `BlitPart` 拆成 `BlitAnimatedPart`：先画主图，名册里有动画帧再画次级帧；`BlitMainObject` 额外把 `tile.Quantity2`
+   （`metadata()[1]`）带进去，判魔法花园。主物件走的仍是 `DrawGroundLayer` / `DrawTopLayer` 里地块自己那一格，
+   addon 链照旧走部件路径，与参考一致。跳过的图集（`MINIHERO` / `MONS32` 等）逻辑不变。
+3. `GameDelays` 新增 `MapsDelayMilliseconds = 250` 常量并让 `SetDelay` 用它（原先写死 250，与
+   `ScrollDelayMilliseconds` 同一模式），`EditorScene.AnimationInterval` 直接引用它。
+4. `EditorScene` 新增 `_animationPhase` / `_animationElapsed` 与 `UpdateAnimation(dt)`：只在
+   `Settings.IsEditorAnimationEnabled` 时累计，每满一格推进一步，单帧最多四步（与卷屏的
+   `MaxEdgeStepsPerUpdate` 同理，防卡顿时跳过整轮）；关掉开关索引停在原处而不是归零，与参考一致。绘制时把相位传进
+   `View.Draw`。`AnimationPhase` 属性给用例与日志看。
+
+**验证**：`AdventureMapAnimationTests` 四条（雪地水车 177 六帧：相位 0/1/6 分别落在 178/179/178；喷泉 15 无动画帧只画主图；
+魔法花园 `Quantity2 == 0` 走 `190+6+1` 而 `== 1` 走动画；图集缺次级帧时停在主图），`EditorSceneAnimationTests` 一条
+（不足一格不推进、关掉停住、再开继续）。全量 **7170 通过**（Core 301 + Assets 441 + App 66 + Game 4034 + UI 2328），
+0 警告 0 错误，编辑器冒烟 67.0 FPS（40 帧）。
+
+**坑**：`Mp2TileInfo.GroundLayer` / `GroundIcnType` 是只读派生属性，用例里只能写 `ObjectName1 = icnType << 2` 与
+`Quantity1` 的层位；`Quantity2` 才是 `metadata()[1]`（`Metadata` 是右移三位后的打包值，别混）。

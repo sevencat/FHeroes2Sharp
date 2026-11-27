@@ -30,6 +30,9 @@ internal sealed class MessageBoxModal : IModalScreen
         _box = box;
     }
 
+    /// <summary>The box being run, for callers that need its title, its body or its elements.</summary>
+    public MessageBox Box => _box;
+
     /// <summary>The button that closed the box; <see cref="DialogButton.None"/> while it is still open.</summary>
     public DialogButton Answer { get; private set; }
 

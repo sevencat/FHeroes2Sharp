@@ -62,9 +62,11 @@ public sealed class MapSpecsState
     private readonly Mp2FileInfo _original;
     private readonly List<Mp2CastlePosition> _towns;
     private readonly List<Mp2MapHero> _heroes;
+    private readonly List<string> _rumors = [];
+    private readonly List<MapDailyEvent> _dailyEvents = [];
 
-    private string _name;
-    private string _description;
+    private readonly MapTranslationState _translations;
+
     private GameDifficulty _difficulty;
     private PlayerColor _humanPlayers;
     private PlayerColor _computerPlayers;
@@ -90,8 +92,14 @@ public sealed class MapSpecsState
         _towns = [.. map.Castles];
         _heroes = [.. map.Heroes];
 
-        _name = _original.Name;
-        _description = _original.Description;
+        _translations = new MapTranslationState(
+            MapTranslationState.DefaultLanguage,
+            new MapTranslationText
+            {
+                Name = _original.Name,
+                Description = _original.Description,
+            });
+
         _difficulty = ClampDifficulty(_original.Difficulty);
         AvailablePlayers = _original.KingdomColors;
         _humanPlayers = _original.HumanPlayers & AvailablePlayers;
@@ -126,20 +134,91 @@ public sealed class MapSpecsState
     public Mp2Map Map { get; }
 
     /// <summary>Scenario name (<c>_mapName</c>, <c>:1970</c>); the header keeps <see cref="Mp2FileInfo.NameFieldLength"/> characters.</summary>
+    /// <remarks>名字存在当前主语言的文本槽里，见 <see cref="Translations"/>。</remarks>
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     public string Name
     {
-        get => _name;
-        set => _name = value ?? throw new ArgumentNullException(nameof(value));
+        get => _translations.Current.Name;
+        set => _translations.Current.Name = value ?? throw new ArgumentNullException(nameof(value));
     }
 
     /// <summary>Scenario description (<c>_description</c>, <c>:1980</c>); the header keeps <see cref="Mp2FileInfo.DescriptionFieldLength"/> characters.</summary>
+    /// <remarks>与 <see cref="Name"/> 一样，存在当前主语言的文本槽里。</remarks>
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     public string Description
     {
-        get => _description;
-        set => _description = value ?? throw new ArgumentNullException(nameof(value));
+        get => _translations.Current.Description;
+        set => _translations.Current.Description = value ?? throw new ArgumentNullException(nameof(value));
     }
+
+    /// <summary>
+    /// Notes the map maker left for whoever opens the map in the editor (<c>creatorNotes</c>), the "ABOUT" button of
+    /// the window (<c>editor_map_specs_window.cpp:2370-2377</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Name"/> / <see cref="Description"/> 同一套路：存在当前主语言的文本槽里，长度上限是参考的
+    /// <c>Map_Format::messageCharLimit</c>（999）。MP2 的 428 字节头部装不下它，写出去只留在
+    /// <see cref="Mp2FileInfo.CreatorNotes"/> 上等 <c>.fh2m</c>。
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">The value is null.</exception>
+    public string CreatorNotes
+    {
+        get => _translations.Current.CreatorNotes;
+        set => _translations.Current.CreatorNotes = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>
+    /// Custom rumors of the map (<c>rumors</c>), the list the rumors window edits
+    /// (<c>editor_map_specs_window.cpp:2282-2289</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把传闻放在 <c>MapFormat</c> 上、按语言各存一份；端口的地图格式还没有这一层（随 <c>.fh2m</c> 进来），
+    /// 所以先存主语言的那一份，MP2 文件也不写它。用 <see cref="SetRumors"/> 整份换掉，窗口拿到的是副本。
+    /// </remarks>
+    public IReadOnlyList<string> Rumors => _rumors;
+
+    /// <summary>
+    /// Daily events of the map (<c>dailyEvents</c>), the list the daily events window edits
+    /// (<c>editor_map_specs_window.cpp:2290-2297</c>).
+    /// </summary>
+    /// <remarks>与 <see cref="Rumors"/> 同样先只存主语言的一份，整份换掉走 <see cref="SetDailyEvents"/>。</remarks>
+    public IReadOnlyList<MapDailyEvent> DailyEvents => _dailyEvents;
+
+    /// <summary>Replaces the rumor list, the write-back of the rumors window (<c>:2284-2286</c>).</summary>
+    /// <param name="rumors">The rumors the window ended up with; copied.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="rumors"/> is <see langword="null"/>.</exception>
+    public void SetRumors(IReadOnlyList<string> rumors)
+    {
+        ArgumentNullException.ThrowIfNull(rumors);
+
+        _rumors.Clear();
+        _rumors.AddRange(rumors);
+    }
+
+    /// <summary>Replaces the daily event list, the write-back of the daily events window (<c>:2292-2294</c>).</summary>
+    /// <param name="events">The events the window ended up with; each one is cloned, so the window keeps its own.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public void SetDailyEvents(IReadOnlyList<MapDailyEvent> events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        _dailyEvents.Clear();
+
+        foreach (MapDailyEvent dailyEvent in events)
+        {
+            _dailyEvents.Add(dailyEvent.Clone());
+        }
+    }
+
+    /// <summary>
+    /// The languages of the map and the texts of the main one, the state the language window edits
+    /// (<c>BaseMapFormat::mainLanguage</c> / <c>translations</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考把语言放在 <c>MapFormat</c> 上，规格窗只改 <c>name</c> / <c>description</c>；端口没有 <c>MapFormat</c>，于是
+    /// 名字与描述由这份状态托管，换语言后 <see cref="CreateInfo"/> 写出去的是新主语言的文本。
+    /// </remarks>
+    public MapTranslationState Translations => _translations;
 
     /// <summary>
     /// Difficulty (<c>:2120-2140</c>). The reference never offers <see cref="GameDifficulty.Impossible"/> — that is a
@@ -545,8 +624,9 @@ public sealed class MapSpecsState
 
         return _original with
         {
-            Name = _name,
-            Description = _description,
+            Name = Name,
+            Description = Description,
+            CreatorNotes = CreatorNotes,
             Difficulty = _difficulty,
             KingdomColors = AvailablePlayers,
             HumanPlayers = _humanPlayers,

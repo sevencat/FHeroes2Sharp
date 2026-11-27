@@ -33,6 +33,55 @@ public sealed class MapSpecsStateTests
     }
 
     [Fact]
+    public void TheRumorsEventsAndCreatorNotesStartEmpty()
+    {
+        MapSpecsState state = new(CreateMap());
+
+        // MP2 的头部装不下传闻、每日事件与作者注记，新状态里它们都是空的。
+        Assert.Empty(state.Rumors);
+        Assert.Empty(state.DailyEvents);
+        Assert.Equal(string.Empty, state.CreatorNotes);
+    }
+
+    [Fact]
+    public void ReplacingTheRumorsCopiesThem()
+    {
+        MapSpecsState state = new(CreateMap());
+        List<string> rumors = ["A rumor.", "Another one."];
+
+        state.SetRumors(rumors);
+        rumors.Add("A late one.");
+
+        Assert.Equal(new[] { "A rumor.", "Another one." }, state.Rumors);
+    }
+
+    [Fact]
+    public void ReplacingTheDailyEventsClonesThem()
+    {
+        MapSpecsState state = new(CreateMap());
+        MapDailyEvent dailyEvent = new() { FirstOccurrenceDay = 3, Message = "The first day." };
+        List<MapDailyEvent> events = [dailyEvent];
+
+        state.SetDailyEvents(events);
+
+        // 存的是副本：窗口之后再改它自己那条不影响状态。
+        dailyEvent.Message = "Changed later.";
+
+        Assert.Single(state.DailyEvents);
+        Assert.Equal("The first day.", state.DailyEvents[0].Message);
+    }
+
+    [Fact]
+    public void TheCreatorNotesTravelToTheHeader()
+    {
+        MapSpecsState state = new(CreateMap());
+
+        state.CreatorNotes = "Made for the test.";
+
+        Assert.Equal("Made for the test.", state.CreateInfo().CreatorNotes);
+    }
+
+    [Fact]
     public void ImpossibleIsNotAMapDifficulty()
     {
         MapSpecsState state = new(CreateMap());

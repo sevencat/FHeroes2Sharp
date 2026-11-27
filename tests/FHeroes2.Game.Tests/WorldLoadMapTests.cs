@@ -263,6 +263,33 @@ public sealed class WorldLoadMapTests
     }
 
     [Fact]
+    public void LoadMapRollsTheRandomArtifactFromTheMapsOwnVersion()
+    {
+        Mp2Map map = BlankMap();
+
+        // 地图头说自己是 Price of Loyalty：神器要按这个版本的布局抽，不能看进程里的「当前地图」
+        // （Settings.CurrentMapFileInfo 是全进程共享的，并行跑测试时曾被另一条用例换成别的版本，
+        // 于是这里抽到的是 SuccessionWars 的帧、按别的版本反推，偶发成了 Unknown）。
+        map.Info = map.Info with { Version = MapVersion.PriceOfLoyalty };
+        map.SetTileAt(At(10, 10), GroundObjectTile(Mp2ObjectIcnType.ObjnArti, 163, Mp2ObjectType.ActionRandomArtifact));
+
+        var world = new World();
+        world.LoadMap(map);
+
+        Tile tile = world.GetTile(10, 10);
+        ArtifactType artifact = (ArtifactType)tile.Metadata[0];
+
+        Assert.NotEqual(ArtifactType.Unknown, artifact);
+        Assert.NotEqual(0u,
+            (uint)(ArtifactLevels.Level(artifact, MapVersion.PriceOfLoyalty) & ArtifactLevel.AllNormal));
+
+        // 抽出来的帧按同一版本的布局解回去还是同一件神器（PoL 地图上扩展神器也在候选里）。
+        Assert.Equal(artifact,
+            ArtifactMapSprites.FromMapIndex(tile.MainObjectPart.IcnIndex, MapVersion.PriceOfLoyalty,
+                priceOfLoyaltySupported: true));
+    }
+
+    [Fact]
     public void LoadMapMovesTheOasisTopSpritesToTheTopLayer()
     {
         Mp2Map map = BlankMap();

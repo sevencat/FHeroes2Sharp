@@ -12,6 +12,11 @@ namespace FHeroes2.UI.Tests;
 /// The interface page of the system options (<c>dialog_interface_settings.cpp</c>): layout, the five leaves and the
 /// in-place scroll speed cycling.
 /// </summary>
+/// <remarks>
+/// 与 <see cref="EditorOptionsDialogTests"/> 一起进归档集合：两者都会把 <c>Settings.ScrollSpeed</c> 这个全进程
+/// 共享的值写成 Normal 再断言点击后的值，并行跑时互相踩（曾偶发 Normal != Fast）。
+/// </remarks>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class InterfaceSettingsDialogTests
 {
     private static readonly Size Screen = new(640, 480);

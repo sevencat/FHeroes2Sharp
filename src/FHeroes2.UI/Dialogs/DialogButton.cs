@@ -89,4 +89,19 @@ public enum DialogButton
 
     /// <summary>Quit the application, the sixth button of the file menu.</summary>
     Quit = 0x40000,
+
+    // 编辑器的文件菜单（editor_interface.cpp:2068-2181）同样是「按序号认按钮」的一组，七颗按钮里
+    // 新图/载图/存图/退出直接用了上面那四个位（语义一致），剩下三颗参考没有对应的位，补在这里。
+
+    /// <summary>
+    /// Leave the editor and play the map, the third button of the editor's file menu; the reference returns
+    /// <c>GameMode::NEW_STANDARD</c> for it.
+    /// </summary>
+    EditorStartMap = 0x80000,
+
+    /// <summary>Return to the game's main menu, the fifth button of the editor's file menu.</summary>
+    EditorToMainMenu = 0x100000,
+
+    /// <summary>Run the map's automatic playtest, the seventh button of the editor's file menu.</summary>
+    EditorAutoPlaytest = 0x200000,
 }
