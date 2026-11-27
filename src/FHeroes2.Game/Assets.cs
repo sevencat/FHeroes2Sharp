@@ -143,7 +143,7 @@ public static class Assets
     /// <see cref="IcnCatalog.GetFileName"/> 对 <see cref="IcnType.LastValidFileIcn"/> 之后的 id 一律回 <c>CUSTOM</c>
     /// （参考的 <c>icn.cpp:224</c> 也这样），但参考的 <c>icnFileNames</c> 表里这些 id 是有名字的，
     /// <c>loadICN</c> 才排得到 <c>generateDefaultImages()</c>。本项目把名字留在各自的生成器里
-    /// （<see cref="Gui.SmallOkayCancelButtons"/>、<see cref="Gui.ScenarioInfoIcons"/>），由这里把 id 接过去。
+    /// （<see cref="Gui.SmallOkayCancelButtons"/>、<see cref="Gui.EmptyButtons"/> 等），由这里把 id 接过去。
     /// </remarks>
     public static string GetFileName(IcnType type) => type switch
     {
@@ -153,6 +153,12 @@ public static class Assets
         IcnType.ButtonSmallOkayEvil => Gui.SmallOkayCancelButtons.OkayEvilFileName,
         IcnType.ButtonSmallCancelGood => Gui.SmallOkayCancelButtons.CancelGoodFileName,
         IcnType.ButtonSmallCancelEvil => Gui.SmallOkayCancelButtons.CancelEvilFileName,
+        IcnType.ButtonSmallDismissGood => Gui.EmptyButtons.SmallDismissGoodFileName,
+        IcnType.ButtonSmallDismissEvil => Gui.EmptyButtons.SmallDismissEvilFileName,
+        IcnType.ButtonSmallExitGood => Gui.EmptyButtons.SmallExitGoodFileName,
+        IcnType.ButtonSmallExitEvil => Gui.EmptyButtons.SmallExitEvilFileName,
+        IcnType.ButtonSmallUpgradeGood => Gui.EmptyButtons.SmallUpgradeGoodFileName,
+        IcnType.ButtonSmallUpgradeEvil => Gui.EmptyButtons.SmallUpgradeEvilFileName,
         IcnType.ButtonExitPuzzleDimDoorGood => Gui.ExitButtons.PuzzleDimDoorGoodFileName,
         IcnType.ButtonExitPuzzleDimDoorEvil => Gui.ExitButtons.PuzzleDimDoorEvilFileName,
         IcnType.ButtonViewworldExitGood => Gui.ExitButtons.ViewWorldGoodFileName,

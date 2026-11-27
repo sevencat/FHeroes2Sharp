@@ -313,6 +313,56 @@ public sealed class EmptyButtonsTests
     }
 
     [Fact]
+    public void DismissAndUpgradeButtonsComeFromTheirOwnViewArmyFrames()
+    {
+        using AssetBundle? assets = GameData.TryOpen();
+        if (assets is null)
+        {
+            return;
+        }
+
+        Assets.Current = assets;
+        try
+        {
+            string originalName = IcnCatalog.GetFileName(IcnType.Viewarmy);
+
+            // The reference picks frames 1/2 for DISMISS, 3/4 for EXIT and 5/6 for UPGRADE
+            // (game_assets.cpp:1194-1205).
+            AssertSmallTextButtonMatches(originalName, EmptyButtons.SmallDismissGoodFileName, 1);
+            AssertSmallTextButtonMatches(originalName, EmptyButtons.SmallExitGoodFileName, 3);
+            AssertSmallTextButtonMatches(originalName, EmptyButtons.SmallUpgradeGoodFileName, 5);
+        }
+        finally
+        {
+            Assets.Current = null;
+        }
+    }
+
+    /// <summary>
+    /// Asserts that a generated small text button is the two frames of <paramref name="originalName"/> at
+    /// <paramref name="releasedFrame"/> and the next one, trimmed by two columns and one row.
+    /// </summary>
+    private static void AssertSmallTextButtonMatches(string originalName, string fileName, int releasedFrame)
+    {
+        Sprite? sourceReleased = Assets.GetImage(originalName, releasedFrame);
+        Sprite? sourcePressed = Assets.GetImage(originalName, releasedFrame + 1);
+        if (sourceReleased is null || sourcePressed is null)
+        {
+            return;
+        }
+
+        Sprite? released = Assets.GetImage(fileName, 0);
+        Sprite? pressed = Assets.GetImage(fileName, 1);
+
+        Assert.NotNull(released);
+        Assert.NotNull(pressed);
+        Assert.Equal(sourceReleased.Width - 2, released!.Width);
+        Assert.Equal(sourceReleased.Height - 1, released.Height);
+        Assert.Equal(sourcePressed.Width - 2, pressed!.Width);
+        Assert.Equal(sourcePressed.Height - 1, pressed.Height);
+    }
+
+    [Fact]
     public void FramesAreCachedSoTheTableIsAssembledOnce()
     {
         using AssetBundle? assets = GameData.TryOpen();

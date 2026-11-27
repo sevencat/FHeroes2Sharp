@@ -138,6 +138,30 @@ public sealed class MageGuildSpellsTests
     }));
 
     [Fact]
+    public void DefaultOkayHotKeyAcceptsTheRows() => Assert.True(TryWithWindow(subject =>
+    {
+        subject.Table.SetSpell(0, 0, SpellType.Bless);
+        subject.View.Refresh();
+
+        // 参考 :447-448：回车与 OKAY 是同一条路，模态层直接调这一入口。
+        Assert.Equal(MageGuildSpellsOutcome.Accepted, subject.Input.Accept());
+
+        Assert.True(subject.Input.HasChanges);
+        Assert.Equal((int)SpellType.Bless, subject.Metadata.MustHaveSpells[0]);
+    }));
+
+    [Fact]
+    public void DefaultCancelHotKeyDropsTheRows() => Assert.True(TryWithWindow(subject =>
+    {
+        subject.Table.SetSpell(0, 0, SpellType.Bless);
+
+        Assert.Equal(MageGuildSpellsOutcome.Cancelled, subject.Input.Cancel());
+
+        Assert.False(subject.Input.HasChanges);
+        Assert.Empty(subject.Metadata.MustHaveSpells);
+    }));
+
+    [Fact]
     public void ClickOnBannedSpellsAsksForTheWindow() => Assert.True(TryWithWindow(subject =>
     {
         subject.Input.Process(Click(Center(subject.View.BannedSpellsArea)));
@@ -171,6 +195,17 @@ public sealed class MageGuildSpellsTests
 
         Assert.Equal(new[] { (int)SpellType.Bless, (int)SpellType.DragonSlayer }, subject.Table.BannedSpells);
         Assert.Equal(5, subject.Input.CurrentBannedSpellsLevel);
+    }));
+
+    [Fact]
+    public void TheBannedWindowReopensAtTheLevelItWasMovedTo() => Assert.True(TryWithWindow(subject =>
+    {
+        // 参考在换等级时改掉 currentBannedSpellsLevel 再重开（:515-521）；宿主只记等级，下一次点按钮从这里开。
+        subject.Input.FocusBannedSpellsLevel(4);
+        subject.Input.Process(Click(Center(subject.View.BannedSpellsArea)));
+
+        Assert.Equal(MageGuildSpellsRequestKind.SelectBannedSpells, subject.Input.Request.Kind);
+        Assert.Equal(4, subject.Input.Request.SpellLevel);
     }));
 
     [Fact]

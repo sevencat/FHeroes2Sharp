@@ -358,7 +358,7 @@ public sealed class MainMenuScene : IScene
         _dataDirectory = dataDirectory;
         _statusBar = new Rect(0, frame.Size.Height - StatusBarHeight, frame.Size.Width, StatusBarHeight);
         _statusBarColor = frame.Palette.FindDarkestIndex();
-        _languageIndex = IndexOfCulture(languages, culture);
+        _languageIndex = LanguageCatalog.IndexOfCulture(languages, culture);
     }
 
     /// <summary>The language currently used for tooltips and the status bar.</summary>
@@ -465,7 +465,7 @@ public sealed class MainMenuScene : IScene
             DoorHighlight? door = CreateDoor(lanternFile);
             bool hasMessageFrame = HasMessageFrame(assets);
 
-            IReadOnlyList<GameText> languages = SelectLanguages(GameText.LoadAll(assets.DataDirectory), fonts);
+            IReadOnlyList<GameText> languages = LanguageCatalog.Select(GameText.LoadAll(assets.DataDirectory), fonts);
 
             ScenarioDialogArtwork? scenarioArtwork = ScenarioArtwork.TryCreate(assets);
             SettingsArtwork? settingsArtwork = SettingsArtwork.TryCreate(assets);
@@ -2303,46 +2303,6 @@ public sealed class MainMenuScene : IScene
         }
 
         return MessageBox.Create(header, body, _fonts.Yellow, _fonts.Normal);
-    }
-
-    private static IReadOnlyList<GameText> SelectLanguages(IReadOnlyList<GameText> languages, GameFonts fonts)
-    {
-        // Without a CJK fallback Chinese tooltips would be drawn as '?' glyphs, so the menu stays
-        // English instead of showing mojibake.
-        if (fonts.SupportsCjk || languages.Count <= 1)
-        {
-            return languages;
-        }
-
-        GameLog.Warn("No CJK glyphs are available; the main menu stays in English.");
-        return [languages[0]];
-    }
-
-    private static int IndexOfCulture(IReadOnlyList<GameText> languages, string? culture)
-    {
-        if (!string.IsNullOrWhiteSpace(culture))
-        {
-            for (int index = 0; index < languages.Count; ++index)
-            {
-                if (string.Equals(languages[index].Culture, culture, StringComparison.OrdinalIgnoreCase))
-                {
-                    return index;
-                }
-            }
-
-            GameLog.Warn($"The requested language '{culture}' is not installed; using the default.");
-        }
-
-        // A localized catalog is what makes the CJK path visible, so it wins over English.
-        for (int index = 0; index < languages.Count; ++index)
-        {
-            if (languages[index].IsLocalized)
-            {
-                return index;
-            }
-        }
-
-        return 0;
     }
 
     /// <summary>

@@ -201,6 +201,11 @@ public sealed class AdventureMapView
     /// The adventure map animation index, <c>Game::getAdventureMapAnimationIndex()</c>. Animated object parts draw
     /// one frame of their cycle on top of the base image, chosen by this value; zero is a normal phase, not "off".
     /// </param>
+    /// <param name="passability">
+    /// The passability of the tiles, drawn instead of the fog when it is not <see langword="null"/> — the
+    /// <c>LEVEL_PASSABILITIES</c> flag of <c>Interface::GameArea::Redraw()</c> (<c>interface_gamearea.cpp:768-776</c>).
+    /// The map editor turns it on with the <c>EDITOR_PASSABILITY</c> option.
+    /// </param>
     /// <remarks>
     /// <para>
     /// The passes are per layer over the whole viewport, not per tile, which is what the reference
@@ -213,7 +218,11 @@ public sealed class AdventureMapView
     /// 决定节拍，也让截图与用例的结果不依赖全局状态。
     /// </para>
     /// </remarks>
-    public void Draw(PixelBuffer target, bool drawTownsOverFog = false, uint animationPhase = 0)
+    public void Draw(
+        PixelBuffer target,
+        bool drawTownsOverFog = false,
+        uint animationPhase = 0,
+        MapTileSet? passability = null)
     {
         ArgumentNullException.ThrowIfNull(target);
 
@@ -222,9 +231,43 @@ public sealed class AdventureMapView
         DrawTerrain(target);
         DrawSprites(target);
 
+        if (passability is not null)
+        {
+            // 通行性叠层与战争迷雾是参考里互斥的两遍（interface_gamearea.cpp:768-793）：打开叠层时雾根本不画。
+            DrawPassability(target, passability);
+
+            return;
+        }
+
         // The fog of war is the very last pass of the reference as well: it hides the terrain and
         // everything that stands on it, and only the castles are painted over it afterwards.
         DrawFog(target, drawTownsOverFog);
+    }
+
+    /// <summary>
+    /// Draws the passability marker of every visible tile, the <c>LEVEL_PASSABILITIES</c> pass of
+    /// <c>Interface::GameArea::Redraw()</c> (<c>interface_gamearea.cpp:768-776</c>).
+    /// </summary>
+    /// <param name="target">The image to paint on.</param>
+    /// <param name="tiles">Passability of the tiles, one per tile of the map.</param>
+    /// <exception cref="ArgumentException">The tile set belongs to a map of another size.</exception>
+    private void DrawPassability(PixelBuffer target, MapTileSet tiles)
+    {
+        if (tiles.Geometry is not { } geometry || geometry.Width != _map.Width || geometry.Height != _map.Height)
+        {
+            throw new ArgumentException("The passability tile set does not cover this map.", nameof(tiles));
+        }
+
+        foreach ((int column, int row, int left, int top, Mp2TileInfo _) in VisibleTiles())
+        {
+            Tile tile = tiles.GetTile((row * _map.Width) + column);
+            bool isActionObject = PassabilityOverlay.IsActionObject(tile.MainObjectType);
+
+            if (isActionObject || tile.PassableDirections != Directions.All)
+            {
+                PassabilityOverlay.Draw(target, new Point(left, top), tile.PassableDirections, isActionObject);
+            }
+        }
     }
 
     /// <summary>

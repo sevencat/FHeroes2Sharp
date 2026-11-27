@@ -47,6 +47,18 @@ public static class EmptyButtons
     /// <summary>The name <c>BUTTON_SMALL_EXIT_EVIL</c> is cached under.</summary>
     public const string SmallExitEvilFileName = "BUTTON_SMALL_EXIT_EVIL.ICN";
 
+    /// <summary>The name <c>BUTTON_SMALL_DISMISS_GOOD</c> is cached under.</summary>
+    public const string SmallDismissGoodFileName = "BUTTON_SMALL_DISMISS_GOOD.ICN";
+
+    /// <summary>The name <c>BUTTON_SMALL_DISMISS_EVIL</c> is cached under.</summary>
+    public const string SmallDismissEvilFileName = "BUTTON_SMALL_DISMISS_EVIL.ICN";
+
+    /// <summary>The name <c>BUTTON_SMALL_UPGRADE_GOOD</c> is cached under.</summary>
+    public const string SmallUpgradeGoodFileName = "BUTTON_SMALL_UPGRADE_GOOD.ICN";
+
+    /// <summary>The name <c>BUTTON_SMALL_UPGRADE_EVIL</c> is cached under.</summary>
+    public const string SmallUpgradeEvilFileName = "BUTTON_SMALL_UPGRADE_EVIL.ICN";
+
     /// <summary>Archive entry holding the raw game palette the button colours are resolved against.</summary>
     private const string GamePaletteName = "KB.PAL";
 
@@ -83,11 +95,14 @@ public static class EmptyButtons
     /// <summary>Pressed frame of <c>NGEXTRA</c>.</summary>
     private const int MapSelectLastFrame = 65;
 
-    /// <summary>Released frame of <c>VIEWARMY</c> / <c>VIEWARME</c> the small text buttons are built from.</summary>
+    /// <summary>Released frame of <c>VIEWARMY</c> / <c>VIEWARME</c> the DISMISS button is built from.</summary>
+    private const int SmallDismissReleasedFrame = 1;
+
+    /// <summary>Released frame of <c>VIEWARMY</c> / <c>VIEWARME</c> the EXIT button is built from.</summary>
     private const int SmallExitReleasedFrame = 3;
 
-    /// <summary>Pressed frame of <c>VIEWARMY</c> / <c>VIEWARME</c>.</summary>
-    private const int SmallExitPressedFrame = 4;
+    /// <summary>Released frame of <c>VIEWARMY</c> / <c>VIEWARME</c> the UPGRADE button is built from.</summary>
+    private const int SmallUpgradeReleasedFrame = 5;
 
     /// <summary>
     /// Builds the two frames of a synthetic button table.
@@ -133,14 +148,34 @@ public static class EmptyButtons
             return BuildMapSelectButton();
         }
 
+        if (string.Equals(fileName, SmallDismissGoodFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: true, SmallDismissReleasedFrame);
+        }
+
+        if (string.Equals(fileName, SmallDismissEvilFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: false, SmallDismissReleasedFrame);
+        }
+
         if (string.Equals(fileName, SmallExitGoodFileName, StringComparison.OrdinalIgnoreCase))
         {
-            return BuildSmallTextButton(isGoodInterface: true);
+            return BuildSmallTextButton(isGoodInterface: true, SmallExitReleasedFrame);
         }
 
         if (string.Equals(fileName, SmallExitEvilFileName, StringComparison.OrdinalIgnoreCase))
         {
-            return BuildSmallTextButton(isGoodInterface: false);
+            return BuildSmallTextButton(isGoodInterface: false, SmallExitReleasedFrame);
+        }
+
+        if (string.Equals(fileName, SmallUpgradeGoodFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: true, SmallUpgradeReleasedFrame);
+        }
+
+        if (string.Equals(fileName, SmallUpgradeEvilFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildSmallTextButton(isGoodInterface: false, SmallUpgradeReleasedFrame);
         }
 
         return null;
@@ -589,26 +624,29 @@ public static class EmptyButtons
     }
 
     /// <summary>
-    /// <c>ICN::BUTTON_SMALL_EXIT_GOOD</c> / <c>BUTTON_SMALL_EXIT_EVIL</c>: <c>VIEWARMY</c> (resp. <c>VIEWARME</c>)
-    /// frames 3 and 4, trimmed by two columns and one row, corners made transparent
-    /// (<c>game_assets.cpp:1178-1211</c>, the original-resources branch).
+    /// <c>ICN::BUTTON_SMALL_DISMISS_*</c>, <c>BUTTON_SMALL_EXIT_*</c> and <c>BUTTON_SMALL_UPGRADE_*</c>:
+    /// <c>VIEWARMY</c> (resp. <c>VIEWARME</c>) frames 1/2, 3/4 or 5/6, trimmed by two columns and one row,
+    /// corners made transparent (<c>game_assets.cpp:1179-1217</c>, the original-resources branch).
     /// </summary>
     /// <remarks>
-    /// 参考的非原资源分支会用 <c>EMPTY_*_BUTTON</c> 加 <c>STONEBAK</c> 和文字 "EXIT" 造出同样大小的按钮；
-    /// 本项目一贯取原资材（见 <see cref="BuildSystemButton"/>），这里也只走原资源分支。DISMISS / UPGRADE
-    /// 与 EXIT 共用这段代码，只差帧下标（1 / 5），等有调用方时再加常量。
+    /// 参考的非原资源分支会用 <c>EMPTY_*_BUTTON</c> 加 <c>STONEBAK</c> 和文字 "DISMISS" / "EXIT" / "UPGRADE"
+    /// 造出同样大小的按钮；本项目一贯取原资材（见 <see cref="BuildSystemButton"/>），这里也只走原资源分支，
+    /// 三张表只差起始帧下标。
     /// </remarks>
-    private static Sprite?[]? BuildSmallTextButton(bool isGoodInterface)
+    /// <param name="isGoodInterface">Whether the good (light) interface table is built.</param>
+    /// <param name="releasedFrame">Frame of the released state; the pressed one is the next frame.</param>
+    private static Sprite?[]? BuildSmallTextButton(bool isGoodInterface, int releasedFrame)
     {
         string originalName = IcnCatalog.GetFileName(isGoodInterface ? IcnType.Viewarmy : IcnType.Viewarme);
+        int pressedFrame = releasedFrame + 1;
 
-        if (Assets.GetImageCount(originalName) < SmallExitPressedFrame + 1)
+        if (Assets.GetImageCount(originalName) < pressedFrame + 1)
         {
             return null;
         }
 
-        if (Assets.GetImage(originalName, SmallExitReleasedFrame) is not { } originalReleased ||
-            Assets.GetImage(originalName, SmallExitPressedFrame) is not { } originalPressed)
+        if (Assets.GetImage(originalName, releasedFrame) is not { } originalReleased ||
+            Assets.GetImage(originalName, pressedFrame) is not { } originalPressed)
         {
             return null;
         }

@@ -1,18 +1,26 @@
 using System.Diagnostics.CodeAnalysis;
 using FHeroes2.App.Fonts;
+using FHeroes2.App.Localization;
 using FHeroes2.App.Modals;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Icn;
+using FHeroes2.Assets.Maps;
 using FHeroes2.Core.Diagnostics;
+using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.Game;
+using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Audio;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Spells;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Editor;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 using GameAssets = FHeroes2.Game.Assets;
+using ZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 
 namespace FHeroes2.App.Scenes;
 
@@ -50,6 +58,7 @@ internal sealed class EditorSceneHost
     private ItemSelectionWindowArtwork? _itemSelectionArtwork;
     private IcnViewWorldSpriteSource? _sprites;
     private VirtualKeyboardArtwork? _keyboardArtwork;
+    private IReadOnlyList<Sprite>? _spellIcons;
 
     /// <summary>Collects what a window of the editor needs from the archives.</summary>
     /// <param name="assets">Where the sprites come from; <see langword="null"/> when the data is missing.</param>
@@ -58,6 +67,7 @@ internal sealed class EditorSceneHost
     {
         _assets = assets;
         _fonts = fonts;
+        SelectResolution = RunResolutionPicker;
     }
 
     /// <summary>
@@ -134,6 +144,174 @@ internal sealed class EditorSceneHost
     }
 
     /// <summary>
+    /// Runs the View World window over the map being edited, <c>eventViewWorld()</c> of
+    /// <c>editor_interface.cpp:2183-2186</c>.
+    /// </summary>
+    /// <param name="view">The map view of the editor; only its map, tile set and sprite sources are read.</param>
+    /// <param name="viewport">The rectangle the map is drawn into, the window's <c>GameArea::GetROI()</c>.</param>
+    /// <param name="frame">The screen the window is painted on.</param>
+    /// <param name="zoomLevel">The zoom level the previous visit ended on.</param>
+    /// <returns>
+    /// The zoom level the window was left at, to remember for the next visit; <see langword="null"/> when the window
+    /// could not be opened.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// 参考在编辑器里调 <c>ViewWorld::ViewWorldWindow( PlayerColor::NONE, ViewWorldMode::ViewAll, *this )</c>：编辑器不按
+    /// 玩家裁雾，看的是整张图。这里照做，只在前面多一步——把编辑中的地图装成世界
+    /// （<see cref="World.CreatePreview"/>），窗口、雷达与图标层都要它。
+    /// </para>
+    /// <para>
+    /// 世界与缓存都只活到窗口关掉：它们不写 <see cref="World.Current"/>，也不回写地图，所以关掉之后编辑器手上的
+    /// <c>Mp2Map</c> 一格都没变。
+    /// </para>
+    /// <para>
+    /// 预览开不出来时只记一行日志：编辑中的地图可能还没配上完整的物件表，这时没有理由把编辑器一起打断。
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="view"/> or <paramref name="frame"/> is <see langword="null"/>.</exception>
+    public ZoomLevel? RunViewWorld(MapEditorView view, Rect viewport, ScreenBuffer frame, ZoomLevel zoomLevel)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(frame);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The View World window has no frame pump (RunModal); it is skipped.");
+
+            return null;
+        }
+
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The View World window needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        AdventureMapView map = view.Map;
+        World world;
+
+        try
+        {
+            world = World.CreatePreview(map.Map);
+        }
+        catch (ArgumentException error)
+        {
+            GameLog.Warn($"The View World window cannot be built: {error.Message}");
+
+            return null;
+        }
+
+        _sprites ??= new IcnViewWorldSpriteSource(assets);
+
+        ViewWorldMapCache cache = new ViewWorldMapBuilder(
+            map.Map,
+            map.Tiles,
+            world,
+            map.Objects,
+            map.Monsters,
+            map.Boats,
+            map.FogSprites).Build(ViewWorldMode.ViewAll);
+
+        ViewWorldRenderer.DrawObjectsIcons(PlayerColor.None, ViewWorldMode.ViewAll, cache, world, _sprites);
+
+        var window = new ViewWorldWindow(
+            world,
+            ViewWorldMode.ViewAll,
+            PlayerColor.None,
+            zoomLevel,
+            viewport,
+            map.VisibleTileArea,
+            cache,
+            frame.Size.Width,
+            frame.Size.Height,
+            _sprites,
+            Settings.Get().IsEvilInterfaceEnabled);
+
+        var modal = new ViewWorldModal(new ViewWorldOverlay(window, frame));
+
+        runModal(modal);
+
+        return modal.Result;
+    }
+
+    /// <summary>
+    /// Builds the castle settings window of the editor, <c>openCastleDialog()</c> of
+    /// <c>editor_castle_details_window.cpp:790</c>.
+    /// </summary>
+    /// <param name="state">The castle the window shows and edits.</param>
+    /// <param name="gamePalette">Palette in video values, needed to blur the buildings of a non default castle.</param>
+    /// <returns>
+    /// The state machine over the loaded window, or <see langword="null"/> when the archives, the fonts or the artwork
+    /// are missing.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public CastleDetailsInput? TryCreateCastleDetails(CastleDetailsState state, Palette gamePalette)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(gamePalette);
+
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The castle settings window needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is null)
+        {
+            GameLog.Warn("The castle settings window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (CastleDetailsView.TryCreate(assets, state, gamePalette, Settings.Get().IsEvilInterfaceEnabled) is not
+            { } view)
+        {
+            GameLog.Warn("The castle settings window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        return new CastleDetailsInput(view);
+    }
+
+    /// <summary>
+    /// Runs the castle settings window to its end, <c>openCastleDialog()</c>.
+    /// </summary>
+    /// <param name="state">The castle the window shows and edits.</param>
+    /// <param name="gamePalette">Palette in video values, needed to blur the buildings of a non default castle.</param>
+    /// <returns>
+    /// How the window was left; <see cref="CastleDetailsOutcome.Accepted"/> means the caller writes
+    /// <paramref name="state"/> back into the map, <see cref="CastleDetailsOutcome.None"/> means it never opened.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public CastleDetailsOutcome RunCastleDetails(CastleDetailsState state, Palette gamePalette)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(gamePalette);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The castle settings window has no frame pump (RunModal); it is skipped.");
+
+            return CastleDetailsOutcome.None;
+        }
+
+        if (TryCreateCastleDetails(state, gamePalette) is not { } input)
+        {
+            return CastleDetailsOutcome.None;
+        }
+
+        var modal = new EditorCastleDetailsModal(input, this);
+
+        runModal(modal);
+
+        return modal.Outcome;
+    }
+
+    /// <summary>
     /// Runs one turn of the editor's options page, <c>openEditorOptionsDialog()</c> of the reference.
     /// </summary>
     /// <returns>
@@ -183,6 +361,460 @@ internal sealed class EditorSceneHost
 
         // 模态没拿到动作就结束只可能是被外部收掉了，当关窗处理。
         return modal.Action;
+    }
+
+    /// <summary>
+    /// Runs the interface language picker to its end, <c>fheroes2::selectLanguage( ..., isGameLanguage = true )</c>.
+    /// </summary>
+    /// <param name="names">The languages as the rows show them, English first.</param>
+    /// <param name="selectedIndex">Index of the row to highlight, the language in use.</param>
+    /// <param name="title">The line above the list, already in the language in use.</param>
+    /// <returns>The index the author picked, or -1 when the window was cancelled or could not be built.</returns>
+    /// <remarks>
+    /// 与主菜单的语言选择器同一个 <see cref="LanguageSelectionDialog"/>，只是拦在一层模态里：参考的
+    /// <c>selectLanguage</c> 也是阻塞的，返回的是选中的语言，取消时原样返回传进去的那个。
+    /// </remarks>
+    public int RunLanguagePicker(IReadOnlyList<string> names, int selectedIndex, string title)
+    {
+        ArgumentNullException.ThrowIfNull(names);
+        ArgumentNullException.ThrowIfNull(title);
+
+        if (names.Count == 0)
+        {
+            GameLog.Warn("The language picker needs at least one installed language, and there is none.");
+
+            return -1;
+        }
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The language picker has no frame pump (RunModal); it is skipped.");
+
+            return -1;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The language picker needs the game fonts, and they are missing.");
+
+            return -1;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The language picker needs the standard buttons, and they are missing.");
+
+            return -1;
+        }
+
+        int contentHeight = LanguageSelectionDialog.GetRequiredHeight(fonts.Normal.LineHeight, names.Count);
+        StandardWindow window = StandardWindow.CreateCentered(
+            new Size(LanguageSelectionDialog.ContentWidth, contentHeight), true, ScreenBuffer.DefaultSize);
+
+        // SYSTEM.ICN 里 OKAY 与 CANCEL 都在，不像主菜单的启动图框还要看素材齐不齐。
+        ButtonGroup group = ButtonGroup.CreateStandard(
+            window.ActiveArea, DialogButton.Ok | DialogButton.Cancel, buttons);
+
+        var dialog = new LanguageSelectionDialog(window, group, fonts.Yellow, fonts.Normal, fonts.Yellow, title,
+            [.. names], Math.Clamp(selectedIndex, 0, names.Count - 1));
+
+        var modal = new GameLanguagePickerModal(dialog);
+
+        runModal(modal);
+
+        return modal.Accepted ? modal.SelectedIndex : -1;
+    }
+
+    /// <summary>
+    /// Opens the resolution chooser, <c>Dialog::SelectResolution()</c> of the graphics page; returns whether a new
+    /// resolution was chosen.
+    /// </summary>
+    /// <remarks>
+    /// 默认接到 <see cref="RunResolutionPicker"/>：参考这一行点下去就是阻塞的 <c>Dialog::SelectResolution()</c>，关窗后
+    /// 图形页拿返回值决定要不要 <c>updateUI</c>。仍是可替换的缝，置 <see langword="null"/> 就退回「点了不变」
+    /// （<see cref="GraphicsSettingsDialog.Apply"/> 收到 <see langword="null"/> 就返回不变）。
+    /// </remarks>
+    public Func<bool>? SelectResolution { get; set; }
+
+    /// <summary>
+    /// Builds the resolution chooser, <c>Dialog::SelectResolution()</c> of <c>dialog_graphics_settings.cpp:255-269</c>.
+    /// </summary>
+    /// <remarks>
+    /// 美术与主菜单首运流程同一套：滚动条 <c>SCROLL</c> 与窗底 <c>ADVBORD</c> 的第 0 帧。行只留游戏尺寸等于帧缓冲的那些
+    /// （<see cref="IDisplayControl.GetAvailableResolutions"/>，ADR-205），其余的 <see cref="IDisplayControl.SetResolution"/>
+    /// 会拒绝；没有显示设备或一条可用行都没有时返回 <see langword="null"/>。
+    /// </remarks>
+    /// <returns>The chooser, or <see langword="null"/> when the artwork, the fonts or the display are missing.</returns>
+    public ResolutionDialog? TryCreateResolutionDialog()
+    {
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The resolution chooser needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The resolution chooser needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The resolution chooser needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (LocalEvent.Current.Engine?.Display is not { } display)
+        {
+            GameLog.Warn("The resolution chooser needs a display to read the resolutions from, and there is none.");
+
+            return null;
+        }
+
+        if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Scroll)) is not { } scroll ||
+            assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Advbord)) is not { } board)
+        {
+            GameLog.Warn("The resolution chooser needs SCROLL and ADVBORD, and one of them is missing.");
+
+            return null;
+        }
+
+        Size frameSize = ScreenBuffer.DefaultSize;
+        List<ResolutionInfo> available = [];
+
+        foreach (ResolutionInfo resolution in display.GetAvailableResolutions())
+        {
+            if (resolution.GameSize == frameSize)
+            {
+                available.Add(resolution);
+            }
+        }
+
+        if (available.Count == 0)
+        {
+            GameLog.Warn(
+                $"The display offers no window for a {frameSize.Width}x{frameSize.Height} frame buffer; the " +
+                "resolution chooser stays closed.");
+
+            return null;
+        }
+
+        ResolutionArtwork artwork = new()
+        {
+            ScrollBarFrames = scroll.Sprites,
+            ScrollBarBackground = board.Sprites[0],
+            Buttons = buttons,
+        };
+
+        ResolutionInfo current = new(frameSize.Width, frameSize.Height, display.ScreenSize.Width,
+            display.ScreenSize.Height);
+
+        return ResolutionDialog.TryCreate(frameSize, artwork, fonts.Yellow, fonts.Normal, fonts.Yellow, available,
+            current);
+    }
+
+    /// <summary>
+    /// Runs the resolution chooser to its end and reports whether the window was switched,
+    /// <c>Dialog::SelectResolution()</c>.
+    /// </summary>
+    /// <returns>Whether a new resolution was chosen and applied.</returns>
+    public bool RunResolutionPicker()
+    {
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The resolution chooser has no frame pump (RunModal); it is skipped.");
+
+            return false;
+        }
+
+        if (TryCreateResolutionDialog() is not { } page)
+        {
+            return false;
+        }
+
+        var modal = new ResolutionPickerModal(page, this, LocalEvent.Current.Engine?.Display);
+
+        runModal(modal);
+
+        return modal.IsFinished && modal.Accepted;
+    }
+
+    /// <summary>
+    /// Builds the graphics page of the system options, <c>showConfigurationWindow()</c> of the reference.
+    /// </summary>
+    /// <remarks>
+    /// 美术来自四个 ICN：<c>SPANEL</c>（模式与垂直同步的图标）、<c>RESOLUTION_ICON</c>、<c>GAME_OPTION_ICON</c>（屏幕缩放）
+    /// 与 <c>EMPTY_OPTION_ICON_BACKGROUND</c>（系统信息那行要往上写字）。窗口控制取自
+    /// <see cref="LocalEvent.Current"/> 的引擎——没窗口时页面仍画得出来，只是全屏与分辨率不会真的生效，与
+    /// <see cref="GraphicsSettingsDialog"/> 的文档一致。
+    /// </remarks>
+    /// <returns>The page, or <see langword="null"/> when the assets, the fonts or the frames are missing.</returns>
+    public GraphicsSettingsDialog? TryCreateGraphicsSettingsDialog()
+    {
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The graphics settings page needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The graphics settings page needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The graphics settings page needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Spanel)) is not { } spanel)
+        {
+            GameLog.Warn("The graphics settings page needs SPANEL, and it is missing.");
+
+            return null;
+        }
+
+        // RESOLUTION_ICON、GAME_OPTION_ICON 与 EMPTY_OPTION_ICON_BACKGROUND 都是新版资源，这套数据里没有；缺哪张就退回
+        // 一块同尺寸的空图标（同 BattleSettingsWindow.ComposeOptionBackground），页面的字与状态照样画得出来。
+        GraphicsSettingsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            ResolutionFrames = OptionFrames(IcnType.ResolutionIcon, 1),
+            GameOptionFrames = OptionFrames(IcnType.GameOptionIcon, 4),
+            EmptyOptionIconFrames = OptionFrames(IcnType.EmptyOptionIconBackground, 1),
+            Buttons = buttons,
+        };
+
+        IDisplayControl? display = LocalEvent.Current.Engine?.Display;
+
+        return GraphicsSettingsDialog.TryCreate(ScreenBuffer.DefaultSize, ScreenBuffer.DefaultSize, artwork,
+            fonts.Yellow, fonts.Normal, display);
+    }
+
+    /// <summary>
+    /// Reads an option icon, or its blank stand-in when the archives of this data set do not carry it.
+    /// </summary>
+    /// <param name="type">The icon file.</param>
+    /// <param name="count">How many frames the caller indexes into.</param>
+    /// <returns>The frames of the icon, or <paramref name="count"/> blank icons of the standard size.</returns>
+    private IReadOnlyList<Sprite> OptionFrames(IcnType type, int count)
+    {
+        if (_assets?.TryReadIcn(IcnCatalog.GetFileName(type)) is { } file)
+        {
+            return file.Sprites;
+        }
+
+        GameLog.Warn($"'{IcnCatalog.GetFileName(type)}' is missing from the archives; the row gets a blank icon.");
+
+        return [.. Enumerable.Range(0, count).Select(_ => new Sprite(OptionItem.OptionIconSize, OptionItem.OptionIconSize))];
+    }
+
+    /// <summary>
+    /// Runs the graphics page to its end and reports the leaf the author chose, <c>showConfigurationWindow()</c>.
+    /// </summary>
+    /// <param name="dialog">The page to run, from <see cref="TryCreateGraphicsSettingsDialog"/>.</param>
+    /// <returns>The leaf, or <see cref="GraphicsSettingsOption.Exit"/> when the page could not run at all.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
+    public GraphicsSettingsOption RunGraphicsSettingsDialog(GraphicsSettingsDialog dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The graphics settings page has no frame pump (RunModal); it is skipped.");
+
+            return GraphicsSettingsOption.Exit;
+        }
+
+        var modal = new GraphicsSettingsModal(dialog, this);
+
+        runModal(modal);
+
+        return modal.IsFinished ? modal.Option : GraphicsSettingsOption.Exit;
+    }
+
+    /// <summary>
+    /// The audio device the pages push their volumes to, <c>Audio::isValid()</c> of the reference.
+    /// </summary>
+    /// <remarks>
+    /// App 侧还没有混音器（只有 <c>AudioPlayer</c> 放音乐），所以默认是 <see langword="null"/>：音频页照常打开、音乐类型与
+    /// 3D 音效照常翻，但两处音量点不动——与参考在没有声卡时的表现一致。接上混音器后由宿主赋值即可生效。
+    /// </remarks>
+    public AudioManager? Audio { get; set; }
+
+    /// <summary>
+    /// Builds the audio page of the system options, <c>Dialog::openAudioSettingsDialog( false )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 美术只有 <c>SPANEL</c> 一张（音量、音效、音乐类型与 3D 四处的图标）与共用按钮；字体给右键说明的标题与正文。
+    /// 与图形页不同，这里没有窗口控制可接：音量交给 <see cref="Audio"/>，引擎模式与音频设备无关。
+    /// </remarks>
+    /// <returns>The page, or <see langword="null"/> when the assets, the fonts or the frames are missing.</returns>
+    public AudioSettingsDialog? TryCreateAudioSettingsDialog()
+    {
+        if (_assets is null)
+        {
+            GameLog.Warn("The audio settings page needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The audio settings page needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The audio settings page needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (_assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Spanel)) is not { } spanel)
+        {
+            GameLog.Warn("The audio settings page needs SPANEL, and it is missing.");
+
+            return null;
+        }
+
+        AudioSettingsArtwork artwork = new()
+        {
+            SpanelFrames = spanel.Sprites,
+            Buttons = buttons,
+        };
+
+        AudioSettingsDialog? page = AudioSettingsDialog.TryCreate(ScreenBuffer.DefaultSize, artwork, fonts.Yellow,
+            fonts.Normal, Audio);
+
+        if (page is null)
+        {
+            GameLog.Warn("The audio settings artwork has too few frames; the page stays closed.");
+        }
+
+        return page;
+    }
+
+    /// <summary>
+    /// Runs the audio page to its end and reports whether a setting changed, the <c>saveConfig</c> of
+    /// <c>Dialog::openAudioSettingsDialog()</c>.
+    /// </summary>
+    /// <param name="dialog">The page to run, from <see cref="TryCreateAudioSettingsDialog"/>.</param>
+    /// <returns>Whether a setting changed.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
+    public bool RunAudioSettingsDialog(AudioSettingsDialog dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The audio settings page has no frame pump (RunModal); it is skipped.");
+
+            return false;
+        }
+
+        var modal = new AudioSettingsModal(dialog, this);
+
+        runModal(modal);
+
+        return modal.IsFinished && modal.IsDirty;
+    }
+
+    /// <summary>
+    /// Builds the hot keys page of the system options, <c>fheroes2::openHotkeysDialog()</c>.
+    /// </summary>
+    /// <remarks>
+    /// 美术是滚动条的 <c>SCROLL</c>、窗底 <c>ADVBORD</c> 的第 0 帧与共用按钮（同分辨率窗，<c>dialog_hotkeys.cpp:307-330</c>
+    /// 读的也是这两份）；界面风格固定用好的一套，理由同 <c>MainMenuScene.CreateResolutionArtwork</c>。
+    /// </remarks>
+    /// <returns>The page, or <see langword="null"/> when the assets, the fonts or the artwork are missing.</returns>
+    public HotKeysDialog? TryCreateHotKeysDialog()
+    {
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The hot keys page needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The hot keys page needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The hot keys page needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Scroll)) is not { } scroll ||
+            assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Advbord)) is not { } board)
+        {
+            GameLog.Warn("The hot keys page needs SCROLL and ADVBORD, and one of them is missing.");
+
+            return null;
+        }
+
+        HotKeysArtwork artwork = new()
+        {
+            ScrollBarFrames = scroll.Sprites,
+            ScrollBarBackground = board.Sprites[0],
+            Buttons = buttons,
+        };
+
+        HotKeysDialog? page = HotKeysDialog.TryCreate(ScreenBuffer.DefaultSize, artwork, fonts.Yellow, fonts.Normal,
+            fonts.Yellow);
+
+        if (page is null)
+        {
+            GameLog.Warn("The hot keys artwork is incomplete or has no rows; the page stays closed.");
+        }
+
+        return page;
+    }
+
+    /// <summary>
+    /// Runs the hot keys page to its end; the reference has no result to report.
+    /// </summary>
+    /// <param name="dialog">The page to run, from <see cref="TryCreateHotKeysDialog"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
+    public void RunHotKeysDialog(HotKeysDialog dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The hot keys page has no frame pump (RunModal); it is skipped.");
+
+            return;
+        }
+
+        runModal(new HotKeysModal(dialog, this));
     }
 
     /// <summary>
@@ -279,36 +911,15 @@ internal sealed class EditorSceneHost
             return new EditorSpellSelectionDialogResult(false, spellLevel, []);
         }
 
-        if (spellLevel is < 1 or > 5)
-        {
-            // 参考在这里 assert，调用方给错了等级就没有窗口可开。
-            GameLog.Warn($"The spell selection window needs a level between 1 and 5, not {spellLevel}.");
-
-            return new EditorSpellSelectionDialogResult(false, spellLevel, []);
-        }
-
-        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } spellFont)
-        {
-            GameLog.Warn("The spell selection window needs the game fonts, and they are missing.");
-
-            return new EditorSpellSelectionDialogResult(false, spellLevel, []);
-        }
-
-        if (EditorSpellSelectionArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled) is not { } artwork)
-        {
-            GameLog.Warn("The spell selection window needs its artwork, and it is missing.");
-
-            return new EditorSpellSelectionDialogResult(false, spellLevel, []);
-        }
-
         int level = spellLevel;
 
         while (true)
         {
-            var window = EditorSpellSelectionWindow.Create(artwork, title, level, selectedSpells,
-                isMultiLevelSelectionEnabled, minimumEnabledSpells, pickDisabledSpells, titleFont, spellFont);
-
-            var modal = new EditorSpellSelectionModal(window, new EditorSpellSelectionInput(window), this);
+            if (TryCreateSpellSelection(title, level, selectedSpells, isMultiLevelSelectionEnabled,
+                    minimumEnabledSpells, pickDisabledSpells) is not { } modal)
+            {
+                return new EditorSpellSelectionDialogResult(false, level, []);
+            }
 
             runModal(modal);
 
@@ -325,11 +936,271 @@ internal sealed class EditorSceneHost
         }
     }
 
+    /// <summary>
+    /// Builds one level of the spell selection window, the half of <c>Editor::openSpellSelectionWindow()</c> that only
+    /// builds it (<c>editor_spell_selection.cpp:172-208</c>).
+    /// </summary>
+    /// <remarks>
+    /// 已经在模态里跑的调用方（城堡详情的魔法行会子窗）不能再用 <see cref="RunSpellSelection"/>：那会把帧泵套成两层。
+    /// 它们拿这个工厂自己压栈、自己判断 <see cref="EditorSpellSelectionOutcome.LevelChanged"/> 再开下一层。
+    /// </remarks>
+    /// <param name="title">Heading of the window, with the trailing colon the reference prints.</param>
+    /// <param name="spellLevel">Spell level, 1 to 5.</param>
+    /// <param name="selectedSpells">The list the window opens with: picked spells, or banned ones.</param>
+    /// <param name="isMultiLevelSelectionEnabled">Whether the level buttons below the list are active.</param>
+    /// <param name="minimumEnabledSpells">How many spells have to stay enabled, <c>getMaxSpellsCount()</c>.</param>
+    /// <param name="pickDisabledSpells">Whether the window edits the banned list instead of the chosen one.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public EditorSpellSelectionModal? TryCreateSpellSelection(string title, int spellLevel,
+        IReadOnlyList<SpellType> selectedSpells, bool isMultiLevelSelectionEnabled = false,
+        int minimumEnabledSpells = 1, bool pickDisabledSpells = false)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(selectedSpells);
+
+        if (spellLevel is < 1 or > 5)
+        {
+            // 参考在这里 assert，调用方给错了等级就没有窗口可开。
+            GameLog.Warn($"The spell selection window needs a level between 1 and 5, not {spellLevel}.");
+
+            return null;
+        }
+
+        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } spellFont)
+        {
+            GameLog.Warn("The spell selection window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (EditorSpellSelectionArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled) is not { } artwork)
+        {
+            GameLog.Warn("The spell selection window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        var window = EditorSpellSelectionWindow.Create(artwork, title, spellLevel, selectedSpells,
+            isMultiLevelSelectionEnabled, minimumEnabledSpells, pickDisabledSpells, titleFont, spellFont);
+
+        return new EditorSpellSelectionModal(window, new EditorSpellSelectionInput(window), this);
+    }
+
+    /// <summary>
+    /// Builds the single-spell picker, <c>Dialog::selectSpell()</c> (<c>dialog_selectitems.cpp:1117-1141</c>).
+    /// </summary>
+    /// <param name="spellLevel">Spell level, 1 to 5.</param>
+    /// <param name="currentSpell">The spell the row already holds, pre-selected in the list.</param>
+    /// <param name="excludedSpells">Spells of the same level the picker must not offer.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public SpellSelectModal? TryCreateSpellSelect(int spellLevel, SpellType currentSpell,
+        IReadOnlyList<int> excludedSpells)
+    {
+        ArgumentNullException.ThrowIfNull(excludedSpells);
+
+        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } spellFont)
+        {
+            GameLog.Warn("The spell picker needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (TryCreateItemSelectionArtwork() is not { } artwork)
+        {
+            GameLog.Warn("The spell picker needs the list artwork, and it is missing.");
+
+            return null;
+        }
+
+        IReadOnlyList<Sprite> icons = SpellIcons();
+
+        if (icons.Count == 0)
+        {
+            GameLog.Warn("The spell picker needs the spell icons, and they are missing.");
+
+            return null;
+        }
+
+        SpellSelectionWindow? window = SpellSelectDialog.TryCreate((int)currentSpell, true,
+            new HashSet<int>(excludedSpells), spellLevel, icons, artwork, titleFont, spellFont);
+
+        return window is null ? null : new SpellSelectModal(window);
+    }
+
+    /// <summary>
+    /// Builds the mage guild spells sub-window of the castle settings,
+    /// <c>mageGuildSpellsDialog()</c> (<c>editor_castle_details_window.cpp:383-605</c>).
+    /// </summary>
+    /// <param name="state">The castle being edited; the window writes back into its metadata.</param>
+    /// <param name="dialogArea">The <c>dialogRoi</c> of the castle window.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public MageGuildSpellsModal? TryCreateMageGuildSpells(CastleDetailsState state, Rect dialogArea)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The mage guild spells window needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The mage guild spells window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (MageGuildSpellsArtwork.TryCreate(assets, state.Race, Settings.Get().IsEvilInterfaceEnabled) is not
+            { } artwork)
+        {
+            GameLog.Warn("The mage guild spells window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        var table = new MageGuildSpellTable(state.Race);
+        table.Load(state.Metadata);
+
+        var view = new MageGuildSpellsView(table, artwork, dialogArea, fonts.White);
+        var input = new MageGuildSpellsInput(view, state.Metadata);
+
+        return new MageGuildSpellsModal(view, input, this);
+    }
+
+    /// <summary>
+    /// Builds the unit information window the army bar asks for, <c>Dialog::ArmyInfo()</c>
+    /// (<c>dialog_armyinfo.cpp:518-712</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 军队条把三个按钮的标志（升级、解散、退出）带在窗口模型里，这里按标志去读对应的两帧按钮图；窗口的位置由
+    /// <see cref="ArmyInfoLayout.Create"/> 按屏幕居中算，偏移量取 0——参考只有在军队条自带偏移时才不为 0。
+    /// </para>
+    /// <para>
+    /// 参考画的是兵种战斗动画的空闲帧，端口的怪兽动画还没转，所以窗口没有单位精灵；等动画转完再把精灵传进来。
+    /// </para>
+    /// </remarks>
+    /// <param name="dialog">The window's model, built by the army bar.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public ArmyInfoModal? TryCreateArmyInfo(ArmyInfoDialog dialog)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+
+        if (_fonts is not { } fonts)
+        {
+            GameLog.Warn("The unit information window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        bool isEvil = Settings.Get().IsEvilInterfaceEnabled;
+
+        IReadOnlyList<Sprite>? sprites = TryReadSprites(isEvil ? IcnType.Viewarme : IcnType.Viewarmy);
+
+        if (sprites is null)
+        {
+            GameLog.Warn("The unit information window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        DialogButtonArtwork? exitButton = TryReadButtonPair(isEvil
+            ? IcnType.ButtonSmallExitEvil
+            : IcnType.ButtonSmallExitGood);
+        DialogButtonArtwork? upgradeButton = dialog.CanUpgrade
+            ? TryReadButtonPair(isEvil ? IcnType.ButtonSmallUpgradeEvil : IcnType.ButtonSmallUpgradeGood)
+            : null;
+        DialogButtonArtwork? dismissButton = dialog.CanDismiss
+            ? TryReadButtonPair(isEvil ? IcnType.ButtonSmallDismissEvil : IcnType.ButtonSmallDismissGood)
+            : null;
+
+        if (ArmyInfoArtwork.TryCreate(sprites, isEvil, exitButton, upgradeButton, dismissButton) is not { } artwork ||
+            exitButton is not { } exit)
+        {
+            GameLog.Warn("The unit information window needs its buttons, and they are missing.");
+
+            return null;
+        }
+
+        ArmyInfoLayout layout = ArmyInfoLayout.Create(
+            new Rect(new Point(0, 0), ScreenBuffer.DefaultSize),
+            new Size(artwork.Background.Width, artwork.Background.Height),
+            new Size(artwork.Shadow.Width, artwork.Shadow.Height),
+            artwork.GetShadowShift(),
+            new Size(exit.Released.Width, exit.Released.Height),
+            upgradeButton is { } upgrade ? new Size(upgrade.Released.Width, upgrade.Released.Height) : null,
+            dismissButton is { } dismiss ? new Size(dismiss.Released.Width, dismiss.Released.Height) : null,
+            isEvil,
+            windowOffsetY: 0,
+            fonts.White.LineHeight,
+            fonts.SmallWhite.LineHeight);
+
+        return new ArmyInfoModal(dialog, artwork, layout, fonts, this);
+    }
+
+    /// <summary>Reads every frame of an archive, the <c>getImage( icn, 0..7 )</c> the reference spells out.</summary>
+    /// <param name="type">The archive to read.</param>
+    /// <returns>The frames, or <see langword="null"/> when the archive is missing.</returns>
+    private static IReadOnlyList<Sprite>? TryReadSprites(IcnType type)
+    {
+        string name = GameAssets.GetFileName(type);
+        List<Sprite> frames = [];
+
+        for (int frame = 0; frame < ArmyInfoArtwork.RequiredSpriteCount; ++frame)
+        {
+            if (GameAssets.GetImage(name, frame) is not { } sprite)
+            {
+                return null;
+            }
+
+            frames.Add(sprite);
+        }
+
+        return frames;
+    }
+
+    /// <summary>Reads the two frames of a button, released and pressed.</summary>
+    /// <param name="type">The archive to read.</param>
+    /// <returns>The two frames, or <see langword="null"/> when the archive is missing.</returns>
+    private static DialogButtonArtwork? TryReadButtonPair(IcnType type)
+    {
+        string name = GameAssets.GetFileName(type);
+
+        if (GameAssets.GetImage(name, 0) is not { } released || GameAssets.GetImage(name, 1) is not { } pressed)
+        {
+            return null;
+        }
+
+        return new DialogButtonArtwork(released, pressed);
+    }
+
+    /// <summary>Every frame of <c>ICN::SPELLS</c>, the icons the picker lists; loaded once.</summary>
+    /// <returns>The icons, or an empty list when the archive is missing.</returns>
+    private IReadOnlyList<Sprite> SpellIcons()
+    {
+        if (_spellIcons is not null)
+        {
+            return _spellIcons;
+        }
+
+        if (_assets is null || _assets.TryReadIcn(IcnCatalog.GetFileName(IcnType.Spells)) is not { } file)
+        {
+            GameLog.Warn("The spell picker needs ICN::SPELLS, and it is missing.");
+
+            return _spellIcons = [];
+        }
+
+        return _spellIcons = file.Sprites;
+    }
+
     /// <summary>Builds a message box ready to be run; <see langword="null"/> when the fonts or the buttons are missing.</summary>
     /// <param name="header">Title of the box; empty for none.</param>
     /// <param name="body">The message.</param>
+    /// <param name="buttons">Buttons on the bottom edge; <see cref="DialogButton.Ok"/> for the plain explanation.</param>
     /// <returns>The box, or <see langword="null"/> with the reason in the log.</returns>
-    public MessageBoxModal? TryCreateMessageBox(string header, string body)
+    public MessageBoxModal? TryCreateMessageBox(string header, string body, DialogButton buttons = DialogButton.Ok)
     {
         if (_fonts is null)
         {
@@ -347,7 +1218,7 @@ internal sealed class EditorSceneHost
             return null;
         }
 
-        return MessageBoxModal.Create(header, body, _fonts.Yellow, _fonts.White, DialogButton.Ok, _buttons);
+        return MessageBoxModal.Create(header, body, _fonts.Yellow, _fonts.White, buttons, _buttons);
     }
 
     /// <summary>Builds the input window a request of the specifications page asks for, <c>Dialog::inputString</c>.</summary>

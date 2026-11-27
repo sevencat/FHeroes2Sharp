@@ -253,17 +253,12 @@ public sealed class MageGuildSpellsInput
 
         if (events.MouseClickLeft(_view.ExitArea))
         {
-            Outcome = MageGuildSpellsOutcome.Cancelled;
-
-            return Outcome;
+            return Cancel();
         }
 
         if (events.MouseClickLeft(_view.OkayArea))
         {
-            _hasChanges |= _view.Table.Save(_metadata);
-            Outcome = MageGuildSpellsOutcome.Accepted;
-
-            return Outcome;
+            return Accept();
         }
 
         if (events.MouseClickLeft(_view.BannedSpellsArea))
@@ -282,6 +277,32 @@ public sealed class MageGuildSpellsInput
         {
             _view.ShowMessage(DefaultMessage);
         }
+
+        return Outcome;
+    }
+
+    /// <summary>
+    /// Accepts the spells as they are now, the OKAY button of the reference and its default okay hot key
+    /// (<c>:444-448</c>).
+    /// </summary>
+    /// <returns>The outcome, <see cref="MageGuildSpellsOutcome.Accepted"/>.</returns>
+    public MageGuildSpellsOutcome Accept()
+    {
+        _hasChanges |= _view.Table.Save(_metadata);
+
+        Outcome = MageGuildSpellsOutcome.Accepted;
+
+        return Outcome;
+    }
+
+    /// <summary>
+    /// Drops the edits and leaves, the EXIT button of the reference and its default cancel hot key
+    /// (<c>:443-446</c>).
+    /// </summary>
+    /// <returns>The outcome, <see cref="MageGuildSpellsOutcome.Cancelled"/>.</returns>
+    public MageGuildSpellsOutcome Cancel()
+    {
+        Outcome = MageGuildSpellsOutcome.Cancelled;
 
         return Outcome;
     }
@@ -327,6 +348,22 @@ public sealed class MageGuildSpellsInput
             _hasChanges = true;
             _view.Refresh();
         }
+    }
+
+    /// <summary>
+    /// Moves the banned spells window to another level without touching the list, the
+    /// <c>currentBannedSpellsLevel = ...</c> of <c>:515-521</c>: the reopened window starts from that level next time.
+    /// </summary>
+    /// <remarks>
+    /// 参考的循环在换等级后把 <c>currentBannedSpellsLevel</c> 改掉再重开；端口在这里只记下等级，重开由宿主负责。
+    /// </remarks>
+    /// <param name="spellLevel">Spell level, 1 to 5.</param>
+    public void FocusBannedSpellsLevel(int spellLevel)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(spellLevel, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(spellLevel, MageGuildSpellTable.LevelCount);
+
+        CurrentBannedSpellsLevel = spellLevel;
     }
 
     /// <summary>

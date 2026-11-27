@@ -6537,3 +6537,189 @@ ESC 与回车交出同一个数，`Value` 只在校验通过时有值。
 
 **坑**：`Mp2TileInfo.GroundLayer` / `GroundIcnType` 是只读派生属性，用例里只能写 `ObjectName1 = icnType << 2` 与
 `Quantity1` 的层位；`Quantity2` 才是 `metadata()[1]`（`Metadata` 是右移三位后的打包值，别混）。
+
+## ADR-339：无 World 的 Mp2 地块通行性（`a7l.7.4.3.2.1`）
+
+**问题**：参考的编辑器是 `world.LoadMapMP2` 起来的一个真 World，通行性叠层因此能直接调 `Tile::updatePassability()`。
+端口的编辑器只拿着一张 `Mp2Map`，没有 World；而 `Tile.UpdatePassability` / `IsAnyTallObjectOnTile` /
+`IsDetachedObject` / `GetIndexOfMainTile` / `GetHero` / `FixMP2MapTileObjectType` 的入参都是 `World`。
+
+**先数清楚 World 到底被用了哪几样**：对 `Tile.cs` 里所有 `world.` 调用做了清点，只有 `Geometry`、`GetTile(index)`、
+`GetHero(id)`、`GetMapEvent(index)` 四样（外加 `SetHero` 里的 `ResetPathfinder`，那条不在通行性路径上）。于是：
+
+1. 新增 `FHeroes2.Game.Maps.ITileNeighbourhood`（`MapGeometry? Geometry` / `Tile GetTile(int)` /
+   `Hero? GetHero(int)` / `MapEvent? GetMapEvent(int)`），`World` 声明实现它；上列方法连 `UpdateObjectType` /
+   `UpdatePriceOfLoyaltyObjectType` / `GetDailyIncomeObjectResources` 一起改成吃接口。`SetHero(World, Hero)` 保持原样
+   （要重置寻路器）。全部调用点传的是 `World`，编译与行为不变——2328 条 UI 测试与 4039 条 Game 测试原样通过。
+2. 新增 `FHeroes2.Game.Maps.MapTileSet : ITileNeighbourhood`：从 `Mp2Map` 按 `World.LoadMap` 同样的顺序建 `Tile[]`
+   （`SetTerrain` → `Init` → addon 链 → `SortObjectParts` → `FixMP2MapTileObjectType`），再跑
+   `World.UpdatePassabilities` 一模一样的两遍（主物件类型为空先 `UpdateObjectType`，全体 `SetInitialPassability`，
+   再全体 `UpdatePassability`）。`GetHero` / `GetMapEvent` 恒 null：编辑器地块不驻英雄、也没有地面事件。
+3. `MapTileSet.Refresh( Mp2Map map, int index )`：重建那一格，然后对 `getAroundIndexes( _index, 1 )` 的八个邻居与它自己
+   各跑一遍 `SetInitialPassability` + `UpdatePassability`（`maps_tiles.cpp:1479-1493` 的口径）。地图参数要传：`Mp2Map`
+   是 record，编辑器改一格是换出一张新地图。
+
+**为什么不做「把 Mp2Map 装成 World 镜像」那条路**：`World.LoadMap` 会连带英雄、城堡、王国、法术、地面事件与 `PostLoad`
+（区域划分与寻路器都跑一遍），每次编辑后重跑不可接受。接口抽取让同一套算法能在「只有地块」的上下文里跑，也不产生第二份实现；
+`a7l.7.5` 的 View World 若需要完整 World，走的仍是 `LoadMap`，两条路互不妨碍。
+
+**已知偏差**：① 地块里存着 `MP2::OBJ_ACTION_HERO`（地图文件留下的英雄标记）时，参考会透过英雄看到下面的物件，端口这里
+`GetHero` 恒 null，于是读成空地。② 合成地图的物件 `uid` 是 0 时 `DoesObjectExist(0)` 会命中空白地块的默认部件，把整格判成
+不可进——真实地图的 uid 从 1 起，这是用例踩到的坑，不是端口 bug（用例里给了 uid 1）。
+
+**验证**：`MapTileSetTests` 五条——空地全通；挡路山只放行中排与下排；压在地图底边整格不可进；`Refresh` 画上山后变化、
+擦掉后回到全通；`GetHero` / `GetMapEvent` 恒 null 且尺寸正确。全量 **7175 通过**（301 + 441 + 66 + 4039 + 2328），0 警告 0 错误。
+
+## ADR-340：编辑器通行性叠层（`a7l.7.4.3.2.2`）
+
+**参考**：`Interface::GameArea::Redraw()` 里 `LEVEL_PASSABILITIES` 与战争迷雾互斥（`interface_gamearea.cpp:768-793`：打开叠层时雾根本不画）；叠层本身是 `Maps::redrawPassable()`（`maps_tiles_render.cpp:916-929`）逐格 `BlitOnTile( surface, 0, 0, mp )`，判定为 `isActionObject || passable != Direction::ALL`，编辑器侧用 `isOffGameActionObject`（纯动作位），游戏内用 `isInGameActionObject`。标记帧 `PassableViewSurface()`（`:188-277`）是一像素宽的框：全通全绿、走不通全红、部分可走时把每条边切三段，斜角方向的开合决定外侧三分之一，直走方向决定中间三分之一。
+
+**做法**：
+
+1. `FHeroes2.Game.AdventureMap.PassabilityOverlay`：把 UI `TileRendering` 里的 `GetPassableViewSurface` 与 512 帧缓存整块搬过来（Game 不能引 UI，而编辑器要画），另给 `IsMarked` / `IsActionObject` / `Draw`。像素逻辑逐行照搬，`Surfaces` 仍是 `(mask, isActionObject)` 键的进程内缓存；UI 的私有方法改成转调，`RedrawPassable` 的动作对象判定也改用 `IsActionObject`，两处只剩一份实现。
+2. `AdventureMapView.Draw( target, drawTownsOverFog, animationPhase, MapTileSet? passability = null )`：非空时在物件层之后画标记并**跳过迷雾**，与参考的互斥一致；地块集尺寸与地图不符时抛 `ArgumentException`。
+3. `EditorScene.PassabilityTileSet()`：`Settings::isEditorPassabilityEnabled` 关着返回 `null`。打开时第一次 `MapTileSet.Create`，之后每帧比对 `Mp2Map` 对象引用——`Mp2Map` 是 record，编辑、撤销、重做都只是换出一张新地图——变了就逐格比一遍 `Mp2TileInfo`，只对真正变过的格子 `Refresh`。比给每条编辑路径挂回调稳妥（撤销、重做、将来的粘贴都自动覆盖），代价是每帧一次二十万字节级的结构比较，实测冒烟 61.8 FPS 无感。
+4. 选项对话框的 `Passability` 早就写 `SetEditorPassability`，不需要新开关；参考在切换后置 `REDRAW_GAMEAREA`，端口每帧整幅重画，注释里说明为什么不需要重画位。
+
+**验证**：`PassabilityOverlayTests` 六条（全通绿框且内部透明、全封红框、动作对象换 115 的绿、`TopLeft|Right` 只让左上角与右边中段变绿——三段划分、`IsMarked` 的两种触发、`Draw` 只画框不动内部）、`AdventureMapPassabilityTests` 四条（无叠层画地形、有叠层画山的红框且内部留地形、全通地块没有标记、尺寸不符抛 `ArgumentException`）、`EditorScenePassabilityTests` 一条端到端（开关来回，视口里标记像素在 90 与地形色之间切换）。全量 **7186 通过**（301+441+67+4049+2328），0 警告 0 错误，编辑器冒烟 61.8 FPS。
+
+**坑**：编辑器网格线正好压在标记框的上边与左边（`DrawGrid` 在合并后的帧上再画一遍），用例读像素会读到网格色；`AdventureMapView` 的标记按地块左上角画，所以取像素要取底边（`y = 30`）中段才可靠。
+
+## ADR-341：编辑器选项页的语言子页（`a7l.7.4.4.1`）
+
+**参考**：`editor_options.cpp:283-296`。多于一个语言时开 `fheroes2::selectLanguage( getSupportedLanguages(), getGameLanguage(), true )`，换了语言就 `clearWarningMessage` + `redrawEditor` + `saveConfiguration = true`；只剩英文时把语言钉成英文并弹 `Attention`：「Your version of Heroes of Might and Magic II does not support any other languages than English.」。
+
+**拆分**：`a7l.7.4.4` 体量超一次会话（四个子页各有自己的模态与请求循环），按规则升为 epic，拆成 `.4.4.1` 语言（本次）、`.4.4.2` 图形、`.4.4.3` 音频、`.4.4.4` 热键，彼此无依赖。
+
+**做法**：
+
+1. `FHeroes2.App.Localization.LanguageCatalog`：主菜单原本私有的 `SelectLanguages` / `IndexOfCulture` 搬出来共用——能画出来的语言只能是有 CJK 字形的那些（`fonts.SupportsCjk`），选中的语言按文化名找、找不到退回第一个本地化目录再退回 0。主菜单两处调用点改成转调，删掉私有副本，避免两边走岔。
+2. `FHeroes2.App.Modals.GameLanguagePickerModal`：把 `LanguageSelectionDialog` 摞进模态栈（它走 `SetCursor` / `SetLeftButton` 那一套，不读 `LocalEvent`，天然适合当内层窗）；`Okay` 收下、`Cancel` 取消，取消时返回 -1。与 `LanguagePickerModal`（地图规格窗的「附加语言」，选项来自 `SupportedLanguage` 枚举）不是一回事，注释里写清了。
+3. `EditorSceneHost.RunLanguagePicker( names, selectedIndex, title )` 只收**显示名**与标题，不认识 `GameText`——选择器因此不依赖装了几份译文就能测；窗口、按钮行（SYSTEM.ICN 的 OKAY+CANCEL）都在这里建，缺素材/缺帧泵时打日志返回 -1。
+4. `EditorScene.SwitchInterfaceLanguage()`：`EditorOptionsAction.Language` 接上。多于一个语言开选择器、写 `Settings.SetGameLanguage`、返回 true 让外层落盘；只有一个语言走参考的提示分支。参考的 `clearWarningMessage` 端口没有（编辑器还没有警告条），`redrawEditor` 也不需要——场景每帧整幅重画，字形表按 `GameLanguage.Current` 现查（`FontGlyphTable`），换完语言下一帧就是新译文，**不用重载字体**。
+
+**已知偏差**：编辑器界面文案目前是英文字面量（参考的 `_()` 还没落到编辑器 chrome 上），所以这一页改的是整个游戏的语言设置与已本地化的那部分文案，编辑器自己的字样要等本地化那一轮才跟着变。
+
+**验证**：`EditorLanguageOptionTests` 六条——无帧泵返回 -1、语言表为空时不开窗、取消返回 -1 且高亮的是当前语言、选中第 1 行返回 1、`SwitchInterfaceLanguage` 端到端（按实际装的语言数走对应分支：装了两份时选中项写进设置并返回 true，只有英文时钉成英文且弹一个窗）、没有数据时不崩。全量 **7192 通过**（301+441+73+4049+2328），0 警告 0 错误，编辑器冒烟 62.1 FPS。
+
+## ADR-342：编辑器选项页的图形子页（`a7l.7.4.4.2`）
+
+**参考**：`editor_options.cpp:307-311` 调 `openGraphicsSettingsDialog( rebuildEditor )`；`dialog_graphics_settings.cpp:238-295` 是个 `SelectedWindow` 状态机——五处选项（模式、分辨率、屏幕缩放、垂直同步、系统信息）任选一项后 `Apply` 再回到 `Configuration` 重开同一页，关窗才是 `Exit`；`updateUI` 只在改分辨率后调（缩放只对主菜单重画，`:274-277`）。
+
+**做法**：
+
+1. `App.Modals.GraphicsSettingsModal`：把 `GraphicsSettingsDialog` 包成一轮模态，同 `EditorOptionsModal` 的缝——一帧画一次、拿到叶子就收摊，交给调用方 `Apply` 再重开。右键的五处说明摞在模态自己的栈上（参考在循环里直接阻塞开窗，端口不能在这里递归 `GameHost.RunModal`）。
+2. `EditorSceneHost.TryCreateGraphicsSettingsDialog` 装美术：`SPANEL` 必须有；`RESOLUTION_ICON`、`GAME_OPTION_ICON`、`EMPTY_OPTION_ICON_BACKGROUND` 这套数据里都没有（新版资源，同 `BattleSettingsWindow` 的旧数据坑），缺哪张退回同尺寸空图标并打一条 warn，页面的字与状态照样画得出来。窗口控制取自 `LocalEvent.Current.Engine?.Display`，没窗口时页面仍画得出来、只是全屏/分辨率不真的生效。
+3. `EditorScene.OpenGraphicsSettings()`：一轮一个模态，`Exit` 跳出，否则 `GraphicsSettingsDialog.Apply(page, option, RebuildInterface, SelectResolution)` 累加脏标记。`updateUI` 就是 `RebuildInterface`，与参考「只在分辨率后 rebuildEditor」一致，模式/缩放/垂直同步/系统信息四项不重画整套界面。
+
+**已知缺口**：`EditorSceneHost.SelectResolution` 是留好的缝，目前为 null，所以 Resolution 一行点了不变——接它需要把主菜单首运流程那套（`ResolutionArtwork` + `ResolutionDialog` + 提示框 + 引擎模式切换）抽成可复用模态，已开 `a7l.7.4.4.5`。
+
+**验证**：`EditorGraphicsOptionTests` 七条——无数据时返回 null 且跑页面得到 `Exit`、有数据时页面按标准尺寸建出来、无帧泵时跳过、点 V-Sync 行叶子是 `VSync`、点 OK 是 `Exit`、`OpenGraphicsSettings` 两轮（V-Sync→OK）真的翻转 `Settings.IsVSyncEnabled` 并返回 true、直接关窗返回 false 且设置不变。另：两个新测试类都挂 `LocalEventCollection`——它们共写 `LocalEvent.Current` / `GameAssets.Current`，并行跑会互相拆台（第一次全量跑就撞出过一条失败）。全量 **7199 通过**（301+441+80+4049+2328），0 警告 0 错误，编辑器冒烟 59.5 FPS。
+
+## ADR-343：编辑器选项页的音频子页（`a7l.7.4.4.3`）
+
+**参考**：`editor_options.cpp:313-316` 调 `Dialog::openAudioSettingsDialog( false )`，返回值并进 `saveConfiguration`，然后 `action = Configuration` 回选项页；`dialog_audio.cpp:149-259` 是整窗阻塞循环，音量按 `( volume + 1 ) % 11` 原地翻、音乐类型与 3D 音效照翻，右键走说明框。
+
+**做法**：
+
+1. `App.Modals.AudioSettingsModal`：把 `AudioSettingsDialog` 包成一轮模态，与 `GraphicsSettingsModal` 同构——一帧画一次，`ProcessEvents` 说关窗就收摊，`IsDirty` 直接透出去当 `saveConfiguration`（这一页的设置都在页内当场写，不需要像图形页那样再 `Apply`）。右键说明同样摞在模态自己的栈上。
+2. `EditorSceneHost.TryCreateAudioSettingsDialog`：美术只有 `SPANEL`（四处图标）与共用按钮，字体给说明框标题/正文；`RunAudioSettingsDialog` 跑一轮返回 `IsFinished && IsDirty`，无帧泵时 `false`。
+3. `EditorScene.OpenAudioSettings()` 接 `EditorOptionsAction.AudioSettings` → `saveConfiguration |=`。
+
+**已知缺口**：App 侧还没有混音器（只有放音乐的 `AudioPlayer`），所以 `EditorSceneHost.Audio` 默认 null——两处音量点不动、图标恒显示 off，与参考在没有声卡时的表现一致；音乐类型与 3D 音效照常生效。接混音器后由宿主赋值即可，已在属性文档里写明。
+
+**验证**：`EditorAudioOptionTests` 七条——无数据返回 null 且跑页面为 false、有数据按 289x272 建出来、无帧泵跳过、无设备时页面仍开且点音乐类型能翻、直接关窗不动设置、`OpenAudioSettings` 翻音乐类型后返回 true、直接关窗返回 false。全量 **7206 通过**（301+441+87+4049+2328），0 警告 0 错误，编辑器冒烟 60.0 FPS。
+
+## ADR-344：编辑器选项页的热键子页（`a7l.7.4.4.4`）
+
+**参考**：`editor_options.cpp:317-321` 调 `fheroes2::openHotkeysDialog()`，无返回值、不碰 `saveConfiguration`，然后 `action = Configuration` 回选项页；`dialog_hotkeys.cpp:415-482` 是整窗阻塞循环——列表滚动、单击选类别、双击等按键改写、右键弹说明。
+
+**做法**：
+
+1. `App.Modals.HotKeysModal`：把 `HotKeysDialog`（UI 层的 `ListBox<HotKeyRow>`）包成一轮模态，与前两页同构：一帧画一次，`ProcessEvents` 返回 OK 或 Cancel 就收摊，右键说明摞在自己的栈上。这一页 `IsDirty` 不往外传——参考改键是当场写进热键表、不落配置。
+2. `EditorSceneHost.TryCreateHotKeysDialog`：美术是 `SCROLL`（滚动条五帧）、`ADVBORD` 第 0 帧（窗底）与共用按钮，与分辨率窗同一套；字体黄/白/黄（标题、行、选中行）。`RunHotKeysDialog` 跑一轮，无帧泵就跳过。
+3. `EditorScene.OpenHotKeys()` 接 `EditorOptionsAction.HotKeys`，不带 `saveConfiguration`。
+
+到此选项页四格（语言、图形、音频、热键）全部接上。
+
+**验证**：`EditorHotKeyOptionTests` 六条——无数据返回 null、有数据建出页面且行表非空、点 OK 结束模态、Escape 结束模态、无帧泵时跳过、`OpenHotKeys` 经场景跑通一轮。全量 **7212 通过**（301+441+93+4049+2328），0 警告 0 错误，编辑器冒烟 62.0 FPS。
+
+## ADR-345：编辑器图形页的分辨率选择窗（`a7l.7.4.4.5`）
+
+**参考**：`dialog_graphics_settings.cpp:255-269` 的 Resolution 一项调 `Dialog::SelectResolution()`，返回 `true` 才 `updateUI()`；`dialog_resolution.cpp:196-300` 是阻塞的列表窗（滚动、双击=选中并确认、右键解释），确认时 `engine().setResolution()`。
+
+**做法**：
+
+1. `App.Modals.ResolutionPickerModal`：把 `ResolutionDialog` 包成一轮模态，与音频/热键页同构：一帧画一次，OK 且 `IsSelected` 时先 `IDisplayControl.SetResolution` 再收摊并记 `Accepted`（引擎拒绝只留一条日志，与主菜单首运流程一致），Cancel/Escape 直接收摊。右键解释摞在自己的栈上。
+2. `EditorSceneHost.TryCreateResolutionDialog`：美术与主菜单同一套（`SCROLL` 五帧 + `ADVBORD[0]` + 共用按钮），行只留 `GameSize == 640x480` 的那些（其余 `SetResolution` 会拒绝，ADR-205），没有显示设备或一条可用行都没有时返回 `null` 并 warn。
+3. `EditorSceneHost.RunResolutionPicker` 跑一轮返回 `IsFinished && Accepted`；`SelectResolution` 在构造函数里默认接到它，仍是可置 `null` 的缝（置空就退回「点了不变」）。`OpenGraphicsSettings` 里 `Apply` 收到 `true` 后照旧 `RebuildInterface`（`updateUI`）。
+
+**验证**：`EditorResolutionOptionTests` 八条——无数据/无显示设备时返回 null 且跑页面为 false、列表只留帧缓冲尺寸的行（三条可用行滤掉 800x600 那条）、`SelectResolution` 默认非空、OK 换窗成功、Escape 不换、`Apply( Resolution )` 换窗并触发 `updateUI`、`OpenGraphicsSettings` 经场景两轮（分辨率→OK）换窗并返回 true。全量 **7220 通过**（301+441+101+4049+2328），0 警告 0 错误，编辑器冒烟 63.5 FPS。
+
+**收尾**：`a7l.7.4.4`（选项页四个子页）四个子页与分辨率缝全部接上，epic 随之关闭。
+
+## ADR-346：城堡详情窗的 App 模态骨架（`bpn.2.1`）
+
+**参考**：`editor_castle_details_window.cpp:790-1100` 是个阻塞函数，循环里再开`Dialog::inputString`（改名，`:882-890`）、`showStandardTextMessage`（右键说明与`Dialog::OK | CANCEL`的未保存确认，`:855-867`）、`mageGuildSpellsDialog`（禁法，`:873`）；军队条不是窗口，光标落进条里就`armyBar.QueueEventProcessing( &message )`（`:992-1003`）。OKAY/EXIT 各有对应热键（`DEFAULT_OKAY`/`DEFAULT_CANCEL`），EXIT 与热键都先比对改动再弹确认。
+
+**做法**：
+
+1. `CastleDetailsInput` 加`Accept()`与`RequestDiscard()`：热键没有鼠标坐标可判，把`:851`/`:855` 两支单拎成显式入口，Process 里的同一处也改调它们，语义与点按钮完全一致（EXIT 那支依旧走`TryDiscard`，未保存确认从热键来也一样弹）。
+2. `App.Modals.EditorCastleDetailsModal`：与`EditorMapSpecsModal`同构——每帧`UpdateButtonPressStates` 再`Process`，内层窗摞在自己的`Stack<IModalScreen>`上；`HotKey` 在栈空时映射 Okay→`Accept`、Cancel→`RequestDiscard`（后者可能只留下确认请求，这里立刻把它开出来）；EditName →`Dialog::inputString`（标题空、正文`Enter Castle name:`、上限`nameCharLimit = 30`，确定且非空才写`CustomName`，`:882-890`）；ShowMessage → `TryCreateMessageBox`，未保存确认用`OK | CANCEL` 且 OK 表示放弃（`:862-866`）；Army → 把这一帧喂给`CastleDetailsView.ArmyBar`，它自己管选中与拖放，要宿主回答的事件留在`ArmyEvent` 上。
+3. `CastleDetailsView` 暴露出`ArmyBar`、`OkayArea`、`ExitArea`（军队条要吃事件、测试要点按钮）。
+4. `EditorSceneHost.TryCreateCastleDetails(state, gamePalette)` + `RunCastleDetails` 返回`Outcome`（`Accepted` = 调用方把状态写回地图）；`TryCreateMessageBox` 加可选的按钮参数，旧的 OK 单键调用不受影响。
+
+**已知缺口**（各自成子项）：Set Spells 的魔法行会窗还没接（`bpn.2.2`），军队条的拆兵/兵种说明/加兵三个回答留在`ArmyEvent` 上（`bpn.2.3`）。
+
+**拆分**：`bpn.2` 升级为 epic，子项`.2.1`（本条）、`.2.2`、`.2.3`，后两者依赖`.2.1`；`bpn.3` 仍挂在 epic 上。
+
+**验证**：`EditorCastleDetailsModalTests` 八条——无数据返回 null 且跑窗为 `None`、点 OKAY / 热键 Okay 都是`Accepted`、干净窗口 Escape 不问直接`Discarded`、有改动 Escape 先弹确认且 OK 放弃、确认里 Cancel 回到窗口再 Okay 是`Accepted`、改名写进`CustomName`、右键名字弹说明。全量 **7228 通过**（301+441+109+4049+2328），0 警告 0 错误，编辑器冒烟 58.2 FPS。
+
+## ADR-347：编辑器放大镜的 View World（`a7l.7.5`）
+
+**参考**：`editor_interface.cpp:2183-2186` 的 `eventViewWorld()` 只有一句 `ViewWorld::ViewWorldWindow( PlayerColor::NONE, ViewWorldMode::ViewAll, *this )`——编辑器不裁雾，看的是整张图。窗口的循环（`view_world.cpp:700-795`）里滚轮换档（713-716）、按住拖拽平移（734-745）、右键只对退出按钮弹说明（753-758）、退出按钮与 ESC 关窗并把当前档位写回 conf（771-772）。
+
+**做法**：
+
+1. `World.CreatePreview(Mp2Map)`：编辑器手上只有地图对象，而窗口、雷达与图标层都按 `World` 写。工厂现装一个一次性世界（`LoadMap` 只读地图），不碰 `World.Current`，尺寸对不上就照 `LoadMap` 的规矩抛 `ArgumentException`。
+2. `EditorSceneHost.RunViewWorld(view, viewport, frame, zoomLevel)`：`ViewWorldMapBuilder` 按 `ViewAll` 建整图缓存，`ViewWorldRenderer.DrawObjectsIcons` 补图标层，`ViewWorldWindow` 与冒险地图同一套参数（`PlayerColor.None`、编辑器视口、整屏尺寸、`Settings.IsEvilInterfaceEnabled`），返回窗口离场时的档位。没有帧泵或数据不全时只 warn 返回 `null`，不打断编辑器。
+3. `App.Modals.ViewWorldModal`：把 `ViewWorldOverlay` 包成模态，编辑器因此不必像 `AdventureMapScene` 那样在 `GameHost` 里特判三处输入。`SetLeftButton` 不带坐标，落点按最近一次光标算；滚轮不在 `IModalScreen` 的输入面上，`Update` 每帧读 `LocalEvent`（与参考在循环里读同一份状态）；ESC 与退出按钮同一条收摊路径。
+4. `EditorScene`：`ClickSystemButton(Magnify)` 走 `OpenViewWorld()`；档位记在场景字段（与 `AdventureMapScene` 同口径，不进 `Settings`），下一回从这一档开。世界与缓存随模态一起丢，地图一格都不被回写。
+5. 测试：`WorldPreviewTests` 四条（建世界且不换 `Current`、地图只被读、雾层可读、尺寸不符与 null 拒绝）；`EditorViewWorldTests` 两条（点放大镜开出整图窗口且帧被整屏覆盖、退出后回到原帧、档位记忆到下一回）。App 测试新增 `AssemblyInfo.cs` 按类串行：这批用例共用 `GameAssets.Current` 与 `Settings.Get()`，并行时 View World 的合成表按钮会撞上别的类关掉的归档。
+
+**验证**：全量 **7234 通过**（301+441+111+4053+2328），0 警告 0 错误。
+
+**收尾**：`a7l.7`（面板系统按钮接线）全部子项完成，epic 随之关闭。
+
+## ADR-348：城堡详情窗的 SET SPELLS（`bpn.2.2`）
+
+**参考**：`editor_castle_details_window.cpp:383-605` 的 `mageGuildSpellsDialog()`。五行卷轴每格点开 `Dialog::selectSpell()`（`dialog_selectitems.cpp:1117-1141`），BANNED SPELLS 点开 `Editor::openSpellSelectionWindow()`（`editor_spell_selection.cpp:172-208`，`pickDisabledSpells = true`），换等级时改 `currentBannedSpellsLevel` 再重开一层（`:515-521`）；热键先 Cancel 后 Okay（`:443-448`），两个按钮的悬停提示写在状态栏。
+
+**做法**：
+
+1. `MageGuildSpellsInput` 补三处：`Accept()` / `Cancel()` 作为按钮与默认热键的共同入口（原来只在 `Process` 里内联），`FocusBannedSpellsLevel()` 记下 `currentBannedSpellsLevel`——参考在换等级时改它，端口由宿主在重开前调用。
+2. `EditorSceneHost.RunSpellSelection` 拆成两半：`TryCreateSpellSelection(...)` 只造窗（原来的字体、美术检查搬进去），`RunSpellSelection` 保留「跑一层、换等级再来一层」的循环。已在模态里的调用方（魔法行会子窗）不能走 `RunModal`——那会在城堡详情窗开着时把帧泵套成两层。
+3. `EditorSceneHost.TryCreateSpellSelect(...)` 造 `Dialog::selectSpell()`：列表内容 `SpellSelectDialog.BuildSpellList(includeRandomSpells: true, …)`、图标 `ICN::SPELLS`（首次读入后缓存在 `_spellIcons`）、列表美术与标题/正文两套字体，最后包成 `App.Modals.SpellSelectModal`。
+4. `EditorSceneHost.TryCreateMageGuildSpells(state, dialogArea)` 造子窗：`MageGuildSpellTable` 按种族建表并从元数据 `Load`，`MageGuildSpellsView` 摆在城堡窗的 `dialogRoi` 上，`MageGuildSpellsInput` 拿同一份元数据。
+5. `App.Modals.MageGuildSpellsModal` 自带内层栈：`SelectSpell` → `SpellSelectModal`、`SelectBannedSpells` → `EditorSpellSelectionModal`、`ShowMessage` / `ShowSpell` → 消息框与法术说明。内层关掉时按类型回填（`ApplySelectedSpell` / `ApplyBannedSpells`），选法术列表为空时照参考弹 `Warning` / `There are no spells to select.`（`includeRandomSpells` 为真时其实进不去这条路，留着对齐结构）。禁法窗回 `LevelChanged` 时不写回这一层，记下新等级后在栈上再压一层，旧层结果丢掉。
+6. `EditorCastleDetailsModal` 的 `SetSpells` 分支改走 `TryCreateMageGuildSpells`；关窗时没有要回填的（元数据在 OKAY 时已写回）。`CastleDetailsView` 补 `DialogArea`（`dialogRoi`）与 `SpellsArea`（SET SPELLS 按钮区域）。
+7. 测试：`MageGuildSpellsTests` 加三条（默认 Okay / 默认 Cancel 两个入口、`FocusBannedSpellsLevel` 之后按钮在那一级开）；新增 `EditorCastleDetailsSetSpellsTests` 四条（点 SET SPELLS 开五行子窗、点格子把选择器压到子窗栈上、点 BANNED SPELLS 开禁法窗且等级为 1、子窗 OKAY 写回元数据）。
+
+**验证**：全量 **7241 通过**（301+441+115+4053+2331），0 警告 0 错误。
+
+## ADR-349：城堡详情窗的兵种说明（`bpn.2.3.1`）
+
+**参考**：`dialog_armyinfo.cpp:518-712` 的 `Dialog::ArmyInfo()`。窗口自己转循环：每帧 `Redraw`，`ProcessEvents` 里处理退出 / 升级 / 解散三个按钮与三个热键（`:599-660`），升级与解散先弹 YES/NO 询问框（`:604-640`），升级买不起时弹带资源图标的提示（`:628-641`），右键点在各处弹 `getTooltip` 的说明（`:660-700`）。没有按钮的形态（`armyInfo(troop, 0)`）在右键松开时关窗（`:556-570`）。关窗后调用方只拿一个 `DialogButton` 去喂 `ArmyBar::ApplyInfoAnswer()`。
+
+**做法**：
+
+1. `EmptyButtons` 补齐小型文字按钮的三张表：`BUTTON_SMALL_DISMISS_*`、`BUTTON_SMALL_EXIT_*`、`BUTTON_SMALL_UPGRADE_*` 共用 `BuildSmallTextButton(isGoodInterface, releasedFrame)`，帧下标分别是 `VIEWARMY`/`VIEWARME` 的 1/2、3/4、5/6（`game_assets.cpp:1194-1205`），裁剪与把四角置透明的步骤与原来一致。`Assets.GetFileName` 把这六个 `IcnType` 接到 `EmptyButtons` 的名字常量上，合成表由 `GetSynthetic` 的既有分支建出来。
+2. `App.Modals.ArmyInfoModal` 包住 `ArmyInfoDialog`：`Draw` 画窗口与三个按钮，`Update` 把 `LocalEvent.Current` 与热键交给 `ProcessEvents`；按钮事件按 `ArmyInfoAction` 分派——`Exit`/`Cancel` 直接收摊，`Upgrade`/`Dismiss` 先压一层 YES/NO 询问框，`UpgradeDisabled` 与右键提示压一层 OK 框。询问框只有 YES 才真的关窗并回填答案，NO 只是把框弹掉。
+3. 内层消息框走 `_inner` 栈，与 `MageGuildSpellsModal` 同一套写法：有内层窗时鼠标、热键、按键全归它，画也画在窗口之上。窗口没有按钮时按 `LocalEvent.Current.IsMouseRightButtonPressed` 松开判定关窗。
+4. `EditorSceneHost.TryCreateArmyInfo(dialog)` 造窗：`VIEWARMY`/`VIEWARME` 八帧读成 `ArmyInfoArtwork`，退出 / 升级 / 解散按钮各读两帧（升级、解散只在 `dialog.CanUpgrade` / `CanDismiss` 为真时读），`ArmyInfoLayout.Create(整屏) ` 排位置，最后包成 `ArmyInfoModal`。资材缺失时只 warn 回 `null`。
+5. `EditorCastleDetailsModal` 的 `Army` 分支接 `ArmyBarEvent.Info`：把当前请求记成 `_pending`，造窗压栈；内层窗关掉时 `ArmyBar.ApplyInfoAnswer(dialog.Troop, modal.Answer)`（静态方法，升级走 `troop.Upgrade()`、解散走 `troop.Reset()`）。造不出来只 warn，军队条照旧留在窗口上。
+6. 已知缺口：单位精灵还没画（怪兽动画未转，`Draw` 传 `null`）；升级买不起的提示没有资源图标与花费，只有文字。
+
+**测试**：新增 `EditorCastleDetailsArmyInfoTests` 三条——双击军队条把兵种说明压到城堡窗栈上、解散先问再清空槽位、退出按钮不动兵力；`EmptyButtonsTests` 加一条核对三张表分别取 1/2、3/4、5/6 帧。
+
+**验证**：全量 **7245 通过**（301+441+118+4054+2331），0 警告 0 错误。

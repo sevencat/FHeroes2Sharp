@@ -117,6 +117,12 @@ public sealed class CastleDetailsView
     public CastleDetailsState State => _state;
 
     /// <summary>
+    /// The area the panels of the window live in, <c>dialogRoi</c> (<c>editor_castle_details_window.cpp:383</c>):
+    /// the mage guild sub-window and its pickers are placed in it.
+    /// </summary>
+    public Rect DialogArea => _frame.DialogArea;
+
+    /// <summary>
     /// The strip the castle name is clicked in, empty when the castle is not a town (the name of a ruin is
     /// not editable, <c>:648-655</c>).
     /// </summary>
@@ -136,6 +142,22 @@ public sealed class CastleDetailsView
 
     /// <summary>The area of the six army slots, <c>armyBar.GetArea()</c>.</summary>
     public Rect ArmyBarArea => _armyBar.RenderingArea;
+
+    /// <summary>Area of the OKAY button, <c>buttonOkay.area()</c>; empty when the frame has none.</summary>
+    public Rect OkayArea => _frame.Okay?.Area ?? Rect.Empty;
+
+    /// <summary>Area of the EXIT button, <c>buttonExit.area()</c>; empty when the frame has none.</summary>
+    public Rect ExitArea => _frame.Exit?.Area ?? Rect.Empty;
+
+    /// <summary>The area of the SET SPELLS button, the one that opens the mage guild sub-window.</summary>
+    public Rect SpellsArea => _frame.Spells?.Area ?? Rect.Empty;
+
+    /// <summary>
+    /// The army strip itself, <c>armyBar</c> of the reference: the editor's window hands the events of the bar
+    /// area to it directly (<c>armyBar.QueueEventProcessing( &amp;message )</c>, <c>:992-1003</c>), because nothing
+    /// of the castle window answers the bar's own questions.
+    /// </summary>
+    public ArmyBar ArmyBar => _armyBar;
 
     /// <summary>
     /// Loads the artwork of the dialog.

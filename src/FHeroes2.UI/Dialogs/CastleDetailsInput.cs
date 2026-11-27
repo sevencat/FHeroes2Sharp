@@ -264,12 +264,12 @@ public sealed class CastleDetailsInput
         // OKAY 和 EXIT 先判：参考的循环里它们排在所有控件之前，点下去这一帧的其余判断都不再走。
         if (events.MouseClickLeft(OkayArea))
         {
-            return Outcome = CastleDetailsOutcome.Accepted;
+            return Accept();
         }
 
         if (events.MouseClickLeft(ExitArea))
         {
-            return TryDiscard();
+            return RequestDiscard();
         }
 
         if (events.MouseClickLeft(RestrictArea))
@@ -427,6 +427,27 @@ public sealed class CastleDetailsInput
 
         return Outcome;
     }
+
+    /// <summary>
+    /// The OKAY button pressed from outside the event loop, the <c>HotKeyEvent::DEFAULT_OKAY</c> half of <c>:851</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>le.MouseClickLeft( buttonOkay.area() ) || Game::HotKeyPressEvent( DEFAULT_OKAY )</c> 是同一个分支的开头，
+    /// 热键由宿主送进来时没有鼠标坐标可判，所以把这一半单拎出来，语义与点 OKAY 完全相同。
+    /// </remarks>
+    /// <returns><see cref="CastleDetailsOutcome.Accepted"/>.</returns>
+    public CastleDetailsOutcome Accept() => Outcome = CastleDetailsOutcome.Accepted;
+
+    /// <summary>
+    /// The EXIT path from outside the event loop, the <c>HotKeyEvent::DEFAULT_CANCEL</c> half of <c>:855</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考这一支先 <c>updateMetadata()</c> 再比对新旧，端口把「有没有改动」交给 <see cref="CastleDetailsState.HasUnsavedChanges"/>
+    /// （见 <c>TryDiscard</c>）；所以热键与点 EXIT 走的是同一条路，包括那句确认请求。
+    /// </remarks>
+    /// <returns><see cref="CastleDetailsOutcome.Discarded"/> when nothing changed, otherwise
+    /// <see cref="CastleDetailsOutcome.None"/> with the confirmation left in <see cref="Request"/>.</returns>
+    public CastleDetailsOutcome RequestDiscard() => TryDiscard();
 
     /// <summary>
     /// Answers the exit confirmation the window asked for, <c>:855-867</c>.

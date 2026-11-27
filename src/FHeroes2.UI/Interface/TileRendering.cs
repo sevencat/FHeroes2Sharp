@@ -1486,119 +1486,12 @@ public static class TileRendering
 
     /// <summary>Passability overlays, <c>PassableViewSurface()</c> (<c>maps_tiles_render.cpp:188-277</c>).</summary>
     /// <remarks>
-    /// One 31 by 31 frame per passability mask and action flag: red where a hero may not leave the tile, green where
-    /// it may. The reference draws the frame into a fresh image and outlines the eight sides of the tile by thirds so
-    /// that a diagonal connection only colours the part of the edge that belongs to it.
+    /// The frames live in <see cref="PassabilityOverlay"/>: the map editor draws them out of the Game assembly, so the
+    /// table of 512 images cannot stay here.
     /// </remarks>
     /// <param name="passable">Passability mask of the tile.</param>
     /// <param name="isActionObject">Whether the tile carries an action object, which shifts the green.</param>
     /// <returns>The overlay, owned by the cache.</returns>
-    private static Sprite GetPassableViewSurface(Direction passable, bool isActionObject)
-    {
-        (int passableMask, bool actionObject) key = ((int)passable, isActionObject);
-
-        if (PassableViewSurfaces.TryGetValue(key, out Sprite? cached))
-        {
-            return cached;
-        }
-
-        const int size = 31;
-        const byte red = 0xBA;
-        byte green = isActionObject ? (byte)115 : (byte)90;
-
-        Sprite surface = new(size, size);
-
-        // Every pixel starts transparent, so only the frame the reference paints becomes visible.
-        if (surface.Transform is { } transform)
-        {
-            Array.Fill(transform, (byte)1);
-        }
-
-        if (passable == Direction.Unknown || passable == Direction.Center)
-        {
-            ImageOps.DrawBorder(surface.Image, red);
-        }
-        else if (passable == Directions.All)
-        {
-            ImageOps.DrawBorder(surface.Image, green);
-        }
-        else
-        {
-            // Thirds of an edge: the outer thirds belong to the diagonal neighbours, the middle third to the
-            // straight one.
-            const int quarter = 10;
-            const int threeQuarters = 21;
-
-            byte topLeftColor = (passable & Direction.TopLeft) != 0 ? green : red;
-            byte topColor = (passable & Direction.Top) != 0 ? green : red;
-            byte topRightColor = (passable & Direction.TopRight) != 0 ? green : red;
-            byte leftColor = (passable & Direction.Left) != 0 ? green : red;
-            byte rightColor = (passable & Direction.Right) != 0 ? green : red;
-            byte bottomLeftColor = (passable & Direction.BottomLeft) != 0 ? green : red;
-            byte bottomColor = (passable & Direction.Bottom) != 0 ? green : red;
-            byte bottomRightColor = (passable & Direction.BottomRight) != 0 ? green : red;
-
-            Span<byte> pixels = surface.Image.Pixels;
-
-            // Horizontal edges.
-            for (int x = 0; x < quarter; ++x)
-            {
-                pixels[x] = topLeftColor;
-                pixels[x + ((size - 1) * size)] = bottomLeftColor;
-            }
-
-            for (int x = quarter; x < threeQuarters; ++x)
-            {
-                pixels[x] = topColor;
-                pixels[x + ((size - 1) * size)] = bottomColor;
-            }
-
-            for (int x = threeQuarters; x < size; ++x)
-            {
-                pixels[x] = topRightColor;
-                pixels[x + ((size - 1) * size)] = bottomRightColor;
-            }
-
-            // Vertical edges.
-            for (int y = 0; y < quarter; ++y)
-            {
-                pixels[y * size] = topLeftColor;
-                pixels[(size - 1) + (y * size)] = topRightColor;
-            }
-
-            for (int y = quarter; y < threeQuarters; ++y)
-            {
-                pixels[y * size] = leftColor;
-                pixels[(size - 1) + (y * size)] = rightColor;
-            }
-
-            for (int y = threeQuarters; y < size; ++y)
-            {
-                pixels[y * size] = bottomLeftColor;
-                pixels[(size - 1) + (y * size)] = bottomRightColor;
-            }
-        }
-
-        if (surface.Transform is { } layer)
-        {
-            for (int x = 0; x < size; ++x)
-            {
-                layer[x] = 0;
-                layer[x + ((size - 1) * size)] = 0;
-            }
-
-            for (int y = 1; y < size - 1; ++y)
-            {
-                layer[y * size] = 0;
-                layer[(size - 1) + (y * size)] = 0;
-            }
-        }
-
-        PassableViewSurfaces[key] = surface;
-
-        return surface;
-    }
-
-    /// <summary>Overlays already built, keyed by the passability mask and the action flag.</summary>
-    private static readonly Dictionary<(int PassableMask, bool IsActionObject), Sprite> PassableViewSurfaces = [];
+    private static Sprite GetPassableViewSurface(Direction passable, bool isActionObject) =>
+        PassabilityOverlay.GetSurface(passable, isActionObject);
 }

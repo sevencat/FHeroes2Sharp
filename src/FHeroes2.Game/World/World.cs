@@ -39,7 +39,7 @@ namespace FHeroes2.Game;
 /// never copies.
 /// </para>
 /// </remarks>
-public sealed partial class World
+public sealed partial class World : ITileNeighbourhood
 {
     /// <summary>Number of days in a game week, <c>numOfDaysPerWeek</c>.</summary>
     public const int NumOfDaysPerWeek = 7;
@@ -157,6 +157,34 @@ public sealed partial class World
     /// The world the game is playing, the reference's <c>World::Get()</c> / <c>world</c>.
     /// </summary>
     public static World Current { get; set; } = new();
+
+    /// <summary>
+    /// Builds a throwaway world out of a map that is not being played, the world the editor's View World
+    /// window shows (<c>editor_interface.cpp:2183</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 编辑器手上只有一份 <see cref="Mp2Map"/>，而 View World 的窗口、雷达与图标层都按 <see cref="World"/> 写，
+    /// 所以打开预览时要现装一个世界。
+    /// </para>
+    /// <para>
+    /// 这个实例只活到窗口关掉：它不写 <see cref="Current"/>，也不回写地图（<see cref="LoadMap"/> 只读地图对象）。
+    /// 难度退回地图头里的那一档，与测试和工具的老口径一致。
+    /// </para>
+    /// </remarks>
+    /// <param name="map">The map to build the world from; it is not modified.</param>
+    /// <returns>A world holding the map's tiles.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="map"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The dimensions of <paramref name="map"/> do not match its tile count.</exception>
+    public static World CreatePreview(Mp2Map map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        var world = new World();
+        world.LoadMap(map);
+
+        return world;
+    }
 
     /// <summary>Map width in tiles, <c>w()</c>; zero while no map is loaded.</summary>
     public int Width { get; private set; }

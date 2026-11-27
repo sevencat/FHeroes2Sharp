@@ -1,4 +1,5 @@
 using FHeroes2.App.Fonts;
+using FHeroes2.App.Localization;
 using FHeroes2.Assets;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Assets.Maps;
@@ -8,11 +9,14 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Maps;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Editor;
 using FHeroes2.UI.Input;
 using FHeroes2.UI.Interface;
+
+using ZoomLevel = FHeroes2.Game.Kingdom.ZoomLevel;
 
 namespace FHeroes2.App.Scenes;
 
@@ -62,9 +66,10 @@ namespace FHeroes2.App.Scenes;
 /// undo history.
 /// </para>
 /// <para>
-/// Not ported yet: the system buttons of <c>EditorPanel</c> (undo, redo, grid, view, menu) — this
-/// release of the game ships thirty-five frames of <c>EDITBTNS.ICN</c> and those buttons need more —
-/// and the property dialogs of the objects, which the information box only reports.
+/// The magnifier of the system row opens the View World window over the map being edited, the
+/// <c>eventViewWorld()</c> of <c>editor_interface.cpp:2183</c>: a modal that builds a throwaway world out
+/// of the map, caches the whole map at every zoom level and comes back with the level it was left at.
+/// Not ported yet: the property dialogs of the objects, which the information box only reports.
 /// </para>
 /// </summary>
 public sealed class EditorScene : IScene
@@ -133,6 +138,13 @@ public sealed class EditorScene : IScene
     private const int ScrollRight = 2;
     private const int ScrollTop = 4;
     private const int ScrollBottom = 8;
+
+    /// <summary>Header of the note the Language option shows when only English is installed.</summary>
+    private const string AttentionTitle = "Attention";
+
+    /// <summary>Body of that note, verbatim from <c>editor_options.cpp:293-295</c>.</summary>
+    private const string OnlyEnglishMessage =
+        "Your version of Heroes of Might and Magic II does not support any other languages than English.";
 
     /// <summary>Height of the decorated header of the panel bay in <c>ADVBORD.ICN</c>.</summary>
     private const int PanelHeaderHeight = 16;
@@ -258,6 +270,25 @@ public sealed class EditorScene : IScene
 
     /// <summary>What the scene asks of the host: the frame pump of its windows, <see langword="null"/> until wired.</summary>
     private readonly EditorSceneHost _host;
+
+    /// <summary>
+    /// Passability of every tile, <see langword="null"/> until the overlay is switched on once. Kept across frames and
+    /// patched tile by tile, because the editor replaces the whole map on every edit.
+    /// </summary>
+    private MapTileSet? _passability;
+
+    /// <summary>The map version <see cref="_passability"/> was built from; the reference edits its world in place.</summary>
+    private Mp2Map? _passabilitySource;
+
+    /// <summary>
+    /// The zoom level the View World window was left at, the <c>conf.ViewWorldZoomLevel()</c> the reference keeps
+    /// (<c>view_world.cpp:771-772</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="AdventureMapScene"/> 一样只记在场景里，不进 <see cref="Settings"/>：端口的设置还没有这一项，
+    /// 两个场景各记各的，退出游戏就丢——与参考在 <c>--no-config</c> 下的行为一致。
+    /// </remarks>
+    private ZoomLevel _viewWorldZoom = ZoomLevel.ZoomLevel2;
 
     private EditorScene(
         ScreenBuffer frame,
@@ -824,7 +855,7 @@ public sealed class EditorScene : IScene
         _frame.Pixels.Clear();
         DrawFrameChrome();
 
-        _editor.Map.Draw(_viewportPixels, animationPhase: _animationPhase);
+        _editor.Map.Draw(_viewportPixels, animationPhase: _animationPhase, passability: PassabilityTileSet());
         ImageOps.Blit(_frame.Pixels, _viewport.Position, _viewportPixels, _viewportPixels.Bounds);
 
         DrawGrid();
@@ -1335,8 +1366,8 @@ public sealed class EditorScene : IScene
 
     /// <summary>
     /// Runs one of the six system buttons of the panel. Undo and redo are the two the port answers itself;
-    /// the magnifier needs a zoom, and the file menu is a later subtask, so their buttons do nothing yet.
-    /// The specifications button opens the page the port already has, the system button the options page.
+    /// the magnifier opens the View World window, the file menu its own loop. The specifications button opens the
+    /// page the port already has, the system button the options page.
     /// </summary>
     /// <param name="button">The button whose cell was clicked.</param>
     private void ClickSystemButton(EditorSystemButton button)
@@ -1349,6 +1380,10 @@ public sealed class EditorScene : IScene
 
             case EditorSystemButton.Redo:
                 Redo();
+                break;
+
+            case EditorSystemButton.Magnify:
+                OpenViewWorld();
                 break;
 
             case EditorSystemButton.Specs:
@@ -1365,6 +1400,23 @@ public sealed class EditorScene : IScene
 
             default:
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Opens the View World window over the map being edited, <c>eventViewWorld()</c>
+    /// (<c>editor_interface.cpp:2183-2186</c>).
+    /// </summary>
+    /// <remarks>
+    /// 与冒险地图的放大镜不同，参考的编辑器调的是整图预览（<c>ViewWorldMode::ViewAll</c>、<c>PlayerColor::NONE</c>），
+    /// 不切换编辑区的缩放。窗口是模态，回来之后把缩放档记住；<see cref="EditorSceneHost.RunViewWorld"/> 在数据不全时
+    /// 只留日志，编辑器不受影响。
+    /// </remarks>
+    private void OpenViewWorld()
+    {
+        if (_host.RunViewWorld(_editor, _viewport, _frame, _viewWorldZoom) is { } zoom)
+        {
+            _viewWorldZoom = zoom;
         }
     }
 
@@ -1399,6 +1451,77 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>
+    /// The graphics page of the system options, <c>openGraphicsSettingsDialog( rebuildEditor )</c> of
+    /// <c>editor_options.cpp:307-311</c>: run one turn of the page, apply the leaf, reopen until the author is done.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的循环（<c>dialog_graphics_settings.cpp:238-295</c>）每选完一项就回到 <c>Configuration</c> 重开同一页，关窗才是
+    /// <c>Exit</c>；端口照抄：一轮一个模态，<see cref="GraphicsSettingsDialog.Apply"/> 落设置，再开一轮。
+    /// </para>
+    /// <para>
+    /// <c>updateUI</c> 就是 <see cref="RebuildInterface"/>。参考只在改分辨率后调它（缩放变化只对主菜单重画，
+    /// <c>:274-277</c>），所以模式、缩放、垂直同步、系统信息四项都不重画整套界面。
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether at least one setting changed, the reference's <c>saveConfiguration</c>.</returns>
+    public bool OpenGraphicsSettings()
+    {
+        bool changed = false;
+
+        while (_host.TryCreateGraphicsSettingsDialog() is { } page)
+        {
+            GraphicsSettingsOption option = _host.RunGraphicsSettingsDialog(page);
+
+            if (option == GraphicsSettingsOption.Exit)
+            {
+                break;
+            }
+
+            if (GraphicsSettingsDialog.Apply(page, option, RebuildInterface, _host.SelectResolution))
+            {
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// The hot keys page of the system options, <c>fheroes2::openHotkeysDialog()</c> of
+    /// <c>editor_options.cpp:317-321</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考这一页既没有返回值也没有 <c>saveConfiguration</c>——改键当场写进热键表，关窗就回选项页。端口照抄。
+    /// </remarks>
+    public void OpenHotKeys()
+    {
+        if (_host.TryCreateHotKeysDialog() is { } page)
+        {
+            _host.RunHotKeysDialog(page);
+        }
+    }
+
+    /// <summary>
+    /// The audio page of the system options, <c>Dialog::openAudioSettingsDialog( false )</c> of
+    /// <c>editor_options.cpp:313-316</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考这一页是整窗阻塞的循环（<c>dialog_audio.cpp:149-259</c>），端口一轮一个模态；关窗时把页面自己的
+    /// <c>IsDirty</c> 当 <c>saveConfiguration</c> 交回来，音量、音乐类型与 3D 音效都在页内当场写进设置，不用再 apply。
+    /// </remarks>
+    /// <returns>Whether at least one setting changed, the reference's <c>saveConfiguration</c>.</returns>
+    public bool OpenAudioSettings()
+    {
+        if (_host.TryCreateAudioSettingsDialog() is not { } page)
+        {
+            return false;
+        }
+
+        return _host.RunAudioSettingsDialog(page);
+    }
+
+    /// <summary>
     /// The options page behind the system button, <c>openEditorSettings()</c> of
     /// <c>editor_options.cpp:235-378</c>: run one turn of the page, apply the action, reopen until the author is done.
     /// </summary>
@@ -1411,12 +1534,12 @@ public sealed class EditorScene : IScene
     /// <para>
     /// 参考在这里还要 <c>redrawEditor</c> / <c>rebuildEditor</c>：通行性的叠层和对象动画都要重画地图，换界面风格
     /// 更是要把边框、雷达、控制面板整套换皮。界面风格的换皮已经在 <see cref="RebuildInterface"/> 里接上；动画开关
-    /// 由 <see cref="UpdateAnimation"/> 每帧读设置，场景本来每帧整幅重画，所以开关一翻就生效，不需要额外的重画位；
-    /// 通行性叠层还没移植，挂在 <c>a7l.7.4.3.2</c> 上。
+    /// 由 <see cref="UpdateAnimation"/> 每帧读设置，通行性叠层由 <see cref="PassabilityTileSet"/> 每帧现取，场景本来
+    /// 每帧整幅重画，所以两个开关一翻就生效，不需要额外的重画位。
     /// </para>
     /// <para>
-    /// 四个子页（语言、图形、音频、热键）的窗口 UI 层都有，但各有自己的模态与请求循环，还都没接进 App
-    /// （<c>a7l.7.4.4</c>），所以现在只留日志。
+    /// 四个子页语言（<see cref="SwitchInterfaceLanguage"/>）、图形（<see cref="OpenGraphicsSettings"/>）、音频
+    /// （<see cref="OpenAudioSettings"/>）与热键（<see cref="OpenHotKeys"/>）都已接上。
     /// </para>
     /// </remarks>
     public void OpenEditorOptions()
@@ -1469,10 +1592,19 @@ public sealed class EditorScene : IScene
                     break;
 
                 case EditorOptionsAction.Language:
+                    saveConfiguration |= SwitchInterfaceLanguage();
+                    break;
+
                 case EditorOptionsAction.Graphics:
+                    saveConfiguration |= OpenGraphicsSettings();
+                    break;
+
                 case EditorOptionsAction.AudioSettings:
+                    saveConfiguration |= OpenAudioSettings();
+                    break;
+
                 case EditorOptionsAction.HotKeys:
-                    GameLog.Warn($"The options page asked for {action}, and no window answers it yet.");
+                    OpenHotKeys();
                     break;
 
                 case EditorOptionsAction.Exit:
@@ -1486,6 +1618,62 @@ public sealed class EditorScene : IScene
                     return;
             }
         }
+    }
+
+    /// <summary>
+    /// The Language option of the page: pick the interface language, <c>editor_options.cpp:283-296</c>.
+    /// </summary>
+    /// <returns>Whether the language changed, i.e. whether the preferences have to be saved.</returns>
+    /// <remarks>
+    /// <para>
+    /// 参考在有多个语言时开 <c>selectLanguage( supported, 当前, true )</c>，换了语言就 <c>clearWarningMessage</c> +
+    /// <c>redrawEditor</c> + <c>saveConfiguration = true</c>；只剩英文时把语言钉成英文并弹一句提示。
+    /// </para>
+    /// <para>
+    /// 端口没有 <c>clearWarningMessage</c>（编辑器还没有警告条），<c>redrawEditor</c> 也不需要——场景每帧整幅重画，
+    /// 字形表按 <c>GameLanguage.Current</c> 现查（<see cref="FHeroes2.App.Fonts.FontGlyphTable"/>），所以换完语言下一帧
+    /// 就是新译文，不用重载字体。编辑器的界面文案目前还是英文字面量，因此这一页改的是整个游戏的语言设置，编辑器自己的
+    /// 字样要等本地化那一轮才跟着变。
+    /// </para>
+    /// </remarks>
+    public bool SwitchInterfaceLanguage()
+    {
+        if (_assets is not { } assets || _fonts is not { } fonts)
+        {
+            GameLog.Warn("The language picker needs the game data and the fonts; it stays closed.");
+
+            return false;
+        }
+
+        Settings settings = Settings.Get();
+        IReadOnlyList<GameText> languages = LanguageCatalog.Select(GameText.LoadAll(assets.DataDirectory), fonts);
+        int current = LanguageCatalog.IndexOfCulture(languages, settings.GameLanguage);
+
+        if (languages.Count <= 1)
+        {
+            // 参考断言过这一支只剩英文（editor_options.cpp:287-293）：钉成英文，再解释一句为什么。
+            bool changed = !string.Equals(settings.GameLanguage, languages[0].Culture, StringComparison.OrdinalIgnoreCase);
+
+            settings.SetGameLanguage(languages[0].Culture);
+            _host.ShowMessage(AttentionTitle, OnlyEnglishMessage);
+
+            return changed;
+        }
+
+        int picked = _host.RunLanguagePicker(
+            [.. languages.Select(language => language.NativeName)],
+            current,
+            languages[current].Get(MainMenuScene.LanguagePickerTitleId));
+
+        if (picked < 0 || picked == current)
+        {
+            return false;
+        }
+
+        settings.SetGameLanguage(languages[picked].Culture);
+        GameLog.Info($"The interface language is now '{languages[picked].NativeName}', {languages[picked].Culture}.");
+
+        return true;
     }
 
     /// <summary>
@@ -1856,6 +2044,57 @@ public sealed class EditorScene : IScene
 
         _animationElapsed -= steps * AnimationInterval;
         _animationPhase += (uint)steps;
+    }
+
+    /// <summary>
+    /// The passability of the tiles when <c>Settings::isEditorPassabilityEnabled()</c> asks for the overlay,
+    /// <see langword="null"/> otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的编辑器直接读自己那个 <c>World</c> 的地块方向；端口的地块集是从 <see cref="Mp2Map"/> 现算的，所以第一次打开
+    /// 叠层时整张算一遍，之后每次编辑只补变过的格子（<see cref="MapTileSet.Refresh"/>）。
+    /// </para>
+    /// <para>
+    /// 地图换了一张新对象就是编辑过：<see cref="Mp2Map"/> 是 record，<see cref="MapEditSession"/> 每落一笔都换出一张新的。
+    /// 逐格比一遍比整张重建便宜得多，也比给每条编辑路径都挂回调稳妥——撤销、重做同样只是换了张地图。
+    /// </para>
+    /// </remarks>
+    /// <returns>The tile set to hand to the view, or <see langword="null"/> to draw the plain map.</returns>
+    private MapTileSet? PassabilityTileSet()
+    {
+        if (!Settings.Get().IsEditorPassabilityEnabled)
+        {
+            return null;
+        }
+
+        Mp2Map map = Map;
+
+        if (_passability is { } set && _passabilitySource is { } source && ReferenceEquals(source, map))
+        {
+            return set;
+        }
+
+        if (_passability is not { } tileSet || tileSet.Geometry is not { } geometry
+                                               || geometry.Width != map.Width || geometry.Height != map.Height)
+        {
+            _passability = MapTileSet.Create(map);
+            _passabilitySource = map;
+
+            return _passability;
+        }
+
+        for (int index = 0; index < map.Tiles.Count; ++index)
+        {
+            if (!map.Tiles[index].Equals(_passabilitySource!.Tiles[index]))
+            {
+                tileSet.Refresh(map, index);
+            }
+        }
+
+        _passabilitySource = map;
+
+        return tileSet;
     }
 
     /// <summary>Bits of the directions whose scroll region contains <paramref name="cursor"/>.</summary>

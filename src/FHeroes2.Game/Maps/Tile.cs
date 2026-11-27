@@ -170,7 +170,7 @@ public sealed partial class Tile
     /// <c>MP2::OBJ_HERO</c> is the action value (183), i.e. <see cref="Mp2ObjectType.ActionHero"/>;
     /// <see cref="Mp2ObjectType.Hero"/> is the non-action twin that no map stores.
     /// </remarks>
-    public Hero? GetHero(World world)
+    public Hero? GetHero(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -269,7 +269,7 @@ public sealed partial class Tile
     /// it is, and <see cref="Mp2ObjectType.None"/> when the hero cannot be resolved.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
-    public Mp2ObjectType GetMainObjectTypeUnderHero(World world)
+    public Mp2ObjectType GetMainObjectTypeUnderHero(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -299,7 +299,7 @@ public sealed partial class Tile
     /// the passability of the tile under it must be decided by the object the hero covers
     /// (<c>maps_tiles.cpp:686</c>: "get object type but ignore heroes as they are temporary objects").
     /// </remarks>
-    public Mp2ObjectType GetMainObjectType(World world, bool ignoreObjectUnderHero = true) =>
+    public Mp2ObjectType GetMainObjectType(ITileNeighbourhood world, bool ignoreObjectUnderHero = true) =>
         ignoreObjectUnderHero ? _mainObjectType : GetMainObjectTypeUnderHero(world);
 
     /// <summary>
@@ -320,7 +320,7 @@ public sealed partial class Tile
     /// </remarks>
     /// <param name="world">The world the tile belongs to.</param>
     /// <returns>The object type without the action bit, seen through a hero standing on the tile.</returns>
-    public Mp2ObjectType GetNonActionObjectType(World world) =>
+    public Mp2ObjectType GetNonActionObjectType(ITileNeighbourhood world) =>
         Mp2ObjectTypes.NonActionType(GetMainObjectType(world, false));
 
     /// <summary>The part that represents the object of the tile, <c>_mainObjectPart</c>.</summary>
@@ -1009,7 +1009,7 @@ public sealed partial class Tile
     /// <param name="world">The world the tile belongs to, for the neighbouring tiles.</param>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The tile is not part of <paramref name="world"/>.</exception>
-    public void UpdateObjectType(World world)
+    public void UpdateObjectType(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -1126,7 +1126,7 @@ public sealed partial class Tile
     /// </remarks>
     /// <param name="world">The world the tile belongs to.</param>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
-    public void FixMP2MapTileObjectType(World world)
+    public void FixMP2MapTileObjectType(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -1255,7 +1255,7 @@ public sealed partial class Tile
     /// <param name="part">Part of the object of this tile.</param>
     /// <param name="world">The world the tile belongs to.</param>
     /// <returns><c>true</c> when the tile type was decided from this part.</returns>
-    private bool UpdatePriceOfLoyaltyObjectType(ObjectPart part, World world)
+    private bool UpdatePriceOfLoyaltyObjectType(ObjectPart part, ITileNeighbourhood world)
     {
         switch (part.IcnType)
         {
@@ -1302,7 +1302,7 @@ public sealed partial class Tile
     /// <param name="world">The world the tile belongs to.</param>
     /// <returns><c>true</c> when a part of one of this tile's objects is on the top layer of the tile above.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
-    public bool IsAnyTallObjectOnTile(World world)
+    public bool IsAnyTallObjectOnTile(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -1354,7 +1354,7 @@ public sealed partial class Tile
     /// <param name="world">The world the tile belongs to.</param>
     /// <returns><c>true</c> when the object stands on its own tile only.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
-    public bool IsDetachedObject(World world)
+    public bool IsDetachedObject(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -1413,7 +1413,7 @@ public sealed partial class Tile
     /// <param name="world">The world the tile belongs to.</param>
     /// <returns>The index of the main tile, or <c>-1</c> when the object has none (a broken map).</returns>
     /// <exception cref="ArgumentNullException"><paramref name="tile"/> or <paramref name="world"/> is <see langword="null"/>.</exception>
-    public static int GetIndexOfMainTile(Tile tile, World world)
+    public static int GetIndexOfMainTile(Tile tile, ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(tile);
         ArgumentNullException.ThrowIfNull(world);
@@ -1502,7 +1502,7 @@ public sealed partial class Tile
     /// </remarks>
     /// <param name="world">The world the tile belongs to.</param>
     /// <exception cref="ArgumentNullException"><paramref name="world"/> is <see langword="null"/>.</exception>
-    public void UpdatePassability(World world)
+    public void UpdatePassability(ITileNeighbourhood world)
     {
         ArgumentNullException.ThrowIfNull(world);
 
@@ -1685,7 +1685,7 @@ public sealed partial class Tile
     /// </remarks>
     /// <param name="world">The world the tile belongs to, needed to see through a hero on the tile.</param>
     /// <returns>The daily income, empty for objects that pay nothing.</returns>
-    public Funds GetDailyIncomeObjectResources(World world)
+    public Funds GetDailyIncomeObjectResources(ITileNeighbourhood world)
     {
         switch (GetNonActionObjectType(world))
         {
