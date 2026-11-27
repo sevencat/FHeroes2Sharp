@@ -133,6 +133,9 @@ public sealed class CastleDetailsView
     /// <summary>The strip the status message is centred in.</summary>
     public Rect StatusBarMessageArea => _frame.StatusBarMessageArea;
 
+    /// <summary>The area of the six army slots, <c>armyBar.GetArea()</c>.</summary>
+    public Rect ArmyBarArea => _armyBar.RenderingArea;
+
     /// <summary>
     /// Loads the artwork of the dialog.
     /// </summary>

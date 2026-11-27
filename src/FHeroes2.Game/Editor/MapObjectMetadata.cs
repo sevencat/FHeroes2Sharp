@@ -105,6 +105,27 @@ public sealed class CastleMetadata : IEquatable<CastleMetadata>
 
         return hash.ToHashCode();
     }
+
+    /// <summary>
+    /// Copies the castle, arrays and lists included, <c>CastleMetadata( const CastleMetadata &amp; )</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的拷贝构造对 <c>std::vector</c> 与 <c>std::map</c> 都是逐元素拷贝，所以这里也得深拷贝：浅拷一份拿去做
+    /// 「打开窗口时的快照」，之后作者改了建筑，快照会跟着一起变，退出时的「有没有未保存改动」就永远答否。
+    /// </remarks>
+    /// <returns>An independent copy.</returns>
+    public CastleMetadata Clone() => new()
+    {
+        CustomName = CustomName,
+        DefenderMonsterType = (int[])DefenderMonsterType.Clone(),
+        DefenderMonsterCount = (int[])DefenderMonsterCount.Clone(),
+        CustomBuildings = CustomBuildings,
+        BuiltBuildings = [.. BuiltBuildings],
+        BannedBuildings = [.. BannedBuildings],
+        MustHaveSpells = new(MustHaveSpells),
+        BannedSpells = [.. BannedSpells],
+        AvailableToHireMonsterCount = (int[])AvailableToHireMonsterCount.Clone()
+    };
 }
 
 /// <summary>

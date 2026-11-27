@@ -101,6 +101,53 @@ public sealed class MageGuildSpellTable
     public static SpellType GetPlaceholder(int spellLevel) => SpellType.Random + spellLevel;
 
     /// <summary>
+    /// Whether a spell type is one of the five placeholders rather than a real spell.
+    /// </summary>
+    /// <param name="spell">The spell type.</param>
+    /// <returns><see langword="true"/> for <c>Spell::RANDOM + level</c>.</returns>
+    public static bool IsPlaceholder(SpellType spell)
+    {
+        int id = (int)spell;
+
+        return id > (int)SpellType.Random && id <= (int)SpellType.Random + LevelCount;
+    }
+
+    /// <summary>
+    /// The spells the spell picker must not offer for a slot, <c>:413-425</c>: the other spells of the row,
+    /// every placeholder, and the banned spells of that level. The slot's own spell stays selectable unless it
+    /// is a placeholder.
+    /// </summary>
+    /// <param name="levelIndex">Level index, 0 for the first level.</param>
+    /// <param name="slot">Slot inside the level.</param>
+    /// <returns>The spell ids to exclude, in the order the reference inserts them.</returns>
+    public IReadOnlyList<int> GetExcludedSpells(int levelIndex, int slot)
+    {
+        SpellType currentSpell = GetSpell(levelIndex, slot);
+        int spellLevel = levelIndex + 1;
+
+        List<int> excluded = [];
+
+        foreach (SpellType spell in _rows[levelIndex])
+        {
+            // 当前那一格的法术留着可选，占位符则永远不给选（它不是真法术）。
+            if ((spell != currentSpell || IsPlaceholder(spell)) && !excluded.Contains((int)spell))
+            {
+                excluded.Add((int)spell);
+            }
+        }
+
+        foreach (int spellId in _bannedSpells)
+        {
+            if (new Spell(spellId).Level() == spellLevel && !excluded.Contains(spellId))
+            {
+                excluded.Add(spellId);
+            }
+        }
+
+        return excluded;
+    }
+
+    /// <summary>
     /// Fills the rows from the metadata, <c>:340-361</c>.
     /// </summary>
     /// <param name="metadata">The castle.</param>

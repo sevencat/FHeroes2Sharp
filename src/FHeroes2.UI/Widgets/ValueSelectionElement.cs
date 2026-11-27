@@ -51,6 +51,29 @@ public sealed class ValueSelectionElement
     /// <summary>Gap between the two arrows.</summary>
     public const int ButtonGap = 5;
 
+    /// <summary>
+    /// The size an element built from <paramref name="editBox"/> and <paramref name="upArrow"/> takes,
+    /// <c>ValueSelectionDialogElement::getArea()</c> of the reference.
+    /// </summary>
+    /// <param name="editBox">The edit box, <c>TOWNWIND.ICN</c> frame <see cref="EditBoxFrame"/>.</param>
+    /// <param name="upArrow">The released up arrow, <c>TOWNWIND.ICN</c> frame <see cref="UpReleasedFrame"/>.</param>
+    /// <returns>Width of the box, the gap and the arrow; twice the arrow height plus the gap.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="editBox"/> or <paramref name="upArrow"/> is <see langword="null"/>.
+    /// </exception>
+    /// <remarks>
+    /// 参考的 <c>getArea()</c> 返回的是写死的尺寸，调用方在创建控件之前就要用它来居中；
+    /// 端口没有那张写死的表，改成从实际美术件算出同一组数，创建控件与布局测量共用它。
+    /// </remarks>
+    public static Size GetArea(Sprite editBox, Sprite upArrow)
+    {
+        ArgumentNullException.ThrowIfNull(editBox);
+        ArgumentNullException.ThrowIfNull(upArrow);
+
+        return new Size(
+            editBox.Width + ArrowGap + upArrow.Width, (upArrow.Height * 2) + ButtonGap);
+    }
+
     private readonly IGlyphSource _font;
     private readonly int _minimum;
     private readonly int _maximum;
@@ -107,9 +130,8 @@ public sealed class ValueSelectionElement
         _editBoxSprite = frames[EditBoxFrame];
         _upSprite = frames[UpReleasedFrame];
 
-        int areaWidth = _editBoxSprite.Width + ArrowGap + _upSprite.Width;
-        int areaHeight = (_upSprite.Height * 2) + ButtonGap;
-        _area = new Rect(offset, new Size(areaWidth, areaHeight));
+        _area = new Rect(offset, GetArea(_editBoxSprite, _upSprite));
+        int areaHeight = _area.Height;
         _editBox = new Rect(
             offset.X, offset.Y + ((areaHeight - _editBoxSprite.Height) / 2),
             _editBoxSprite.Width, _editBoxSprite.Height);

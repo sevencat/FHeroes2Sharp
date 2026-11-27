@@ -111,6 +111,13 @@ public sealed class MapEditSession
     /// </summary>
     private bool _addonsChanged;
 
+    /// <summary>
+    /// Whether <see cref="Mp2Map.Info"/> was replaced during this session, i.e. the map specifications
+    /// window wrote the header back. The tile patch of a save leaves the header alone, so the save has to
+    /// overwrite it too.
+    /// </summary>
+    private bool _headerChanged;
+
     /// <summary>Undo depth at the last save; the map is dirty while the depth differs from it.</summary>
     private int _savedDepth;
 
@@ -164,9 +171,10 @@ public sealed class MapEditSession
     /// the map either. The depth is compared with the depth at the save, so undoing past the save
     /// counts as a change even though the history only shrinks. An unfinished stroke counts as well:
     /// the tiles under the held button are already changed, and a save in the middle of a drag must not
-    /// look like a clean map.
+    /// look like a clean map. A header replaced by <see cref="ApplyMapInfo"/> is not in the history, so it
+    /// has its own flag.
     /// </remarks>
-    public bool IsDirty => _stroke is not null || _undo.Count != _savedDepth;
+    public bool IsDirty => _stroke is not null || _undo.Count != _savedDepth || _headerChanged;
 
     /// <summary>File <see cref="Save"/> writes to, the file the map was opened from by default.</summary>
     public string SavePath => _savePath;
@@ -1287,6 +1295,38 @@ public sealed class MapEditSession
         return true;
     }
 
+    /// <summary>
+    /// Replaces the header of the map with the one the map specifications window produced,
+    /// <see cref="MapSpecsState.CreateInfo"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 头部不进撤销历史：规格窗没有「撤销」按钮，参考也是确定即生效。换过头部以后 <see cref="SaveAs"/>
+    /// 会把头部一起写回文件（<see cref="Mp2MapWriter.Save"/> 的 <c>writeHeader</c>），否则补丁式保存仍然
+    /// 留着旧名称。
+    /// </para>
+    /// <para>
+    /// 只允许换同一个尺寸的头部：地形区的大小由头部的宽高决定，换了尺寸地图就散架了。
+    /// </para>
+    /// </remarks>
+    /// <param name="info">The new header, normally <see cref="MapSpecsState.CreateInfo"/>'s result.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="info"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">The header has another map size.</exception>
+    public void ApplyMapInfo(Mp2FileInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        if (info.Width != Map.Width || info.Height != Map.Height)
+        {
+            throw new ArgumentException(
+                $"The map is {Map.Width}x{Map.Height}, but the header is {info.Width}x{info.Height}.",
+                nameof(info));
+        }
+
+        Map.Info = info;
+        _headerChanged = true;
+    }
+
     /// <summary>Writes the map to <see cref="SavePath"/>.</summary>
     /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
     /// <returns>Whether the map was written.</returns>
@@ -1309,7 +1349,8 @@ public sealed class MapEditSession
     /// kept as it was read. A map that never had a file — the ones <see cref="Mp2Map.CreateBlank"/>
     /// makes — has nothing to patch, so it is written whole instead (see <see cref="Mp2MapWriter"/>).
     /// The same holds once an object with add-ons was placed: those add-ons are new rows of a section
-    /// the patch does not touch, so the file is written whole from then on.
+    /// the patch does not touch, so the file is written whole from then on. A header replaced by
+    /// <see cref="ApplyMapInfo"/> is written over the original one in the same patch.
     /// </remarks>
     /// <param name="filePath">File to write, created or replaced.</param>
     /// <param name="error">Why the save failed, <see langword="null"/> when it worked.</param>
@@ -1334,11 +1375,12 @@ public sealed class MapEditSession
             }
             else
             {
-                Mp2MapWriter.Save(filePath, Map, _savePath);
+                Mp2MapWriter.Save(filePath, Map, _savePath, writeHeader: _headerChanged);
             }
 
             _savePath = filePath;
             _addonsChanged = false;
+            _headerChanged = false;
             _savedDepth = _undo.Count;
             return true;
         }

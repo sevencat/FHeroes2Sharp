@@ -337,10 +337,30 @@ public sealed class MageGuildDialog
         PixelBuffer target,
         MageGuildLayout layout,
         Sprite building,
+        MapRace race) => DrawGuildBuilding(target, layout.Dialog.Position, MageGuildLayout.DialogHeight, building, race);
+
+    /// <summary>
+    /// Draws the guild's picture into a window of any size, <c>renderMageGuildBuilding()</c>
+    /// (<c>castle_mageguild.cpp:33-95</c>).
+    /// </summary>
+    /// <remarks>
+    /// 编辑器把这张图贴到城堡详情窗的 <c>dialogRoi</c> 里，那里没有 <see cref="MageGuildLayout"/>：参考传的是
+    /// 位置加 <c>Display::DEFAULT_HEIGHT</c> 这么高的裁切区（<c>editor_castle_details_window.cpp:336</c>），
+    /// 高度比窗口高出一截，靠画布的边界再裁一次。所以这里只接位置与高度，两版共用一份算法。
+    /// </remarks>
+    /// <param name="target">The display buffer.</param>
+    /// <param name="dialog">Top left corner of the window the picture goes into.</param>
+    /// <param name="clipHeight">Height of the column the picture is clipped to.</param>
+    /// <param name="building">The frame of <see cref="MageGuildArtwork.GetGuildBuildingIcn"/>.</param>
+    /// <param name="race">The town's race.</param>
+    public static void DrawGuildBuilding(
+        PixelBuffer target,
+        Point dialog,
+        int clipHeight,
+        Sprite building,
         MapRace race)
     {
         ArgumentNullException.ThrowIfNull(target);
-        ArgumentNullException.ThrowIfNull(layout);
         ArgumentNullException.ThrowIfNull(building);
 
         Sprite picture = building;
@@ -355,14 +375,14 @@ public sealed class MageGuildDialog
         Rect inked = ImageOps.GetActiveRoi(picture);
 
         Point destination = new(
-            layout.Dialog.X + (MageGuildLayout.GuildColumnWidth / 2) - inked.X - (inked.Width / 2),
-            layout.Dialog.Y + MageGuildLayout.GuildBaselineOffsetY - picture.Height);
+            dialog.X + (MageGuildLayout.GuildColumnWidth / 2) - inked.X - (inked.Width / 2),
+            dialog.Y + MageGuildLayout.GuildBaselineOffsetY - picture.Height);
 
         Rect clip = new(
-            layout.Dialog.X,
-            layout.Dialog.Y,
+            dialog.X,
+            dialog.Y,
             MageGuildLayout.GuildColumnWidth,
-            MageGuildLayout.DialogHeight);
+            clipHeight);
 
         ImageOps.BlitSpriteClipped(target, destination, picture, picture.Image.Bounds, clip);
     }

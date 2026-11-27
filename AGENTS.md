@@ -129,6 +129,34 @@ bd prime                # Refresh Beads context
 - Use `bd` for all task tracking; do not create markdown TODO lists.
 - Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
 - Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
+- 在执行任何 `feature` 或 `task` 类型的 Issue 时，如果发现以下任一情况，**严禁在单个 Issue 中硬编码完成**，必须立即执行拆分：
+1. **上下文消耗预警**：单个任务无法在一次干净的会话（Context Window）内完成并验证测试。
+2. **发现隐藏依赖**：实现过程中发现了未预料到的前置重构或独立子需求。
+
+### 拆分执行步骤：
+1. **升级为 Epic**：将当前过大的 Issue 类型改为 `epic`：
+   `bd update <current-id> --type epic`
+2. **创建子 Issue**：按独立可测试的最小粒度创建子任务，并绑定父级关系：
+   `bd create --parent <current-id> --type task --title "子任务1：数据库Schema迁移"`
+   `bd create --parent <current-id> --type task --title "子任务2：实现核心接口"`
+3. **建立执行顺序依赖**（如果子任务有先后顺序）：
+   `bd dep add <child-2-id> <child-1-id>` （表示 child-2 依赖 child-1 完成）
+4. **重新获取可执行任务**：运行 `bd ready` 领取第一个无阻塞的子任务继续开发，不要直接停留在原 Epic 上。
+
+## 快捷执行指令 (Quick Resume Trigger)
+
+当用户的输入仅为“**继续**”、“**go**”、“**continue**”或“**next**”（不带其他具体指令）时，立即按以下标准流程自动拉取并执行 Beads 任务，无需向用户二次确认：
+
+1. **检查当前状态**：运行 `bd list --status in_progress` 查看是否有正在进行中（未关闭）的 Issue。
+   - 如果已有 `in_progress` 的 Issue，直接读取其详情（`bd show <id>`）并从断点处继续开发。
+2. **拉取新任务**：如果没有进行中的任务，运行 `bd ready` 获取当前无阻塞、最高优先级的就绪 Issue。
+   - 如果 `bd ready` 返回空，运行 `bd list --status open` 向用户汇报剩余未完成但被阻塞的 Issue 列表及原因，并停止执行。
+3. **认领并开工**：
+   - 认领排名第一的就绪 Issue：`bd update <id> --claim`
+   - 读取完整需求描述：`bd show <id>`
+   - **评估体量**：先检查该任务是否过大（参考《自动拆分规则》）；若过大则先拆分为子任务并重新运行 `bd ready`，否则直接开始编写代码与测试。
+4. **单任务闭环**：完成代码修改与验证后，更新状态并关闭当前 Issue（`bd close <id>`），然后简要汇报完成情况并等待下一条指令（不要擅自连续开启下一个 Issue，除非用户再次说“继续”）。
+
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->

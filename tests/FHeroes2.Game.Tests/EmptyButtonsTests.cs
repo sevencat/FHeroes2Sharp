@@ -9,6 +9,7 @@ namespace FHeroes2.Game.Tests;
 /// The run time assembly of the <c>EMPTY_*_BUTTON</c> tables
 /// (<c>generateDefaultImages()</c>, <c>game_assets.cpp:4852-4976</c>) against the real archives.
 /// </summary>
+[Collection(GlobalArchiveCollection.Name)]
 public sealed class EmptyButtonsTests
 {
     [Fact]

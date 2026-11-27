@@ -439,7 +439,8 @@ public sealed partial record Mp2FileInfo
     /// <param name="side1">The colors of the first side.</param>
     /// <param name="side2">The colors of the second side.</param>
     /// <returns>One color set per player index; a color outside both sides stands alone.</returns>
-    private static PlayerColor[] FillUnions(PlayerColor side1, PlayerColor side2)
+    /// <remarks>公开是给编辑器的地图规格窗用：它只存得下「第一方几个颜色」，写回时要重建整张联盟表。</remarks>
+    public static PlayerColor[] FillUnions(PlayerColor side1, PlayerColor side2)
     {
         PlayerColor[] unions = new PlayerColor[PlayerColors.Ordered.Count];
 

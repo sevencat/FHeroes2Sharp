@@ -182,7 +182,11 @@ public sealed class CastleBuildingCell
     /// 顶上去，往上禁时把已建压下来。
     /// </remarks>
     /// <param name="restrictionMode">Whether the author is editing the bans instead of the buildings.</param>
-    public void Cycle(bool restrictionMode)
+    /// <returns>
+    /// Always <see langword="true"/>: the reference returns <c>true</c> as soon as the click lands on the slot
+    /// (<c>:152-175</c>), because either branch moves one of the two levels.
+    /// </returns>
+    public bool Cycle(bool restrictionMode)
     {
         if (restrictionMode)
         {
@@ -198,7 +202,7 @@ public sealed class CastleBuildingCell
                 _builtLevel = _restrictedLevel - 1;
             }
 
-            return;
+            return true;
         }
 
         ++_builtLevel;
@@ -211,6 +215,8 @@ public sealed class CastleBuildingCell
         {
             _restrictedLevel = _builtLevel < _variantCount - 1 ? _builtLevel + 1 : -1;
         }
+
+        return true;
     }
 
     /// <summary>

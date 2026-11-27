@@ -43,17 +43,28 @@ public static class Mp2MapWriter
     /// <param name="sourcePath">
     /// File whose untouched sections are kept; the path the map was read from by default.
     /// </param>
+    /// <param name="writeHeader">
+    /// Also overwrite the leading <see cref="Mp2FileInfo.HeaderSize"/> bytes with
+    /// <see cref="Mp2FileInfo.ToHeaderBytes"/>. The editor needs it after its map specifications window
+    /// replaced <see cref="Mp2Map.Info"/>; the header it produces still starts from the original image, so
+    /// only the modelled fields change.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="map"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="filePath"/> is empty.</exception>
     /// <exception cref="BinaryFormatException">
     /// The source is too short for a map of this size, or the map does not hold one tile per position.
     /// </exception>
-    public static void Save(string filePath, Mp2Map map, string? sourcePath = null)
+    public static void Save(string filePath, Mp2Map map, string? sourcePath = null, bool writeHeader = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(map);
 
         byte[] bytes = File.ReadAllBytes(sourcePath ?? map.Info.FilePath);
+
+        if (writeHeader)
+        {
+            map.Info.ToHeaderBytes().CopyTo(bytes, 0);
+        }
 
         WriteTiles(bytes, map);
         WriteAtomically(filePath, bytes);

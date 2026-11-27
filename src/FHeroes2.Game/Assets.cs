@@ -159,6 +159,15 @@ public static class Assets
         IcnType.ButtonViewworldExitEvil => Gui.ExitButtons.ViewWorldEvilFileName,
         IcnType.MiniMonsterImage => Gui.MiniMonsterSprites.ImageFileName,
         IcnType.MiniMonsterShadow => Gui.MiniMonsterSprites.ShadowFileName,
+        IcnType.DifficultyIconEasy => Gui.ScenarioInfoIcons.DifficultyEasyFileName,
+        IcnType.DifficultyIconNormal => Gui.ScenarioInfoIcons.DifficultyNormalFileName,
+        IcnType.DifficultyIconHard => Gui.ScenarioInfoIcons.DifficultyHardFileName,
+        IcnType.DifficultyIconExpert => Gui.ScenarioInfoIcons.DifficultyExpertFileName,
+        IcnType.DifficultyIconImpossible => Gui.ScenarioInfoIcons.DifficultyImpossibleFileName,
+        IcnType.MetallicBorderedTextboxGood => Gui.ScenarioInfoIcons.MetallicTextboxGoodFileName,
+        IcnType.MetallicBorderedTextboxEvil => Gui.ScenarioInfoIcons.MetallicTextboxEvilFileName,
+        IcnType.StonebakEvil => Gui.EvilInterfaceImages.StonebakEvilFileName,
+        IcnType.DroplislEvil => Gui.EvilInterfaceImages.DroplislEvilFileName,
         _ => IcnCatalog.GetFileName(type),
     };
 
@@ -171,6 +180,7 @@ public static class Assets
     /// 参考：<c>src/fheroes2/game/game_assets.h:36</c> 声明、<c>src/fheroes2/game/game_assets.cpp:5834</c>
     /// <c>uint32_t getImageCount( const int icnId )</c>（非法 ICN 号返回 0）。用它的是
     /// <c>ui_text.cpp:143</c> 的 <c>getCharacterLimit</c>——字体就是逐字符一帧的 ICN。
+    /// 参考数的是 <c>loadICN()</c> 补完帧之后的表，所以 <c>NGEXTRA.ICN</c> 这里是 88 而不是归档里的 82。
     /// </remarks>
     public static int GetImageCount(string fileName)
     {
@@ -178,7 +188,13 @@ public static class Assets
 
         lock (SyncRoot)
         {
-            return GetSynthetic(fileName)?.Length ?? GetIcn(fileName)?.Count ?? 0;
+            if (GetSynthetic(fileName) is { } synthetic)
+            {
+                return synthetic.Length;
+            }
+
+            // NGEXTRA 的帧数要算上 loadICN() 补出来的那六张，见 GetArchiveFrame。
+            return Gui.EditorPlayerIcons.GetFrameCount(fileName, GetIcn(fileName)?.Count ?? 0);
         }
     }
 
@@ -222,6 +238,7 @@ public static class Assets
                              ?? Gui.SmallOkayCancelButtons.Build(fileName)
                              ?? Gui.ExitButtons.Build(fileName)
                              ?? Gui.MiniMonsterSprites.Build(fileName)
+                             ?? Gui.EvilInterfaceImages.Build(fileName)
                              ?? Gui.ScenarioInfoIcons.Build(fileName);
         SyntheticFiles[fileName] = frames;
 
@@ -233,7 +250,13 @@ public static class Assets
     {
         IcnSpriteFile? file = GetIcn(fileName);
 
-        return file is not null && frameId < file.Count ? file.Sprites[frameId] : null;
+        if (file is null)
+        {
+            return null;
+        }
+
+        // 参考 loadICN() 解完归档还会补帧（game_assets.cpp:3940-3989），补出来的帧号超过归档帧数。
+        return frameId < file.Count ? file.Sprites[frameId] : Gui.EditorPlayerIcons.Build(file.Sprites, frameId);
     }
 
     /// <summary>

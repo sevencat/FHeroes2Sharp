@@ -182,6 +182,45 @@ public sealed class MageGuildSpellTableTests
     }
 
     [Fact]
+    public void PlaceholdersAreTheFiveRandomEntries()
+    {
+        for (int spellLevel = 1; spellLevel <= MageGuildSpellTable.LevelCount; ++spellLevel)
+        {
+            Assert.True(MageGuildSpellTable.IsPlaceholder(MageGuildSpellTable.GetPlaceholder(spellLevel)));
+        }
+
+        Assert.False(MageGuildSpellTable.IsPlaceholder(SpellType.Bless));
+        Assert.False(MageGuildSpellTable.IsPlaceholder(SpellType.None));
+    }
+
+    [Fact]
+    public void ThePickerNeverOffersAPlaceholder()
+    {
+        MageGuildSpellTable table = new(MapRace.Knight);
+
+        // 三格全是占位符时，去重后只剩一条——三格本来都是同一个「随机」。
+        Assert.Equal(new[] { (int)MageGuildSpellTable.GetPlaceholder(1) }, table.GetExcludedSpells(0, 0));
+
+        table.SetSpell(0, 0, SpellType.Bless);
+
+        // 自己那一格留着可选，别人那一格照旧排掉。
+        Assert.Equal(new[] { (int)MageGuildSpellTable.GetPlaceholder(1) }, table.GetExcludedSpells(0, 0));
+    }
+
+    [Fact]
+    public void BannedSpellsOfTheLevelAreExcludedFromThePicker()
+    {
+        MageGuildSpellTable table = new(MapRace.Knight);
+        table.SetSpell(0, 0, SpellType.Bless);
+        table.SetBannedSpells([(int)SpellType.Curse, (int)SpellType.Armageddon]);
+
+        // 一级的禁用进一级的清单，五级的不进（参考按 Spell::Level() 过滤）。
+        Assert.Contains((int)SpellType.Curse, table.GetExcludedSpells(0, 0));
+        Assert.DoesNotContain((int)SpellType.Armageddon, table.GetExcludedSpells(0, 0));
+        Assert.Contains((int)SpellType.Armageddon, table.GetExcludedSpells(4, 0));
+    }
+
+    [Fact]
     public void TheGuildTitleIsTheNameOfThatGuildLevel()
     {
         string first = CastleDetailsLabels.GetMageGuildLevelTitle(1);

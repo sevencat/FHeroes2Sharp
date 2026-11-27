@@ -30,6 +30,7 @@ namespace FHeroes2.UI.Dialogs;
 public sealed class CastleDetailsState
 {
     private readonly List<CastleBuildingCell> _cells;
+    private readonly CastleMetadata _onOpen;
 
     /// <summary>
     /// Reads a castle out of the metadata.
@@ -44,6 +45,7 @@ public sealed class CastleDetailsState
         ArgumentNullException.ThrowIfNull(army);
 
         Metadata = metadata;
+        _onOpen = metadata.Clone();
         Race = race;
         Army = army;
         IsNeutral = color == PlayerColor.None;
@@ -163,6 +165,26 @@ public sealed class CastleDetailsState
     /// Empties the army, what the reset button does (<c>:981-991</c>).
     /// </summary>
     public void ResetArmy() => Army.Reset();
+
+    /// <summary>
+    /// Clears the custom name, what the reset button next to the name bar does (<c>:905-911</c>).
+    /// </summary>
+    public void ResetName() => Metadata.CustomName = string.Empty;
+
+    /// <summary>
+    /// Whether the author changed anything, <c>beforeChangesCastleMetadata == castleMetadata</c> (<c>:856-860</c>).
+    /// </summary>
+    /// <remarks>
+    /// 比较之前先写回一次，因为参考就是这么比的：先把界面上的改动落到元数据里，再拿打开窗口时留的快照对比。
+    /// 快照在构造时深拷，之后元数据怎么改都影响不到它。
+    /// </remarks>
+    /// <returns>Whether the metadata differs from what it was when the window opened.</returns>
+    public bool HasUnsavedChanges()
+    {
+        WriteMetadata();
+
+        return !Metadata.Equals(_onOpen);
+    }
 
     /// <summary>
     /// Writes the state back into the metadata, <c>updateMetadata()</c> plus the name and the spells the caller already

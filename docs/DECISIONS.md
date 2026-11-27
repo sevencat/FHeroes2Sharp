@@ -5180,6 +5180,54 @@ Cell Details、Streams、Roads、Erase），于是这一页退回三行文字（
 `CastleDetailsGridTests` 9 条（十九格与队长、亡灵神龛、行列坐标与两处 5 像素、越界、队长位置、两本掩码读数、
 town 判定、默认建筑开关、禁建要塞）。渲染未变动，未重跑像素基线。
 
+## ADR-300：城堡详情窗的事件处理（`a7l.3.2`）
+
+新增 `UI/Dialogs/CastleDetailsInput.cs`，对应 `editor_castle_details_window.cpp:844-1059` 里除绘制之外的全部逻辑：
+光标停在哪个控件上、状态栏说什么、点了之后改什么、什么时候关窗。
+
+| 新增 | 参考 |
+|---|---|
+| `Process(LocalEvent)` | 每帧一次的整条判断链 |
+| `Cursor` / `CursorSlot` | 光标所在的控件与建筑格序号 |
+| `Message` | 已解析好的状态栏文字，没指着任何东西时是 `Castle Settings` |
+| `CastleDetailsRequest` | 交回宿主的四件事：改名字、弹提示、开法师公会、让军队条吃事件 |
+| `CastleDetailsOutcome` | OKAY / EXIT 的返回码 |
+| `ResolveUnsavedChanges(bool)` | 退出确认的第二次问答 |
+
+**模态对话框一律交回宿主。** `Dialog::inputString`、`showStandardTextMessage`、`mageGuildSpellsDialog` 与
+`armyBar.QueueEventProcessing` 在端口要么不存在、要么在 `FHeroes2.App` 那一层。硬在这里调会让这一层离不开引擎，
+也没法单独测。所以 `Process` 一次只处理「这一帧作者想干什么」，要弹窗就发 `CastleDetailsRequest`，宿主做完再回来问
+`Outcome`——和第 5 阶段的 `CastleScreenInput.TakeAction` 是同一个套路。
+
+**退出确认因此要分两步。** 参考里 EXIT 一按就同步弹框、同步拿结果；端口先 `TryDiscard()`：没改动直接
+`Discarded`，有改动只发一条 `ShowMessage`，等宿主弹完框调 `ResolveUnsavedChanges(discard)` 才定结局。
+
+**「有没有改动」靠深拷快照。** `CastleDetailsState` 构造时留 `_onOpen = metadata.Clone()`，`HasUnsavedChanges()`
+先 `WriteMetadata()` 再和快照比。为此给 `CastleMetadata` 补了 `Clone()`——参考的拷贝构造对 `std::vector`、`std::map`
+是逐元素拷贝，浅拷的话快照会跟着元数据一起变，答案永远是否。
+
+**判断链的顺序是有意义的**：OKAY 与 EXIT 排在最前（点下去这一帧不再处理别的），RESTRICT 与 SET SPELLS 的点击在其后，
+然后才是一串 `else if` 的悬停链：名字 → 复位名字 → Allow Castle（只有城镇）→ Default Buildings → RESTRICT →
+Default Army（只有中立）→ 复位军队 → 军队条 → SET SPELLS → OKAY → EXIT → 十九格。挨个 `if` 而不是串起来的话，
+同时压着两个控件会触发两件事。
+
+**建筑格的 `Cycle` 改成返回 `bool`**：参考的 `BuildingData::queueEventProcessing` 返回 `needRedraw`，调用方据此把
+「默认建筑」标记摘掉；只在真点了格子时才摘，光悬停不摘。
+
+**用例上的三个坑**（都是跑出来才知道的）：
+1. 命中判定读的是**绘制时算出来的区域**，所以每个用例都必须先 `Paint` 一帧再 `Process`，否则所有区域都是空的。
+2. 夹具必须是**真实的城镇**（`Tent` 已建）。拿一个空空如也的 `CastleMetadata` 去测，`WriteMetadata()` 会把 `Tent`
+   补进去，于是「打开窗口什么都没动」被算成有改动，EXIT 立刻要确认框——问题不在被测代码，在夹具不真实。
+3. 军队条要先用 `MapFormatArmy.LoadCastleArmy` 从元数据读进条里。参考也是这么做的；塞一个空军队进去，写回时会把
+   元数据里的守军清掉，同样伪造出「有改动」。
+
+**验证**：构建 0 警告 0 错误；Core 295、Assets 441、UI 1954、Game 3919 通过，合计 6609（较上轮 +17）。新增
+`CastleDetailsInputTests` 17 条（空闲文案、名字/复位/两个勾选框/RESTRICT/军队条/OKAY/EXIT 的悬停与点击、EXIT 的
+两步确认、点格子改建筑并摘掉默认标记、右键格子的描述、以及有/无改动的判定）。
+
+**还没做**（挪到 `a7l.3.7`，等编辑器宿主）：按钮的按压态绘制、`DEFAULT_OKAY`/`EXIT`/`CANCEL` 热键、以及把
+`CastleDetailsRequest` 接到真正的模态对话框上。
+
 ## ADR-299：城堡详情窗的整块绘制（`a7l.3.1` 第二刀）
 
 `a7l.3.1` 收尾：新增 `UI/Dialogs/CastleDetailsView.cs`，把 `castleDetailsDialog()` 的画面从背景到状态栏文字
@@ -5314,4 +5362,105 @@ OKAY/EXIT、名字与军队的复位小按钮、以及按文字宽度长出来�
 `mageGuildSpellsDialog()` 的画与事件。两处都还有前置：前者要 `StandardWindow` 的全屏尺寸与按钮素材表装配，后者要
 `editor_spell_selection.cpp`（`Editor::openSpellSelectionWindow`，端口完全没有）与 `SpellsInOneRow` 控件。显示层仍等
 `a7l.6`。
+
+## ADR-301：编辑器法术选择窗（`a7l.8`）
+
+`editor_spell_selection.cpp` 全文落地，拆成四件：
+
+| 新增 | 参考 |
+|---|---|
+| `UI/Widgets/EditorSpellSelectionGrid.cs` | `SpellContainerUI`（`:51-167`） |
+| `UI/Dialogs/EditorSpellSelectionArtwork.cs` | 素材装配（`:207-259`） |
+| `UI/Dialogs/EditorSpellSelectionWindow.cs` | 满屏窗的布局、整块绘制与状态 |
+| `UI/Dialogs/EditorSpellSelectionInput.cs` | 事件循环（`:279-416`） |
+
+**名字必须带 `Editor`**：`UI.Dialogs` 里早有一个 `SpellSelectionWindow`（英雄学法术的列表窗）。不加前缀就撞名——真的
+撞过一次，`write_to_file` 把那个文件覆盖了，靠 `git checkout --` 才捞回来。新建类型前先 grep 定义，别信「这个名字应该
+没人用」。
+
+**一个等级一次打开**：参考按等级按钮是 `break` 出循环再 `return true`，由调用方拿新等级重开（`:324-326`）。所以窗口
+不重建内容，只改 `Level` 并回 `LevelChanged`，宿主自己新建一个——省掉窗口里「重算格子」的第二条路径。
+
+**整块重画取代 `ImageRestorer`**：参考只重画改动过的一小块（`:365-415`），端口每帧 `Paint` 全窗。省掉一整类「忘了
+restore」的 bug，代价是每帧多画十几个精灵，而满屏窗本来就要整块交给 `display.render( background.totalArea() )`
+（`:276`）。
+
+**两个 Toggle 与五个等级按钮的素材存档里没有**：`BUTTON_TOGGLE_ALL_*`、`BUTTON_1_GOOD..5_GOOD` 由
+`ButtonFactory.MakeButtonSprites` 现场合成（空文本或数字 + 86x25/46x25 + STONEBAK 边框），Toggle 的图案再叠 h2d 的
+`toggle-all-*-{released,pressed}.image`；h2d 缺席时退化成空板子，位置与尺寸不变（ADR-299 的「运行期合成」同一套路）。
+
+**`pickDisabledSpells` 是取反**：参考 `:191` 是「在清单里 `!= pickDisabledSpells`」。第一版照直觉写成「在清单里就算
+选中」，用例立刻红——调用方给的清单可能是禁用清单，也可能是启用清单，全靠这个布尔区分。
+
+**禁用的法术是同一张卷轴过灰度调色板**（`:105-106`），图标同理（`:119-125`）；等级按钮的启用态跟着「选中的法术够不够
+最小数」走（`:399-412`）。五处右键说明与法术说明一律发 `EditorSpellSelectionRequest` 交回宿主，和 ADR-300 的
+`CastleDetailsRequest` 同一套路。
+
+**测试夹具要还原而不是置空**：这些用例要临时把 `GameAssets.Current` 指到游戏数据上。第一版结尾写的是
+`Current = null`，单跑全绿，跑全量时同一个集合里的 `SkillBarsTests` 红了——它排在后面，拿到的资源被前一个用例清掉了。
+改成「记住进来时的值、走的时候放回去」（`AdventureMapTests` 的写法），一次就过。
+
+**验证**：构建 0 警告 0 错误；全量 6627 通过（较上轮 +18，新增 `EditorSpellSelectionTests`）。其中三条是布局公式的
+纯算术用例（九张出三列、十一张的最后一行右移半格、二十五张报错），其余走真实游戏数据。
+
+**还没做**（`a7l.9`）：接进编辑器宿主的模态循环——`editor_interface.cpp:2490/2523` 两处调用、`DEFAULT_OKAY`/
+`DEFAULT_CANCEL` 热键、`ShowMessage`/`ShowSpell` 接真正的弹窗、以及选中结果回写 `selectedSpells`/`spellLevel`。
+
+## ADR-302：法师公会法术子窗（`a7l.3.3`）
+
+`mageGuildSpellsDialog()` 落地，三个新件 + 两处小改：
+
+| 新增 | 参考 |
+|---|---|
+| `UI/Dialogs/MageGuildSpellsArtwork.cs` | 石头底/状态栏/OKAY/EXIT 借用 `CastleDetailsArtwork`，只补公会建筑、`TOWNWIND` 两种卷轴、BANNED SPELLS 按钮、法术图标 |
+| `UI/Dialogs/MageGuildSpellsView.cs` | 布局与整块绘制（`:331-403`） |
+| `UI/Dialogs/MageGuildSpellsInput.cs` | 事件链、三处提示、请求与回写（`:437-600`） |
+
+**控件不用新写**：`SpellsInOneRow` 就是 `a7l.8` 里那个 `SpellScrollRow`，连 <code>setCoords()</code> 的中心对齐都一模一样，
+直接复用。行是表的视图——`Paint` 每帧从 `MageGuildSpellTable` 重建五排，表是唯一真相，省掉 `redrawCurrentSpell()` 那条
+「只重画一格」的路径。
+
+**改了两处既有代码**：`MageGuildDialog.DrawGuildBuilding` 加了一个「位置 + 裁切高度」的重载（编辑器没有
+`MageGuildLayout`，参考传的是 `dialogRoi.getPosition()` 与 `Display::DEFAULT_HEIGHT`），旧重载转手调它；
+`MageGuildSpellTable` 补了 `IsPlaceholder()` 与 `GetExcludedSpells(levelIndex, slot)`——参考 `:413-425` 那张排除集，
+占位符永远排掉（连当前那一格也是），其余只排别人的。
+
+**模态还是留在宿主**：点格子发 `SelectSpell`（带等级、当前法术、排除集），点 BANNED SPELLS 发 `SelectBannedSpells`
+（带该等级标题与清单），宿主开完窗调 `ApplySelectedSpell` / `ApplyBannedSpells` 塞回来。参考里禁用清单是
+「确认就生效、Escape 才退出」的 while 循环（`:515-555`），端口把这个循环也交给宿主，`ApplyBannedSpells` 每调一次等于确认
+一次。
+
+**两个被用例纠正的直觉**：卷轴坐标给的是「这一排的中心」，`Coords[i].X` 是减掉半宽之后的左上角；排除集在「当前格是
+占位符」时是**整排**都被排掉，不是「槽位数减一」。
+
+**验证**：构建 0 警告 0 错误；全量 6645 通过（较上轮 +18：`MageGuildSpellsTests` 15 条、`MageGuildSpellTableTests` 补 3 条）。
+
+**还没做**（`a7l.3.1`）：把子窗接进 `CastleDetailsInput` 的 `SetSpells` 请求上——宿主侧的循环、等级切换后的重开、以及
+`MageGuildSpellsRequest` 的三种弹窗落地。
+
+## ADR-303：地图规格窗的数据半（`a7l.3.4`）
+
+`mapSpecificationsDialog()` 的状态与写回，一个新增件 + 三处小改：
+
+| 改动 | 内容 |
+|---|---|
+| `Game/Editor/MapSpecsState.cs` | 名称、描述、难度、三种颜色、两个条件与参数、两个胜利开关；`TogglePlayerColor`、两个 `Update*Condition`、`CreateInfo` |
+| `Mp2Map.Info` | `init` → `set`：头部只有一个，换了就是换了，不进撤销历史 |
+| `MapEditSession` | 新增 `ApplyMapInfo`（拒收不同尺寸的头部）与 `_headerChanged`，`IsDirty` 认它 |
+| `Mp2MapWriter.Save` | 新增 `writeHeader` 参数；补丁式保存本来只改地形，不写回头部就丢掉新名称 |
+
+**为什么状态是可变类而不是 record**：参考直接改 `MapFormat`；MP2 头部是 `Mp2FileInfo` 记录，于是做一层可变状态，
+`CreateInfo()` 生成新头部、`MapEditSession.ApplyMapInfo` 装回去。安装只此一条路径（会话负责脏标记与写回），
+`CreateInfo` 本身不改地图——`WriteBack` 那种「生成 + 就地装回」会让会话的脏标记漏掉头部。
+
+**四处 MP2 装不下 fh2m 的折衷**（都写进了类注释）：胜利/失败目标只有坐标（fh2m 是「格索引 + 颜色」）；
+金额按千枚存（fh2m 是枚数，`MinVictoryGoldInThousands = 10` 对应参考的 10 000 起步）；联盟只存「第一方几个颜色」，
+写回时用 `Mp2FileInfo.FillUnions` 重建整张表（为此把它转公开）；城镇归属存在信息块里而编辑器不维护，所以城镇候选不按
+归属筛，「占领城镇」的 AI 胜利位恒 false——参考对非中立城镇也这么办。
+
+**`updateCondition` 的微小差别**：参考只在换条件类型时返回 true，「换成第一个候选」仍返回 false；端口只要有东西被改就
+返回 true，调用方拿它决定重画。`CreateInfo` 里再跑一遍，兜住「宿主换完颜色没调 Update」的路径。
+
+**没做**：绘制与事件循环（`a7l.3.5`）；参考里「禁止法术 / 禁止神器位图」是多选窗（`a7l.8` 的选择器），截图里的位图只是
+一张状态图，取值不在数据半。
 

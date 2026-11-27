@@ -69,6 +69,56 @@ public static partial class ImageOps
     }
 
     /// <summary>
+    /// Darkens <paramref name="roi"/> into a text box: the soft inner shading and the banded border of
+    /// <c>fheroes2::StandardWindow::applyTextBackgroundShading()</c> (<c>gui/ui_window.cpp:337</c>).
+    /// </summary>
+    /// <param name="target">Indexed surface to darken in place.</param>
+    /// <param name="roi">Text area; the bands are drawn inside it, the centre is darkened twice.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="target"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// <para>
+    /// 参考里这块底纹由一个 <c>StandardWindow</c> 成员函数做，端口没有那个类，所以放在这里——
+    /// 它只用 <see cref="ApplyTransform"/>，和本文件其余变换是同一类东西，也给将来的其它文字框复用。
+    /// </para>
+    /// <para>
+    /// 中心先按 3 号表、再按 5 号表各转一次（参考注释：单用 2 号太重）；四条边是 1 像素或 3 像素宽的
+    /// 环带，从外到内依次 9、4、3、2、3、4、5，最外一圈反而变亮一点，于是框子有立体边。
+    /// 每圈的四条边都不含已经画过的角，所以不会重复变暗。
+    /// </para>
+    /// <para>
+    /// 与参考一致：所有 <see cref="ApplyTransform"/> 的越界部分被裁掉，因此 <paramref name="roi"/>
+    /// 超出 <paramref name="target"/> 时只画看得见的部分。
+    /// </para>
+    /// </remarks>
+    public static void ApplyTextBackgroundShading(PixelBuffer target, in Rect roi)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        // 本地函数不能捕获 in 参数，先拷一份。
+        Rect area = roi;
+
+        ApplyTransform(target, area.X + 2, area.Y + 2, area.Width - 4, area.Height - 4, 3);
+        ApplyTransform(target, area.X + 2, area.Y + 2, area.Width - 4, area.Height - 4, 5);
+
+        ApplyRingTransform(0, 1, 9);
+        ApplyRingTransform(1, 1, 4);
+        ApplyRingTransform(2, 1, 3);
+        ApplyRingTransform(3, 3, 2);
+        ApplyRingTransform(6, 1, 3);
+        ApplyRingTransform(7, 1, 4);
+        ApplyRingTransform(8, 1, 5);
+
+        void ApplyRingTransform(int offset, int size, int transformId)
+        {
+            // 上、下两条横带整宽；左、右两条竖带跳过已经算作横带的角。
+            ApplyTransform(target, area.X + offset, area.Y + offset, area.Width - (2 * offset), size, transformId);
+            ApplyTransform(target, area.X + offset, area.Y + offset + size, size, area.Height - (2 * (offset + size)), transformId);
+            ApplyTransform(target, area.X + offset, area.Y + area.Height - offset - size, area.Width - (2 * offset), size, transformId);
+            ApplyTransform(target, area.X + area.Width - offset - size, area.Y + offset + size, size, area.Height - (2 * (offset + size)), transformId);
+        }
+    }
+
+    /// <summary>
     /// Draws the gradient shadow of <paramref name="source"/> into <paramref name="target"/>,
     /// <c>fheroes2::addGradientShadow()</c>.
     /// </summary>

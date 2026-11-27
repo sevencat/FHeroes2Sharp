@@ -99,7 +99,17 @@ public sealed record Mp2Map
     ];
 
     /// <summary>Information block of the map, read from the leading 428 bytes.</summary>
-    public required Mp2FileInfo Info { get; init; }
+    /// <remarks>
+    /// <para>
+    /// 可写，因为编辑器的「地图规格」窗会整块换掉头部（<c>MapEditSession.ApplyMapInfo</c>）。这是唯一一处
+    /// 不进 <see cref="SetTileAt"/> 那套撤销记录的在位修改：头部只有一个，换了就是换了。
+    /// </para>
+    /// <para>
+    /// 换头部不能动 <see cref="Width"/> / <see cref="Height"/>：文件里的地形区大小与它们绑定，
+    /// <c>MapEditSession</c> 会拒绝尺寸不同的头部。
+    /// </para>
+    /// </remarks>
+    public required Mp2FileInfo Info { get; set; }
 
     /// <summary>All tiles, row by row, <c>index = x + y * width</c>.</summary>
     public required IReadOnlyList<Mp2TileInfo> Tiles { get; init; }
