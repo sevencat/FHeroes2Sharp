@@ -272,7 +272,7 @@ internal sealed class SnapshotMapAction : MapAction
 /// <c>MetadataMapAction&lt;T&gt;</c> (<c>src/fheroes2/editor/history_manager.cpp:125-159</c>).
 /// </summary>
 /// <typeparam name="T">The per-object metadata.</typeparam>
-public sealed class MetadataMapAction<T> : MapAction
+public sealed class MetadataMapAction<T> : MapAction, IEditStep
 {
     /// <summary>The dictionary the action works on, <c>_metadata</c>.</summary>
     private readonly IDictionary<uint, T> _metadata;
@@ -284,15 +284,29 @@ public sealed class MetadataMapAction<T> : MapAction
     private Dictionary<uint, T>? _after;
 
     /// <summary>
+    /// Makes an independent copy of one entry, or <see langword="null"/> when the entries are values.
+    /// </summary>
+    /// <remarks>
+    /// 参考的 <c>Map_Format::*Metadata</c> 都是 <c>struct</c>，<c>std::map</c> 的拷贝构造自然是深拷。端口的这几张表装的
+    /// 是 class，浅拷只换引用：先快照、再改表里那个对象，连快照一起被改掉，撤销就等于没撤。所以引用类型的表要交一个
+    /// 克隆函数进来（<c>CastleMetadata.Clone()</c> 这类）。
+    /// </remarks>
+    private readonly Func<T, T>? _clone;
+
+    /// <summary>
     /// Snapshots the dictionary, the reference constructor (<c>history_manager.cpp:128-134</c>).
     /// </summary>
     /// <param name="metadata">The dictionary to track; the action keeps a reference to it.</param>
-    public MetadataMapAction(IDictionary<uint, T> metadata)
+    /// <param name="clone">
+    /// Makes an independent copy of one entry; required for a table of reference types, omitted for value types.
+    /// </param>
+    public MetadataMapAction(IDictionary<uint, T> metadata, Func<T, T>? clone = null)
     {
         ArgumentNullException.ThrowIfNull(metadata);
 
         _metadata = metadata;
-        _before = new Dictionary<uint, T>(metadata);
+        _clone = clone;
+        _before = Copy(metadata);
     }
 
     /// <summary>
@@ -302,7 +316,7 @@ public sealed class MetadataMapAction<T> : MapAction
     /// <returns>Always true: copying a dictionary cannot fail.</returns>
     public override bool Prepare(uint lastObjectUid)
     {
-        _after = new Dictionary<uint, T>(_metadata);
+        _after = Copy(_metadata);
 
         return true;
     }
@@ -336,8 +350,24 @@ public sealed class MetadataMapAction<T> : MapAction
 
         foreach (KeyValuePair<uint, T> entry in source)
         {
-            _metadata[entry.Key] = entry.Value;
+            // 再克隆一次：表格里拿到的必须是自己的对象，否则下一次改动会顺着引用改到快照里。
+            _metadata[entry.Key] = _clone is null ? entry.Value : _clone(entry.Value);
         }
+    }
+
+    /// <summary>Copies a table, cloning its entries when the action was asked to.</summary>
+    /// <param name="source">The table to copy.</param>
+    /// <returns>An independent copy.</returns>
+    private Dictionary<uint, T> Copy(IEnumerable<KeyValuePair<uint, T>> source)
+    {
+        Dictionary<uint, T> copy = [];
+
+        foreach (KeyValuePair<uint, T> entry in source)
+        {
+            copy[entry.Key] = _clone is null ? entry.Value : _clone(entry.Value);
+        }
+
+        return copy;
     }
 }
 

@@ -213,6 +213,79 @@ public sealed class EditorDailyEventsModalTests : IDisposable
         Assert.False(scene.Edits.IsDirty);
     }
 
+    [Fact]
+    public void TheResourceCountWindowWritesTheAmountBackToTheEvent() =>
+        Assert.True(Try(window =>
+        {
+            var modal = new EditorDailyEventsModal(window, Host(), EveryColor, EveryColor);
+
+            Click(modal, window.AddButton.Area);
+
+            var spec = (EditorDailyEventSpecModal)modal.TopWindow!;
+
+            // 点资源图标开数量窗（参考 :314-330 的 Dialog::SelectCount）。
+            Click(modal, spec.Window.ResourceIconAreas[0]);
+
+            Assert.True(spec.HasInnerWindow, "the count window did not open");
+
+            var count = Assert.IsType<SelectCountModal>(spec.TopWindow);
+
+            count.View.Value.Value = 1234;
+            count.HotKey(ButtonHotKey.Okay);
+
+            Pump(modal);
+
+            Assert.False(spec.HasInnerWindow, "the count window did not close");
+
+            int resourceType = 1;
+
+            Assert.Equal(1234, spec.Window.Event.Resources.Get(resourceType));
+
+            // 取消时表里那一位不动。
+            Click(modal, spec.Window.ResourceIconAreas[0]);
+            Assert.IsType<SelectCountModal>(spec.TopWindow).HotKey(ButtonHotKey.Cancel);
+            Pump(modal);
+
+            Assert.Equal(1234, spec.Window.Event.Resources.Get(resourceType));
+
+            return true;
+        }));
+
+    [Fact]
+    public void TheNumberPadWritesTheDayBackToTheEvent() =>
+        Assert.True(Try(window =>
+        {
+            var modal = new EditorDailyEventsModal(window, Host(), EveryColor, EveryColor);
+
+            Click(modal, window.AddButton.Area);
+
+            var spec = (EditorDailyEventSpecModal)modal.TopWindow!;
+
+            // 点数字框开键盘（参考 :220-239 的 openVirtualNumpad）。
+            Click(modal, spec.Window.FirstDaySelection.EditBox);
+
+            Assert.True(spec.HasInnerWindow, "the number pad did not open");
+
+            var pad = Assert.IsType<EditorMapSpecsValueModal>(spec.TopWindow);
+
+            // 键盘的文本是预填的当前值（默认 1），点一个键把它接成 15。
+            Assert.Equal("1", pad.Pad.Text);
+
+            VirtualKeyboardButton five = pad.Pad.Rows.SelectMany(row => row).First(button => button.Text == "5");
+
+            Click(modal, five.Sprite.Area);
+
+            Assert.Equal("15", pad.Pad.Text);
+
+            pad.HotKey(ButtonHotKey.Okay);
+            Pump(modal);
+
+            Assert.False(spec.HasInnerWindow, "the number pad did not close");
+            Assert.Equal(15u, spec.Window.Event.FirstOccurrenceDay);
+
+            return true;
+        }));
+
     /// <summary>Runs <paramref name="body"/> against a list over one "old" event, skipping without game data.</summary>
     /// <param name="body">The test body.</param>
     /// <returns>Whatever <paramref name="body"/> returned, <see langword="true"/> when the data is missing.</returns>

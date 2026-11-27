@@ -118,6 +118,18 @@ public sealed class EditorSaveMapWindow : ListBox<Mp2FileInfo>
     /// <summary>Body of the virtual keyboard button's message.</summary>
     public const string VirtualKeyboardMessage = "Click to open the Virtual Keyboard dialog.";
 
+    /// <summary>
+    /// The question of an overwrite, <c>_( "Are you sure you want to overwrite the existing map?" )</c>
+    /// (<c>editor_interface.cpp:3248</c>).
+    /// </summary>
+    public const string OverwriteMessage = "Are you sure you want to overwrite the existing map?";
+
+    /// <summary>Body of the box shown when the maps directory cannot be located or created.</summary>
+    public const string DirectoryErrorMessage = "Unable to create a directory to save the map.";
+
+    /// <summary>Body of the box shown when the write fails, <c>_( "Failed to save the map." )</c>.</summary>
+    public const string SaveFailedMessage = "Failed to save the map.";
+
     private const int ScrollBarRightInset = 35;
 
     private readonly StandardWindow _window;
@@ -369,11 +381,26 @@ public sealed class EditorSaveMapWindow : ListBox<Mp2FileInfo>
     /// <summary>Whether the author clicked the map name and the host has to open the input box (<c>:383-396</c>).</summary>
     public bool MapNameRequested { get; private set; }
 
-    /// <summary>
-    /// Whether the author asked for the virtual keyboard, <c>openVirtualKeyboard( fileName, ... )</c> (<c>:336-344</c>);
+    /// <summary>Whether the author asked for the virtual keyboard, <c>openVirtualKeyboard( fileName, ... )</c> (<c>:336-344</c>);
     /// the host opens it and hands the result back through <see cref="FileName"/>.
     /// </summary>
     public bool VirtualKeyboardRequested { get; private set; }
+
+    /// <summary>
+    /// Answers OKAY from outside the event loop, the <c>DEFAULT_OKAY</c> the host folds into a click
+    /// (<c>:311-315</c>).
+    /// </summary>
+    /// <returns><see cref="EditorSaveMapOutcome.Accepted"/> when OKAY is enabled, otherwise nothing.</returns>
+    public EditorSaveMapOutcome Accept()
+    {
+        Result = _okay.IsEnabled ? EditorSaveMapOutcome.Accepted : EditorSaveMapOutcome.None;
+
+        return Result;
+    }
+
+    /// <summary>Answers CANCEL from outside the event loop, the <c>DEFAULT_CANCEL</c> of <c>:311-315</c>.</summary>
+    /// <returns><see cref="EditorSaveMapOutcome.Cancelled"/>.</returns>
+    public EditorSaveMapOutcome RequestCancel() => Result = EditorSaveMapOutcome.Cancelled;
 
     /// <summary>The virtual keyboard button, or <see langword="null"/> when the artwork has no icon for it.</summary>
     public ButtonSprite? VirtualKeyboard => _virtualKeyboard;

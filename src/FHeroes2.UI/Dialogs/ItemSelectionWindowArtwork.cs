@@ -45,6 +45,21 @@ public sealed class ItemSelectionWindowArtwork
     public required DialogButtonArtwork Cancel { get; init; }
 
     /// <summary>
+    /// The "enable all" button of a multi-selection list, <c>ICN::BUTTON_TOGGLE_ALL_ON_*</c> frames 0 and 1
+    /// (<c>dialog_selectitems.cpp:1074</c>); <see langword="null"/> when a window offers no such button.
+    /// </summary>
+    /// <remarks>
+    /// 这两张图在归档里没有 <c>.ICN</c>，是空板子加 h2d 图案合成的（<c>ButtonFactory.MakeToggleAllButton</c>）。
+    /// </remarks>
+    public (Sprite Released, Sprite Pressed)? ToggleAllOn { get; init; }
+
+    /// <summary>
+    /// The "disable all" button of a multi-selection list, <c>ICN::BUTTON_TOGGLE_ALL_OFF_*</c> frames 0 and 1
+    /// (<c>dialog_selectitems.cpp:1078</c>); <see langword="null"/> when a window offers no such button.
+    /// </summary>
+    public (Sprite Released, Sprite Pressed)? ToggleAllOff { get; init; }
+
+    /// <summary>
     /// Loads the artwork the way <c>ItemSelectionWindow::ItemSelectionWindow()</c> does
     /// (<c>dialog_selectitems.cpp:909-957</c>): the scroll bar of <c>SCROLL</c> or <c>SCROLLE</c>, the groove of
     /// <c>ADVBORD</c> and the small okay/cancel buttons of the good or the evil interface.
@@ -79,6 +94,17 @@ public sealed class ItemSelectionWindowArtwork
             return null;
         }
 
+        // 两颗「全开/全关」是合成的：BUTTON_TOGGLE_ALL_* 在归档里没有 .ICN，图案在 h2d 资源里，底子铺 STONEBAK
+        // （与二级技能选择窗同一条路，ADR-311）。取不到就留空，多选窗因此不画它们，窗口仍然可用。
+        (Sprite Released, Sprite Pressed)? toggleOn = null;
+        (Sprite Released, Sprite Pressed)? toggleOff = null;
+
+        if (sprites.GetSprite(evilInterface ? IcnType.StonebakEvil : IcnType.Stonebak, 0) is { } stone)
+        {
+            toggleOn = ButtonFactory.MakeToggleAllButton(stone, evilInterface, enableAll: true);
+            toggleOff = ButtonFactory.MakeToggleAllButton(stone, evilInterface, enableAll: false);
+        }
+
         return new ItemSelectionWindowArtwork
         {
             ScrollBarBackground = background,
@@ -89,6 +115,8 @@ public sealed class ItemSelectionWindowArtwork
             ScrollSlider = slider,
             Okay = new DialogButtonArtwork(okayReleased, okayPressed),
             Cancel = new DialogButtonArtwork(cancelReleased, cancelPressed),
+            ToggleAllOn = toggleOn,
+            ToggleAllOff = toggleOff,
         };
     }
 }

@@ -6723,3 +6723,228 @@ ESC 与回车交出同一个数，`Value` 只在校验通过时有值。
 **测试**：新增 `EditorCastleDetailsArmyInfoTests` 三条——双击军队条把兵种说明压到城堡窗栈上、解散先问再清空槽位、退出按钮不动兵力；`EmptyButtonsTests` 加一条核对三张表分别取 1/2、3/4、5/6 帧。
 
 **验证**：全量 **7245 通过**（301+441+118+4054+2331），0 警告 0 错误。
+
+## ADR-350：城堡详情窗的编辑器加兵（`bpn.2.3.2`）
+
+**背景**：`army_bar.cpp:448-489` 的 add troop 分支是两扇阻塞窗：`Dialog::selectMonster( 本族一级兵 )` 选生物，有效才 `Dialog::SelectCount( "Set %{monster} Count:", 1, 500000, count, 1, &monsUi )`，两窗都确定才 `troop.Set()`。选择窗是 `SelectEnumMonster`（`dialog_selectitems.cpp:131-167`）：行高 43、`MONS32` 图标居中画在 `SWAPWIN` 第 0 帧 `( 36, 267, 43, 43 )` 的板上、名字从 50 起，列表去掉五个 random 标记；右键一行开的是整扇 `Dialog::ArmyInfo( Troop( monster, 0 ), Dialog::ZERO )`。
+
+**决定**：
+
+1. `MonsterSelectionWindow` 沿用 `SpellSelectionWindow` 的骨架（`ItemSelectionWindow`），板子由 `CutPlate()` 裁 `SWAPWIN`，图标走已有的 `IMiniMonsterSprites`；右键不自开窗，只记 `TakeInfoRequest()`。`MonsterSelectDialog` 提供 `BuildMonsterList()` / `DialogSize()` / `TryCreate()`，空列表返 null 让调用方弹 `Warning`。
+2. `SelectCountView` 补 `ProcessHotKey()`，把 `SetLeftButton` 里写答案的两行提成私有 `Apply()` 共用。
+3. `MonsterSelectModal` 与 `SpellSelectModal` 同构，另带一层内层栈：右键请求 → `TryCreateArmyInfo` 压一扇说明窗。`SelectCountModal` 走光标 + 左键，答案读 `SelectCountView.Dialog.Result`（取消为 null）。
+4. 宿主新增 `TryCreateMonsterSelect`（复用 `TryCreateItemSelectionArtwork`，`SWAPWIN` 板子裁一次存字段）与 `TryCreateSelectCount`（`TOWNWIND` 数字框 + `SYSTEM` 按钮）；`EditorCastleDetailsModal` 记下槽位与所选怪兽，数量窗关掉才写回。
+
+**后果**：选生物窗取消时槽位保持空（与参考一致）；右键说明窗里的单位精灵仍是空的（同 ADR-349）；数量窗没有参考里数字框右键的范围提示与长按重复。拆兵（`bpn.2.3.3`）仍未接。
+
+## ADR-351：城堡详情窗的拆兵（`bpn.2.3.3`）
+
+**背景**：`army_bar.cpp:96-142` 的 `RedistributeArmy()` 在「不是一键就能定的那几种情况」里调 `Dialog::ArmySplitTroop()`（`dialog_selectcount.cpp:462-651`）。这扇窗把两件事一起问：数字框是「移动几个兵」，下面那排 `REQUESTS` 图标（第 21 帧起 `freeSlots - 1` 张）是「拆成几格」——点一张就在它上面套一圈 214 号色的框，不点就按「两格 + 数字框的数量」处理。窗口回两个值：`slots`（2..6）与 `useFastSplit`（有没有点图标）。
+
+**决定**：
+
+1. `ArmySplitDialog` 从纯契约补上 `InitialCount` / `UseFastSplit` / `Minimum`（`min(1, max)`），`Create` 多两个可选参数，旧调用不受影响。
+2. 新增 `ArmySplitView`：`FrameBox` + 黄字兵名 + 白字问句 + 数字框 + `REQUESTS` 槽位排 + OK/CANCEL，布局常量照参考（`textTopOffset 13`、数字框 `pos.x + 70`、槽位行 `deltaX 10` / `deltaXStart (n-1)*-5`、选中框色 214）。点图标在**按下**时选定，与参考 `MouseClickLeft( rt )` 同拍。`SlotCount` / `UseFastSplit` / `Count` 直接对参考的两个出参。
+3. `ArmyBar.ApplySplit` 多一个可选 `redistributeCount`：参考在这一支用的是**对话框回的数字**而不是建议值，原来端口一律用 `SuggestedCount`，数字框改了也不生效。默认值保持 `SuggestedCount`，既有调用与测试不变。
+4. `ArmySplitModal` 走 `SetCursor` / `SetLeftButton`，关窗时 `Answer` 只可能是 Ok 或 Cancel；`EditorSceneHost.TryCreateArmySplit(split)` 用 `TOWNWIND` 数字框、`SYSTEM` 按钮与 `REQUESTS` 21 起的槽位图造窗。
+5. `EditorCastleDetailsModal` 把 `LocalEvent` 交给军队条时**开始传热键**：`CurrentArmyHotKey()` 按 `army_bar.cpp:123` 的 else-if 链问 `GameHotKeys.HotKeyHoldEvent(ArmySplitStackByHalf / ByOne / JoinStacks)`。在这一次之前端口从未传过热键，拆兵与合并两种键位因此一直是死的。`ArmyEvent.Split` 造窗压栈，关窗时 `ApplySplit(split, SlotCount, UseFastSplit, Count)`；取消什么都不做。
+
+**与 issue 描述的出入**：issue 写的是「Even Split 复选框」，参考里并不是复选框而是一排槽位图标；端口照参考做，复选框那种说法只保留在票面。
+
+**后果**：MAX / MIN 快捷键、数字框键盘直输与长按重复仍未转（与 `SelectCountView` 同一个缺口，见 `biv`）。`ArmyBarSplit.UseFastSplit` 属性现在只是初始值来源，不再被窗口改写——窗口的两个答案单独回传。
+
+## ADR-352：MP2 城堡块读出编辑器用的 `CastleMetadata`（`bpn.3.1`）
+
+**背景**：`bpn.3`（点城镇开城堡详情窗）开工时发现缺一块前置：窗口的输入是 `Maps::Map_Format::CastleMetadata`，而参考的编辑器读的是自己的地图格式，`castleMetadata` 在载入时就已经填好；端口的编辑器只有 MP2，`MapObjectMetadataStore` 是空表，点开窗会是空白城堡。按「发现隐藏依赖就拆」把 `bpn.3` 升为 epic，拆出 `.3.1`（本条）与 `.3.2`（入口与写回）。
+
+**决定**：
+
+1. 新增 `FHeroes2.Game.Editor.Mp2CastleMetadata`：`TryRead( map, tile, out metadata, out owner )` 按 `tile.Metadata == block.ObjectId` 找那 70 字节的城堡块（与 `World.FindInfoBlockTile` 同一规则），`ReadBlock( span, out owner )` 按 `Castle::LoadFromMP2()` 的字节顺序逐段读。
+2. **只读，不装载**：默认建筑不掷骰、魔法行会不初始化、中立守军不加强。编辑器要的是作者写下的原样，参考的元数据表也正是原样。
+3. 归属色取块首字节（0..5 对应蓝绿红黄橙紫，其余中立），与 `Castle.LoadFromMP2` 的映射一致。
+4. 建筑位到 `BuildingType` 的转换照 `castle.cpp` 的两张位表；**升级位同时点亮它的基础住所**（`0x0200` → `DwellingUpgrade2 | DwellingMonster2`），这是格式的限制而不是可选项。魔法行会按等级展开成 1..N 级。
+5. `BuiltBuildings` 里逐条放单值建筑而不是一个组合掩码：`MapFormatArmy.GetBuildings` 只做或运算，两种写法都能用，但详情窗写回时是逐条放的，读回来也逐条放，两次打开同一座城得到的列表才一样。
+
+**后果**：没有块的城堡（或块尺寸不对）返回 `false`，调用方自己补一份空元数据——与参考「表里一定有条目」的假设相比这里是显式的。`MustHaveSpells`、`BannedSpells`、`AvailableToHireMonsterCount` 在 MP2 块里没有对应字节，保持默认值。
+
+## ADR-353：编辑器点城镇开城堡详情窗（`bpn.3.2`）
+
+**背景**：`editor_interface.cpp:2232-2246` 在编辑模式下遍历格上的物件，遇到 `OBJ_CASTLE` / `OBJ_RANDOM_TOWN` / `OBJ_RANDOM_CASTLE` 就把 `castleMetadata[id]` 拷一份、带上种族与归属色跑 `Editor::castleDetailsDialog()`，只有窗口返回真且元数据真的变了才 `ActionCreator( CASTLE_METADATA )` 写回。端口的编辑器此前点城镇只是普通物件信息框。
+
+**决定**：
+
+1. `EditorScene.OpenCastleDetails(tile)`：先判 `Mp2CastleMetadata.IsTownTile`，再用 `Mp2CastleMetadata.TryRead` 读块（`bpn.3.1`）拿元数据与归属色；种族取 `Map.Castles` 里坐标相同那条（MP2 的城堡表就是种族来源，物件自身不带）。
+2. 元数据表里已有该 UID（`Level1ObjectUid`）时以表里的为准并深拷贝一份给窗口——作者上次确认的改动比文件里的原样新，而窗口不能就地改表（取消时要一字不动）。
+3. `MapFormatArmy.LoadCastleArmy` 填守军（默认守军时不动军队，与 `Maps::loadCastleArmy` 同口径），再 `CastleDetailsState(metadata, race, owner, army)` → `_host.RunCastleDetails`。
+4. `Accepted` 才写 `_metadata.Castles[uid] = state.Metadata`；`Discarded` / `None` 什么都不写。`LastCastleDetailsTile` 记下最后跑过窗的格子，给日志与用例用。
+5. `PressDetail` 的编辑分支先试城堡、再退回物件信息框——与参考「编辑模式点物件」的同一处入口。返回值仍是「地图有没有变」，开窗不算变。
+
+**后果**：**撤销栈没接**：参考的 `ActionCreator( CASTLE_METADATA )` 只换一本表，端口是整图快照 + 地块差分，元数据不在其中，所以确认后只留一条日志。这条缺口已登记为 `bpn.3.3`。
+
+**坑**：用例里 `AssetBundle` 必须活到窗口跑完（`CastleDetailsArtwork` 是懒读归档的），而且 `GameAssets.Current` 必须指向它——`EMPTY_GUILDWELL_BUTTON.ICN` 这类合成表要查当前 bundle，否则 `ButtonFactory.RequireBlank` 直接抛。
+
+## ADR-354：编辑器存图链路（`fsk`）
+
+**背景**：`editor_interface.cpp:3204-3266` 的 `saveMapToFile()` 是个循环：确认数据目录与 `maps` 子目录可写 → `Editor::mapSaveSelectFile()`（取消即返回）→ 拼 `目录/文件名.fh2m` → 文件已存在就问一句「真的要覆盖吗」，答 NO 回去重开窗 → 写盘 → 记日志。UI 层的 `EditorSaveMapWindow` 早就在了，只是一句都没接。
+
+**决定**：
+
+1. 新增 `App.Modals.EditorSaveMapModal`：`Update` 把 `LocalEvent` 交给窗口，窗口的四个请求各自摞一层——地图名走输入框、删除走后跟一个 YES/NO 确认框（确认后 `File.Delete` 并让列表丢掉那一行）、右键说明走消息框，虚拟键盘只留一条日志（端口的 `VirtualKeyboardView` 只有数字键盘）。`HotKey` 折成窗口新加的 `Accept()` / `RequestCancel()`，与点按钮同一条路。
+2. `EditorSceneHost.RunSaveMapWindow(directory, fileName, mapName)` 造窗并跑一轮：美术 `EditorSaveMapArtwork.TryCreate`（走 `GameAssets.Current`），列表每次开窗用 `MapCatalog.ReadAll([directory])` 现扫——与参考一致。
+3. `EditorScene.SaveMapToFile()` 照参考写循环，写盘交给 `MapEditSession.SaveAs`（它顺手更新「已保存」基线，等于参考的「保存后不再是脏的」）。地图名改了就 `ApplyMapInfo(Map.Info with { Name = mapName })`，这样保存时头部会一起写回。
+4. 保存目录默认 `GameDataDirectory.Get("fheroes2")/maps`，用例用新加的 `EditorScene.SaveMapDirectory` 换成临时目录——`GameDataDirectory.OverrideRoot` 是全局静态，不适合按用例切换。
+
+**后果**：文件菜单的 `SaveMap` 分支接上了；其余六颗（新图/载图/开始地图/主菜单/退出/自动测试）仍是 `beb`。`MapCatalog` 只列 `.mp2`，端口写的就是 mp2（ADR-312 的偏差延续）。
+
+**测试口径**：`RunModal` 这条缝在用例里既跑保存窗又跑覆盖问句，所以桩要按窗口类型分支——保存窗给文件名并按 OKAY，问句框按 CANCEL（这扇窗只有 YES/NO，CANCEL 就等于 NO）。
+
+## ADR-355：文件菜单的出口缝与退出/主菜单两颗（`beb.1`）
+
+**背景**：`beb` 一张票写了六颗按钮，开工时数了一遍体量：退出与主菜单只要一个「离开编辑器」的请求缝；新图与载图要回编辑器主菜单重选；开始地图与自动测试要 World（而编辑器手上只有 `Mp2Map`）。按「开工前发现过大就拆」把 `beb` 升为 epic，拆出 `.1`（本条）、`.2`（新图/载图）、`.3`（开始地图/自动测试，P3）。
+
+**决定**：
+
+1. 新增 `EditorLeaveRequest { None, MainMenu, Quit }` 与 `EditorScene.LeaveEditor`（`Action<EditorLeaveRequest>?`）：参考的编辑器循环返回 `GameMode`，端口把这一步交回 `GameHost`——它才持有场景表与客户端生命周期，与 `SavePreferences` 同一条缝。没接上时什么都不发生（`--scene editor` 那种没有菜单的启动方式）。
+2. `EditorScene.ConfirmLeave(title, body)`：YES/NO 框走 `RunModal`；**没有帧泵时答 NO**——参考在开不出框时也不会悄悄丢掉改动，这里同样保守。
+3. `OpenFileMenu()` 拆成「跑菜单 + `HandleFileMenuResult(result)`」，后者照 `editor_interface.cpp:2103-2153` 分派。拆出来是为了让用例不必造出整张菜单就能测分支，与场景里既有的 `OpenCastleDetails` / `SaveMapToFile` 同一种可测入口。
+4. Quit 用 `processEditorExitEvent()` 的文案（`Quit` / 「Are you sure you want to quit? …」），MainMenu 用 `:2129` 那句；两者都是 YES 才 `LeaveEditor`。
+5. `GameHost.HandleEditorLeave`：`MainMenu` → `CloseEditor()`；`Quit` → `_running = false`（与主菜单的 Quit 同一处）。两处编辑器场景的接线（`HandleEditorMenuRequest` 新建、命令行打开）都补上了。
+
+**后果**：ESC 仍是直接 `CloseEditor()`，没有接确认框——参考的 `DEFAULT_CANCEL` 走的是 `processEditorExitEvent()`，这一处留作后续（没有 issue，随 `.2` 一起看）。`.2` 复用同一个 `EditorLeaveRequest` 的 `NewMap` / `LoadMap` 两个值。
+
+## ADR-356：文件菜单的新图与载图两颗（`beb.2`）
+
+**背景**：`editor_interface.cpp:2050-2067` 的 `eventLoadMap()` / `eventNewMap()` 各是一句确认框（标题为空，正文「Are you sure you want to load a new map? …」/「… create a new map? …」），YES 才返回 `EDITOR_LOAD_MAP` / `EDITOR_NEW_MAP`，主循环拿这个值回 `Editor::menuMain()`。`beb.2` 开工时的描述写「参考这里不确认」是错的，读源码后按参考补上了确认框。
+
+**决定**：
+
+1. `EditorLeaveRequest` 加 `NewMap` / `LoadMap` 两个值。
+2. `HandleFileMenuResult` 两支各 `ConfirmLeave(string.Empty, …)`：标题传空串（参考就是空标题），正文是两句新的常量 `NewMapQuestion` / `LoadMapQuestion`。
+3. `GameHost.HandleEditorLeave` 收到这两个值时 `CloseEditor()` + `OpenEditorMenu()`——参考是「先退回主循环再进编辑器主菜单」，端口把这两步连起来；新图与载图具体做什么由编辑器主菜单自己的 `EditorMenuAction` 负责（载图目前仍开目录里第一张图，见 `beb` 未做部分）。
+
+**后果**：编辑器主菜单的「载图」仍不弹选关列表（`OpenEditor` 直接开第一张）——那是 `EditorMainMenuScene` 那条线的缺口，不在这张票里。ESC 的确认框也仍未接（同 ADR-355 的遗留）。
+
+## ADR-357：编辑器物件点击的法术选择支（`a7l.10.1`）
+
+**票面修正**：`a7l.10` 原描述把 `editor_object_popup_window.cpp` 当成「元数据编辑窗」。读源码后确认那个文件只是**右键说明浮窗**（`showPopupWindow` → `displayStandardPopupWindow`），端口的 `EditorObjectPopup` / `EditorObjectPopupView` 早就转过。真正缺的是 `editor_interface.cpp:2196-2620` 的 `mouseCursorAreaClickLeft`：编辑模式下按物件类型分派的十四条分支，各开各的窗、各写各的元数据表，只有元数据真的变了才 `ActionCreator` 提交。票面已改写并升为 epic，拆出 `.1`（本条）、`.2`（标牌/怪物/资源/神器）、`.3`（sphinx/事件/巫术小屋/方尖碑/归属）。
+
+**决定**：
+
+1. `EditorScene.OpenSpellChooser(tile)`：`SpellLevelOf(type)` 给出 1/2/3（三环神殿）与 5（金字塔），Action 前缀的同类值也认；表里已有条目就拷一份当初始值，标题是 `Mp2ObjectName.Of(type) + ":"`（参考 `MP2::StringObject(type) + ':'`）。
+2. 复用 `EditorSceneHost.RunSpellSelection(title, level, current)`——它已经带「换等级重开一层」的循环，所以这里不再管 `LevelChanged`。
+3. **只在接受且列表非空时建条目**：空列表在参考里表示「全启用=按默认」，端口照抄；取消与「全部启用」都不写表，也不新建一条空记录。
+4. 接在 `PressDetail` 的编辑分支里、城堡之后、物件信息框之前（参考也是城堡先判）。
+5. `LastSpellChooserTile` 给日志与用例一个「确实开过窗」的锚点，同 `LastCastleDetailsTile`。
+
+**后果**：`a7l.9.3` 的第一处调用点（神殿/金字塔）解锁；第二处（城堡禁法）早在 `bpn.2.2` 就完成，所以那张票可以关了。写回仍不进撤销栈（`bpn.3.3`）。
+
+## ADR-358：标牌、怪物与资源三支物件编辑（`a7l.10.2`）
+
+**拆分**：`a7l.10.2` 原票含神器的四支，开工时发现那四支都要 `Dialog::multiSelectArtifact`，即参考的 `MultiArtifactSelection`（`ItemSelectionWindow` + `MultiItemSelectionBase` + 一对 toggle 全开/全关按钮），而端口的 `ItemSelectionWindow` 文档明确写着 toggle 按钮未转、唯一用户就是它。体量独立，按规则拆出 `a7l.10.4`，本票只留三支。
+
+**决定**：
+
+1. `EditorScene.EditSign(tile)`：`InputStringDialog.Create(string.Empty, "Input {object} text:", 999, isMultiLine: true, 当前文本)`——参考把物件名填进正文、标题留空。**接受且文本变了**才写 `signMetadata[uid].Message`。
+2. `EditorScene.EditMonsterCount(tile)`：`Mp2ObjectData.CarriesTroopCount` 判是不是兵堆，`MonsterOf` 取怪种，标题 `Set {怪物名} Count:`，范围 `0..500000`，初值是表里的数量、没有就用地块的数据字。参考还带一个「这堆可能是哪些怪」的多选，端口先只做数量（多选要等 `a7l.10.4` 的骨架）。
+3. `EditorScene.EditResourceCount(tile)`：`ResourceOf` 取资源种类，标题 `Set {资源名} Count:`，范围 `0..999999`，表里没有就从 0 起（参考同样先补一条 0）。
+4. 三支都接在 `PressDetail` 编辑分支里、城堡与法术选择之后；`TryReadEditableTile` 统一挡地图外的点。`LastObjectEditorTile` 给日志与用例。
+5. `PressDetail` 用 `EditSign(tile) || EditMonsterCount(tile) || EditResourceCount(tile)` 短路——三支的类型判定互斥，先判谁都行，短路只省两次查表。
+
+**后果**：三支都只写元数据表、不进撤销栈（`bpn.3.3`）。神器的四支（终极神器半径+多选、法术卷轴选法术、随机神器多选、单件神器说明）在 `a7l.10.4`。
+
+**测试口径**：`InputStringModal` 走的是「先 `SetCursor` 再 `SetLeftButton`」那一套（它的 `Update` 不读 `LocalEvent`），所以点 OKAY 要用 `SetCursor` + 两次 `SetLeftButton`，不能像列表窗那样往 `LocalEvent` 里塞点击。多行输入里回车是换行，确认只能点按钮。
+
+## ADR-359：地块与元数据共用一条撤销时间线（`bpn.3.3`）
+
+**背景**：参考只有一条 `HistoryManager`，整图快照、元数据字典与地块笔画都往同一个 `std::list<Action>` 里放，所以撤销严格按时间倒序。端口原本让 `MapEditSession` 自己攒 `List<MapStroke>`，元数据改动干脆不入栈（ADR-353 的缺口）。两张票（`bpn.3.3` 与 `a7l.10.2` 的日志）都写着「not in the undo history yet」。
+
+**决定**：
+
+1. 新增 `IEditStep { bool Undo(); bool Redo(); }`：把「一步」抽象成同一种元素。`MapStroke` 与 `MetadataMapAction<T>` 都实现它，于是 `MapEditSession` 的 `_undo` / `_redo` 从 `List<MapStroke>` 变成 `List<IEditStep>`，两种步骤混在同一条时间线里。`MapStroke` 因此要持有 `Mp2Map` 引用（`SetTileAt` 写的是数组，引用足够），`Apply` 从 session 搬进笔画自己。
+2. `MapEditSession.RecordStep(step)`：非地块步骤的入口，与 `EndStroke` 一样受 `MaxUndoDepth` 约束、一样清空 redo 分支。`IsDirty`（`_undo.Count != _savedDepth`）因此也认得元数据改动，与参考「保存后清干净」一致。
+3. 五处元数据写回（城堡、神殿/金字塔、标牌、怪物、资源）统一成参考的三步：`new MetadataMapAction<T>( table, clone )` 捕获前值 → 改表 → `CommitMetadataChange( action )`（`Prepare` 捕获后值 + `RecordStep`）。顺序不能反，否则撤销撤到的是改完之后的样子。
+4. **顺手修了一个深浅拷贝的坑**：`MetadataMapAction<T>` 原来是 `new Dictionary<uint,T>(metadata)`，浅拷。参考的表装 `struct`，所以 `std::map` 的拷贝构造天然是深拷；端口的这五张表装的是 `class`，浅拷只换引用——先快照、再改表里那个对象，快照跟着变，撤销等于没撤。现在构造与 `Replace` 都走一个可选的 `Func<T,T> clone`，五处各传自己的 `Clone()`；`SphinxMetadata` 之外的四个 metadata 类补了 `Clone()`（`CastleMetadata` 早就有）。
+
+**后果**：`Ctrl+Z` / `Ctrl+Y` 现在同时覆盖地块与五张元数据表，顺序正确。仍是单栈语义：撤销后做新改动会清掉 redo 分支，与参考相同。
+
+**没做**：`HistoryManager` 类本身没接进编辑器（它管的是 `MapAction` 与整图快照，编辑器用的是 `MapEditSession` + `IEditStep`）；`ActionCreator` 那种 `IDisposable` 的「不改就撤回」语义没有对应用例，因为端口每处都是「先判断变了没有，再建动作」。
+
+## ADR-360：编辑器窗口的内层循环也能截图（`74t`）
+
+**背景**：`--screenshot-frame` 一直拍不到编辑器窗口（规格窗、文件菜单、系统菜单）。原因有两层，只修一层仍然拍不到：
+
+1. `OnFrameEnded` 开头 `if ( _modal is not null ) return _running;` —— 内层循环的帧既不计数也不拍照。这条是票面写的。
+2. **`_running` 置位太晚**：它原本在 `CreateScenes()` / `StartAudio()` **之后**才置 `true`，而 `--editor-panel-click` 这类脚本是**在 `CreateScenes()` 内部**执行的，`RunModal` 的循环条件是 `while ( !screen.IsFinished && _running )`——`_running` 还是 `false`，窗口一进去就被跳过，脚本点完等于没开过窗。
+3. **`_scene` 挂得太晚**：`Draw()` 按 `_scene` 作画，而 `_scene` 原本在 `CreateScenes()` 返回之后才赋值。窗口在 `CreateScenes()` 内部跑起来时 `_scene` 还是 `null`，`Draw()` 直接返回，内层循环画的每一帧都是空的后缓冲——第一次修完第 1 条后拍到的是一张**纯黑图**，就是这个原因。
+
+**决定**：
+
+1. `RunModal` 循环里 `Draw()` 之后补 `CaptureScreenshot(composedFrameOnly: true)`：内层循环已经把画面合成到 `_frame` 了，直接编码它就够，不必读后缓冲（内层循环的帧还没 present，读回来是空的）。
+2. `_running = true` 挪到 `CreateScenes()` 之前，并写注释说明原因。
+3. `OpenEditor` 里把 `_scene = scene` 挪到脚本交互之前（`RunModal` 接线旁边），理由同上。
+
+**验证**：`--scene editor --editor-new 36 --editor-panel-click 72,302 --screenshot-frame 20` 拍出了完整的文件菜单（NEW MAP / LOAD MAP / START MAP / SAVE MAP / MAIN MENU / QUIT / AUTO PLAYTEST / CANCEL 八颗）；改前同一命令拍到的是纯黑。`--campaign 0 --screenshot-frame 8` 也拍到了战役选择窗。
+
+**既有回归**：`VerifyEditorBaseline.ps1` 报 990 像素差（两个小色块，`max channel delta 216`）。把 `GameHost.cs` 改动 `git stash` 掉重跑，**同样的 990 像素差、同样的位置**——是这条基线本来就漂了，与本票无关，没有 -Update。
+
+**没做**：`--editor-popup` 的浮窗不带，因为它只活 3 秒、按 `dt` 递减，截图拍到什么取决于这一跑多快（ADR 记录里踩过同一个坑）。
+
+## ADR-361：每日事件窗的两个数字子窗接进 App（`7we`）
+
+**背景**：`EditorDailyEventSpecWindow` 会发出两个请求——`ResourceCountRequest`（带一个 UI 层已经做好的 `SelectCountDialog`）与 `NumpadRequest`（字段、范围、当前值）——原先 `EditorDailyEventSpecModal` 只记 `GameLog.Warn`。
+
+**决定**：
+
+1. 数量窗直接用 `EditorSceneHost.TryCreateSelectCount(dialog, value)` + `SelectCountModal`（`bpn.2.3.2` 那套，素材是 `TOWNWIND` 数字框 + `SYSTEM` 按钮）。
+2. 数字键盘复用 **`EditorMapSpecsValueModal`** 而不是新写一层：它包的就是 `openVirtualNumpad()` 那一层的全部行为——关窗才校验、越界与非法只弹错误框、键盘不关、数字不清。参考里地图规格页与每日事件调的是同一个函数，端口因此也该是同一个模态。**没有**改名成 `NumpadModal`：那是与本票无关的重命名，会牵动约 16 处测试引用；类的文档里写清了它是通用数字键盘模态。
+3. 两个请求各自的「回填目标」（资源类型、字段）存在 `_pendingResource` / `_pendingNumpad` 里，`Resolve` 按模态类型取出答案再调 `SetResourceCount` / `SetValueField`。取消（`Result` / `Value` 为 `null`）什么都不写。
+4. 顺序照参考：消息 → 资源数量 → 数字键盘 → 右键说明。每个请求都 `return`，一帧只开一扇窗。
+
+**测试口径**：键盘的文本是预填的当前值（`FirstOccurrenceDay` 默认 1），所以用例点一个「5」键把它接成 15 再按 OKAY——这既证明了写入，也证明键盘与事件窗共用的是同一份状态。
+
+## ADR-362：神器列表窗（`a7l.10.4.1`）
+
+**拆分**：`a7l.10.4`（神器元数据编辑）开工时数了一遍：它要 ①`SelectEnumArtifact` 列表窗、②`MultiItemSelectionBase` + `enableToggleButtons()` 的 toggle 全开/全关按钮（`ItemSelectionWindow` 文档明确写着这两颗没转、唯一用户就是多选神器）、③App 模态与四支分支。三件互相依赖且各自可测，按规则把 `a7l.10.4` 升为 epic，拆出 `.4.1`（本条）、`.4.2`（多选骨架与 toggle 按钮）、`.4.3`（四支接线）。
+
+**决定**：
+
+1. 新增 `IArtifactIcons { Sprite? GetMiniArtifact(uint frame) }`，`ArtifactsBarArtwork` 直接实现它——它本来就有同名的 `GetMiniArtifact(frame)`，帧号口径也一致（`ArtifactTypes.MiniSpriteIndex` = id − 1，正是参考的 `Artifact::IndexSprite32()`）。不新造图标缓存，两处共用一份。
+2. `ArtifactSelectionWindow`：`ItemSelectionWindow` 子类，行高 42、图标 `middleImageOffsetX = 45/2`、文字 `textOffsetX = 50`，名字取 `ArtifactTable.Get(type).Name`；右键只记 `TakeInfoRequest()`，由宿主开说明框（同 `SpellSelectionWindow` 的做法）。
+3. `ArtifactSelectDialog.BuildArtifactList(version, isForVictoryConditions, level)` 逐条照参考：首项是魔法书（胜利条件那条路换成「任意终极神器」）、跳过魔法书自身、胜利条件跳过法术卷轴、`SuccessionWars` 跳过资料片神器、跳过无效编号。多出的 `level` 参数是编辑器两条路要的「只留某一档」，参考里是就地筛的（`editor_interface.cpp:2385-2427`）。
+4. `TryCreate` 在列表空时返 `null`，由调用方弹「There are no artifacts to select from.」——与 `MonsterSelectDialog` / `SpellSelectDialog` 同一形状。
+
+**坑**：`ArtifactSelectDialog.DialogSize()` 是 370 宽，居中后活动区 x = 135，列表再左缩 10 → 145。写布局断言时按 `SpellSelectDialog`（340 宽 → 150）的习惯直接抄成 165 会错，那是窗口宽度差 30 造成的。
+
+## ADR-363：多选骨架与 toggle 全开/全关按钮（`a7l.10.4.2`）
+
+**背景**：`ItemSelectionWindow` 的文档明确写着 toggle 按钮没转、唯一用户是参考的 `MultiArtifactSelection`。`MultiItemSelectionBase` 的语义也不显然：**调用方给的选中集为空时它全选**——因为空集在参考里表示「没指定，就都允许」。
+
+**决定**：
+
+1. 新增 `MultiItemSelection`（纯逻辑、不碰美术）：构造即 `_setup()`（与候选求交、为空则全选），`Toggle` / `SelectAll` / `Clear` / `GetSelected`。`GetSelected` 按**列表顺序**交回（参考的 `std::set` 是升序，但列表本身就是调用方给的顺序，两边在这里一致）。
+2. `ItemSelectionWindowArtwork` 加两个可空字段 `ToggleAllOn` / `ToggleAllOff`（`(Sprite, Sprite)?`）。它们不是归档里的 `.ICN`，是 `ButtonFactory.MakeToggleAllButton` 合成的（h2d 图案），`EditorSecondarySkillSelectionArtwork` 早就在用同一个工厂。可空让**所有既有调用方一行都不用改**。
+3. `ItemSelectionWindow` 补 `EnableToggleButtons()`（底部居中、{0,7}、先让「全开」禁用）、`OnToggleOn`/`OnToggleOff` 两个 virtual 钩子、`SetOkayEnabled`，以及 `DoubleClickAnswersOkay` 这个 virtual——参考的 `isDoubleClicked()` 在多选里恒为假，因为双击在那里是「切换一行」。
+4. `MultiArtifactSelectionWindow : ArtifactSelectionWindow`：单击与双击都切换行，图标未被选中时套 `PaletteId.Gray`，按下「全关」把 OKAY 灰掉。`ArtifactSelectionWindow` 因此去掉了 `sealed`，并加了 `DecorateIcon` 这个 virtual 让子类改画法。
+
+**后果**：`ItemSelectionWindow.Draw` 现在多画一颗 toggle（两颗只有一个可见），顺序照参考在按钮行之前。
+
+**测试口径**：`ListBox` 没有 `GetItemRect`（那在 `ItemsActionBar` 上），行中心要自己算：`ItemsArea.Y + n * (ItemsArea.Height / VisibleItemCount) + rowHeight / 2`。点 toggle 与点行走 `ProcessEvents(LocalEvent)`，就是真实鼠标那条路。
+
+## ADR-364：神器四支接线（`a7l.10.4.3`）
+
+**决定**：
+
+1. `ItemSelectionWindowArtwork.TryCreate` 顺手补上 `ToggleAllOn` / `ToggleAllOff`（`STONEBAK` 底 + `ButtonFactory.MakeToggleAllButton`）。单选窗不调 `EnableToggleButtons()`，所以多出来的这对图对它们毫无影响；多选窗因此不用另走一条取美术的路。
+2. 新增 `ArtifactDescriptionDialog`（`ArtifactDialogElement::showPopup()`）：`RESOURCE.ICN` 帧 7 当框、`ARTIFACT.ICN` 的全尺寸帧当图标，标题是名字、正文是 `ArtifactTable.Get(type).GetDescription(extraParameter)`——`extraParameter` 是法术卷轴的法术 id，它填进说明的 `%{spell}`。
+3. 新增 `ArtifactSelectModal` / `MultiArtifactSelectModal`（与 `SpellSelectModal` 同构：窗口自己读 `LocalEvent`，右键说明框摞在自己栈上）。多选的 `SelectedArtifacts` 只在 `Result == Ok` 时有值。
+4. 宿主三个工厂：`TryCreateArtifactSelect(artifact, level, version)`、`TryCreateMultiArtifactSelect(allowed, selected)`、`TryCreateArtifactInfo(artifact, spell)`。图标用 `ArtifactsBarArtwork`（它已实现 `IArtifactIcons`），缓存在 `_artifactIcons`。
+5. `EditorScene.EditArtifact(tile)` 照 `editor_interface.cpp:2346-2437` 分派四支：终极神器（半径 0..100）→ 法术卷轴（`selectSpell` 全等级）→ 四种随机神器（按 `Treasure`/`Minor`/`Major`/`AllNormal` 筛候选后多选）→ 其余合法神器（只弹说明）。写回沿用 ADR-359 的同一条撤销时间线，且只在值真的变了才写。
+
+**两处修正**：
+
+- `EditorSceneHost.TryCreateSpellSelect` 的 `spellLevel` 从 `int` 改成 `int?`：法术卷轴要的是「全部等级」，参考的 `selectSpell( id, true )` 不传等级。`null` 折成 `-1`，既有调用方传 `int` 会自动提升。
+- `ArtifactOf` 只在 `OBJ_ARTIFACT` 上跑：`ArtifactMapSprites.FromMapIndex` 对随机神器的几个固定下标（163/164/167/169/171）会**真的抽一次**（`ArtifactRandom.Next`），编辑器不该消耗随机序列。
+
+**没做**：终极神器那一支参考还带「那八件里允许哪些」的多选（`selectionUi`），端口只做了半径。原因同 `a7l.10.2` 的怪物多选：那一格的候选多选要跟半径窗同屏，而 `SelectCountView` 还没有「调用方部件」的位置（见 `biv`）。已在该票的范围里记着。
+
+**测试口径**：模态的 `HotKey` 只记下、`Update` 才转给窗口，所以桩里按下热键后必须再 `Pump` 一帧，否则跑完桩回头读 `Accepted` 时窗口还没处理过热键。

@@ -16,7 +16,7 @@ namespace FHeroes2.UI.Widgets;
 /// 帧号见 <see cref="ArtifactTypes.MiniSpriteIndex"/> 与 <see cref="ArtifactTypes.FullSpriteIndex"/>，
 /// 空槽是 <c>ARTIFACT</c> 第 0 帧（<c>artifact.cpp:1129</c>）。
 /// </remarks>
-public sealed class ArtifactsBarArtwork : IArtifactsBarSprites
+public sealed class ArtifactsBarArtwork : IArtifactsBarSprites, Dialogs.IArtifactIcons
 {
     private readonly Dictionary<uint, Sprite?> _miniIcons = [];
     private readonly Dictionary<uint, Sprite?> _icons = [];

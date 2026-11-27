@@ -41,8 +41,8 @@ public sealed class MapEditSession
     public const int MaxUndoDepth = 200;
 
     private readonly MapEditorView _editor;
-    private readonly List<MapStroke> _undo = [];
-    private readonly List<MapStroke> _redo = [];
+    private readonly List<IEditStep> _undo = [];
+    private readonly List<IEditStep> _redo = [];
 
     private MapStroke? _stroke;
     private MapGround _brush = MapGround.Grass;
@@ -543,7 +543,7 @@ public sealed class MapEditSession
             return false;
         }
 
-        _stroke = new MapStroke();
+        _stroke = new MapStroke(Map);
         _strokeAnchor = null;
         return true;
     }
@@ -1268,15 +1268,16 @@ public sealed class MapEditSession
             return false;
         }
 
-        MapStroke stroke = _undo[^1];
+        IEditStep step = _undo[^1];
         _undo.RemoveAt(_undo.Count - 1);
 
-        Apply(stroke, reverse: true);
-        _redo.Add(stroke);
+        _ = step.Undo();
+        _redo.Add(step);
+
         return true;
     }
 
-    /// <summary>Applies the last undone stroke again.</summary>
+    /// <summary>Applies the last undone step again.</summary>
     /// <returns>Whether there was anything to redo.</returns>
     public bool Redo()
     {
@@ -1287,12 +1288,39 @@ public sealed class MapEditSession
             return false;
         }
 
-        MapStroke stroke = _redo[^1];
+        IEditStep step = _redo[^1];
         _redo.RemoveAt(_redo.Count - 1);
 
-        Apply(stroke, reverse: false);
-        _undo.Add(stroke);
+        _ = step.Redo();
+        _undo.Add(step);
+
         return true;
+    }
+
+    /// <summary>
+    /// Puts a step that was not a tile stroke onto the same history, e.g. a change of one metadata table
+    /// (<c>fheroes2::ActionCreator</c> committing into the single <c>HistoryManager</c> of the reference).
+    /// </summary>
+    /// <remarks>
+    /// 步骤自己要先把「改之前」与「改之后」都准备好——<see cref="MetadataMapAction{T}"/> 的构造捕获前者、
+    /// <see cref="MetadataMapAction{T}.Prepare"/> 捕获后者，正好是参考的构造加 <c>commit()</c>。压进来以后
+    /// <kbd>Ctrl</kbd>+<kbd>Z</kbd> 会按时间顺序同时覆盖地块与元数据。
+    /// </remarks>
+    /// <param name="step">The step to record.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="step"/> is <see langword="null"/>.</exception>
+    public void RecordStep(IEditStep step)
+    {
+        ArgumentNullException.ThrowIfNull(step);
+
+        _undo.Add(step);
+
+        if (_undo.Count > MaxUndoDepth)
+        {
+            _undo.RemoveAt(0);
+            _savedDepth = Math.Max(0, _savedDepth - 1);
+        }
+
+        _redo.Clear();
     }
 
     /// <summary>
@@ -1392,15 +1420,6 @@ public sealed class MapEditSession
         }
     }
 
-    /// <summary>Writes one side of a stroke back into the map.</summary>
-    private void Apply(MapStroke stroke, bool reverse)
-    {
-        foreach (MapTileChange change in stroke.Changes)
-        {
-            Map.SetTileAt(change.Index, reverse ? change.Before : change.After);
-        }
-    }
-
     private bool WithinMap(Point tile) =>
         tile.X >= 0 && tile.Y >= 0 && tile.X < Map.Width && tile.Y < Map.Height;
 }
@@ -1415,9 +1434,23 @@ public readonly record struct MapTileChange(int Index, Mp2TileInfo Before, Mp2Ti
 /// The tiles one press-drag-release changed, one entry per tile: a tile the pointer crossed twice
 /// keeps its first "before" and its last "after", so the whole gesture undoes in one step.
 /// </summary>
-internal sealed class MapStroke
+internal sealed class MapStroke : IEditStep
 {
     private readonly Dictionary<int, MapTileChange> _changes = [];
+
+    private readonly Mp2Map _map;
+
+    /// <summary>
+    /// Creates a stroke over a map; the map is kept by reference, which is enough because
+    /// <see cref="Mp2Map.SetTileAt"/> writes into the tile array the map already holds.
+    /// </summary>
+    /// <param name="map">The map the stroke edits.</param>
+    public MapStroke(Mp2Map map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        _map = map;
+    }
 
     /// <summary>Number of distinct tiles the stroke changed.</summary>
     public int Count => _changes.Count;
@@ -1434,5 +1467,24 @@ internal sealed class MapStroke
         _changes[index] = _changes.TryGetValue(index, out MapTileChange change)
             ? change with { After = after }
             : new MapTileChange(index, before, after);
+    }
+
+    /// <inheritdoc/>
+    public bool Undo() => Apply(reverse: true);
+
+    /// <inheritdoc/>
+    public bool Redo() => Apply(reverse: false);
+
+    /// <summary>Writes one side of the stroke back into the map.</summary>
+    /// <param name="reverse">Whether to write the "before" or the "after" side.</param>
+    /// <returns>Always <see langword="true"/>: writing tiles back cannot fail.</returns>
+    private bool Apply(bool reverse)
+    {
+        foreach (MapTileChange change in _changes.Values)
+        {
+            _map.SetTileAt(change.Index, reverse ? change.Before : change.After);
+        }
+
+        return true;
     }
 }

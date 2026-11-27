@@ -1,3 +1,4 @@
+﻿using System.Globalization;
 using FHeroes2.App.Fonts;
 using FHeroes2.App.Localization;
 using FHeroes2.Assets;
@@ -8,8 +9,14 @@ using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
+using FHeroes2.Game.Artifacts;
+using FHeroes2.Game.Army;
+using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
 using FHeroes2.Game.Maps;
+using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
+using FHeroes2.Game.Spells;
 using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
 using FHeroes2.UI.Editor;
@@ -387,6 +394,22 @@ public sealed class EditorScene : IScene
     /// </remarks>
     public Action? SavePreferences { get; set; }
 
+    /// <summary>
+    /// Asks the host to leave the editor, the <c>fheroes2::GameMode</c> the reference's <c>eventFileDialog()</c> and
+    /// <c>processEditorExitEvent()</c> return to the main loop (<c>editor_interface.cpp:1393-1401</c>, <c>:2121-2153</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的编辑器自己就是主循环的一帧，退出与回主菜单都是「返回一个 GameMode」。端口把这一步交回
+    /// <c>GameHost</c>——它才持有场景表与客户端生命周期，与 <see cref="SavePreferences"/> 同一条缝。
+    /// </para>
+    /// <para>
+    /// 只在确认框答了 YES 之后才调用；没接上时什么都不发生，编辑器留下（<c>--scene editor</c> 那种没有菜单的
+    /// 启动方式就是这样）。
+    /// </para>
+    /// </remarks>
+    public Action<EditorLeaveRequest>? LeaveEditor { get; set; }
+
     /// <summary>The tool in use, as the panel names it.</summary>
     public string Tool => _edits.Tool.ToString();
 
@@ -401,6 +424,16 @@ public sealed class EditorScene : IScene
 
     /// <summary>Whether the information box of the object under the pointer is open.</summary>
     public bool IsObjectInfoOpen => _infoTile is not null;
+
+    /// <summary>
+    /// The directory the save window lists and writes into; empty to use the writable data directory's
+    /// <c>maps</c> folder.
+    /// </summary>
+    /// <remarks>
+    /// 参考只认 <c>System::GetDataDirectory( "fheroes2" )</c>；端口留这个缝是给用例换成临时目录，免得往用户的
+    /// <c>%APPDATA%</c> 里写字。
+    /// </remarks>
+    public string SaveMapDirectory { get; set; } = string.Empty;
 
     /// <summary>The tile the information box describes, <see langword="null"/> when it is closed.</summary>
     public Point? ObjectInfoTile => _infoTile;
@@ -461,6 +494,641 @@ public sealed class EditorScene : IScene
     {
         _infoTile = null;
         _info = null;
+    }
+
+    /// <summary>
+    /// The per-object metadata tables of the map, i.e. what the castle details window edits
+    /// (<c>_mapFormat.castleMetadata</c> of the reference).
+    /// </summary>
+    /// <remarks>
+    /// MP2 里没有这套表，于是它从空开始，城堡详情窗确认后才写入 <see cref="MapObjectMetadataStore.Castles"/>。
+    /// 历史栈还没接：参考的 <c>ActionCreator( CASTLE_METADATA )</c> 因此缺一条撤销，见本方法下方的日志。
+    /// </remarks>
+    public MapObjectMetadataStore Metadata => _metadata;
+
+    /// <summary>
+    /// The tile whose castle details window is open, or <see langword="null"/> when none is.
+    /// </summary>
+    /// <remarks>
+    /// 窗口是模态的（<see cref="EditorSceneHost.RunCastleDetails"/> 里再起一层帧循环），所以这个字段只在
+    /// 「跑完回来后」有意义：用例与日志靠它确认点下去确实开了窗。
+    /// </remarks>
+    public Point? LastCastleDetailsTile { get; private set; }
+
+    /// <summary>
+    /// Opens the castle details window of the town on a tile, <c>Editor::castleDetailsDialog()</c> of
+    /// <c>editor_interface.cpp:2232-2246</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与参考同一个顺序：从城堡块读出元数据与归属色（MP2 的等价物，见 <see cref="Mp2CastleMetadata"/>），把守军
+    /// 填进 <see cref="Army"/>，跑窗，只有 <see cref="CastleDetailsOutcome.Accepted"/> 才写回元数据表。
+    /// </para>
+    /// <para>
+    /// 表里已经有这一格（<see cref="Mp2TileInfo.Level1ObjectUid"/>）的条目时以表里的为准——作者上一次确认过的改动
+    /// 比地图文件里的原样新。取消时表里原样的东西一个字都不动，与参考「<c>newCastleMetadata</c> 只是个副本」一致。
+    /// </para>
+    /// <para>
+    /// <b>已知缺口</b>：参考在写回前用 <c>ActionCreator( CASTLE_METADATA )</c> 把改动记进撤销栈，端口的
+    /// <see cref="MapEditSession"/> 只记地块，元数据表还没有历史，所以这里只写日志。
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">Tile of the town's gate, in map tiles.</param>
+    /// <returns>Whether the tile held a town and the window ran.</returns>
+    public bool OpenCastleDetails(Point tile)
+    {
+        if (tile.X < 0 || tile.X >= Map.Width || tile.Y < 0 || tile.Y >= Map.Height)
+        {
+            return false;
+        }
+
+        Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
+
+        if (!Mp2CastleMetadata.IsTownTile(info.ObjectType))
+        {
+            return false;
+        }
+
+        _ = Mp2CastleMetadata.TryRead(Map, tile, out CastleMetadata fromBlock, out PlayerColor owner);
+
+        // 城堡表里那条决定种族：物件自身不带种族，参考也是问物件元数据里的那一位。
+        MapRace race = MapRace.Knight;
+
+        foreach (Mp2CastlePosition position in Map.Castles)
+        {
+            if (position.X == tile.X && position.Y == tile.Y)
+            {
+                race = position.Race;
+
+                break;
+            }
+        }
+
+        uint uid = info.Level1ObjectUid;
+        CastleMetadata metadata = _metadata.Castles.TryGetValue(uid, out CastleMetadata? recorded)
+            ? recorded.Clone()
+            : fromBlock;
+
+        var army = new Army();
+
+        _ = MapFormatArmy.LoadCastleArmy(army, metadata);
+
+        var state = new CastleDetailsState(metadata, race, owner, army);
+
+        CastleDetailsOutcome outcome = _host.RunCastleDetails(state, _frame.Palette);
+
+        LastCastleDetailsTile = tile;
+
+        if (outcome != CastleDetailsOutcome.Accepted)
+        {
+            return true;
+        }
+
+        MetadataMapAction<CastleMetadata> action = new(_metadata.Castles, metadata => metadata.Clone());
+        _metadata.Castles[uid] = state.Metadata;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The castle at ({tile.X}; {tile.Y}) was accepted.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Puts a metadata change on the editor's history, the <c>commit()</c> of the reference's
+    /// <c>fheroes2::ActionCreator</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 用法与参考完全一致：改表**之前**先用 <c>new MetadataMapAction&lt;T&gt;( table )</c> 捕获前值（构造即快照，
+    /// 与 <c>ActionCreator</c> 的构造函数同语义），改完再调本方法把后值也捕获下来并入栈。
+    /// </para>
+    /// <para>
+    /// 入栈的是 <see cref="MapEditSession.RecordStep"/>，所以 Ctrl+Z / Ctrl+Y 与地块笔画共用一条时间线：
+    /// 先改名再画一格，两次撤销正好按相反顺序退回。
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="T">The per-object metadata type of the table.</typeparam>
+    /// <param name="action">The action whose table has just been changed.</param>
+    private void CommitMetadataChange<T>(MetadataMapAction<T> action)
+    {
+        if (!action.Prepare(Map.LastObjectUid))
+        {
+            return;
+        }
+
+        _edits.RecordStep(action);
+    }
+
+    /// <summary>
+    /// Opens the spell chooser of a shrine or a pyramid, the two <c>Editor::openSpellSelectionWindow()</c> calls of
+    /// <c>editor_interface.cpp:2484-2504</c> and <c>:2520-2540</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考给这三个神殿各一级（1/2/3 环），金字塔是 5 级；标题是物件名加冒号。选中结果写进
+    /// <c>selectionObjectMetadata[uid].selectedItems</c>，只有真的变了才提交历史（历史栈还没接，见
+    /// <c>bpn.3.3</c>）。
+    /// </para>
+    /// <para>
+    /// 空列表在参考里表示「按默认」：神殿默认给本环的随机法术，所以取消与「全部启用」都不写表——端口照抄，
+    /// 只在接受且列表非空时建条目。
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile was a shrine or a pyramid and the window ran.</returns>
+    public bool OpenSpellChooser(Point tile)
+    {
+        if (tile.X < 0 || tile.X >= Map.Width || tile.Y < 0 || tile.Y >= Map.Height)
+        {
+            return false;
+        }
+
+        Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
+
+        int spellLevel = SpellLevelOf(info.ObjectType);
+
+        if (spellLevel == 0)
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        SelectionObjectMetadata metadata = _metadata.Selections.TryGetValue(uid, out SelectionObjectMetadata? recorded)
+            ? new SelectionObjectMetadata { SelectedItems = [.. recorded.SelectedItems] }
+            : new SelectionObjectMetadata();
+
+        string title = Mp2ObjectName.Of(info.ObjectType) + ":";
+        List<SpellType> current = [.. metadata.SelectedItems.Select(id => (SpellType)id)];
+
+        EditorSpellSelectionDialogResult result = _host.RunSpellSelection(title, spellLevel, current);
+
+        LastSpellChooserTile = tile;
+
+        if (!result.Accepted || result.Spells.Count == 0)
+        {
+            return true;
+        }
+
+        var updated = new List<int>(result.Spells.Count);
+
+        foreach (SpellType spell in result.Spells)
+        {
+            updated.Add((int)spell);
+        }
+
+        if (recorded is not null && recorded.SelectedItems.SequenceEqual(updated))
+        {
+            return true;
+        }
+
+        MetadataMapAction<SelectionObjectMetadata> action = new(_metadata.Selections, metadata => metadata.Clone());
+        _metadata.Selections[uid] = new SelectionObjectMetadata { SelectedItems = updated };
+        CommitMetadataChange(action);
+
+        GameLog.Info(
+            $"The {Mp2ObjectName.Of(info.ObjectType)} at ({tile.X}; {tile.Y}) keeps {updated.Count} spell(s).");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The spell level a shrine or a pyramid offers, or zero when the object is neither
+    /// (<c>editor_interface.cpp:2489-2500</c>, <c>:2530</c>).
+    /// </summary>
+    /// <param name="type">The object type of the clicked tile.</param>
+    /// <returns>1 to 3 for the three shrines, 5 for a pyramid, zero otherwise.</returns>
+    private static int SpellLevelOf(Mp2ObjectType type) => type switch
+    {
+        Mp2ObjectType.ShrineFirstCircle or Mp2ObjectType.ActionShrineFirstCircle => 1,
+        Mp2ObjectType.ShrineSecondCircle or Mp2ObjectType.ActionShrineSecondCircle => 2,
+        Mp2ObjectType.ShrineThirdCircle or Mp2ObjectType.ActionShrineThirdCircle => 3,
+        Mp2ObjectType.Pyramid or Mp2ObjectType.ActionPyramid => 5,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// The tile whose spell chooser ran last, or <see langword="null"/> when none did; the tests and the log read it.
+    /// </summary>
+    public Point? LastSpellChooserTile { get; private set; }
+
+    /// <summary>
+    /// Opens the text box of a sign or a bottle, the <c>Dialog::inputString</c> of
+    /// <c>editor_interface.cpp:2266-2281</c>.
+    /// </summary>
+    /// <remarks>
+    /// 标题是 <c>Input %{object} text:</c>（物件名填进去），正文为空，多行，上限
+    /// <see cref="SignMessageCharLimit"/>；接受且文本真的变了才写 <c>signMetadata[uid].Message</c>。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile was a sign or a bottle and the box ran.</returns>
+    public bool EditSign(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.Sign or Mp2ObjectType.ActionSign or
+                Mp2ObjectType.Bottle or Mp2ObjectType.ActionBottle))
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        string current = _metadata.Signs.TryGetValue(uid, out SignMetadata? recorded) ? recorded.Message : string.Empty;
+
+        string header = string.Format(CultureInfo.InvariantCulture, InputObjectTextHeader, Mp2ObjectName.Of(info.ObjectType));
+        InputStringDialog dialog = InputStringDialog.Create(string.Empty, header, SignMessageCharLimit,
+            isMultiLine: true, initialText: current);
+
+        if (_host.TryCreateInput(dialog) is not { } window || RunModal is not { } runModal)
+        {
+            GameLog.Warn("The sign text needs the input window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.Window.Result is not { } text || text == current)
+        {
+            return true;
+        }
+
+        MetadataMapAction<SignMetadata> action = new(_metadata.Signs, metadata => metadata.Clone());
+        _metadata.Signs[uid] = new SignMetadata { Message = text };
+        CommitMetadataChange(action);
+
+        GameLog.Info(
+            $"The {Mp2ObjectName.Of(info.ObjectType)} at ({tile.X}; {tile.Y}) now reads {text.Length} character(s).");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Opens the count window of a monster stack, the <c>Dialog::SelectCount()</c> of
+    /// <c>editor_interface.cpp:2294-2331</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考还带一个「这一堆可能是哪些怪」的多选 UI（<c>ObjectMultiSelectionUI</c>），端口先只做数量：数量本身才是
+    /// 地图要存的东西，多选那块要等 <c>a7l.10.4</c> 的多选骨架。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile held a monster stack and the window ran.</returns>
+    public bool EditMonsterCount(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) || !Mp2ObjectData.CarriesTroopCount(info.ObjectType))
+        {
+            return false;
+        }
+
+        int monsterId = Mp2ObjectData.MonsterOf(info);
+
+        if (monsterId == Mp2MonsterName.Unknown)
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        MonsterMetadata metadata = _metadata.Monsters.TryGetValue(uid, out MonsterMetadata? recorded)
+            ? recorded
+            : new MonsterMetadata();
+        int current = metadata.Count > 0 ? metadata.Count : (int)info.Metadata;
+
+        string header = string.Format(CultureInfo.InvariantCulture, SetMonsterCountHeader,
+            MonsterNames.GetSingular((MonsterType)monsterId));
+        SelectCountDialog dialog = SelectCountDialog.Create(header, 0, MaximumMonsterCount, step: 1);
+
+        if (_host.TryCreateSelectCount(dialog, current) is not { } window || RunModal is not { } runModal)
+        {
+            GameLog.Warn($"The stack of {monsterId} needs the count window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.Result is not { } count || count == current)
+        {
+            return true;
+        }
+
+        // metadata 是表里那条的同一份对象（没有条目时是新建的），所以先入栈再改它的 Count：
+        // 前值是构造时拷下的那份，后值是 Prepare 时看到的这份。
+        MetadataMapAction<MonsterMetadata> action = new(_metadata.Monsters, metadata => metadata.Clone());
+        metadata.Count = count;
+        _metadata.Monsters[uid] = metadata;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The stack at ({tile.X}; {tile.Y}) holds {count} creature(s) now.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Opens the count window of a resource pile, the <c>Dialog::SelectCount()</c> of
+    /// <c>editor_interface.cpp:2333-2362</c>.
+    /// </summary>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile held a resource pile and the window ran.</returns>
+    public bool EditResourceCount(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.Resource or Mp2ObjectType.ActionResource))
+        {
+            return false;
+        }
+
+        Mp2ResourceType resource = Mp2ObjectData.ResourceOf(info);
+
+        if (resource == Mp2ResourceType.None)
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        int current = _metadata.Resources.TryGetValue(uid, out ResourceMetadata? recorded) ? recorded.Count : 0;
+
+        string header = string.Format(CultureInfo.InvariantCulture, SetResourceCountHeader,
+            Mp2ObjectData.Name(resource));
+        SelectCountDialog dialog = SelectCountDialog.Create(header, 0, MaximumResourceCount, step: 1);
+
+        if (_host.TryCreateSelectCount(dialog, current) is not { } window || RunModal is not { } runModal)
+        {
+            GameLog.Warn($"The {resource} pile needs the count window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.Result is not { } count || count == current)
+        {
+            return true;
+        }
+
+        MetadataMapAction<ResourceMetadata> action = new(_metadata.Resources, metadata => metadata.Clone());
+        _metadata.Resources[uid] = new ResourceMetadata { Count = count };
+        CommitMetadataChange(action);
+
+        GameLog.Info(
+            $"The {resource} pile at ({tile.X}; {tile.Y}) holds {count} now; " +
+            "the count is not in the undo history yet.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The artifact editors of a tile, the four <c>ADVENTURE_ARTIFACTS</c> branches of
+    /// <c>editor_interface.cpp:2346-2437</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 四支的分派与参考一致：终极神器问「半径 + 那八件里允许哪些」，法术卷轴问「哪条法术」，四种随机神器问「按等级
+    /// 允许哪些」，其余合法神器只弹说明框。随机那三支都是多选，参考里是 <c>Dialog::multiSelectArtifact()</c>。
+    /// </para>
+    /// <para>
+    /// 只有接受且列表真的变了才写 <c>artifactMetadata[uid]</c>（并沿用 <see cref="EditorScene"/> 的同一条撤销时间线）；
+    /// 取消什么都不写，与参考的 <c>if ( temp != selected )</c> 同口径。
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile held an artifact and something ran.</returns>
+    public bool EditArtifact(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info))
+        {
+            return false;
+        }
+
+        // 只有单件神器那一支要问「这是哪一件」：随机神器的帧是固定标记，而 FromMapIndex 在那些下标上会真的抽一次
+        // （ArtifactRandom.Next），编辑器不该消耗随机序列。
+        ArtifactType artifact = info.ObjectType is Mp2ObjectType.Artifact or Mp2ObjectType.ActionArtifact
+            ? ArtifactOf(info)
+            : ArtifactType.Unknown;
+
+        uint uid = info.Level1ObjectUid;
+        ArtifactMetadata metadata = _metadata.Artifacts.TryGetValue(uid, out ArtifactMetadata? recorded)
+            ? recorded
+            : new ArtifactMetadata();
+
+        switch (info.ObjectType)
+        {
+            case Mp2ObjectType.RandomUltimateArtifact:
+            case Mp2ObjectType.ActionRandomUltimateArtifact:
+                return EditUltimateArtifact(tile, uid, metadata);
+
+            case Mp2ObjectType.Artifact:
+            case Mp2ObjectType.ActionArtifact when artifact == ArtifactType.SpellScroll:
+                return EditSpellScroll(tile, uid, metadata);
+
+            case Mp2ObjectType.RandomArtifact:
+            case Mp2ObjectType.ActionRandomArtifact:
+            case Mp2ObjectType.RandomArtifactTreasure:
+            case Mp2ObjectType.ActionRandomArtifactTreasure:
+            case Mp2ObjectType.RandomArtifactMinor:
+            case Mp2ObjectType.ActionRandomArtifactMinor:
+            case Mp2ObjectType.RandomArtifactMajor:
+            case Mp2ObjectType.ActionRandomArtifactMajor:
+                return EditRandomArtifact(tile, uid, metadata, info.ObjectType);
+
+            default:
+                break;
+        }
+
+        if (!ArtifactTypes.IsValid(artifact))
+        {
+            return false;
+        }
+
+        // 单件神器：只有说明框，没有可改的东西（参考的 ArtifactDialogElement::showPopup）。
+        if (RunModal is not { } runModal || _host.TryCreateArtifactInfo(artifact) is not { } box)
+        {
+            return false;
+        }
+
+        runModal(box);
+
+        LastArtifactEditorTile = tile;
+
+        return true;
+    }
+
+    /// <summary>
+    /// The radius and the candidates of the ultimate artifact, <c>editor_interface.cpp:2349-2382</c>.
+    /// </summary>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <param name="uid">Object UID, the key of the metadata table.</param>
+    /// <param name="metadata">Its recorded data, or a fresh one.</param>
+    /// <returns>Whether a window ran.</returns>
+    private bool EditUltimateArtifact(Point tile, uint uid, ArtifactMetadata metadata)
+    {
+        int radius = metadata.Radius;
+        SelectCountDialog dialog = SelectCountDialog.Create(SetUltimateRadiusHeader, 0, MaximumUltimateRadius, 1);
+
+        if (_host.TryCreateSelectCount(dialog, radius) is not { } count || RunModal is not { } runModal)
+        {
+            GameLog.Warn("The ultimate artifact needs the count window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(count);
+
+        LastArtifactEditorTile = tile;
+
+        if (count.Result is not { } chosen || chosen == radius)
+        {
+            return true;
+        }
+
+        MetadataMapAction<ArtifactMetadata> action = new(_metadata.Artifacts, entry => entry.Clone());
+        metadata.Radius = chosen;
+        _metadata.Artifacts[uid] = metadata;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The ultimate artifact at ({tile.X}; {tile.Y}) is buried within {chosen} tile(s).");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The spell of a spell scroll, <c>editor_interface.cpp:2383-2400</c>.
+    /// </summary>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <param name="uid">Object UID.</param>
+    /// <param name="metadata">Its recorded data.</param>
+    /// <returns>Whether a window ran.</returns>
+    private bool EditSpellScroll(Point tile, uint uid, ArtifactMetadata metadata)
+    {
+        SpellType current = metadata.Selected.Count > 0 ? (SpellType)metadata.Selected[0] : SpellType.None;
+
+        if (_host.TryCreateSpellSelect(spellLevel: null, current, []) is not { } window ||
+            RunModal is not { } runModal)
+        {
+            GameLog.Warn("The spell scroll needs the spell picker, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastArtifactEditorTile = tile;
+
+        SpellType chosen = window.SelectedSpell;
+
+        // 参考：没选法术、或者选了同一个，就什么都不做。
+        if (chosen == SpellType.None || chosen == current)
+        {
+            return true;
+        }
+
+        MetadataMapAction<ArtifactMetadata> action = new(_metadata.Artifacts, entry => entry.Clone());
+        metadata.Selected.Clear();
+        metadata.Selected.Add((int)chosen);
+        _metadata.Artifacts[uid] = metadata;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The spell scroll at ({tile.X}; {tile.Y}) now carries {new Spell(chosen).GetName()}.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The candidates of a random artifact, <c>editor_interface.cpp:2401-2427</c>.
+    /// </summary>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <param name="uid">Object UID.</param>
+    /// <param name="metadata">Its recorded data.</param>
+    /// <param name="type">The object type, which decides the tier.</param>
+    /// <returns>Whether a window ran.</returns>
+    private bool EditRandomArtifact(Point tile, uint uid, ArtifactMetadata metadata, Mp2ObjectType type)
+    {
+        ArtifactLevel level = type switch
+        {
+            Mp2ObjectType.RandomArtifact or Mp2ObjectType.ActionRandomArtifact => ArtifactLevel.AllNormal,
+            Mp2ObjectType.RandomArtifactTreasure or Mp2ObjectType.ActionRandomArtifactTreasure => ArtifactLevel.Treasure,
+            Mp2ObjectType.RandomArtifactMinor or Mp2ObjectType.ActionRandomArtifactMinor => ArtifactLevel.Minor,
+            _ => ArtifactLevel.Major,
+        };
+
+        List<int> allowed = ArtifactSelectDialog.BuildArtifactList(Map.Info.Version, level: level);
+
+        if (_host.TryCreateMultiArtifactSelect(allowed, metadata.Selected) is not { } picker ||
+            RunModal is not { } runModal)
+        {
+            GameLog.Warn($"The random artifact at ({tile.X}; {tile.Y}) needs the artifact picker, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(picker);
+
+        LastArtifactEditorTile = tile;
+
+        if (!picker.Accepted)
+        {
+            return true;
+        }
+
+        List<int> chosen = [.. picker.SelectedArtifacts];
+
+        if (chosen.SequenceEqual(metadata.Selected))
+        {
+            return true;
+        }
+
+        MetadataMapAction<ArtifactMetadata> action = new(_metadata.Artifacts, entry => entry.Clone());
+        metadata.Selected.Clear();
+        metadata.Selected.AddRange(chosen);
+        _metadata.Artifacts[uid] = metadata;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The random artifact at ({tile.X}; {tile.Y}) may now be {chosen.Count} kind(s).");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The artifact an <c>OBJNARTI</c> tile stands for, read back from its sprite frame.
+    /// </summary>
+    /// <param name="info">The tile.</param>
+    /// <returns>The artifact, or <see cref="ArtifactType.Unknown"/> when the sprite names none.</returns>
+    private ArtifactType ArtifactOf(Mp2TileInfo info)
+    {
+        // 精灵帧是 2 * id - 1（OBJNARTI 每件神器占两帧，前面那帧是影子），所以反算见 ArtifactMapSprites。
+        if (!info.HasGroundObject || info.GroundIcnType != Mp2ObjectIcnType.ObjnArti)
+        {
+            return ArtifactType.Unknown;
+        }
+
+        return ArtifactMapSprites.FromMapIndex(info.BottomIcnImageIndex, Map.Info.Version,
+            Map.Info.Version != MapVersion.SuccessionWars);
+    }
+
+    /// <summary>The tile whose artifact editor ran last, or <see langword="null"/> when none did.</summary>
+    public Point? LastArtifactEditorTile { get; private set; }
+
+    /// <summary>
+    /// Reads the tile an object editor is about to look at, refusing everything outside the map.
+    /// </summary>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <param name="info">The tile's content.</param>
+    /// <returns><see langword="false"/> for a point outside the map.</returns>
+    private bool TryReadEditableTile(Point tile, out Mp2TileInfo info)
+    {
+        info = default;
+
+        if (tile.X < 0 || tile.X >= Map.Width || tile.Y < 0 || tile.Y >= Map.Height)
+        {
+            return false;
+        }
+
+        info = Map.Tile(tile.X, tile.Y);
+
+        return true;
     }
 
     /// <summary>Whether the popup of the right button is on screen.</summary>
@@ -1131,6 +1799,30 @@ public sealed class EditorScene : IScene
 
             Mp2TileInfo info = Map.Tile(tile.X, tile.Y);
 
+            // 参考在编辑模式下先看这一格是不是城堡入口（editor_interface.cpp:2232-2246），不是才描述物件。
+            if (OpenCastleDetails(tile))
+            {
+                return false;
+            }
+
+            // 神殿与金字塔是法术选择窗（editor_interface.cpp:2484-2540），比说明框先判。
+            if (OpenSpellChooser(tile))
+            {
+                return false;
+            }
+
+            // 标牌、怪物、资源各开一扇现成的窗（:2266-2362）。
+            if (EditSign(tile) || EditMonsterCount(tile) || EditResourceCount(tile))
+            {
+                return false;
+            }
+
+            // 神器的四支（:2346-2437）：终极神器的半径与候选、法术卷轴的法术、随机神器的候选、单件的说明。
+            if (EditArtifact(tile))
+            {
+                return false;
+            }
+
             return (info.HasGroundObject || info.HasTopObject) && ShowObjectInfo(tile);
         }
 
@@ -1695,20 +2387,265 @@ public sealed class EditorScene : IScene
     /// 那里的日志是多余的，直接返回。
     /// </para>
     /// </remarks>
-    public void OpenFileMenu()
-    {
-        EditorFileResult result = _host.RunFileDialog();
+    public void OpenFileMenu() => HandleFileMenuResult(_host.RunFileDialog());
 
+    /// <summary>
+    /// Acts on the button the file menu was left with, the switch inside the reference's <c>eventFileDialog()</c>
+    /// loop (<c>editor_interface.cpp:2103-2153</c>).
+    /// </summary>
+    /// <param name="result">The button that was pressed.</param>
+    public void HandleFileMenuResult(EditorFileResult result)
+    {
         switch (result)
         {
             case EditorFileResult.Cancel:
             case EditorFileResult.None:
                 return;
 
+            case EditorFileResult.SaveMap:
+                _ = SaveMapToFile();
+
+                return;
+
+            case EditorFileResult.NewMap:
+                // editor_interface.cpp:2059-2067 的 eventNewMap()：问一句「真的要新建吗」，YES 才回主菜单。
+                if (ConfirmLeave(string.Empty, NewMapQuestion))
+                {
+                    LeaveEditor?.Invoke(EditorLeaveRequest.NewMap);
+                }
+
+                return;
+
+            case EditorFileResult.LoadMap:
+                // editor_interface.cpp:2050-2057 的 eventLoadMap()。
+                if (ConfirmLeave(string.Empty, LoadMapQuestion))
+                {
+                    LeaveEditor?.Invoke(EditorLeaveRequest.LoadMap);
+                }
+
+                return;
+
+            case EditorFileResult.MainMenu:
+                // editor_interface.cpp:2127-2136：问一句「回主菜单吗，未保存的改动会丢」，YES 才交出请求。
+                if (ConfirmLeave(MainMenuTitle, MainMenuQuestion))
+                {
+                    LeaveEditor?.Invoke(EditorLeaveRequest.MainMenu);
+                }
+
+                return;
+
+            case EditorFileResult.Quit:
+                // editor_interface.cpp:1393-1401 的 processEditorExitEvent()。
+                if (ConfirmLeave(QuitTitle, QuitQuestion))
+                {
+                    LeaveEditor?.Invoke(EditorLeaveRequest.Quit);
+                }
+
+                return;
+
             default:
                 GameLog.Warn($"The editor file menu asked for {result}, and no action answers it yet.");
                 break;
         }
+    }
+
+    /// <summary>Title of the quit confirmation, <c>_( "Quit" )</c> (<c>editor_interface.cpp:1396</c>).</summary>
+    public const string QuitTitle = "Quit";
+
+    /// <summary>
+    /// Header of the sign text box, <c>_( "Input %{object} text:" )</c> (<c>editor_interface.cpp:2267</c>).
+    /// </summary>
+    public const string InputObjectTextHeader = "Input {0} text:";
+
+    /// <summary>Longest sign text, <c>Maps::Map_Format::messageCharLimit</c>.</summary>
+    public const int SignMessageCharLimit = 999;
+
+    /// <summary>Header of a stack's count window, <c>_( "Set %{monster} Count:" )</c> (<c>:2308</c>).</summary>
+    public const string SetMonsterCountHeader = "Set {0} Count:";
+    /// <summary>Largest stack the editor lets an author set, the <c>500000</c> of <c>:2320</c>.</summary>
+    public const int MaximumMonsterCount = 500_000;
+
+    /// <summary>Header of a pile's count window, <c>_( "Set %{resource-type} Count:" )</c> (<c>:2352</c>).</summary>
+    public const string SetResourceCountHeader = "Set {0} Count:";
+
+    /// <summary>Largest pile the editor lets an author set, the <c>999999</c> of <c>:2357</c>.</summary>
+    public const int MaximumResourceCount = 999_999;
+
+    /// <summary>
+    /// Header of the ultimate artifact's radius window, <c>_( "Set Random Ultimate Artifact Radius:" )</c>
+    /// (<c>:2368</c>).
+    /// </summary>
+    public const string SetUltimateRadiusHeader = "Set Random Ultimate Artifact Radius:";
+
+    /// <summary>Largest radius of the ultimate artifact, the <c>100</c> of <c>:2368</c>.</summary>
+    public const int MaximumUltimateRadius = 100;
+
+    /// <summary>
+    /// The tile whose sign text, monster count or resource count window ran last, or <see langword="null"/> when
+    /// none did; the tests and the log read it.
+    /// </summary>
+    public Point? LastObjectEditorTile { get; private set; }
+
+    /// <summary>Body of the quit confirmation, <c>_( "Are you sure you want to quit? …" )</c>.</summary>
+    public const string QuitQuestion = "Are you sure you want to quit? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>Title of the main menu confirmation, <c>_( "Main Menu" )</c> (<c>:2129</c>).</summary>
+    public const string MainMenuTitle = "Main Menu";
+
+    /// <summary>Body of the main menu confirmation, <c>_( "Do you wish to return to the game's Main Menu? …" )</c>.</summary>
+    public const string MainMenuQuestion =
+        "Do you wish to return to the game's Main Menu? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>Body of the new map confirmation, <c>editor_interface.cpp:2062</c>; the reference shows no title.</summary>
+    public const string NewMapQuestion =
+        "Are you sure you want to create a new map? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>Body of the load map confirmation, <c>editor_interface.cpp:2053</c>; the reference shows no title.</summary>
+    public const string LoadMapQuestion =
+        "Are you sure you want to load a new map? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>
+    /// Asks a YES/NO question about leaving the editor, the <c>showStandardTextMessage( …, Dialog::YES | Dialog::NO )</c>
+    /// pair of <c>:1393-1401</c> and <c>:2127-2136</c>.
+    /// </summary>
+    /// <remarks>
+    /// 没有帧泵时答 NO：参考在没有显示设备时也开不出这个框，宁可让作者留在编辑器里，也不要悄悄丢掉改动。
+    /// </remarks>
+    /// <param name="title">Title of the box.</param>
+    /// <param name="body">The question.</param>
+    /// <returns>Whether the author said YES.</returns>
+    private bool ConfirmLeave(string title, string body)
+    {
+        if (RunModal is not { } runModal ||
+            _host.TryCreateMessageBox(title, body, DialogButton.Yes | DialogButton.No) is not { } box)
+        {
+            GameLog.Warn($"The editor cannot ask \"{body}\", so it stays open.");
+
+            return false;
+        }
+
+        runModal(box);
+
+        return box.Answer == DialogButton.Yes;
+    }
+
+    /// <summary>
+    /// Saves the map through the save window, <c>EditorInterface::saveMapToFile()</c>
+    /// (<c>editor_interface.cpp:3204-3266</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的顺序：确认数据目录与 <c>maps</c> 子目录可写 → 开保存窗（取消就返回）→ 拼出 <c>目录/文件名.mp2</c> →
+    /// 文件已经存在就先问一句「真的要覆盖吗」，答 NO 就回去重开窗 → 写盘 → 记一条「Map saved to: …」。
+    /// 端口照抄这个循环，只是写盘交给 <see cref="MapEditSession.SaveAs"/>，它顺手把「已保存」的基线也更新了。
+    /// </para>
+    /// <para>
+    /// 地图名改了就按参考写回头部（<c>_mapFormat.name = mapName</c>）：<see cref="MapEditSession.ApplyMapInfo"/>
+    /// 会置上「头部变了」，保存时才会把名字一起写回文件。
+    /// </para>
+    /// <para>
+    /// 保存目录默认是 <see cref="GameDataDirectory"/> 下的 <c>maps</c>，用例可以先用
+    /// <see cref="SaveMapDirectory"/> 换成临时目录。
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether a file was written.</returns>
+    public bool SaveMapToFile()
+    {
+        string directory = ResolveSaveMapDirectory();
+
+        try
+        {
+            Directory.CreateDirectory(directory);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ShowError(EditorSaveMapWindow.DirectoryErrorMessage);
+            GameLog.Warn($"The map directory '{directory}' could not be created: {exception.Message}");
+
+            return false;
+        }
+
+        string fileName = Path.GetFileNameWithoutExtension(_edits.SavePath ?? string.Empty);
+        string mapName = Map.Info.Name;
+
+        while (true)
+        {
+            if (_host.RunSaveMapWindow(directory, fileName, mapName) is not { } modal ||
+                modal.Outcome != EditorSaveMapOutcome.Accepted)
+            {
+                return false;
+            }
+
+            fileName = modal.Window.FileName;
+            mapName = modal.Window.MapName;
+
+            if (EditorSaveMapWindow.SanitizeFileName(fileName).Length == 0)
+            {
+                continue;
+            }
+
+            string path = EditorSaveMapWindow.ComposeFilePath(directory, fileName);
+
+            if (File.Exists(path) && !ConfirmOverwrite())
+            {
+                continue;
+            }
+
+            if (mapName != Map.Info.Name)
+            {
+                _edits.ApplyMapInfo(Map.Info with { Name = mapName });
+            }
+
+            // 参考的 Maps::Map_Format::saveMap() 写的就是这条路径；端口从同一个目录直接写 mp2。
+            if (!_edits.SaveAs(path, out string? error))
+            {
+                ShowError(EditorSaveMapWindow.SaveFailedMessage);
+                GameLog.Warn($"The map could not be saved to '{path}': {error}");
+
+                return false;
+            }
+
+            GameLog.Info($"Map saved to: {path}");
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The directory the save window lists and writes into: <see cref="SaveMapDirectory"/> when set, otherwise the
+    /// <c>maps</c> folder of the writable data directory (<c>System::GetDataDirectory( "fheroes2" ) + "maps"</c>).
+    /// </summary>
+    private string ResolveSaveMapDirectory() =>
+        string.IsNullOrWhiteSpace(SaveMapDirectory)
+            ? Path.Combine(GameDataDirectory.Get("fheroes2"), "maps")
+            : SaveMapDirectory;
+
+    /// <summary>Asks whether an existing map may be overwritten, <c>editor_interface.cpp:3247-3250</c>.</summary>
+    /// <returns>Whether the author said YES.</returns>
+    private bool ConfirmOverwrite()
+    {
+        if (RunModal is not { } runModal || _host.TryCreateMessageBox(string.Empty,
+                EditorSaveMapWindow.OverwriteMessage, DialogButton.Yes | DialogButton.No) is not { } box)
+        {
+            // 没有帧泵就当成「不覆盖」，与参考在没有窗口时只有 OK 一样保守：宁可回去改名字。
+            return false;
+        }
+
+        runModal(box);
+
+        return box.Answer == DialogButton.Yes;
+    }
+
+    /// <summary>Shows a one-button error box, the <c>showStandardTextMessage( _( "Error" ), … )</c> of the reference.</summary>
+    /// <param name="body">The message.</param>
+    private void ShowError(string body)
+    {
+        if (RunModal is not { } runModal || _host.TryCreateMessageBox(EditorSceneHost.ErrorTitle, body) is not { } box)
+        {
+            return;
+        }
+
+        runModal(box);
     }
 
     /// <summary>

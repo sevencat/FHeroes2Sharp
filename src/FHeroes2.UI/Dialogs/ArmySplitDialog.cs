@@ -30,11 +30,14 @@ public sealed record ArmySplitResult(DialogButton Button, int RedistributeCount,
 /// </remarks>
 public sealed class ArmySplitDialog
 {
-    private ArmySplitDialog(int freeSlots, int redistributeMaximum, string troopName)
+    private ArmySplitDialog(int freeSlots, int redistributeMaximum, string troopName, int initialCount,
+        bool useFastSplit)
     {
         FreeSlots = freeSlots;
         RedistributeMaximum = redistributeMaximum;
         TroopName = troopName;
+        InitialCount = initialCount;
+        UseFastSplit = useFastSplit;
     }
 
     /// <summary>
@@ -45,16 +48,21 @@ public sealed class ArmySplitDialog
     /// Largest number of units that can be moved, <c>redistributeMax</c> of the reference.
     /// </param>
     /// <param name="troopName">Name of the unit, used in the message the dialog shows.</param>
+    /// <param name="initialCount">Number shown first, <c>redistributeCount</c> of the reference.</param>
+    /// <param name="useFastSplit">
+    /// Whether the first slot of the row starts selected, <c>useFastSplit</c> of the reference.
+    /// </param>
     /// <returns>The model.</returns>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="freeSlots"/> or <paramref name="redistributeMaximum"/> is negative.
     /// </exception>
-    public static ArmySplitDialog Create(int freeSlots, int redistributeMaximum, string troopName)
+    public static ArmySplitDialog Create(int freeSlots, int redistributeMaximum, string troopName,
+        int initialCount = 0, bool useFastSplit = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(freeSlots);
         ArgumentOutOfRangeException.ThrowIfNegative(redistributeMaximum);
 
-        return new ArmySplitDialog(freeSlots, redistributeMaximum, troopName);
+        return new ArmySplitDialog(freeSlots, redistributeMaximum, troopName, initialCount, useFastSplit);
     }
 
     /// <summary>How many army slots are empty.</summary>
@@ -65,6 +73,18 @@ public sealed class ArmySplitDialog
 
     /// <summary>Name of the unit.</summary>
     public string TroopName { get; }
+
+    /// <summary>Number the dialog starts with, <c>redistributeCount</c> of the reference.</summary>
+    public int InitialCount { get; }
+
+    /// <summary>Whether the equal split starts selected, <c>useFastSplit</c> of the reference.</summary>
+    public bool UseFastSplit { get; }
+
+    /// <summary>
+    /// Smallest number of units the dialog offers, <c>redistributeMin = std::min( 1, redistributeMax )</c>
+    /// (<c>dialog_selectcount.cpp:472</c>).
+    /// </summary>
+    public int Minimum => Math.Min(1, RedistributeMaximum);
 
     /// <summary>The buttons the dialog has.</summary>
     public DialogButton Buttons => DialogButton.Ok | DialogButton.Cancel;

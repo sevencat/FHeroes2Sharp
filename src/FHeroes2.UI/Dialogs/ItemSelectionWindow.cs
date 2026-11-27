@@ -112,6 +112,10 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
     private readonly Rect _listArea;
     private readonly Rect _grooveArea;
     private readonly ButtonGroup _buttons = new();
+    private readonly (Sprite Released, Sprite Pressed)? _toggleOnArtwork;
+    private readonly (Sprite Released, Sprite Pressed)? _toggleOffArtwork;
+    private ButtonSprite? _toggleOn;
+    private ButtonSprite? _toggleOff;
     private bool _isDoubleClicked;
 
     /// <summary>
@@ -184,6 +188,79 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
         _buttons.CreateButton(area.X + area.Width - cancel.Released.Width - ButtonEdgeGapX,
             area.Y + area.Height - cancel.Released.Height - ButtonEdgeGapY,
             cancel.Released, cancel.Pressed, DialogButton.Cancel);
+
+        _toggleOnArtwork = artwork.ToggleAllOn;
+        _toggleOffArtwork = artwork.ToggleAllOff;
+    }
+
+    /// <summary>
+    /// Places the "enable all" and "disable all" buttons at the bottom centre, the
+    /// <c>enableToggleButtons()</c> of <c>dialog_selectitems.cpp:1068-1083</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在 <c>enableToggleButtons()</c> 里用 <c>renderButton( …, { 0, 7 }, BOTTOM_CENTER )</c> 摆两颗，先让
+    /// 「全开」禁用、「全关」可用——刚打开时一切都已经全开，所以该显示的是「全关」。端口照办。
+    /// </para>
+    /// <para>
+    /// 美术缺席时什么都不做：那两颗按钮是合成的，没有 h2d 图案的旧数据里取不到，窗口仍然可用（多选照样能点行）。
+    /// </para>
+    /// </remarks>
+    protected void EnableToggleButtons()
+    {
+        if (_toggleOnArtwork is not { } on || _toggleOffArtwork is not { } off)
+        {
+            return;
+        }
+
+        Rect area = _window.ActiveArea;
+
+        _toggleOn = new ButtonSprite(on.Released, on.Pressed, null,
+            area.X + ((area.Width - on.Released.Width) / 2), area.Y + area.Height - on.Released.Height - 7);
+        _toggleOff = new ButtonSprite(off.Released, off.Pressed, null,
+            area.X + ((area.Width - off.Released.Width) / 2), area.Y + area.Height - off.Released.Height - 7);
+
+        _toggleOn.Disable();
+    }
+
+    /// <summary>The "enable all" button, or <see langword="null"/> for a window without one, <c>_buttonToggleOn</c>.</summary>
+    public ButtonSprite? ToggleAllOn => _toggleOn;
+
+    /// <summary>The "disable all" button, or <see langword="null"/> for a window without one, <c>_buttonToggleOff</c>.</summary>
+    public ButtonSprite? ToggleAllOff => _toggleOff;
+
+    /// <summary>
+    /// Enables or disables the OKAY button, <c>setButtonOkayStatus()</c> (<c>dialog_selectitems.h:112-128</c>).
+    /// </summary>
+    /// <remarks>多选窗里选中集为空时 OKAY 要灰掉，否则「确定」会交出一无所有的结果。</remarks>
+    /// <param name="enabled">Whether OKAY may be clicked.</param>
+    protected void SetOkayEnabled(bool enabled)
+    {
+        if (_buttons.Count == 0 || _buttons[0].IsEnabled == enabled)
+        {
+            return;
+        }
+
+        if (enabled)
+        {
+            _buttons[0].Enable();
+        }
+        else
+        {
+            _buttons[0].Disable();
+        }
+    }
+
+    /// <summary>Called when the author pressed "enable all", <c>onToggleOn()</c> (<c>dialog_selectitems.h:130-133</c>).</summary>
+    protected virtual void OnToggleOn()
+    {
+        // Do nothing, as in the reference.
+    }
+
+    /// <summary>Called when the author pressed "disable all", <c>onToggleOff()</c> (<c>dialog_selectitems.h:135-138</c>).</summary>
+    protected virtual void OnToggleOff()
+    {
+        // Do nothing, as in the reference.
     }
 
     /// <summary>The window the list lives in, <c>_window</c> of the reference.</summary>
@@ -265,6 +342,16 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
 
         Redraw(target);
 
+        // 参考把「全开/全关」画在按钮行之下（两颗只有一个可见），再画底边的 OKAY / CANCEL。
+        if (_toggleOn is { IsEnabled: true })
+        {
+            _toggleOn.Draw(target);
+        }
+        else
+        {
+            _toggleOff?.Draw(target);
+        }
+
         _buttons.DrawShadows(target);
         _buttons.Draw(target);
     }
@@ -319,10 +406,19 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
             return true;
         }
 
+        // 两颗 toggle 只在多选窗里存在，位置与顺序照参考：先「全开」后「全关」（:1018-1033）。
+        if (_toggleOn is not null && _toggleOff is not null &&
+            ProcessToggleButtons(events))
+        {
+            return true;
+        }
+
         bool listRedrawn = QueueEventProcessing(events);
 
-        if (!_isDoubleClicked)
+        if (!_isDoubleClicked || !DoubleClickAnswersOkay)
         {
+            _isDoubleClicked = false;
+
             return listRedrawn;
         }
 
@@ -377,6 +473,16 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
     }
 
     /// <summary>
+    /// Whether a double click on the selected row answers OKAY, <c>isDoubleClicked()</c>
+    /// (<c>dialog_selectitems.h:149-152</c>).
+    /// </summary>
+    /// <remarks>
+    /// 多选窗把它关掉：参考的 <c>MultiArtifactSelection::isDoubleClicked()</c> 恒为假，因为双击在那里是「切换这一行」，
+    /// 不是「确定」。
+    /// </remarks>
+    protected virtual bool DoubleClickAnswersOkay => true;
+
+    /// <summary>
     /// Remembers that the selected row was clicked again; <see cref="ProcessEvents"/> turns that into
     /// <see cref="DialogButton.Ok"/>, <c>_isDoubleClicked</c> of the reference.
     /// </summary>
@@ -391,6 +497,40 @@ public abstract class ItemSelectionWindow : ListBox<ItemSelectionEntry>
     public override void ActionListPressRight(ItemSelectionEntry item)
     {
         // Do nothing, as in the reference.
+    }
+
+    /// <summary>
+    /// One frame of the two toggle buttons, the <c>_buttonToggleOn</c> / <c>_buttonToggleOff</c> block of
+    /// <c>:1018-1033</c>: a click on one flips the pair and runs its hook.
+    /// </summary>
+    /// <param name="events">Input of this frame.</param>
+    /// <returns><see langword="true"/> when a button was clicked, i.e. when the frame is spent.</returns>
+    private bool ProcessToggleButtons(LocalEvent events)
+    {
+        _toggleOn!.UpdatePressState(events);
+        _toggleOff!.UpdatePressState(events);
+
+        if (_toggleOn.IsEnabled && events.MouseClickLeft(_toggleOn.Area))
+        {
+            _toggleOn.Disable();
+            _toggleOff.Enable();
+
+            OnToggleOn();
+
+            return true;
+        }
+
+        if (_toggleOff.IsEnabled && events.MouseClickLeft(_toggleOff.Area))
+        {
+            _toggleOff.Disable();
+            _toggleOn.Enable();
+
+            OnToggleOff();
+
+            return true;
+        }
+
+        return false;
     }
 
     private static void DrawCentered(PixelBuffer target, IGlyphSource font, string text, Rect area, int y)

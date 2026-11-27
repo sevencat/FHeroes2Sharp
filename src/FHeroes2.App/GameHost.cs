@@ -351,6 +351,10 @@ public sealed class GameHost : IDisposable
                 GameLog.Info($"Random generator seeded with {seed}.");
             }
 
+            // 客户端在造场景之前就算「在跑」：`--editor-panel-click` 这类脚本会在 CreateScenes 里直接开窗，
+            // 而 RunModal 的循环以 _running 为条件——放到后面才置位，那些窗会当场被跳过（74t 的成因之一）。
+            _running = true;
+
             CreateTextRenderer();
             CreateScenes();
             StartAudio();
@@ -364,11 +368,8 @@ public sealed class GameHost : IDisposable
                 GameLog.Info($"Smoke mode: the client will exit after {frames} rendered frames.");
             }
 
-            _running = true;
-
             // 视频要等呈现器就绪才有画面，参考也是在主循环之前播这几个 logo（game_mainmenu.cpp:125-128）。
             PlayStartupVideos();
-
             Loop();
 
             // 参考在各修改点各自保存（设置窗、热键、雷达位置……），端口在退出时统一落一次，是所有修改点的超集。
@@ -670,6 +671,10 @@ public sealed class GameHost : IDisposable
                 SpendSmokeBudget();
 
                 Draw();
+
+                // 窗口画的这一帧也要能拍：`--screenshot-frame` 指到窗口上时，读回来的后缓冲还没有这一帧
+                // （见 CaptureScreenshot 的注释），所以直接编码画好的 _frame。
+                CaptureScreenshot(composedFrameOnly: true);
             }
         }
         finally
@@ -2115,6 +2120,39 @@ public sealed class GameHost : IDisposable
     }
 
     /// <summary>
+    /// Leaves the editor for the menu the author asked for, the <c>GameMode</c> the reference's editor loop returns
+    /// (<c>editor_interface.cpp:1393-1401</c>, <c>:2127-2136</c>).
+    /// </summary>
+    /// <param name="request">Which way out the author confirmed.</param>
+    private void HandleEditorLeave(EditorLeaveRequest request)
+    {
+        switch (request)
+        {
+            case EditorLeaveRequest.MainMenu:
+                CloseEditor();
+                return;
+
+            case EditorLeaveRequest.NewMap:
+            case EditorLeaveRequest.LoadMap:
+                // 参考把 GameMode 交回主循环，主循环再进 Editor::menuMain()；端口直接换回编辑器主菜单，
+                // 新图与载图由它自己的 EditorMenuAction 走。
+                CloseEditor();
+                OpenEditorMenu();
+                return;
+
+            case EditorLeaveRequest.Quit:
+                // 参考的 QUIT_GAME 让主循环收摊；端口在这里直接停客户端，与主菜单的 Quit 同一处。
+                GameLog.Info("The editor asked to quit the client.");
+                _running = false;
+                return;
+
+            case EditorLeaveRequest.None:
+            default:
+                return;
+        }
+    }
+
+    /// <summary>
     /// Opens the editor main menu, the <c>Editor::menuMain()</c> window of
     /// <c>editor_mainmenu.cpp</c>: the editor sign of the game main menu lands here, and the map is
     /// chosen inside the editor's own screen.
@@ -2218,6 +2256,9 @@ public sealed class GameHost : IDisposable
 
         // 编辑器的窗口借这条帧泵进内层循环：与冒险地图给 AdventureHeroActionHost 接线是同一条缝。
         scene.RunModal = RunModal;
+
+        // 文件菜单的退出与回主菜单：参考是编辑器循环返回 GameMode，端口把这一步交回宿主。
+        scene.LeaveEditor = HandleEditorLeave;
 
         // 选项页改完设置要落盘，配置文件归宿主管（参考在 openEditorSettings() 里直接 conf.Save）。
         scene.SavePreferences = SaveSettings;
@@ -2461,7 +2502,12 @@ public sealed class GameHost : IDisposable
         // 帧泵在脚本交互之前就要接上：--editor-panel-click 能点到规格窗这类会开窗口的按钮，而窗口只在
         // RunModal 接好之后才开得出来。
         scene.RunModal = RunModal;
+        scene.LeaveEditor = HandleEditorLeave;
         scene.SavePreferences = SaveSettings;
+
+        // 场景也要在脚本交互之前挂上：窗口在 CreateScenes 期间就跑起来了，Draw() 按 _scene 作画，
+        // 不先挂上去窗口那几帧画出来是黑的，--screenshot-frame 拍到的就是黑屏（74t）。
+        _scene = scene;
 
         // The synthetic pointer of a screenshot has to reach the editor as well, or the highlighted
         // tile and the hover text of the status bar would be missing from every baseline.

@@ -135,8 +135,26 @@ public sealed class SelectCountView
     {
         _value.SetLeftButton(down, point);
         _buttons.SetCursor(point);
-        DialogButton answer = _buttons.SetLeftButton(down);
 
+        return Apply(_buttons.SetLeftButton(down));
+    }
+
+    /// <summary>
+    /// Answers a standard button hot key, the <c>Game::HotKeyPressEvent()</c> half of
+    /// <c>ButtonGroup::processEvents()</c> the reference's loop runs.
+    /// </summary>
+    /// <param name="hotKey">Key that was pressed.</param>
+    /// <returns>
+    /// The button the key stands for, or <see cref="DialogButton.None"/>; OKAY writes the number into
+    /// <see cref="SelectCountDialog.Result"/>, CANCEL leaves it <see langword="null"/>.
+    /// </returns>
+    public DialogButton ProcessHotKey(ButtonHotKey hotKey) => Apply(_buttons.ProcessHotKey(hotKey));
+
+    /// <summary>Writes an answer into the dialog, the two <c>Choose()</c> calls of the click path.</summary>
+    /// <param name="answer">The button that was pressed, or <see cref="DialogButton.None"/>.</param>
+    /// <returns><paramref name="answer"/>.</returns>
+    private DialogButton Apply(DialogButton answer)
+    {
         if (answer == DialogButton.Ok)
         {
             _dialog.Choose(_value.Value);

@@ -301,6 +301,17 @@ public sealed class SphinxMetadata : IEquatable<SphinxMetadata>
     /// <summary>Resources given as a reward, <c>resources</c>.</summary>
     public Funds Resources { get; set; }
 
+    /// <summary>Copies the riddle, its answers included; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public SphinxMetadata Clone() => new()
+    {
+        Riddle = Riddle,
+        Answers = [.. Answers],
+        Artifact = Artifact,
+        ArtifactMetadata = ArtifactMetadata,
+        Resources = Resources
+    };
+
     /// <inheritdoc/>
     public bool Equals(SphinxMetadata? other)
     {
@@ -342,6 +353,10 @@ public sealed class SignMetadata
 {
     /// <summary>The text on the sign, <c>message</c>.</summary>
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>Copies the text; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public SignMetadata Clone() => new() { Message = Message };
 }
 
 /// <summary>
@@ -484,6 +499,10 @@ public sealed class SelectionObjectMetadata
 {
     /// <summary>The items the author picked, <c>selectedItems</c>.</summary>
     public List<int> SelectedItems { get; init; } = [];
+
+    /// <summary>Copies the picked items; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public SelectionObjectMetadata Clone() => new() { SelectedItems = [.. SelectedItems] };
 }
 
 /// <summary>
@@ -504,6 +523,16 @@ public sealed class MonsterMetadata
 
     /// <summary>Monsters a random monster stack may become, <c>selected</c>.</summary>
     public List<int> Selected { get; init; } = [];
+
+    /// <summary>Copies the count and the candidates; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public MonsterMetadata Clone() => new()
+    {
+        Count = Count,
+        JoinCondition = JoinCondition,
+        IsWeeklyGrowthDisabled = IsWeeklyGrowthDisabled,
+        Selected = [.. Selected]
+    };
 }
 
 /// <summary>
@@ -520,6 +549,15 @@ public sealed class ArtifactMetadata
 
     /// <summary>Artifacts a random artifact or a spell scroll may hold, <c>selected</c>.</summary>
     public List<int> Selected { get; init; } = [];
+
+    /// <summary>Copies the radius and the candidates; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public ArtifactMetadata Clone() => new()
+    {
+        Radius = Radius,
+        CaptureCondition = CaptureCondition,
+        Selected = [.. Selected]
+    };
 }
 
 /// <summary>
@@ -530,6 +568,10 @@ public sealed class ResourceMetadata
 {
     /// <summary>Amount of the resource, <c>count</c>.</summary>
     public int Count { get; set; }
+
+    /// <summary>Copies the amount; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public ResourceMetadata Clone() => new() { Count = Count };
 }
 
 /// <summary>

@@ -11,7 +11,11 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Audio;
+using FHeroes2.Game.Army;
+using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Monsters;
+using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
 using FHeroes2.Game.Kingdom;
 using FHeroes2.Game.System;
@@ -49,6 +53,12 @@ internal sealed class EditorSceneHost
     /// <summary>Title of the box the host shows when a window reports a failure.</summary>
     public const string ErrorTitle = "Error";
 
+    /// <summary>
+    /// First frame of <c>REQUESTS</c> that the split window uses as a slot icon, <c>spriteIconIdx = 21</c>
+    /// (<c>dialog_selectcount.cpp:512</c>).
+    /// </summary>
+    public const int FirstSplitIconFrame = 21;
+
     private readonly AssetBundle? _assets;
     private readonly GameFonts? _fonts;
 
@@ -59,6 +69,10 @@ internal sealed class EditorSceneHost
     private IcnViewWorldSpriteSource? _sprites;
     private VirtualKeyboardArtwork? _keyboardArtwork;
     private IReadOnlyList<Sprite>? _spellIcons;
+    private Mons32Sprites? _monsters;
+    private ArtifactsBarArtwork? _artifactIcons;
+    private Sprite? _monsterPlate;
+    private bool _monsterPlateLoaded;
 
     /// <summary>Collects what a window of the editor needs from the archives.</summary>
     /// <param name="assets">Where the sprites come from; <see langword="null"/> when the data is missing.</param>
@@ -818,6 +832,66 @@ internal sealed class EditorSceneHost
     }
 
     /// <summary>
+    /// Runs the save map window to its end, <c>Editor::mapSaveSelectFile()</c>
+    /// (<c>editor_save_map_window.cpp:181-487</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 列表内容由 <see cref="MapCatalog.ReadAll"/> 现扫目录得到（参考也是每次开窗重新扫），所以传进来的目录必须已经
+    /// 存在；调用方负责先建目录并给出错误框。
+    /// </para>
+    /// <para>
+    /// 窗口的四个请求（地图名、删除、虚拟键盘、右键说明）都在 <see cref="Modals.EditorSaveMapModal"/> 里分派，
+    /// 这里只造窗与跑一轮。取消与「造不出来」都返回 <see langword="null"/>。
+    /// </para>
+    /// </remarks>
+    /// <param name="directory">The <c>maps</c> directory to list and save into.</param>
+    /// <param name="fileName">The file stem the field starts with; empty for the default one.</param>
+    /// <param name="mapName">The map name shown above the list.</param>
+    /// <returns>The window after it closed, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException">An argument is <see langword="null"/>.</exception>
+    public EditorSaveMapModal? RunSaveMapWindow(string directory, string fileName, string mapName)
+    {
+        ArgumentNullException.ThrowIfNull(directory);
+        ArgumentNullException.ThrowIfNull(fileName);
+        ArgumentNullException.ThrowIfNull(mapName);
+
+        if (RunModal is not { } runModal)
+        {
+            GameLog.Warn("The save map window has no frame pump (RunModal); it is skipped.");
+
+            return null;
+        }
+
+        if (_fonts?.Yellow is not { } headerFont || _fonts.White is not { } bodyFont)
+        {
+            GameLog.Warn("The save map window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        EditorSaveMapArtwork? artwork = EditorSaveMapArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The save map window needs the SCROLL, ADVBORD and SYSTEM frames, and they are missing.");
+
+            return null;
+        }
+
+        IReadOnlyList<Mp2FileInfo> maps = MapCatalog.ReadAll([directory]);
+
+        EditorSaveMapWindow window = EditorSaveMapWindow.Create(ScreenBuffer.DefaultSize, maps, fileName, mapName,
+            artwork, headerFont, bodyFont);
+
+        var modal = new EditorSaveMapModal(window, this);
+
+        runModal(modal);
+
+        return modal;
+    }
+
+    /// <summary>
     /// Runs the editor's file menu to its end, <c>eventFileDialog()</c> of the reference.
     /// </summary>
     /// <returns>
@@ -989,11 +1063,11 @@ internal sealed class EditorSceneHost
     /// <summary>
     /// Builds the single-spell picker, <c>Dialog::selectSpell()</c> (<c>dialog_selectitems.cpp:1117-1141</c>).
     /// </summary>
-    /// <param name="spellLevel">Spell level, 1 to 5.</param>
+    /// <param name="spellLevel">Spell level, 1 to 5, or <see langword="null"/> for every level.</param>
     /// <param name="currentSpell">The spell the row already holds, pre-selected in the list.</param>
     /// <param name="excludedSpells">Spells of the same level the picker must not offer.</param>
     /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
-    public SpellSelectModal? TryCreateSpellSelect(int spellLevel, SpellType currentSpell,
+    public SpellSelectModal? TryCreateSpellSelect(int? spellLevel, SpellType currentSpell,
         IReadOnlyList<int> excludedSpells)
     {
         ArgumentNullException.ThrowIfNull(excludedSpells);
@@ -1022,7 +1096,7 @@ internal sealed class EditorSceneHost
         }
 
         SpellSelectionWindow? window = SpellSelectDialog.TryCreate((int)currentSpell, true,
-            new HashSet<int>(excludedSpells), spellLevel, icons, artwork, titleFont, spellFont);
+            new HashSet<int>(excludedSpells), spellLevel ?? -1, icons, artwork, titleFont, spellFont);
 
         return window is null ? null : new SpellSelectModal(window);
     }
@@ -1140,6 +1214,192 @@ internal sealed class EditorSceneHost
         return new ArmyInfoModal(dialog, artwork, layout, fonts, this);
     }
 
+    /// <summary>
+    /// Builds the creature picker the army bar asks for, <c>Dialog::selectMonster()</c>
+    /// (<c>dialog_selectitems.cpp:1204-1229</c>).
+    /// </summary>
+    /// <remarks>
+    /// 行底那块 43x43 的板子是世界窗 <c>SWAPWIN</c> 第 0 帧的 (36, 267) 一块，与参考
+    /// <c>renderMonsterOnBackground()</c> 同源；缺它就只画 <c>MONS32</c> 的怪兽（列表仍然能用）。
+    /// 列表骨架、滚动条与两颗小按钮复用的是 <see cref="TryCreateItemSelectionArtwork"/> 那一套。
+    /// </remarks>
+    /// <param name="suggested">The creature the list opens on, or <see cref="MonsterType.Unknown"/> for the first row.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public MonsterSelectModal? TryCreateMonsterSelect(MonsterType suggested)
+    {
+        if (_assets is not { } assets)
+        {
+            GameLog.Warn("The creature picker needs the game data, and it is missing.");
+
+            return null;
+        }
+
+        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } font)
+        {
+            GameLog.Warn("The creature picker needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (TryCreateItemSelectionArtwork() is not { } artwork)
+        {
+            GameLog.Warn("The creature picker needs the list artwork, and it is missing.");
+
+            return null;
+        }
+
+        _monsters ??= Mons32Sprites.TryCreate(assets);
+
+        if (_monsters is null)
+        {
+            GameLog.Warn("The creature picker needs MONS32, and it is missing.");
+
+            return null;
+        }
+
+        MonsterSelectionWindow? window = MonsterSelectDialog.TryCreate(suggested, _monsters, MonsterPlate(), artwork,
+            titleFont, font);
+
+        return window is null ? null : new MonsterSelectModal(window, this);
+    }
+
+    /// <summary>
+    /// Builds the "set the amount" window, <c>Dialog::SelectCount()</c>
+    /// (<c>dialog_selectcount.cpp:79-225</c>).
+    /// </summary>
+    /// <remarks>
+    /// 数字框与上下箭头取自 <c>TOWNWIND</c> 的第 4..8 帧（<see cref="ValueSelectionElement.RequiredFrameCount"/>），
+    /// 按钮是 <c>SYSTEM</c> 的 OKAY 与 CANCEL。参考在这个窗里还能放两块调用方的部件（怪兽、资源图标），端口的
+    /// <see cref="SelectCountView"/> 还没转，所以只有标题与数字。
+    /// </remarks>
+    /// <param name="dialog">The header, the range and the step, plus where the answer lands.</param>
+    /// <param name="initialValue">Number shown first, clamped into the range.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
+    public SelectCountModal? TryCreateSelectCount(SelectCountDialog dialog, int initialValue = 0)
+    {
+        ArgumentNullException.ThrowIfNull(dialog);
+
+        if (_fonts?.White is not { } font)
+        {
+            GameLog.Warn("The count window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The count window needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (_assets?.TryReadIcn(IcnCatalog.GetFileName(IcnType.Townwind)) is not { } townwind ||
+            townwind.Count < ValueSelectionElement.RequiredFrameCount)
+        {
+            GameLog.Warn("The count window needs the number frames of TOWNWIND, and they are missing.");
+
+            return null;
+        }
+
+        SelectCountView? view = SelectCountView.TryCreate(dialog, buttons, font, townwind.Sprites, initialValue);
+
+        if (view is null)
+        {
+            GameLog.Warn("The count window needs the message frame, and it is missing.");
+
+            return null;
+        }
+
+        return new SelectCountModal(view);
+    }
+
+    /// <summary>
+    /// Builds the split question the army bar asks, <c>Dialog::ArmySplitTroop()</c>
+    /// (<c>dialog_selectcount.cpp:462-651</c>).
+    /// </summary>
+    /// <remarks>
+    /// 槽位那排的图标是 <c>REQUESTS</c> 第 21 帧起的 <c>freeSlots - 1</c> 张（<c>:509-523</c>），数字框与按钮与数量窗
+    /// 同一套。参考的标题是 <c>troopFrom.GetName()</c>，即单数名字。
+    /// </remarks>
+    /// <param name="split">The question, holding the two armies and the start values.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="split"/> is <see langword="null"/>.</exception>
+    public ArmySplitModal? TryCreateArmySplit(ArmyBarSplit split)
+    {
+        ArgumentNullException.ThrowIfNull(split);
+
+        if (_fonts?.Yellow is not { } headerFont || _fonts.White is not { } textFont)
+        {
+            GameLog.Warn("The split window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The split window needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (_assets?.TryReadIcn(IcnCatalog.GetFileName(IcnType.Townwind)) is not { } townwind ||
+            townwind.Count < ValueSelectionElement.RequiredFrameCount)
+        {
+            GameLog.Warn("The split window needs the number frames of TOWNWIND, and they are missing.");
+
+            return null;
+        }
+
+        if (TryReadRequestsFrames(FirstSplitIconFrame, split.Slots - 1) is not { } icons)
+        {
+            GameLog.Warn("The split window needs the slot icons of REQUESTS, and they are missing.");
+
+            return null;
+        }
+
+        ArmySplitDialog dialog = ArmySplitDialog.Create(split.Slots, split.MaxCount,
+            MonsterNames.GetSingular(split.From.Monster), split.SuggestedCount, split.UseFastSplit);
+
+        ArmySplitView? view = ArmySplitView.TryCreate(dialog, buttons, headerFont, textFont, townwind.Sprites, icons);
+
+        if (view is null)
+        {
+            GameLog.Warn("The split window needs the message frame, and it is missing.");
+
+            return null;
+        }
+
+        return new ArmySplitModal(view);
+    }
+
+    /// <summary>
+    /// The 43x43 plate the creature picker puts under a portrait, cut from <c>SWAPWIN</c> frame 0; loaded once.
+    /// </summary>
+    /// <returns>The plate, or <see langword="null"/> when the archive is missing it.</returns>
+    private Sprite? MonsterPlate()
+    {
+        if (_monsterPlateLoaded)
+        {
+            return _monsterPlate;
+        }
+
+        _monsterPlateLoaded = true;
+
+        if (GameAssets.GetImage(GameAssets.GetFileName(IcnType.Swapwin), 0) is not { } swapWindow)
+        {
+            GameLog.Warn("The creature picker needs SWAPWIN for the row plates; it draws the portraits without them.");
+
+            return null;
+        }
+
+        return _monsterPlate = MonsterSelectionWindow.CutPlate(swapWindow);
+    }
+
     /// <summary>Reads every frame of an archive, the <c>getImage( icn, 0..7 )</c> the reference spells out.</summary>
     /// <param name="type">The archive to read.</param>
     /// <returns>The frames, or <see langword="null"/> when the archive is missing.</returns>
@@ -1161,11 +1421,39 @@ internal sealed class EditorSceneHost
         return frames;
     }
 
+    /// <summary>
+    /// Reads a run of frames of <c>REQUESTS</c>, the slot icons of the split window (<c>dialog_selectcount.cpp:509-523</c>).
+    /// </summary>
+    /// <param name="first">Frame of the first icon, 21 in the reference.</param>
+    /// <param name="count">How many icons the row holds.</param>
+    /// <returns>The frames, or <see langword="null"/> when one of them is missing.</returns>
+    private static IReadOnlyList<Sprite>? TryReadRequestsFrames(int first, int count)
+    {
+        if (count <= 0)
+        {
+            return null;
+        }
+
+        string name = IcnCatalog.GetFileName(IcnType.Requests);
+        List<Sprite> frames = new(count);
+
+        for (int index = 0; index < count; ++index)
+        {
+            if (GameAssets.GetImage(name, first + index) is not { } sprite)
+            {
+                return null;
+            }
+
+            frames.Add(sprite);
+        }
+
+        return frames;
+    }
+
     /// <summary>Reads the two frames of a button, released and pressed.</summary>
     /// <param name="type">The archive to read.</param>
     /// <returns>The two frames, or <see langword="null"/> when the archive is missing.</returns>
-    private static DialogButtonArtwork? TryReadButtonPair(IcnType type)
-    {
+    private static DialogButtonArtwork? TryReadButtonPair(IcnType type)    {
         string name = GameAssets.GetFileName(type);
 
         if (GameAssets.GetImage(name, 0) is not { } released || GameAssets.GetImage(name, 1) is not { } pressed)
@@ -1356,6 +1644,141 @@ internal sealed class EditorSceneHost
         }
 
         return _dailyEventArtwork;
+    }
+
+    /// <summary>
+    /// Builds the single-artifact picker, <c>Dialog::selectArtifact()</c> (<c>dialog_selectitems.cpp:1162-1194</c>).
+    /// </summary>
+    /// <param name="artifact">The artifact the list starts on, or <see cref="ArtifactType.Unknown"/> for the first row.</param>
+    /// <param name="level">When set, only the artifacts of that tier are offered.</param>
+    /// <param name="version">
+    /// Version of the map, which decides whether the expansion artifacts are offered
+    /// (<c>Settings::getCurrentMapInfo().version</c> of the reference; the port has no settings layer for it).
+    /// </param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public ArtifactSelectModal? TryCreateArtifactSelect(ArtifactType artifact, ArtifactLevel? level = null,
+        MapVersion version = MapVersion.PriceOfLoyalty)
+    {
+        if (TryCreateItemSelectionArtwork() is not { } artwork ||
+            _fonts?.Yellow is not { } titleFont || _fonts.White is not { } font)
+        {
+            GameLog.Warn("The artifact picker needs the list artwork and the fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (TryCreateArtifactIcons() is not { } icons)
+        {
+            return null;
+        }
+
+        ArtifactSelectionWindow? window = ArtifactSelectDialog.TryCreate(artifact, icons, artwork, titleFont, font,
+            version, level: level);
+
+        if (window is null)
+        {
+            GameLog.Warn($"The artifact picker has nothing to offer for {level}.");
+
+            return null;
+        }
+
+        return new ArtifactSelectModal(window, this);
+    }
+
+    /// <summary>
+    /// Builds the multi-artifact picker, <c>Dialog::multiSelectArtifact()</c> (<c>dialog_selectitems.cpp:1196-1202</c>).
+    /// </summary>
+    /// <param name="allowed">The artifacts the list offers.</param>
+    /// <param name="selected">The artifacts already picked; empty means every one of them is picked.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="allowed"/> or <paramref name="selected"/> is <see langword="null"/>.</exception>
+    public MultiArtifactSelectModal? TryCreateMultiArtifactSelect(IReadOnlyList<int> allowed,
+        IReadOnlyList<int> selected)
+    {
+        ArgumentNullException.ThrowIfNull(allowed);
+        ArgumentNullException.ThrowIfNull(selected);
+
+        if (allowed.Count == 0)
+        {
+            GameLog.Warn("The artifact picker has no candidates.");
+
+            return null;
+        }
+
+        if (TryCreateItemSelectionArtwork() is not { } artwork ||
+            _fonts?.Yellow is not { } titleFont || _fonts.White is not { } font)
+        {
+            GameLog.Warn("The artifact picker needs the list artwork and the fonts, and they are missing.");
+
+            return null;
+        }
+
+        if (TryCreateArtifactIcons() is not { } icons)
+        {
+            return null;
+        }
+
+        var window = new MultiArtifactSelectionWindow(allowed, selected, icons, ArtifactSelectDialog.DialogSize(),
+            artwork, titleFont, font);
+
+        return new MultiArtifactSelectModal(window, this);
+    }
+
+    /// <summary>
+    /// Builds the box that describes one artifact, <c>ArtifactDialogElement::showPopup()</c>
+    /// (<c>ui_dialog.cpp:666-676</c>).
+    /// </summary>
+    /// <param name="artifact">The artifact the author clicked.</param>
+    /// <param name="spell">The spell of a spell scroll, which its description names; <see cref="SpellType.None"/> otherwise.</param>
+    /// <returns>The box, or <see langword="null"/> with the reason in the log when the data is missing.</returns>
+    public MessageBoxModal? TryCreateArtifactInfo(ArtifactType artifact, SpellType spell = SpellType.None)
+    {
+        if (_fonts is null)
+        {
+            GameLog.Warn("The artifact description needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is null)
+        {
+            GameLog.Warn("The artifact description needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        Sprite? frame = GameAssets.GetImage(GameAssets.GetFileName(IcnType.Resource),
+            ArtifactDescriptionDialog.FrameIndex);
+        Sprite? icon = GameAssets.GetImage(GameAssets.GetFileName(IcnType.Artifact),
+            (int)ArtifactTypes.FullSpriteIndex(artifact));
+
+        if (frame is null || icon is null)
+        {
+            GameLog.Warn($"The artifact description needs the frames of {artifact}, and the archive lacks them.");
+
+            return null;
+        }
+
+        return new MessageBoxModal(ArtifactDescriptionDialog.Create(artifact, frame, icon, _fonts.Yellow,
+            _fonts.White, _buttons, (int)spell));
+    }
+
+    /// <summary>
+    /// The <c>ARTFX</c> icons the artifact pickers draw, which the artifact bag already loads.
+    /// </summary>
+    /// <returns>The icons, or <see langword="null"/> with the reason in the log when the archives are missing.</returns>
+    private IArtifactIcons? TryCreateArtifactIcons()
+    {
+        if (_assets is null)
+        {
+            GameLog.Warn("The artifact picker needs the archives, and they are missing.");
+
+            return null;
+        }
+
+        return _artifactIcons ??= new ArtifactsBarArtwork();
     }
 
     /// <summary>

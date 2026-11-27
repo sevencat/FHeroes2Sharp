@@ -17,13 +17,13 @@ namespace FHeroes2.App.Modals;
 /// <remarks>
 /// <para>
 /// 参考的窗口在循环里自己阻塞开三个子窗：资源数量 <c>Dialog::SelectCount</c>（<c>:320</c>）、消息
-/// <c>Dialog::inputString</c>（<c>:336</c>），以及两个数字框在窗口内就地把值改回去。端口只有消息这一层接得上
-/// ——输入框已有；数量窗与数字键盘还没有（见 <c>qto.2</c> 拆出去的票），请求落在日志里，作者得靠窗口里的数字框
-/// 微调。
+/// <c>Dialog::inputString</c>（<c>:336</c>），以及两个数字框点开后 <c>openVirtualNumpad()</c>（<c>:223</c>、<c>:236</c>）。
+/// 端口把三扇都摞在自己这一层的栈上：数量窗走 <see cref="SelectCountModal"/>、消息走
+/// <see cref="InputStringModal"/>、数字键盘走 <see cref="EditorMapSpecsValueModal"/>（同一个
+/// <c>openVirtualNumpad()</c>，所以直接复用那一层，否则错误框的「越界不关窗」逻辑要写第二遍）。
 /// </para>
 /// <para>
-/// 同 <see cref="EditorRumorModal"/>：栈上有窗时这一帧只归它，<see cref="EditorDailyEventSpecWindow.Process"/>
-/// 一个事件都不读。
+/// 栈上有窗时这一帧只归它，<see cref="EditorDailyEventSpecWindow.Process"/> 一个事件都不读。
 /// </para>
 /// </remarks>
 internal sealed class EditorDailyEventSpecModal : IModalScreen
@@ -31,6 +31,12 @@ internal sealed class EditorDailyEventSpecModal : IModalScreen
     private readonly EditorDailyEventSpecWindow _window;
     private readonly EditorSceneHost _host;
     private readonly Stack<IModalScreen> _inner = new();
+
+    /// <summary>The resource whose amount window is open, or <c>-1</c> when none is.</summary>
+    private int _pendingResource = -1;
+
+    /// <summary>The day field whose number pad is open, or <see cref="DailyEventValueField.None"/> when none is.</summary>
+    private DailyEventValueField _pendingNumpad = DailyEventValueField.None;
 
     /// <summary>Wraps the window.</summary>
     /// <param name="window">The event window to run.</param>
@@ -135,21 +141,58 @@ internal sealed class EditorDailyEventSpecModal : IModalScreen
             return;
         }
 
-        // 数量窗与数字键盘还没有，参考的 SelectCount 与 numpad 请求只能落在日志里。
         if (_window.ResourceCountRequest is { } resource)
         {
-            GameLog.Warn($"The count window of resource {resource.ResourceType} is not wired up yet.");
+            OpenResourceCount(resource);
+
+            return;
         }
 
         if (_window.NumpadRequest is { } numpad)
         {
-            GameLog.Warn($"The numpad for {numpad.Field} is not wired up yet.");
+            OpenNumpad(numpad);
+
+            return;
         }
 
         if (_window.Popup is { } popup && _host.TryCreateMessageBox(popup.Header, popup.Body) is { } box)
         {
             _inner.Push(box);
         }
+    }
+
+    /// <summary>
+    /// Opens the amount window of one resource, <c>Dialog::SelectCount</c> of <c>:320</c>.
+    /// </summary>
+    /// <param name="request">The resource and the dialog the window filled in.</param>
+    private void OpenResourceCount(DailyEventResourceRequest request)
+    {
+        if (_host.TryCreateSelectCount(request.Dialog, request.Value) is not { } window)
+        {
+            GameLog.Warn($"The count window of resource {request.ResourceType} cannot be built.");
+
+            return;
+        }
+
+        _pendingResource = request.ResourceType;
+        _inner.Push(window);
+    }
+
+    /// <summary>
+    /// Opens the number pad of one of the two day fields, the <c>openVirtualNumpad()</c> of <c>:223</c> and <c>:236</c>.
+    /// </summary>
+    /// <param name="request">The field, its range and its current value.</param>
+    private void OpenNumpad(DailyEventNumpadRequest request)
+    {
+        if (_host.TryCreateNumpad(request.Value, request.Minimum, request.Maximum) is not { } pad)
+        {
+            GameLog.Warn($"The number pad of {request.Field} cannot be built.");
+
+            return;
+        }
+
+        _pendingNumpad = request.Field;
+        _inner.Push(new EditorMapSpecsValueModal(pad, request.Minimum, request.Maximum, _host));
     }
 
     /// <summary>Opens the message input box, <c>Dialog::inputString</c> of <c>:336</c>.</summary>
@@ -167,13 +210,45 @@ internal sealed class EditorDailyEventSpecModal : IModalScreen
         _inner.Push(input);
     }
 
-    /// <summary>Feeds the message the input box produced back into the event, <c>:337</c>.</summary>
+    /// <summary>Feeds the answer of a closed inner window back into the event.</summary>
     /// <param name="closed">The window that just finished.</param>
     private void Resolve(IModalScreen closed)
     {
-        if (closed is InputStringModal { Window.Result: { } text })
+        switch (closed)
         {
-            _window.SetMessage(text);
+            case InputStringModal { Window.Result: { } text }:
+                _window.SetMessage(text);
+
+                return;
+
+            case SelectCountModal count:
+            {
+                int resourceType = _pendingResource;
+                _pendingResource = -1;
+
+                if (count.Result is { } value)
+                {
+                    _window.SetResourceCount(resourceType, value);
+                }
+
+                return;
+            }
+
+            case EditorMapSpecsValueModal pad:
+            {
+                DailyEventValueField field = _pendingNumpad;
+                _pendingNumpad = DailyEventValueField.None;
+
+                if (pad.Value is { } value)
+                {
+                    _window.SetValueField(field, value);
+                }
+
+                return;
+            }
+
+            default:
+                return;
         }
     }
 }

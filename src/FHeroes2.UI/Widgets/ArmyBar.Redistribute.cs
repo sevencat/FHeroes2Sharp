@@ -127,8 +127,11 @@ public sealed partial class ArmyBar
     /// <param name="split">The question that was answered.</param>
     /// <param name="slots">How many slots to split the creatures into; 2 to 6 to be honoured.</param>
     /// <param name="useFastSplit">Whether the player asked for an even split rather than the suggested count.</param>
+    /// <param name="redistributeCount">
+    /// How many creatures the player chose to move, or <see langword="null"/> for <see cref="ArmyBarSplit.SuggestedCount"/>.
+    /// </param>
     /// <returns><see langword="true"/> when the slots changed.</returns>
-    public static bool ApplySplit(ArmyBarSplit split, int slots, bool useFastSplit)
+    public static bool ApplySplit(ArmyBarSplit split, int slots, bool useFastSplit, int? redistributeCount = null)
     {
         ArgumentNullException.ThrowIfNull(split);
 
@@ -139,21 +142,22 @@ public sealed partial class ArmyBar
 
         Troop troopFrom = split.From;
         Troop troopTarget = split.Target;
+        int chosenCount = redistributeCount ?? split.SuggestedCount;
         uint totalSplitTroopCount = troopFrom.Count;
 
         if (!useFastSplit && slots == 2)
         {
-            // The suggested count, used when splitting onto a stack of the same kind.
+            // The count the player picked, which defaults to the suggested one.
             if (split.SameTroopType)
             {
-                troopTarget.Count += (uint)split.SuggestedCount;
+                troopTarget.Count += (uint)chosenCount;
             }
             else
             {
-                troopTarget.Set(troopFrom.Monster, (uint)split.SuggestedCount);
+                troopTarget.Set(troopFrom.Monster, (uint)chosenCount);
             }
 
-            troopFrom.Count = totalSplitTroopCount - (uint)split.SuggestedCount;
+            troopFrom.Count = totalSplitTroopCount - (uint)chosenCount;
 
             return true;
         }
