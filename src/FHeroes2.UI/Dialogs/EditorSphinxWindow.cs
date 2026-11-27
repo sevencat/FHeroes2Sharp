@@ -378,6 +378,24 @@ public sealed class EditorSphinxWindow : ListBox<string>
     /// <summary>The resources as they stand, <c>metadata.resources</c>.</summary>
     public Funds Resources => _resources;
 
+    /// <summary>
+    /// The metadata the window now describes, <c>updateMetadata()</c> of the reference's caller.
+    /// </summary>
+    /// <remarks>
+    /// 参考把 <c>newMetadata</c> 传引用进来、窗口就地改，所以调用方手里那份就是最新的。端口的窗口把字段拷进自己
+    /// 身上（与其它 <c>EditorListOutcome</c> 窗口一致），于是要有这一条把当前状态打包回去——调用方拿它和打开窗口
+    /// 前的快照比对，变了才写表。
+    /// </remarks>
+    /// <returns>A fresh copy of everything the window shows.</returns>
+    public SphinxMetadata ToMetadata() => new()
+    {
+        Riddle = _riddle,
+        Answers = [.. _answers],
+        Artifact = (int)_artifact,
+        ArtifactMetadata = _artifactMetadata,
+        Resources = _resources,
+    };
+
     /// <summary>How the author left the window; reset by <see cref="Process"/>.</summary>
     public EditorListOutcome Result { get; private set; }
 

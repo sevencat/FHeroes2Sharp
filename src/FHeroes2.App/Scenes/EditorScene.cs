@@ -8,11 +8,13 @@ using FHeroes2.Core.Diagnostics;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
+using FHeroes2.Game;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Castle;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Maps;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
@@ -296,6 +298,24 @@ public sealed class EditorScene : IScene
     /// 两个场景各记各的，退出游戏就丢——与参考在 <c>--no-config</c> 下的行为一致。
     /// </remarks>
     private ZoomLevel _viewWorldZoom = ZoomLevel.ZoomLevel2;
+
+    /// <summary>
+    /// The settings the auto playtest window starts on and is left with, the singleton <c>AutoPlaytest</c> of the
+    /// reference (<c>game_auto_playtest.h:31</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考存进程级的单例，所以再开一次窗是上次的滑条位置；端口把它挂在场景上，与 <see cref="_viewWorldZoom"/>
+    /// 同一个理由：<see cref="Settings"/> 还没有这些项，退出编辑器就丢。
+    /// </remarks>
+    public PlaytestSettings PlaytestSettings { get; set; } = new();
+
+    /// <summary>
+    /// The tally of the last auto playtest, or <see langword="null"/> when none has run in this session.
+    /// </summary>
+    /// <remarks>
+    /// 参考的结果表存在单例里、由 <c>displayResults()</c> 读；端口放在场景上，结果窗（<c>beb.3.2.2.4</c>）直接读它。
+    /// </remarks>
+    public PlaytestSummary? LastPlaytestSummary { get; private set; }
 
     private EditorScene(
         ScreenBuffer frame,
@@ -797,7 +817,8 @@ public sealed class EditorScene : IScene
             MonsterNames.GetSingular((MonsterType)monsterId));
         SelectCountDialog dialog = SelectCountDialog.Create(header, 0, MaximumMonsterCount, step: 1);
 
-        if (_host.TryCreateSelectCount(dialog, current) is not { } window || RunModal is not { } runModal)
+        if (_host.TryCreateSelectCount(dialog, current, _host.TryCreateMonsterPlate((MonsterType)monsterId)) is not
+                { } window || RunModal is not { } runModal)
         {
             GameLog.Warn($"The stack of {monsterId} needs the count window, and it cannot be built.");
 
@@ -1110,6 +1131,308 @@ public sealed class EditorScene : IScene
 
     /// <summary>The tile whose artifact editor ran last, or <see langword="null"/> when none did.</summary>
     public Point? LastArtifactEditorTile { get; private set; }
+
+    /// <summary>
+    /// Shows how many obelisks the map has, the <c>OBJ_OBELISK</c> branch of <c>editor_interface.cpp:2531-2536</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考只 <c>showStandardTextMessage</c> 一条：「The total number of obelisks is %{count}.」，标题是物件名。
+    /// 这一支不改任何元数据，所以也没有撤销条目。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile was an obelisk and the box ran.</returns>
+    public bool ShowObeliskCount(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.Obelisk or Mp2ObjectType.ActionObelisk))
+        {
+            return false;
+        }
+
+        int count = CountObelisks();
+
+        string body = string.Format(CultureInfo.InvariantCulture, ObeliskCountMessage, count);
+
+        if (RunModal is not { } runModal ||
+            _host.TryCreateMessageBox(Mp2ObjectName.Of(info.ObjectType), body) is not { } box)
+        {
+            GameLog.Warn($"The map has {count} obelisk(s), and the message box cannot be built.");
+
+            return true;
+        }
+
+        runModal(box);
+
+        return true;
+    }
+
+    /// <summary>How many obelisks stand on the map, <c>getObeliskCount( mapFormat )</c> (<c>:2532</c>).</summary>
+    /// <returns>The number of obelisk tiles.</returns>
+    private int CountObelisks()
+    {
+        int count = 0;
+
+        foreach (Mp2TileInfo tile in Map.Tiles)
+        {
+            if (tile.ObjectType is Mp2ObjectType.Obelisk or Mp2ObjectType.ActionObelisk)
+            {
+                ++count;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Opens the skill picker of a witch's hut, the <c>OBJ_WITCHS_HUT</c> branch of
+    /// <c>editor_interface.cpp:2513-2530</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考传 <c>openSecondarySkillSelectionWindow( title, 1, newMetadata.selectedItems )</c>：等级固定 1，标题是物件名
+    /// 加冒号。接受且选中集变了才写 <c>selectionObjectMetadata[uid]</c>（走同一条撤销时间线）。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile was a witch's hut and the window ran.</returns>
+    public bool EditWitchsHut(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.WitchsHut or Mp2ObjectType.ActionWitchsHut))
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        IReadOnlyList<int> recorded = _metadata.Selections.TryGetValue(uid, out SelectionObjectMetadata? existing)
+            ? existing.SelectedItems
+            : [];
+
+        string title = Mp2ObjectName.Of(info.ObjectType) + ":";
+
+        if (_host.TryCreateSecondarySkillSelection(title, SkillLevel.Basic,
+                [.. recorded.Select(id => (SecondarySkill)id)]) is not { } window ||
+            RunModal is not { } runModal)
+        {
+            GameLog.Warn("The witch's hut needs the skill picker, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastSpellChooserTile = tile;
+
+        if (window.Outcome != EditorSecondarySkillSelectionOutcome.Accepted)
+        {
+            return true;
+        }
+
+        List<int> chosen = [.. window.SelectedSkills.Select(skill => (int)skill)];
+
+        if (chosen.SequenceEqual(recorded))
+        {
+            return true;
+        }
+
+        MetadataMapAction<SelectionObjectMetadata> action = new(_metadata.Selections, entry => entry.Clone());
+        _metadata.Selections[uid] = new SelectionObjectMetadata { SelectedItems = chosen };
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The witch's hut at ({tile.X}; {tile.Y}) teaches {chosen.Count} skill(s) now.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// The owner colour of a capturable object, the <c>isCapturableObject()</c> branch of
+    /// <c>editor_interface.cpp:2537-2571</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考先查「图上有没有玩家」——没有玩家就没人能拥有它，只留一条 warning；否则开颜色选择窗，答案与原色不同才动表：
+    /// 选中「中立」（<see cref="PlayerColor.None"/>）把表里那条**删掉**，否则写入新色。
+    /// </para>
+    /// <para>
+    /// 参考这一支走整图快照那一档（改归属要连地图上的旗子一起重画）。端口没有「按归属重画」的渲染，写表即可，撤销
+    /// 沿用同一条时间线。
+    /// </para>
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile was a capturable object and something ran.</returns>
+    public bool EditCapturableOwner(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) || !IsCapturable(info.ObjectType))
+        {
+            return false;
+        }
+
+        PlayerColor available = Map.Info.KingdomColors;
+
+        if (PlayerColors.Count(available) == 0)
+        {
+            GameLog.Warn("There are no players on the map, so no one can own this object.");
+
+            return true;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        PlayerColor original = _metadata.CapturableObjects.TryGetValue(uid, out CapturableObjectMetadata? recorded)
+            ? recorded.OwnerColor
+            : PlayerColor.None;
+
+        if (_host.TryCreatePlayerColorSelection(original, available) is not { } window ||
+            RunModal is not { } runModal)
+        {
+            GameLog.Warn("The capturable object needs the colour picker, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.Answer is not { } chosen || chosen == original)
+        {
+            return true;
+        }
+
+        if (chosen == PlayerColor.None)
+        {
+            if (recorded is null)
+            {
+                return true;
+            }
+
+            MetadataMapAction<CapturableObjectMetadata> clearing =
+                new(_metadata.CapturableObjects, entry => entry.Clone());
+            _metadata.CapturableObjects.Remove(uid);
+            CommitMetadataChange(clearing);
+
+            GameLog.Info($"The {Mp2ObjectName.Of(info.ObjectType)} at ({tile.X}; {tile.Y}) is neutral again.");
+
+            return true;
+        }
+
+        MetadataMapAction<CapturableObjectMetadata> action =
+            new(_metadata.CapturableObjects, entry => entry.Clone());
+        _metadata.CapturableObjects[uid] = new CapturableObjectMetadata { OwnerColor = chosen };
+        CommitMetadataChange(action);
+        GameLog.Info(
+            $"The {Mp2ObjectName.Of(info.ObjectType)} at ({tile.X}; {tile.Y}) belongs to {PlayerColors.GetName(chosen)}.");
+
+        return true;
+    }
+
+    /// <summary>Whether an object can be owned by a player, <c>Maps::isCapturableObject()</c>.</summary>    /// <param name="type">The object type.</param>
+    /// <returns><see langword="true"/> for a mine, a lab, a sawmill or a lighthouse.</returns>
+    /// <remarks>
+    /// 参考用的是「物件表里 <c>isCapturable</c> 的那几组」，端口按类型逐个列出——就是那张表的四个成员。
+    /// </remarks>
+    private static bool IsCapturable(Mp2ObjectType type) => type is
+        Mp2ObjectType.Mine or Mp2ObjectType.ActionMine or
+        Mp2ObjectType.AlchemistLab or Mp2ObjectType.ActionAlchemistLab or
+        Mp2ObjectType.Sawmill or Mp2ObjectType.ActionSawmill or
+        Mp2ObjectType.Lighthouse or Mp2ObjectType.ActionLighthouse;
+
+    /// <summary>
+    /// Opens the sphinx editor, the <c>OBJ_SPHINX</c> branch of <c>editor_interface.cpp:2438-2452</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考先拷一份 <c>newMetadata</c> 再开窗，只有返回真**且**元数据变了才写 <c>sphinxMetadata[uid]</c>——比较是为了
+    /// 不给撤销栈塞空动作。端口照抄，写回值取窗口的 <see cref="EditorSphinxWindow.ToMetadata"/>。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile held a sphinx and the window ran.</returns>
+    public bool EditSphinx(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.Sphinx or Mp2ObjectType.ActionSphinx))
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        SphinxMetadata original = _metadata.Sphinxes.TryGetValue(uid, out SphinxMetadata? recorded)
+            ? recorded
+            : new SphinxMetadata();
+        SphinxMetadata edited = original.Clone();
+
+        if (_host.TryCreateSphinx(edited) is not { } window || RunModal is not { } runModal)
+        {
+            GameLog.Warn("The sphinx needs its window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.AcceptedMetadata is not { } accepted || accepted.Equals(original))
+        {
+            return true;
+        }
+
+        MetadataMapAction<SphinxMetadata> action = new(_metadata.Sphinxes, entry => entry.Clone());
+        _metadata.Sphinxes[uid] = accepted;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The sphinx at ({tile.X}; {tile.Y}) was accepted with {accepted.Answers.Count} answer(s).");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Opens the adventure map event editor, the <c>OBJ_EVENT</c> branch of
+    /// <c>editor_interface.cpp:2453-2462</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考拷一份 <c>newEventData</c> 再开窗，只有返回真**且**元数据变了才写 <c>adventureMapEventMetadata[uid]</c>。
+    /// 端口的窗口就地改传进去的那一份，所以拷一份交给它，比对之后再决定写不写。
+    /// </remarks>
+    /// <param name="tile">Tile the author clicked.</param>
+    /// <returns>Whether the tile held an event and the window ran.</returns>
+    public bool EditMapEvent(Point tile)
+    {
+        if (!TryReadEditableTile(tile, out Mp2TileInfo info) ||
+            info.ObjectType is not (Mp2ObjectType.Event or Mp2ObjectType.ActionEvent))
+        {
+            return false;
+        }
+
+        uint uid = info.Level1ObjectUid;
+        AdventureMapEventMetadata original = _metadata.AdventureMapEvents.TryGetValue(uid,
+            out AdventureMapEventMetadata? recorded)
+            ? recorded
+            : new AdventureMapEventMetadata();
+        AdventureMapEventMetadata edited = original.Clone();
+
+        if (_host.TryCreateEventDetails(edited, Map.Info.HumanPlayers, Map.Info.ComputerPlayers) is not { } window ||
+            RunModal is not { } runModal)
+        {
+            GameLog.Warn("The map event needs its window, and it cannot be built.");
+
+            return true;
+        }
+
+        runModal(window);
+
+        LastObjectEditorTile = tile;
+
+        if (window.AcceptedMetadata is not { } accepted || accepted.Equals(original))
+        {
+            return true;
+        }
+
+        MetadataMapAction<AdventureMapEventMetadata> action =
+            new(_metadata.AdventureMapEvents, entry => entry.Clone());
+        _metadata.AdventureMapEvents[uid] = accepted;
+        CommitMetadataChange(action);
+
+        GameLog.Info($"The map event at ({tile.X}; {tile.Y}) was accepted.");
+
+        return true;
+    }
 
     /// <summary>
     /// Reads the tile an object editor is about to look at, refusing everything outside the map.
@@ -1823,6 +2146,36 @@ public sealed class EditorScene : IScene
                 return false;
             }
 
+            // 方尖碑只弹一条总数消息（:2531-2536）。
+            if (ShowObeliskCount(tile))
+            {
+                return false;
+            }
+
+            // 巫术小屋开副技选择窗（:2513-2530）。
+            if (EditWitchsHut(tile))
+            {
+                return false;
+            }
+
+            // 可占领物的归属色（:2537-2571）。
+            if (EditCapturableOwner(tile))
+            {
+                return false;
+            }
+
+            // 狮身人面像（:2438-2452）。
+            if (EditSphinx(tile))
+            {
+                return false;
+            }
+
+            // 冒险地图事件（:2453-2462）。
+            if (EditMapEvent(tile))
+            {
+                return false;
+            }
+
             return (info.HasGroundObject || info.HasTopObject) && ShowObjectInfo(tile);
         }
 
@@ -2434,6 +2787,15 @@ public sealed class EditorScene : IScene
 
                 return;
 
+            case EditorFileResult.StartMap:
+                // editor_interface.cpp:2137-2146：先过 _prepareMapForGameplay()，再问一句。
+                if (PrepareMapForGameplay() && ConfirmLeave(StartMapTitle, StartMapQuestion))
+                {
+                    LeaveEditor?.Invoke(EditorLeaveRequest.StartMap);
+                }
+
+                return;
+
             case EditorFileResult.Quit:
                 // editor_interface.cpp:1393-1401 的 processEditorExitEvent()。
                 if (ConfirmLeave(QuitTitle, QuitQuestion))
@@ -2443,10 +2805,78 @@ public sealed class EditorScene : IScene
 
                 return;
 
+            case EditorFileResult.AutoPlaytest:
+                // editor_interface.cpp:2144-2150 的 _runAutoPlaytest()。
+                RunAutoPlaytest();
+
+                return;
+
             default:
                 GameLog.Warn($"The editor file menu asked for {result}, and no action answers it yet.");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Opens the auto playtest setup window and, when the author accepts, runs the playtest,
+    /// <c>_runAutoPlaytest()</c> plus <c>openMapAutoPlayTest()</c> (<c>editor_interface.cpp:2144-2150</c>,
+    /// <c>game_auto_playtest.cpp:386-660</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在窗口的循环里当场跑完（<c>:536-540</c>）：OKAY 之后 <c>runPlayTest()</c> 逐轮载图、跑 AI、收结果，
+    /// 最后 <c>displayResults()</c> 开结果窗。端口同样同步跑，结果留给 <see cref="LastPlaytestSummary"/>。
+    /// </para>
+    /// <para>
+    /// <b>结果窗还没接</b>（<c>beb.3.2.2.4</c>）：这一票只把统计留下并记一行日志，免得「跑完什么都没发生」。
+    /// </para>
+    /// </remarks>
+    public void RunAutoPlaytest()
+    {
+        if (RunModal is not { } runModal || _host.TryCreateAutoPlaytest(PlaytestPlayers(), PlaytestSettings) is not
+                { } window)
+        {
+            return;
+        }
+
+        runModal(window);
+
+        if (window.Settings is not { } settings)
+        {
+            return;
+        }
+
+        PlaytestSettings = settings;
+
+        // 试玩会换掉 World.Current，跑的时候界面这一帧已经画完了，收摊再画下一帧。
+        LastPlaytestSummary = MapPlaytest.RunMany(Map, settings);
+
+        GameLog.Info(
+            $"Auto playtest: {LastPlaytestSummary.Count} playthrough(s), " +
+            $"{LastPlaytestSummary.TimeLimitCount} reached the day limit.");
+
+        // 参考在 runPlayTest() 的最后一句就是 displayResults()（game_auto_playtest.cpp:348）。
+        if (_host.TryCreateAutoPlaytestResults(LastPlaytestSummary) is { } results)
+        {
+            runModal(results);
+        }
+    }
+
+    /// <summary>
+    /// The players the auto playtest window lists, i.e. the colours the map puts in play with their classes,
+    /// the <c>players.Init()</c> plus icon row of <c>game_auto_playtest.cpp:496-520</c>.
+    /// </summary>
+    /// <returns>One entry per kingdom colour, in rotation order.</returns>
+    private IReadOnlyList<AutoPlaytestPlayer> PlaytestPlayers()
+    {
+        List<AutoPlaytestPlayer> players = [];
+
+        foreach (PlayerColor color in PlayerColors.ToList(Map.Info.KingdomColors))
+        {
+            players.Add(new AutoPlaytestPlayer(color, Map.Info.RaceOf(color)));
+        }
+
+        return players;
     }
 
     /// <summary>Title of the quit confirmation, <c>_( "Quit" )</c> (<c>editor_interface.cpp:1396</c>).</summary>
@@ -2481,6 +2911,11 @@ public sealed class EditorScene : IScene
     public const int MaximumUltimateRadius = 100;
 
     /// <summary>
+    /// Body of the obelisk message, <c>_( "The total number of obelisks is %{count}." )</c> (<c>:2532</c>).
+    /// </summary>
+    public const string ObeliskCountMessage = "The total number of obelisks is {0}.";
+
+    /// <summary>
     /// The tile whose sign text, monster count or resource count window ran last, or <see langword="null"/> when
     /// none did; the tests and the log read it.
     /// </summary>
@@ -2503,6 +2938,63 @@ public sealed class EditorScene : IScene
     /// <summary>Body of the load map confirmation, <c>editor_interface.cpp:2053</c>; the reference shows no title.</summary>
     public const string LoadMapQuestion =
         "Are you sure you want to load a new map? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>Title of the start map confirmation, <c>_( "Start Map" )</c> (<c>:2138</c>).</summary>
+    public const string StartMapTitle = "Start Map";
+
+    /// <summary>Body of the start map confirmation, <c>editor_interface.cpp:2139</c>.</summary>
+    public const string StartMapQuestion =
+        "Do you wish to leave the Editor and start the map? (Any unsaved changes to the current map will be lost.)";
+
+    /// <summary>Title of the "save first" question, <c>_( "Unsaved Changes" )</c> (<c>:2082</c>).</summary>
+    public const string UnsavedChangesTitle = "Unsaved Changes";
+
+    /// <summary>Body of the "save first" question, <c>editor_interface.cpp:2083-2087</c>.</summary>
+    public const string UnsavedChangesQuestion =
+        "This map has either terrain changes, undo history or has not yet been saved to a file.\n\n" +
+        "Do you wish to save the current map?";
+
+    /// <summary>Title of the "cannot be played" box, <c>_( "Unplayable Map" )</c> (<c>:2097</c>).</summary>
+    public const string UnplayableMapTitle = "Unplayable Map";
+
+    /// <summary>Body of the "cannot be played" box, <c>editor_interface.cpp:2098-2100</c>.</summary>
+    public const string UnplayableMapMessage =
+        "This map is not playable. You need at least one human player for the map to be playable.";
+
+    /// <summary>
+    /// Decides whether the map may be played, the <c>_prepareMapForGameplay()</c> of
+    /// <c>editor_interface.cpp:2075-2105</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考的两道门槛：地图还没有名字（= 没存过文件）时先问「要不要保存」，答 NO 就放弃、答 YES 就
+    /// <c>saveMapToFile()</c> 再确认一次名字；然后要求至少一个人类玩家，否则弹「Unplayable Map」。
+    /// </para>
+    /// <para>
+    /// 端口用 <see cref="MapEditSession.SavePath"/> 判「有没有存过」——它正是「上一次写盘的那个文件」。
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether the map can be started.</returns>
+    public bool PrepareMapForGameplay()
+    {
+        if (string.IsNullOrWhiteSpace(_edits.SavePath))
+        {
+            if (!ConfirmLeave(UnsavedChangesTitle, UnsavedChangesQuestion) || !SaveMapToFile() ||
+                string.IsNullOrWhiteSpace(_edits.SavePath))
+            {
+                return false;
+            }
+        }
+
+        if (PlayerColors.Count(Map.Info.HumanPlayers) == 0)
+        {
+            ShowError(UnplayableMapMessage, UnplayableMapTitle);
+
+            return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Asks a YES/NO question about leaving the editor, the <c>showStandardTextMessage( …, Dialog::YES | Dialog::NO )</c>
@@ -2636,11 +3128,13 @@ public sealed class EditorScene : IScene
         return box.Answer == DialogButton.Yes;
     }
 
-    /// <summary>Shows a one-button error box, the <c>showStandardTextMessage( _( "Error" ), … )</c> of the reference.</summary>
+    /// <summary>Shows a one-button box, the <c>showStandardTextMessage</c> of the reference.</summary>
     /// <param name="body">The message.</param>
-    private void ShowError(string body)
+    /// <param name="title">Its title, <see cref="EditorSceneHost.ErrorTitle"/> when omitted.</param>
+    private void ShowError(string body, string? title = null)
     {
-        if (RunModal is not { } runModal || _host.TryCreateMessageBox(EditorSceneHost.ErrorTitle, body) is not { } box)
+        if (RunModal is not { } runModal ||
+            _host.TryCreateMessageBox(title ?? EditorSceneHost.ErrorTitle, body) is not { } box)
         {
             return;
         }

@@ -61,6 +61,76 @@ public static class ButtonFactory
     public const int TextWidthMargin = 10;
 
     /// <summary>
+    /// Builds the MAX shortcut of the count window, the <c>ICN::BUTTON_SMALL_MAX_GOOD</c> of
+    /// <c>game_assets.cpp:1261-1283</c> (original resources): <c>RECRUIT</c> frames 4/5 cropped to 60×25 with
+    /// their corners made transparent.
+    /// </summary>
+    /// <returns>The two sprites, released first; <see langword="null"/> when the archive lacks the frames.</returns>
+    public static (Sprite Released, Sprite Pressed)? MakeSmallMaxButton()
+    {
+        Sprite? released = CropRecruitButton(4);
+        Sprite? pressed = CropRecruitButton(5);
+
+        if (released is null || pressed is null)
+        {
+            return null;
+        }
+
+        return (released, pressed);
+    }
+
+    /// <summary>
+    /// Builds the MIN shortcut of the count window, the <c>ICN::BUTTON_SMALL_MIN_GOOD</c> of
+    /// <c>game_assets.cpp:1284-1294</c>: a <c>MIN</c> labelled button whose text area is the MAX button's width
+    /// less ten pixels.
+    /// </summary>
+    /// <param name="maxButtonWidth">Width of the MAX button, <c>60</c> with the original artwork.</param>
+    /// <param name="background">
+    /// Texture the transparent corners of the pressed plate are filled with, usually <c>STONEBAK</c>.
+    /// </param>
+    /// <returns>The two sprites, released first.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="background"/> is <see langword="null"/>.</exception>
+    public static (Sprite Released, Sprite Pressed) MakeSmallMinButton(int maxButtonWidth, Sprite background)
+    {
+        ArgumentNullException.ThrowIfNull(background);
+
+        return MakeButtonSprites(
+            "MIN", new Size(maxButtonWidth - TextWidthMargin, 25), isEvilInterface: false, background);
+    }
+
+    /// <summary>
+    /// Crops one of the two <c>RECRUIT</c> frames the MAX button is cut from, <c>Crop( image, 5, 0, 60, 25 )</c>
+    /// plus the transparent corners of <c>setButtonCornersTransparent()</c>.
+    /// </summary>
+    /// <param name="frame">Frame of <c>RECRUIT</c>, 4 for released and 5 for pressed.</param>
+    /// <returns>The sprite at (0, 0), or <see langword="null"/> when the archive lacks the frame.</returns>
+    private static Sprite? CropRecruitButton(int frame)
+    {
+        const int width = 60;
+        const int height = 25;
+
+        if (GameAssets.GetImage(GameAssets.GetFileName(IcnType.Recruit), frame) is not { } original)
+        {
+            return null;
+        }
+
+        Sprite cropped = ImageOps.Crop(original, 5, 0, width, height);
+
+        if (cropped.Image.IsEmpty)
+        {
+            return null;
+        }
+
+        // Crop keeps the (x, y) it was cut at; the reference calls setPosition( 0, 0 ) because the button is
+        // blitted by its absolute position.
+        var button = new Sprite(cropped.Image);
+
+        EmptyButtons.MakeButtonCornersTransparent(button);
+
+        return button;
+    }
+
+    /// <summary>
     /// Generates the released and pressed look of a button labelled with <paramref name="text"/>,
     /// <c>makeButtonSprites()</c>.
     /// </summary>

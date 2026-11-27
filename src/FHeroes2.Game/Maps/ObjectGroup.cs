@@ -79,3 +79,11 @@ public enum ObjectGroup : byte
     /// <summary><c>GROUP_COUNT</c>: number of groups, not a group itself.</summary>
     GroupCount = 21,
 }
+
+/// <summary>
+/// The address of an object inside the <c>.fh2m</c> format: a table and a position in it, which is what
+/// <see cref="Fh2mTileObject.Group"/> and <see cref="Fh2mTileObject.Index"/> store.
+/// </summary>
+/// <param name="Group">The table the object lives in.</param>
+/// <param name="Index">Position inside that table.</param>
+public readonly record struct MapObjectIndex(ObjectGroup Group, uint Index);

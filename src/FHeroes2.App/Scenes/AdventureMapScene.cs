@@ -178,11 +178,39 @@ public sealed class AdventureMapScene : IScene
     }
 
     /// <summary>
-    /// Reopens the adventure map of a game that <see cref="GameSave.Load"/> already read into
-    /// <see cref="World.Current"/>; <see langword="null"/> with an <paramref name="error"/> when its map or the
+    /// Starts a new game on a map that is already in memory instead of a file, the editor's START MAP
+    /// (<c>editor_interface.cpp:2131-2147</c>); <see langword="null"/> with an <paramref name="error"/> when the
     /// terrain tiles cannot be read.
     /// </summary>
     /// <remarks>
+    /// 参考在这一支里是「先把编辑器地图存成文件、再由 <c>NewStandard()</c> 读回来」。端口不必绕磁盘：
+    /// 地图对象本身就是 <c>Mp2Map</c>，把它直接交给同一条开局流程即可——`World.LoadMap` 与
+    /// `AdventureSession.Start` 要的都只是这张图。
+    /// </remarks>
+    /// <param name="frame">The logical frame the scene draws into.</param>
+    /// <param name="assets">The archives.</param>
+    /// <param name="fonts">The fonts.</param>
+    /// <param name="map">The map to play, usually the one the editor is editing.</param>
+    /// <param name="error">Why the scene could not be built, <see langword="null"/> when it could.</param>
+    /// <returns>The scene, or <see langword="null"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="frame"/> or <paramref name="map"/> is <see langword="null"/>.</exception>
+    public static AdventureMapScene? TryCreateFromMap(
+        ScreenBuffer frame,
+        AssetBundle? assets,
+        GameFonts? fonts,
+        Mp2Map map,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+
+        return TryCreate(frame, assets, fonts, map.Info, loadedFromSave: false, out error, map);
+    }
+
+    /// <summary>
+    /// Reopens the adventure map of a game that <see cref="GameSave.Load"/> already read into
+    /// <see cref="World.Current"/>; <see langword="null"/> with an <paramref name="error"/> when its map or the
+    /// terrain tiles cannot be read.
+    /// </summary>    /// <remarks>
     /// <para>
     /// 读档与开局在参考里是同一条 <c>StartGame()</c>，只由 <c>isLoadedFromSave</c> 分岔
     /// （<c>game_startgame.cpp:755</c>）：不再 <c>LoadMap</c>（世界已经是存档里的局面）、不再 <c>NewDay()</c>
@@ -210,7 +238,8 @@ public sealed class AdventureMapScene : IScene
         GameFonts? fonts,
         Mp2FileInfo mapInfo,
         bool loadedFromSave,
-        out string? error)
+        out string? error,
+        Mp2Map? preparedMap = null)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentNullException.ThrowIfNull(mapInfo);
@@ -226,7 +255,8 @@ public sealed class AdventureMapScene : IScene
 
         try
         {
-            Mp2Map map = Mp2Map.Read(mapInfo.FilePath);
+            // 编辑器改的是内存里的地图、还没有文件，所以它把那份直接交进来；其余调用方从磁盘读。
+            Mp2Map map = preparedMap ?? Mp2Map.Read(mapInfo.FilePath);
             ObjectSpriteSet? objects = ObjectSpriteSet.TryCreate(assets);
 
             // The map is drawn into the viewport of the frame and not over the whole display, so the

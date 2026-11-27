@@ -585,6 +585,10 @@ public sealed class CapturableObjectMetadata
 {
     /// <summary>Player the object belongs to, <c>ownerColor</c>.</summary>
     public PlayerColor OwnerColor { get; set; }
+
+    /// <summary>Copies the owner; the history snapshots need independent entries.</summary>
+    /// <returns>An independent copy.</returns>
+    public CapturableObjectMetadata Clone() => new() { OwnerColor = OwnerColor };
 }
 
 /// <summary>

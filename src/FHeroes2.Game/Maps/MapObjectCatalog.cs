@@ -51,6 +51,17 @@ public static partial class MapObjectCatalog
     /// </summary>
     private static readonly Dictionary<(Mp2ObjectIcnType IcnType, uint IcnIndex), ObjectGroup> GroupByIcn = [];
 
+    /// <summary>
+    /// The address of the object that registered a given ICN image, <see cref="MapObjectIndex"/>: the group and the
+    /// position inside it. Built in the same pass and with the same "first wins" rule as
+    /// <see cref="ObjectInfoByIcn"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="GroupByIcn"/> only answers the first half; saving a map in the <c>.fh2m</c> format needs both halves,
+    /// because a tile of that format stores <c>( group, index )</c> and nothing about the ICN.
+    /// </remarks>
+    private static readonly Dictionary<(Mp2ObjectIcnType IcnType, uint IcnIndex), MapObjectIndex> ObjectIndexByIcn = [];
+
     static MapObjectCatalog() => PopulateObjectData();
 
     /// <summary>
@@ -124,6 +135,27 @@ public static partial class MapObjectCatalog
     /// <returns>The group of the part drawn at ground level.</returns>
     public static ObjectGroup GetGroundGroup(Mp2TileInfo tile) =>
         tile.HasGroundObject ? GetObjectGroupByIcn(tile.GroundIcnType, tile.BottomIcnImageIndex) : ObjectGroup.None;
+
+    /// <summary>
+    /// The address of the object that draws a given ICN image, the <c>( group, index )</c> pair the <c>.fh2m</c>
+    /// format stores for a tile.
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="GetObjectGroupByIcn"/> 同一趟构建、同一条「先到先得」规则，只是多带回组内下标。存图时瓦片上只有
+    /// ICN 类型与帧号，而 <c>.fh2m</c> 只认这个二元组，所以两者都要。
+    /// </remarks>
+    /// <param name="icnType">ICN resource of the part.</param>
+    /// <param name="icnIndex">Sprite index inside the resource.</param>
+    /// <param name="index">The address, when the image belongs to a known object.</param>
+    /// <returns><see langword="true"/> when an object registered the image.</returns>
+    public static bool TryGetObjectIndex(Mp2ObjectIcnType icnType, uint icnIndex, out MapObjectIndex index) =>
+        ObjectIndexByIcn.TryGetValue((icnType, icnIndex), out index);
+
+    /// <summary>How many objects a group has.</summary>
+    /// <param name="group">The group.</param>
+    /// <returns>The size of its table.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not a group.</exception>
+    public static int GetObjectCount(ObjectGroup group) => GetObjectsByGroup(group).Count;
 
     /// <summary>The group of the top part of a tile, <see cref="ObjectGroup.None"/> when it has no known part.</summary>
     /// <param name="tile">Tile to look at.</param>
@@ -228,19 +260,27 @@ public static partial class MapObjectCatalog
         for (int group = 0; group < ObjectData.Length; ++group)
         {
             ObjectGroup groupId = (ObjectGroup)group;
+            IReadOnlyList<ObjectInfo> groupObjects = ObjectData[group];
 
-            foreach (ObjectInfo objectInfo in ObjectData[group])
+            for (int objectIndex = 0; objectIndex < groupObjects.Count; ++objectIndex)
             {
+                ObjectInfo objectInfo = groupObjects[objectIndex];
+
+                // The index is the position inside the group, which is what the .fh2m format stores.
+                MapObjectIndex address = new(groupId, (uint)objectIndex);
+
                 foreach (LayeredObjectPartInfo part in objectInfo.GroundLevelParts)
                 {
                     ObjectInfoByIcn.TryAdd((part.IcnType, part.IcnIndex), part);
                     GroupByIcn.TryAdd((part.IcnType, part.IcnIndex), groupId);
+                    ObjectIndexByIcn.TryAdd((part.IcnType, part.IcnIndex), address);
                 }
 
                 foreach (ObjectPartInfo part in objectInfo.TopLevelParts)
                 {
                     ObjectInfoByIcn.TryAdd((part.IcnType, part.IcnIndex), part);
                     GroupByIcn.TryAdd((part.IcnType, part.IcnIndex), groupId);
+                    ObjectIndexByIcn.TryAdd((part.IcnType, part.IcnIndex), address);
                 }
             }
         }

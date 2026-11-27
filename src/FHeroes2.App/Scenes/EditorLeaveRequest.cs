@@ -30,4 +30,10 @@ public enum EditorLeaveRequest
     /// (<c>editor_interface.cpp:2050-2057</c>).
     /// </summary>
     LoadMap,
+
+    /// <summary>
+    /// Leave the editor and play the map, <c>GameMode::NEW_STANDARD</c>
+    /// (<c>editor_interface.cpp:2131-2142</c>).
+    /// </summary>
+    StartMap,
 }

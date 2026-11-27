@@ -89,7 +89,11 @@ public sealed class Mp2HeroInfo
     /// </summary>
     private const int PatrolDistanceOffset = 60;
 
-    private Mp2HeroInfo()
+    /// <summary>
+    /// Creates an empty block: no custom army, portrait, artifacts, skills or name. The reference reads a zeroed
+    /// structure when a hero tile has no block behind it, which is the same thing.
+    /// </summary>
+    public Mp2HeroInfo()
     {
     }
 
@@ -97,52 +101,52 @@ public sealed class Mp2HeroInfo
     /// Whether the block carries an army of its own, <c>pblock[1]</c>. When it does not, the hero gets the
     /// army of his race at the default strength.
     /// </summary>
-    public bool HasCustomArmy { get; private init; }
+    public bool HasCustomArmy { get; init; }
 
     /// <summary>Monster ids of the five army slots, raw MP2 values (engine id is <c>+ 1</c>).</summary>
-    public IReadOnlyList<int> MonsterIds { get; private init; } = [];
+    public IReadOnlyList<int> MonsterIds { get; init; } = [];
 
     /// <summary>Counts of the five army slots; zero when the slot is empty.</summary>
-    public IReadOnlyList<int> MonsterCounts { get; private init; } = [];
+    public IReadOnlyList<int> MonsterCounts { get; init; } = [];
 
     /// <summary>Whether the block carries a portrait, <c>pblock[17]</c>.</summary>
-    public bool HasCustomPortrait { get; private init; }
+    public bool HasCustomPortrait { get; init; }
 
     /// <summary>Portrait id, raw MP2 byte; the engine id is <c>PortraitId + 1</c>.</summary>
-    public int PortraitId { get; private init; }
+    public int PortraitId { get; init; }
 
     /// <summary>Artifact ids of the three slots, raw MP2 values (engine id is <c>+ 1</c>).</summary>
-    public IReadOnlyList<int> ArtifactIds { get; private init; } = [];
+    public IReadOnlyList<int> ArtifactIds { get; init; } = [];
 
     /// <summary>Experience of the hero, <c>pblock[23]</c>.</summary>
-    public uint Experience { get; private init; }
+    public uint Experience { get; init; }
 
     /// <summary>Whether the block carries secondary skills, <c>pblock[27]</c>.</summary>
-    public bool HasCustomSecondarySkills { get; private init; }
+    public bool HasCustomSecondarySkills { get; init; }
 
     /// <summary>Secondary skill ids of the eight slots, raw MP2 values (engine id is <c>+ 1</c>).</summary>
-    public IReadOnlyList<int> SecondarySkillIds { get; private init; } = [];
+    public IReadOnlyList<int> SecondarySkillIds { get; init; } = [];
 
     /// <summary>Levels the eight secondary skills start at.</summary>
-    public IReadOnlyList<int> SecondarySkillLevels { get; private init; } = [];
+    public IReadOnlyList<int> SecondarySkillLevels { get; init; } = [];
 
     /// <summary>Whether the block carries a name, <c>pblock[45]</c>.</summary>
-    public bool HasCustomName { get; private init; }
+    public bool HasCustomName { get; init; }
 
     /// <summary>The custom name, empty when there is none.</summary>
-    public string Name { get; private init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
 
     /// <summary>
     /// Whether the hero patrols, <c>pblock[59]</c>. A patrolling hero is a guard: he does not leave the
     /// area around his position.
     /// </summary>
-    public bool IsOnPatrol { get; private init; }
+    public bool IsOnPatrol { get; init; }
 
     /// <summary>
     /// The patrol distance, or the race of the hero of a jail when the block describes a jail rather than
     /// a hero on the map, <c>pblock[60]</c>.
     /// </summary>
-    public int PatrolDistanceOrJailRace { get; private init; }
+    public int PatrolDistanceOrJailRace { get; init; }
 
     /// <summary>
     /// Reads a hero block, <c>Heroes::LoadFromMP2()</c> (<c>heroes.cpp:421</c>).
@@ -206,6 +210,67 @@ public sealed class Mp2HeroInfo
         };
 
         return true;
+    }
+
+    /// <summary>
+    /// Writes the block back into the 76 bytes <see cref="TryRead"/> reads, the mirror of
+    /// <c>Heroes::LoadFromMP2()</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考没有写端（fheroes2 只写自家的 <c>.fh2m</c>），所以这是从读端逐偏移反推出来的：每个字节要么由某个字段决定，
+    /// 要么是读端明确忽略的三处（0、22、44）与尾部 15 字节，后者一律写 0。
+    /// </para>
+    /// <para>
+    /// <b>名字字段</b>用 <see cref="MapTextCodec.Encode"/>，与地图头的文本同一套编码与截断规则；<see cref="HasCustomName"/>
+    /// 为假时整个字段留 0（读端只在那面旗帜非零时才解名字）。
+    /// </para>
+    /// </remarks>
+    /// <returns>The 76 bytes of the block, without its size prefix.</returns>
+    public byte[] ToBlock()
+    {
+        byte[] block = new byte[StructureSize];
+
+        block[CustomArmyOffset] = HasCustomArmy ? (byte)1 : (byte)0;
+
+        for (int slot = 0; slot < TroopCount; ++slot)
+        {
+            block[MonsterOffset + slot] = (byte)(slot < MonsterIds.Count ? MonsterIds[slot] : 0);
+
+            int count = slot < MonsterCounts.Count ? MonsterCounts[slot] : 0;
+
+            BinaryPrimitives.WriteUInt16LittleEndian(block.AsSpan(MonsterCountOffset + (slot * 2)), (ushort)count);
+        }
+
+        block[CustomPortraitOffset] = HasCustomPortrait ? (byte)1 : (byte)0;
+        block[PortraitOffset] = (byte)PortraitId;
+
+        for (int slot = 0; slot < ArtifactCount; ++slot)
+        {
+            block[ArtifactOffset + slot] = (byte)(slot < ArtifactIds.Count ? ArtifactIds[slot] : 0);
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(block.AsSpan(ExperienceOffset), Experience);
+
+        block[CustomSkillOffset] = HasCustomSecondarySkills ? (byte)1 : (byte)0;
+
+        for (int slot = 0; slot < SecondarySkillCount; ++slot)
+        {
+            block[SkillOffset + slot] = (byte)(slot < SecondarySkillIds.Count ? SecondarySkillIds[slot] : 0);
+            block[SkillLevelOffset + slot] = (byte)(slot < SecondarySkillLevels.Count ? SecondarySkillLevels[slot] : 0);
+        }
+
+        block[CustomNameOffset] = HasCustomName ? (byte)1 : (byte)0;
+
+        if (HasCustomName)
+        {
+            MapTextCodec.Encode(Name, NameFieldSize).CopyTo(block, NameOffset);
+        }
+
+        block[PatrolOffset] = IsOnPatrol ? (byte)1 : (byte)0;
+        block[PatrolDistanceOffset] = (byte)PatrolDistanceOrJailRace;
+
+        return block;
     }
 
     /// <summary>

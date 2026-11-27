@@ -6948,3 +6948,360 @@ ESC 与回车交出同一个数，`Value` 只在校验通过时有值。
 **没做**：终极神器那一支参考还带「那八件里允许哪些」的多选（`selectionUi`），端口只做了半径。原因同 `a7l.10.2` 的怪物多选：那一格的候选多选要跟半径窗同屏，而 `SelectCountView` 还没有「调用方部件」的位置（见 `biv`）。已在该票的范围里记着。
 
 **测试口径**：模态的 `HotKey` 只记下、`Update` 才转给窗口，所以桩里按下热键后必须再 `Pump` 一帧，否则跑完桩回头读 `Accepted` 时窗口还没处理过热键。
+
+## ADR-365：方尖碑那一支（`a7l.10.3.1`）
+
+**拆分**：`a7l.10.3` 原票含五支：方尖碑、可占领物归属、巫术小屋、sphinx、事件。开工时按体量拆成 `.3.1`（本条）、`.3.2`（巫术小屋，UI 窗已有）、`.3.3`（sphinx + 事件，两扇 37/46 KB 的窗都要新做 App 模态）、`.3.4`（归属色选择，要新做一扇带 `BRCREST` 王冠的颜色窗）。本票又收窄成只做方尖碑，归属色挪进 `.3.4`。
+
+**决定**：`EditorScene.ShowObeliskCount(tile)` 照 `editor_interface.cpp:2531-2536`：标题是物件名、正文是 `The total number of obelisks is {0}.`，数字由 `CountObelisks()` 数一遍 `Map.Tiles` 上 `Obelisk` / `ActionObelisk` 的格子得到。这一支**不写任何元数据**，所以也没有撤销条目。接在 `PressDetail` 编辑分支的神器之后。
+
+**没做**：可占领物的归属色选择（`.3.4`）——它要新做一扇窗：`StandardWindow(max(250, 30 + 70 * (颜色数+1)), 160)`、标题 `Select color:`、一格「中立」加每格一顶 `BRCREST` 王冠、下面一行颜色名、选中格套 `BRCREST` 第 6 帧的框。选中的语义也特殊：取消返回原色、确定返回当前高亮的色、`NONE` 表示把表里那条**删掉**。
+
+## ADR-366：巫术小屋的副技选择（`a7l.10.3.2`）
+
+**决定**：
+
+1. 新增 `EditorSecondarySkillSelectionModal`：窗口自己读 `LocalEvent`（`EditorSecondarySkillSelectionInput.Process`），右键的四条说明按 `Request` 摞到自己的栈上，关掉之后 `SelectedSkills` 只在 `Accepted` 时有值。
+2. `EditorSceneHost.TryCreateSecondarySkillSelection(title, level, selected)`：美术 `EditorSecondarySkillSelectionArtwork.TryCreate`（`STONEBAK` + `SECSKILL` 帧 15 + 四颗按钮）。
+3. `EditorScene.EditWitchsHut(tile)` 照 `editor_interface.cpp:2513-2530`：等级固定 `SkillLevel.Basic`（参考传的是 `1`），标题是物件名加冒号；接受且选中集变了才写表，走同一条撤销时间线。
+
+**一个语义要点**：「全开」在参考里交回**空列表**——游戏把空列表读成「按默认」。所以打开窗口直接 OKAY 不会写任何东西（表里那条空着就等于全允许），只有真的关掉一些技能才落一条非空记录。用例把这两种情形都钉住了（一条「关一格→有记录」，一条「直接 OKAY→无记录」）。
+
+**顺带**：`EditorSecondarySkillSelectionInput` 没有 `Outcome` 属性（`Process` 直接返回结果），所以模态自己存一份，与 `EditorSpellSelectionModal` 的形状一致。
+
+## ADR-367：可占领物归属色选择（`a7l.10.3.4`）
+
+**决定**：
+
+1. 新增 `PlayerColorSelectionWindow`：`StandardWindow(max(250, 30 + 70 × (颜色数+1)), 160)`、标题 `Select color:`、王冠排从 `area.y + 40` 起、每格横进 70；第一格「中立」，之后按 `Color::IndexToColor` 的顺序只放 `availableColors` 里有的颜色，每格下面一行小字写名字。
+2. `IColorCrestSprites` 抽象 `BRCREST` 的取图（六色冠、中立冠、选中框、未选中框），宿主实现一次并缓存。未选中框是选中框过「灰 + 变暗」两张调色板叠出来的，对应参考的 `PAL::CombinePalettes( GRAY, DARKENING )`。
+3. 答案语义照参考：CANCEL 返回**原色**（不是「没有」）、OKAY 返回当前高亮的色、中立格返回 `PlayerColor.None`。
+4. `EditorScene.EditCapturableOwner(tile)` 照 `editor_interface.cpp:2537-2571`：先查 `Map.Info.KingdomColors` 有没有玩家（没有就只 warn），再开窗；答案与原色不同才动表——`None` 把那条**删掉**，否则写入新色，都走同一条撤销时间线（`CapturableObjectMetadata` 因此补了 `Clone()`）。
+
+**一个数据发现**：`BRCREST.ICN` 在这份原版数据里只有 **7 帧**（0..6：六色冠 + 58x55 的选中框），参考代码要的第 7 帧（中立冠）不存在。所以中立格允许没有冠图——只画框和名字，与参考缺图时画空图的效果一致；只有选中框本身缺了才拒绝整扇窗。这条写在了 `GetNeutralCrown()` 的注释里，免得下次又被当成 bug 查。
+
+## ADR-368：狮身人面像窗接进物件分派（`a7l.10.3.3.1`）
+
+**拆分**：`a7l.10.3.3`（sphinx + 事件两扇窗）升为 epic，拆成 `.3.3.1`（本条）与 `.3.3.2`（事件详情窗）。两扇窗的请求面各自就有四到五类子窗，放一张票里做不完。
+
+**决定**：
+
+1. `EditorSphinxModal`：窗口自己读 `LocalEvent`，五类请求各摞一层——谜题与答案走 `InputStringModal`（正文 `Riddle:` / `Answer:`，谜题多行 999 字、答案单行 64 字）、神器走 `ArtifactSelectModal`、资源走 `SelectCountModal`、右键说明走消息框。关窗按 `_pending` / `_pendingResource` 回填。
+2. `EditorSphinxWindow` 补 **`ToMetadata()`**：参考把 `newMetadata` 传引用进来就地改，端口的窗口把字段拷进自己身上（与其它 `EditorListOutcome` 窗口一致），所以要一条把当前状态打包回去的路。
+3. `EditorScene.EditSphinx(tile)` 照 `editor_interface.cpp:2438-2452`：拷一份 `newMetadata` → 开窗 → 只有返回真**且**元数据变了才写 `sphinxMetadata[uid]`（比较是为了不给撤销栈塞空动作）。
+
+**测试上的两个坑**：「加答案」与「改答案」共用同一个输入框，靠 `_pending` 区分，这是这一层唯一的状态机；另外神器列表的 `CurrentId` 初值是 0，所以「点第一行」在第一次点击时就已经走双击分支（直接确定），用例改成点第二行两下来避开这个初值。
+
+## ADR-369：冒险地图事件窗接进物件分派（`a7l.10.3.3.2`）
+
+**决定**：
+
+1. `EditorEventDetailsModal`：窗口自己读 `LocalEvent`，五类请求各摞一层——消息走 `InputStringModal`（正文 `Input event message text:`，多行 999 字）、神器走 `ArtifactSelectModal`、副技走 `EditorSecondarySkillSelectionModal`、资源与经验各走一扇 `SelectCountModal`（用 `_pendingResource` 的 `-1` 区分「这一扇是经验」）。
+2. 副技那一支参考用的是那扇窗的**单选**形态；端口的窗口只暴露 `SetSecondarySkill( skill, level )`，所以取选中集第一项、等级固定 `Basic`；选中集为空时 `ClearSecondarySkill()`。
+3. `EditorSceneHost.TryCreateEventDetails(metadata, humanColors, computerColors)`：美术 `EditorEventDetailsArtwork.TryCreate`，颜色来自 `Map.Info.HumanPlayers` / `ComputerPlayers`。
+4. `EditorScene.EditMapEvent(tile)` 照 `editor_interface.cpp:2453-2462`：拷一份元数据 → 开窗 → 只有返回真**且**变了才写 `adventureMapEventMetadata[uid]`。窗口就地改传进去的那一份（`AdventureMapEventMetadata` 是可变类），所以拷贝在进窗之前做。
+
+**测试口径**：「打开就确定、什么都没改」不该写表——这条钉住了参考的 `newEventData != eventMetadata` 那道门槛，也顺带说明为什么元数据要在进窗之前拷（否则比对时两边是同一个对象，永远相等）。
+
+**收尾**：`a7l.10.3` 下的四支（方尖碑、巫术小屋、归属色、sphinx、事件）全部完成，`a7l.10`（物件点击的元数据编辑分派）可以关了。
+
+## ADR-370：编辑器开始地图（`beb.3.1`）
+
+**拆分**：`beb.3`（开始地图 + 自动试玩）开工时确认两件事，于是升为 epic 并拆开：① `World.LoadMap(Mp2Map)` 早就直接吃内存地图，所以「编辑器地图怎么变成一局游戏」不需要绕临时文件；② 自动试玩还要一个「无人值守跑 N 回合」的驱动器，是另一块。`.3.1`（本条）只做开始地图，`.3.2` 是自动试玩。
+
+**决定**：
+
+1. `AdventureMapScene` 加 `TryCreateFromMap(frame, assets, fonts, Mp2Map, out error)`：私有 `TryCreate` 多一个可选的 `preparedMap`，给定时不读文件。既有的四个调用点一行不改。
+2. `EditorScene.PrepareMapForGameplay()` 照 `_prepareMapForGameplay()`（`editor_interface.cpp:2075-2105`）：`SavePath` 为空（= 没存过）就先问 `Unsaved Changes` / 「Do you wish to save the current map?」，答 NO 放弃、答 YES 就 `SaveMapToFile()`，存完还空也放弃；然后要求 `Map.Info.HumanPlayers` 至少一个颜色，否则弹 `Unplayable Map`。
+3. `EditorLeaveRequest` 加 `StartMap`；`HandleFileMenuResult` 的 `StartMap` 支是「先 prepare，再问 Do you wish to leave the Editor and start the map?」，两道都过才发请求。
+4. `GameHost.StartMapFromEditor()`：`SetGameType(Standard)` → 取编辑器地图 → `CloseEditor()` → `TryCreateFromMap` → `ShowAdventureScene`；造不出来就回编辑器主菜单（与参考一致，不留在黑屏上）。
+5. `ShowError` 加可选标题，给 `Unplayable Map` 用（其余地方仍是 `Error`）。
+
+**没做**：自动试玩（`.3.2`）。另外「参考在开局前会把编辑器地图存盘」这一步端口只在需要时做（有 `SavePath` 就跳过）——因为 `TryCreateFromMap` 不需要文件，硬存一次只会多写一轮磁盘。
+
+**测试口径**：三支都靠 `RunModal` 的桩分别回答两张框——「要不要保存」答 CANCEL 就必须放弃整支，「开始吗」答 OKAY 才该发请求；`SaveAs` 到临时目录造出「已存过」的前提，`ApplyMapInfo` 把人类玩家清空造出「不可玩」的前提。
+
+## ADR-371：全 AI 试玩驱动器（`beb.3.2.1`）
+
+**背景**：参考的 `AutoPlaytest` 是 `prepareMap()` → `SetGameType( TYPE_AUTO_PLAYTEST )` → `Game::StartGame()`，让开局循环在无人值守下跑，跑完把每个玩家的 `WINNER` / `LOSER` / `TIME_LIMIT` 记进结果表（`game_auto_playtest.cpp:280-360`）。端口的 `StartGame` 循环已经拆在 `AdventureSession` 里（`EndTurn` / `RunAiTurn`），缺的只是一个把「所有玩家都是电脑」这件事安排好的驱动器。
+
+**决定**：
+
+1. 新增 `MapPlaytest.Run(Mp2Map, maxDays, difficulty?)`：新开一个 `World` 装地图，把 `World.Current` 指向它，跑完在 `finally` 里换回调用方原来那个——编辑器正在编辑的世界因此不受影响（参考同样拷一份图再跑）。
+2. **在副本上清空人类表**：`map with { Info = map.Info with { HumanPlayers = None } }`。`World.ComputerColorsOf()` 会按文件头留一位「人类」，直接载入原图的话 `AdventureSession` 的轮转表里就有一位永远不跑 AI 的色，试玩会停在那一位身上。复制头部而不改原图，调用方手上的地图保持原样。
+3. `AdventureSession.StartPlaytest` 与 `Create(..., allowNoHumans: true)`：`Start` 要求至少一位人类（那是玩家开局的语义），试玩没有人在键盘前。
+4. `AdventureSession.IsGameOver` 在**没有人类**时改看整张轮转表：原有的「只看人类」会让试玩每一帧都判定已结束，`EndTurn` 立刻返回，日期原地不动。
+5. 循环逐位跑 `RunAiTurn()` 再 `EndTurn()`，直到只剩一个王国或天数上限到了；`EndTurn` 走完最后一轮会把日期推到「上限 + 1」，但那天没有任何玩家行动，报告里的最后一天按上限记。
+6. 结果：最后一个王国 `Winner`、失去全部城与英雄的 `Loser`、其余 `TimeLimit`。参考的 `INTERRUPTED`（玩家中途取消）留给配置窗那一票（`beb.3.2.2`），驱动器本身没有取消入口。
+
+**测试口径**：两个英雄分别摆在 36×36 图的两角时跑满三天，两位都是 `TIME_LIMIT`、报告日期是 3 而不是 4；只有蓝有英雄时绿在开局第一天就出局，试玩一天即收、蓝 `Winner`。另有用例钉住「调用方的地图头与 `World.Current` 在跑完之后都没被改」。`Settings.Reset()` 之后跑，因为开局会填进程级的 `Players` 表。
+
+## ADR-372：通用复选框控件（`beb.3.2.2.1`）
+
+**拆分**：`beb.3.2.2`（试玩配置窗与结果一览）开工时清点了参考：配置窗 550×450（三条滑条 + 两个复选 + 玩家图标排）、多轮循环与结果聚合、结果窗 500×220、以及 App 接线。滑条其实早有（`UI/Widgets/Slider.cs` 就是 `HorizontalSlider` 的端口，票面写的「还没有」已过期），真正缺的是通用布尔复选框、多轮驱动器、两扇窗。按规则升为 epic，拆 `.1`（本条）、`.2`（多轮与聚合）、`.3`（配置窗）、`.4`（结果窗）。
+
+**决定**：
+
+1. 新增 `CheckboxWidget`（`UI/Widgets`）：两帧 `CELLWIN.ICN`（帧 1 空框、帧 2 勾），`Draw` 顺序照参考——框、勾、evil 调色板、暗化。顺序有意义：调色板必须同时作用到勾上，否则 evil 界面里勾还是好阵营的颜色。
+2. 两个标志分开：`IsChecked` 是值，`IsActive` 是「能不能用」。参考的 `renderCheckbox( isEnabled, isActive )` 只有两者都为真才画勾，且 `!isActive` 时把整块压暗——「Sound Effects」在动画关掉时就是这个状态。
+3. `Toggle()` 在 `!IsActive` 时返回 `false` 且不翻转。参考把这条规则写在调用方（`&& autoPlaytest.isAnimationEnabled()`），端口收进控件，免得配置窗两处点击分支各写一遍。
+4. 勾按帧自带的 `OffsetX`/`OffsetY` 摆（参考是 `offsetX + mark.x()`），不写死 2 像素：`CELLWIN` 的勾偏移是归档数据，不是约定。
+5. 帧 2 缺失时允许 `null`：框照画、状态照翻，只是永远看不到勾。与 `PlayerColorSelectionWindow` 对缺失中立冠的处理一致（参考给 `errorImage`，端口宁可不画）。
+
+**测试口径**：手工造 10×9 的框与 1×1 的勾，逐像素断言——未选中只有框；选中时勾落在框原点 +(2,2)；`IsActive = false` 时那个位置是 `Darkening[BoxColor]`；evil 时框与勾都变成 `GoodToEvilInterface[...]`；`Toggle` 三态（翻上、翻下、灰掉不动）。
+
+## ADR-373：多轮试玩与结果聚合（`beb.3.2.2.2`）
+
+**决定**：
+
+1. `PlaytestSettings` 是**不可变**的 record，三个数字在构造函数里 `Math.Clamp` 到各自滑条的范围（轮数 1…100、天数 1…3360、动画速度 1…10）。参考是三个 `std::clamp` 的 setter，端口把它们收进构造，于是配置窗与结果窗都不必再防越界。
+2. 默认值照参考：1 轮、每轮 336 天（48 周）、速度 10（最快）、动画与音效都开。
+3. `MapPlaytest.RunMany(map, settings)` 逐轮调 `Run`，把报告装进 `PlaytestSummary`。参考每轮重读一次地图（`prepareMap()`），端口每轮同样新开世界、重载地图，初始局面因此一致；不同的只有 AI 抽到的随机数。
+4. 统计口径照 `displayResults()`：**先**看每一轮有没有 `TIME_LIMIT`，有就整轮记进 `TimeLimitCount` 并从胜率里剔除；否则把该轮的 `WINNER` 累加给对应颜色。胜率的分母是**总轮数**，不是「分出胜负的轮数」——一轮打满上限会让所有人的百分比一起下降，这是参考的口径。
+5. 颜色表取自第一份报告（`getResults().front()`），顺序就是轮转表的顺序（蓝、绿、红……），不去重排序。
+6. `PlaytestSummary.Empty` 给「一轮都没跑」的调用方一个空表：`Count = 0`、`Colors` 为空，结果窗据此不开窗。
+
+**没做**：`INTERRUPTED` 与中断入口留给 `.3`（配置窗要弹确认框、要在轮次之间打断），本票的循环没有取消点。
+
+**测试口径**：手工拼三份报告（一轮上限、一轮蓝胜、一轮绿胜）钉住 `33%` 这个分母为 3 的口径；两份全上限的报告钉住「百分比全 0 且 `TimeLimitCount` 等于轮数」；真跑的两条分别验证 `RunMany` 的轮数与胜负累加。
+
+## ADR-374：试玩配置窗（`beb.3.2.2.3.1`）
+
+**拆分**：`beb.3.2.2.3` 开工后确认「UI 窗口」与「App 模态 + 文件菜单接线」各自要独立验证，按规则升为 epic 拆 `.3.1`（本条，窗口）与 `.3.2`（接线）。
+
+**决定**：
+
+1. `AutoPlaytestWindow` 逐行照参考的偏移：活动区 550×450、标题框离顶端 10、第一行离顶端 70、行距先 45 再 30；三条滑条宽 150，值列在滑条右 57 像素；标签在 250 宽的栏里右对齐、再退 10 像素。玩家图标排用 `playerStepX = 80`、职业图标在颜色图标下 60 像素、整排再占 120 像素，之后才是底部的提示行。
+2. 一条 `PlaytestSettings` 进来、一条出去：窗口内部把五个值拆成字段（滑条与复选直接改字段），OKAY 时用 `new PlaytestSettings(...)` 重新夹一遍范围。CANCEL 时 `Settings` 保持 `null`。
+3. **动画开关联动**收进 `ApplyAnimationState()`：`_speedSlider.Enable()/Disable()` 与 `_soundsCheckbox.IsActive` 一起改。参考在点击分支里做同样的事，只是还顺手重画了那两行字；端口每帧整窗重画，所以状态对了画面就对了。
+4. 右键说明统一走 `IsMouseRightButtonPressedInArea`：参考在这个窗里用的就是「按下」而不是「点击」，而端口别处（`RandomMapGeneratorView`）用的是 `MouseClickRight`。这里跟参考走，也让「按住右键拖」不会重复弹窗。
+5. **不给换职业**：参考在「这张图允许改职业」时支持左键换职业（`:604-616`），那要读地图头；窗口只收 `(颜色, 职业)` 列表，所以这一支跳过，右键说明照开。写在这里免得以后被当成 bug。
+6. 灰字用可选的 `disabledFont`：动画关掉时「Animation speed:」与「Sound Effects」用灰色字，调用方拿不到灰字体时退回正文字体——不影响布局与逻辑。
+
+**测试口径**：合成素材（滑条帧 200×20 的槽、12×12 的框、30×26 的玩家图标、30×20 的按钮）把活动区钉在 (45,15)，于是每条偏移都能硬写：滑条 (305,85)/(305,130)/(305,220)、复选 (308,190)/(308,250)、图标排 (265,280) 起。另有用例覆盖 OKAY 带出设置、CANCEL 不带、拖滑条写回、动画开关的三处联动、音效复选在动画关掉时点不动、三种右键说明、缺滑条帧时 `TryCreate` 返回 `null`。
+
+## ADR-375：试玩配置窗接 App（`beb.3.2.2.3.2`）
+
+**决定**：
+
+1. `AutoPlaytestModal` 与别的编辑器模态同构：窗口自己读 `LocalEvent`，右键说明摞在自己的栈上（参考在窗口循环里就地 `showStandardTextMessage()`）。
+2. **主窗口也吃热键**：`HotKey` 在栈空时转给 `AutoPlaytestWindow.ProcessEvents(events, hotKey)`，而不是像 `EditorFileModal` / `EditorSphinxModal` 那样只转给内层窗。原因在这个窗口的输入面：它把「Enter / ESC」当参数收（与 `RandomMapGeneratorView` 一致），自己并不读键。只转给内层窗的话，宿主发来的 `HotKey(Okay)` 会落空——第一版就是这样，用例里按 OKAY 之后 `Outcome` 仍是 `None`。
+3. `EditorSceneHost.TryCreateAutoPlaytest(players, settings)` 读四张表：标题框走 `ScenarioInfoIcons`（`METALLIC_BORDERED_TEXTBOX_*` 是 `generateDefaultImages()` 造出来的，与剧本信息屏共用同一份裁切）、滑条走 `TRADPOST`（恶界面把每帧克隆后过 `GoodToEvilInterface`，原版数据没有 `TRADPOSTE`）、复选走 `CELLWIN` 1/2、玩家图标走按帧缓存的 `NGEXTRA`（缺帧退第 0 帧）。
+4. `EditorScene`：`PlaytestSettings` 改为公开可读写属性（参考是进程级单例，再开窗沿用上次的滑条位置）；`LastPlaytestSummary` 只在跑过之后有值。`HandleFileMenuResult` 的 `AutoPlaytest` 支调 `RunAutoPlaytest()`：开窗 → 收 OKAY 的设置 → `MapPlaytest.RunMany` → 记日志。
+5. **结果窗不在这一票**（`beb.3.2.2.4`）：跑完只把统计挂在场景上，日志里报轮数与打满上限的轮数。没有这一步的话「OKAY 之后什么都没发生」，用户会以为按钮坏了。
+
+**测试口径**：三条用例都用真资材与真地图（`EditorScene.CreateNew` 造 36×36 空图），把天数上限压到 1——空图上六个王国都没有城与英雄，开局当天全部出局，于是统计是「1 轮、0 轮上限、六位全 0%」。CANCEL 那条同时钉住「设置对象原样不动」（`Assert.Same`）与「没有统计」。第三条钉住图标排的人数来自地图头的 `KingdomColors`。
+
+## ADR-376：试玩结果窗（`beb.3.2.2.4`）
+
+**决定**：
+
+1. `AutoPlaytestResultsWindow` 照 `displayResults()` 摆：活动区 500×220、标题框离顶端 10、图标排从「标题框底 + 10」起，整排按 `(width - count × 80 + 18) / 2` 居中（那个 `+18` 是参考给最后一格留的宽度，照抄）；每格下 10 像素是胜率（黄字、在图标宽度里居中），再下 20 与 40 是两行统计（白字、在活动区里居中）。OKAY 在底边居中、离边 {6,6}。
+2. `AutoPlaytestResultsText` 收全部文案：`%` 后缀、单/复数轮数（`1 playthrough` / `%{count} playthroughs`）、天数上限后缀、`Won %{percent}% of playthroughs.`。复数判定单独抽成 `PlaythroughCount()`，免得调用方各写一遍。
+3. **空表不开窗**：参考的第一句就是 `if ( getResults().empty() ) return;`，`TryCreate` 因此在 `Count == 0` 或颜色表为空时返 `null`。
+4. 右键两圈：先颜色图标（`Opponents` / `%{color} player`），再**百分数那一行**（颜色名 / `Won %{percent}%`）。参考的第二圈判的是同一批 `playerRects`，实际永远被第一圈吃掉、那段代码走不到；端口改成判图标下方的那一行矩形，语义才是作者看到的「点在百分数上」。
+5. `AutoPlaytestResultsModal` 与配置窗同构，`HotKey` 同样转给主窗口。只有一颗 OKAY 时 `ButtonGroup.ProcessHotKey` 对两个键都答那颗按钮（参考的 `HotKeyCloseWindow()`），所以 ESC 也能关窗。
+6. `EditorScene.RunAutoPlaytest` 在记录统计之后立刻开结果窗（参考的 `runPlayTest()` 末尾就是 `displayResults()`，`game_auto_playtest.cpp:348`）。宿主新增 `TryCreateAutoPlaytestResults(summary)`，标题框与 `NGEXTRA` 的读取与配置窗共用。
+
+**没做**：参考在这一屏还会 `PlayMusic( MUS::VICTORY, REWIND_AND_PLAY_INFINITE )` 并在关窗时 `ResetAudio()`；端口没有音乐队列，这一步跳过。
+
+**测试口径**：合成素材让活动区钉在 (70,130)，于是三条偏移能硬写：图标 (249,180)/(329,180)、百分数行 216、统计行 236/256。另有用例覆盖 50% 的胜率、空表不开窗、OKAY 与 ESC 关窗、图标右键（`Opponents`）与百分数右键（`Won …`）、以及文案的单复数与替换。App 侧那条把两个模态都按下去，钉住「OKAY → 跑 → 开结果窗且结果窗拿到同一份统计」，CANCEL 那条钉住「没开结果窗」。
+
+## ADR-377：数量窗的完整输入面（`biv.1`）
+
+**拆分**：`biv`（数量窗缺的三块）开工时确认三块互相独立、各自要动布局或输入面，按规则升为 epic 拆 `.1`（输入面，本条）、`.2`（MAX/MIN）、`.3`（调用方部件）。
+
+**决定**：
+
+1. `SelectCountView.ProcessEvents(LocalEvent)` 按参考的次序走：键盘直输 → `ValueSelectionElement.ProcessEvents`（滚轮、上下键长按、数字框的两种请求）→ 按钮组。按钮**最后**才问，与 `dialog_selectcount.cpp:186-215` 的 `else if` 链一致。
+2. 键盘直输用现成的 `IntegerValueTyping.Process`，「这一帧有键按下」用 `LocalEvent.IsAnyKeyPressed` + `PressedKeyValue` 表达参考的 `getPressedKeyValue()`。`typedValueBuf` 存在视图里，**任何别的东西改了值就清空**——参考在每个 `setValue` 之后都 `typedValueBuf.clear()`；漏掉的话「敲 2 → 点箭头到 3 → 敲 1」会变成 31。
+3. 新增 `SelectCountFrame(Changed, Answer, Request)`：把「改了值 / 按钮答案 / 要开的子窗」一起交出去，宿主一次就能决定这一帧干什么。`SetValue(int)` 供数字键盘回填。
+4. `SelectCountModal` 改为读 `LocalEvent`（原来的 `SetCursor`/`SetLeftButton` 布尔模型走不到长按与滚轮），右键范围提示弹消息框、点数字框开 `EditorMapSpecsValueModal`（与每日事件窗共用同一层包装：越界只弹错、键盘留着）。`SelectCountView.SetLeftButton` 保留，既有测试与只映射布尔的宿主仍能用。
+5. **既有测试的改动**：`EditorCastleDetailsAddTroopTests.ClickWindow` 原本喂 `SetCursor`/`SetLeftButton`，现在必须喂 `LocalEvent`（与 `Click` 合并）。这是 1 号决定的下游影响，不是行为变化——那扇窗现在能收键盘与滚轮了。
+
+**测试口径**：`SelectCountViewTests` 新增 10 例——敲 `1` 再敲 `2` 得 12（用 0..100 的图，1..5 里 12 会被合法拒绝）、越界数字被拒、Backspace 回下限、滚轮改值、点数字框要键盘、右键要范围、`SetValue` 回填且清缓冲、箭头点击后敲数字不会接在旧值后面、点 OKAY 报按钮。
+
+## ADR-378：数量窗的 MIN/MAX 快捷键（`biv.2`）
+
+**决定**：
+
+1. 两颗按钮都是**运行期合成**的，归档里没有（`game_assets.cpp:1261-1294`）：MAX 是 `RECRUIT` 帧 4/5 裁 `(5,0,60,25)` 再把四角透明化；MIN 是拿 `STONEBAK` 当底、用按钮字体现写 `MIN` 合成的，文字区宽 = MAX 宽度 − 10（`ButtonFactory.TextWidthMargin`），两者最终都是 60×25。新增 `ButtonFactory.MakeSmallMaxButton()` / `MakeSmallMinButton()`，四角透明化复用 `EmptyButtons.MakeButtonCornersTransparent`。
+2. 恶界面那两张（`UNIFORM_EVIL_MIN/MAX_BUTTON`）在参考里就是对好界面版本做调色板替换（`game_assets.cpp:1498-1560` 的 `BUTTON_SMALL_MIN_EVIL` 一条），端口照这个做法对两帧各换一次色——与读滑条帧、读标题框的既有做法一致。
+3. `SelectCountShortcuts` 把两张图收成一个可空对象；`TryCreate` 拿不到 `RECRUIT` 或 `STONEBAK` 时返回 `null`，窗口照常打开、只是没有这两颗按钮（参考在这种情况下会画 `errorImage`，端口宁可不画）。
+4. 布局：`value.Area.Right + 6`，与数字框同高开始摆；两颗**同一位置**，同一时刻只显示一颗——`SwitchMaxMinButtons()`：值 `<= min` 显示 MAX，否则显示 MIN。值一变就重新判一次（键盘、滚轮、箭头、MIN/MAX、数字键盘回填五处都调它，对应参考 `needRedraw` 块里的那一行）。
+5. 点 MAX/MIN 把值推到 `dialog.Maximum`/`dialog.Minimum` 并清 `typedValueBuf`；右键弹 `MAX`/`Click to select the maximum amount.` 与 `MIN`/`Click to select the minimum amount.`。这两句走 `SelectCountFrame.Popup`，由模态摞一层消息框。
+6. `SelectCountView.TryCreate` 的两个新参数默认 `null`，既有调用点一行不改。
+
+**测试口径**：`SelectCountViewTests.CreateView` 现在会带上 `SelectCountShortcuts.TryCreate(false)`，于是新增 6 例——初始在下限时显示 MAX、`SetValue` 后翻成 MIN、点 MAX 到 5 且翻成 MIN、点 MIN 回 1 且 OKAY 交出 1、两颗各弹自己的说明、不带快捷键的窗口两颗都没有。写这条时踩了一次顺序坑：**值不为下限时 MAX 是隐藏的**，所以「点 MAX」的用例必须从 1 起步，否则点到的是同一位置的 MIN（第一次跑就点成了 1）。
+
+## ADR-379：数量窗的调用方部件（`biv.3`）
+
+**决定**：
+
+1. `SelectCountView.TryCreate` 末尾加两个可选的 `DialogElement`（`topElement` / `bottomElement`），复用既有的 `DialogElement` 抽象（`PictureBuffer + Point offset` 的 Draw、`ProcessEvents(events, offset)`），不新造一层接口——它本来就是参考 `fheroes2::DialogElement` 的端口，元素「不知道自己的绝对位置」这条约定也正好对上。
+2. 布局照 `dialog_selectcount.cpp:96-130`：每个部件占「自身高 + `ElementOffset`」，水平在文本区里居中；数字在部件下方再隔一个 `ElementOffset`。`uiAdditionalOffset` 那两行（`topHeight > 0 ? 10 : 0` 加同样的下部件）照抄，于是「没有部件」时窗口高度与之前一模一样。
+3. `ProcessWidget` 只在两种事件上转给部件——左键**释放**与右键**按下**（参考的两条 `isMouseLeftButtonReleasedInArea` / `isMouseRightButtonPressedInArea`）。部件的 `DialogElementResult` 折成 `SelectCountFrame`：要重绘或要弹窗就带出去，否则算「这一帧不归它」继续往下问。数字与按钮先吃事件，部件最后——与参考的 `else if` 链同序。
+4. **参考的一处笔误没抄**：`topUiElement->update( display, bottomUiOffset )` 用的是下方部件的偏移。端口按部件自己的偏移画与算区域。
+5. 加兵链路接上：`EditorSceneHost.TryCreateMonsterPlate(monster)`（`MonsterPlateArtwork` → `MonsterDialogElement`）传给数量窗，于是编辑器点一个怪物堆时，数量窗里能看到那只怪——正是参考 `editor_interface.cpp:2294-2331` 传 `MonsterDialogElement` 的用意，也是 `biv` 票面点名的那处缺失。
+6. `TryCreateSelectCount` 的新参数默认 `null`，另外两个调用点（资源堆、终极神器半径）一行不改。
+
+**测试口径**：新增 5 例——上部件让窗口高 30 并按文本区居中、下部件在数字下方、两个部件同时存在时高度是「各占高 + 间隔」（第一版把 `ElementOffset` 数成 3 份，多算的那个是标题与数字之间本就有的那份）、点部件时它收到一帧、点数字框时部件收不到。`SolidElement` 是测试里的最小部件：固定尺寸、画一块纯色、`ProcessEvents` 只计数。
+
+## ADR-380：`.fh2m` 容器与 BaseMapFormat 读写（`lg0.1`）
+
+**拆分**：`lg0`（`.fh2m` 地图容器）开工后清点：容器（`h2map\0` + 全大端）、BaseMapFormat 二十余个字段、以及一段 zlib 压缩的尾段。尾段里装的是瓦片、每日事件、传闻与十二张物件元数据表；要连它一起解析，等于把 `MapFormat` 整个搬过来，那不是「最小读写」。按规则升为 epic，拆 `.1`（容器 + 头部，本条）与 `.2`（编辑器接入：语言窗翻译落盘与另存）。
+
+**决定**：
+
+1. **尾段原样保留**。只解析头部，剩下的字节整段存进 `Payload` 并原样写回。这样「只改翻译」的路径不会碰到瓦片，也就不会弄丢瓦片——语言窗要的正是这一半。
+2. 字节序独立成 `BigEndianReader`/`BigEndianWriter`（内部类），不复用 `Core.Io.LittleEndianReader`：`.fh2m` 每一个多字节数字都要换序（参考打开文件时 `setBigendian( true )`），单独一层比在既有读写器上加开关更不容易写错。
+3. 字段宽度逐条照 `serialize.cpp`：`bool` 一字节、语言 `uint8`、字符串是 `uint32` 长度 + UTF-8 字节、`vector<u32>` 与 `vector<u8>` 都是 `uint32` 计数加元素。
+4. **`std::array` 也带计数前缀**：参考的流算子对 `std::array` 用的是和 `std::vector` 同一套模板（`serialize.h:409-420`），所以六个种族前面确实有一个 `6`。写的时候照抄，否则后面每个字段都会错位。
+5. `translations` 是 `std::map`，按键升序写出；端口写之前 `Order()` 一次，读回来同样是升序。
+6. 版本门槛照 `map_format_info.cpp:452-487`：`< 9` 没有 `creatorNotes`、`< 11` 没有 `translations`。写的时候按这两条决定写不写，读的时候按同一条跳过——于是版本 8 的文件读回来是空串与空表，而不是错位。
+7. 校验与参考同源：文件短于 512 字节、签名不对、版本越出 2..13、`width <= 0` 一律 `InvalidDataException`（参考返回 `false`，端口用异常把原因带出来）。集合计数还要额外过一道「不能超过文件剩余字节」，否则一个坏文件能让 `new byte[2GB]` 先崩。
+
+**没做**：版本迁移（`convertFromV2ToV3` … `convertFromV12ToV13`）。它们只改 `tiles` 里的对象下标，而尾段在端口里是不透明的，迁移本来就无从下手；读旧版本头部的字段仍然正确。
+
+**测试口径**：9 例——两语言往返（含尾段逐字节相同）、签名检查与位置复原、签名错误、短文件、版本 1 与 14、版本 8 两种字段都缺、版本 9 只有 `creatorNotes`、尾段写在文件末尾、宽度为 0。写入的测试文件尾段都用 600 字节，才够 512 的最小长度。
+
+## ADR-381：语言块与编辑器状态的互转（`lg0.2`）
+
+**决定**：
+
+1. 新增 `Fh2mMapText`——一个纯转换层，不碰文件也不碰窗口：`ToState(header)` 造 `MapTranslationState`，`ApplyTo(header, state)` 写回一份新的头部。两边是一一映射，因为参考本来就是把「当前语言的三串」摊在头部字段上、`translations` 只装别的语言——端口的 `MapTranslationState` 是同一个分工。
+2. `ToState` 跳过「主语言又出现在 `translations` 里」的那种坏数据：留着会让状态里出现两份主语言，`Languages` 也会重复。
+3. `ApplyTo` 只动语言块（`MainLanguage`/`Name`/`Description`/`CreatorNotes`/`Translations`），其余字段与 `Payload` 原样带过——这样「只改翻译再写回」不会碰瓦片。
+4. `FromSpecs(MapSpecsState)` 给「本来是 `.mp2`、要另存成 `.fh2m`」的那条路一个起点：从 `CreateInfo()` 取难度/颜色/种族/条件/尺寸，加上语言块，`Payload` 留空。**这条路径造出的文件只有头部可用**，瓦片仍在 `.mp2` 里——ADR-380 的结论（尾段不解析）决定了这一点，写在这里免得以后以为另存丢了地图。
+5. 没有改 `MapEditSession` 与保存链路：真正的「另存为 .fh2m」还要先决定瓦片怎么写出（尾段是 zlib 里的另一套对象模型），那是独立的一块，不在本票里。
+
+**测试口径**：6 例——两语言文件读成三语言状态（主 + 两翻译，顺序按主语言在前）、切主语言后德语退回翻译且法语改动生效、写盘再读回语言集合一致、语言块之外的字段与尾段引用不变、`translations` 里混主语言时被跳过、`FromSpecs` 从地图规格造出头部（宽度/在世颜色/名称/翻译都对，`Payload` 为空）。
+
+## ADR-382：战役片尾的致谢屏（`urk`）
+
+**分层**：照票面的要求三块分开——`Game/Credits`（节奏与名单数据，可测）、`UI/Dialogs/CreditsView`（排页与压 alpha）、`App/Video/CreditsModalScreen`（帧泵与跳过）。
+
+**决定**：
+
+1. `CreditsSequence` 就是 `AnimationSequence`（`game_credits.cpp:78-150`）：每格 alpha ±5、满值后按「计数器 > 100」保持 **101** 格、归零那一格换页。参考把 `fadeInHeader = false` 写在第一次进入停顿处（`:757-759`），端口提成 `IsFirstFadeIn`，由绘制方决定标题条只淡入一次。
+2. 页面在 `CreditsView.TryCreate` 里**按屏幕宽度画好一次**：页高 = 屏宽 × 背景高 / 背景宽，余下的高度是标题条——与参考「按主菜单背景的宽度缩放每一页」同效（`:744-752`）。`Draw` 每帧只压一次 alpha；alpha 为 0 时直接填 0，满值时直接贴图（参考对这两格也各走一条捷径）。
+3. 排版用 `CreditsPage` 的两种形态：三列（列距 210、起始 42、列宽 200）与单列居中（起始 60、宽 300）。条目按「先填满第一列再换列」流动，与参考手写列位置的视觉效果一致。
+4. **名单是节选**：参考的团队名单有数百行，端口把每一页的标题与主创照抄，长名单只留前若干名字。名单是数据，排版与节奏才是这屏的行为；补人只需往 `CreditsContent` 里加条目。
+5. **怪物插图没搬**（黑龙、牛头人、凤凰等）。它们是纯装饰，逐张对准位置是另一件事。
+6. 淡入淡出只压页面区域：参考用 `ImageRestorer` 保住主菜单边框，端口每帧重画整屏，所以不需要。
+7. 接在 `CompleteCampaignScenario` 的 `IsCampaignFinished` 分支里、`WIN.SMK` **之前**（`game_campaign.cpp:1242-1272` 的顺序）。建不出窗口（缺 `CBKGLAVA` 或字体）时只记一条警告，直接走到片子与高分榜——这是票面的验收条件。
+8. 页数按 `Settings.IsPriceOfLoyaltySupported` 决定：不带资料片 5 页，带 8 页（参考的 `pages.emplace_back` 那七行）。
+9. 标题条的版本号用常量 `1.0.0`，不读程序集：参考的 `ENGINE_VERSION` 是构建期注入的，端口没有对应的构建步骤。
+
+**测试口径**：`CreditsSequenceTests` 7 例（首帧状态、5 步一档到 255、101 格保持、归零换页、末页回首、标题标志、页数校验）；`CreditsContentTests` 5 例（5/8 页、首页三列与团队、感谢页单列、每页都有文本）；`CreditsViewTests` 5 例（页高与标题条相加为屏高、资料片多三页、alpha 0 全黑、满值画出像素、无资材返 null）；`CreditsModalScreenTests` 6 例（25+25ms 一格、200ms 四格、任意键/标准键/鼠标键结束、Draw 标记整屏）。写 `CreditsSequenceTests` 时踩了一次边界：5×51 正好等于 255，所以第 51 步仍停在淡入，第 52 步才越界转入停顿——第一版把这两步数错了。
+
+## ADR-383：`.fh2m` 尾段序列化（`oaq.1`）
+
+**拆分**：`oaq` 开工清点时确认这块的主体不是序列化，而是 `map_object_info.cpp`（423 KB、20 个 `populate` 函数、19 个对象组）——从 `Mp2Map` 的瓦片反推 `Map_Format` 的 group/index 必须有那张表。升为 epic，拆 `.1`（zlib + 尾段，本条）、`.2`（对象表）、`.3`（另存接入）。
+
+**决定**：
+
+1. 新增 `Fh2mPayload`：`additionalInfo`、`tiles`、`dailyEvents`、`rumors`、十张按 UID 索引的元数据表、按语言分的 `translationInfo`。`Read`/`Write` 自己处理 zlib（.NET 的 `ZLibStream`），所以调用方给的是压缩后的字节。
+2. **十张元数据表直接复用编辑器那一套类**（`CastleMetadata` 等）：字段与参考一一对应，再造一份没有意义。`Fh2mTile` 的 `Group`/`Index` 保持原始数值，序列化层不依赖对象表。
+3. **`std::array` 与 `std::vector` 都带 `uint32` 计数**。这是这一条踩到的坑：`serialize.h` 给两者用的是同一套模板，所以 `defenderMonsterType`（五个）与 `bannedSpells`（可变长）在流里都先有一个计数。第一版把「固定尺寸的数组」当无前缀写，读回来 `bannedSpells` 变成 `[8, 1, -1, 2, …]`——多吃的那个 8 是下一个字段的计数。
+4. `Funds` 的字段顺序照 `resource.cpp:666-669`：wood、mercury、ore、sulfur、crystal、gems、gold。端口的 `Funds` 构造函数参数顺序是 ore 在前，所以读的时候要留意别按名字顺序传。
+5. `translationInfo` 的每一项是「语言 + 同一套表的一个子集」（每日事件、传闻、五张文本类元数据）。端口完整解析它，虽然编辑器暂时不编辑这些按语言的文本——不解析就没法读完整个尾段。
+6. 两个长度保护：`ReadCount` 拒绝「计数大于剩余字节」的坏文件（否则 `new byte[2GB]` 先崩）；`Fh2mPayload.Read` 把 `ZLibStream` 的 `InvalidDataException` 包一层，说明是尾段而不是头部出错。
+
+**没做**：`StandardObjectMetadata`（版本 10 之前的怪物/神器/资源元数据）只出现在参考的**读**分支里、供版本迁移使用，新写出的文件不含它，端口因此也不支持读版本 10 之前的那种旧表。
+
+**测试口径**：9 例——两格瓦片（含一格两个对象）、传闻与每日事件（含 `Funds` 七个数字逐个核对）、十张元数据表逐字段往返、按语言的文本、空尾段与 `additionalInfo`、两千格同瓦片压完明显更短、空流、非 zlib、压缩对但声明超量的截断体。测试里 `Assert.Contains(key, sortedDictionary)` 有二义性（`IDictionary` 与 `IReadOnlyDictionary` 两个重载），一律改成 `TryGetValue` + `Assert.True`。
+
+## ADR-384：对象反查表补上组内下标（`oaq.2.1`）
+
+**意外发现**：开工时清点 `map_object_info.cpp`（423 KB、20 个 `populate` 函数），准备逐组搬数据；结果发现端口**早就有了**：`MapObjectCatalog` 加六个分部文件（`Generated.cs` 266 KB 的生成数据、`Roads.cs` 75 KB、`Landscape.cs` 24 KB，以及手写的怪物/城镇/神器三张）。也就是说对象表本身不是这块的工作量，票面判断的「主体是那张表」已经过时。
+
+**剩下的真缺口**：`MapObjectCatalog` 只提供 `GetObjectGroupByIcn`（**只要组**）与 `GetObjectPartByIcn`（**只要部件**），而 `.fh2m` 的瓦片存的是 **(group, index)** ——组内下标那一半没人算。参考的 `objectInfoByIcn` 同样只指向部件，索引是另一步（编辑器 `getObjectInfo( group, index )` 反着用）。
+
+**决定**：
+
+1. 在 `PopulateObjectData` 的同一趟循环里再建一张 `ObjectIndexByIcn`：`( ICN 类型, 帧号 ) → MapObjectIndex( 组, 组内下标 )`，与既有的两张表同一套「先到先得」。三张表共用一趟，所以永远不会互相矛盾。
+2. 组内下标就是对象在组表里的位置（`for objectIndex` 的那个变量），这正是 `.fh2m` 要的语义——参考的 `objects[i]` 与格式里的 `index` 是同一个东西。
+3. 新增 `TryGetObjectIndex` / `GetObjectCount`，`MapObjectIndex` 放在 `ObjectGroup.cs` 里（与枚举同处，两者是一个概念的两半）。
+4. `ObjectGroup` 枚举本身**早就存在**（21 个值，含 `GroupCount = 21`），不动它。
+5. 因此 `oaq.2.2` / `oaq.2.3`（道路/风景/冒险物件各组的数据）**不需要再做**，建票时是清点失误；把它们关掉并在理由里写明原因。
+
+**测试口径**：13 例——怪物组 71 项（66 生物 + 5 随机）、五个生物各有自己的帧号与下标（含随机那五个）、英雄组 42 项、三个英雄帧号、两组反查一致性、未知帧与未知 ICN、以及一条「遍历全部组、凡是只有一个地面部件的对象都必须能从自己的帧号反查回来」的全表检查。最后那条是这条票的价值所在：它同时钉住了「哪张表漏了一行」。
+
+## ADR-385：`.fh2m` 另存完整地图（`oaq.3`）
+
+**决定**：
+
+1. 新增 `Fh2mMapWriter`：`Build` 把三段拼成一个文件——头部 `Fh2mMapText.FromSpecs`、尾段 `Fh2mPayload`（瓦片 + 十张元数据表 + 传闻与每日事件）、`Fh2mBaseMap.Write` 落盘。`Save` 是「路径 + 地图 + 规格 + 元数据」的便利包装。
+2. 瓦片上的 ICN 与帧号靠 `MapObjectCatalog.TryGetObjectIndex` 换成 `( group, index )`；地面对象用 `Level1ObjectUid`、顶层对象用 `Level2ObjectUid` 当 `id`，UID 为 0（编辑器新摆的对象还没编号）时从 1 起顺序补一个，保证整张图的 id 唯一。
+3. **查不到地址的对象丢弃并计数**：`Build` 通过 `out skippedObjects` 交回条数，`Save` 在大于 0 时记一条警告。编辑器能摆的组合不一定在目录里（例如把某个 ICN 的帧号改成了目录里没有的值），静默丢掉比写坏一张图好，但也不能一声不响。
+4. **文件可能小于格式下限**：参考的读取端有 `minFileSize = 512`（`map_format_info.cpp:105`），而一张几乎全空的小图压完真的会不到 512 字节——写出的文件连参考自己也读不回来。端口不改这个格式约定（改了就与参考不兼容），只在 `Save` 里比一下大小并记警告说明这一点。这条是写测试时撞出来的：36×36 空白图写出约 300 字节，`Read` 直接抛「少于 512 字节」。
+5. 尾段里的十张元数据表直接取 `MapObjectMetadataStore` 的字段（同一批对象，不需要转换）；传闻与每日事件取 `MapSpecsState`。
+
+**没做**：接进编辑器「另存为」的按钮链路。`Save` 已经可以直接用，但菜单里的 `.fh2m` 选项还要与 `EditorSaveMapWindow` 的扩展名列表一起改，那是界面的事，本票只交付格式本身。
+
+**测试口径**：7 例——空白图的瓦片数与原样地形索引、一格农民换成 `( 怪物组, 0 )` 且 id 保留、帧号 200（目录里没有）被丢弃并计数为 1、元数据三表落到尾段、传闻与每日事件落到尾段、头部带上规格（版本/宽/名称/描述）、写盘再读回（用 400 条计数各异的怪物元数据把文件推过 512 字节）。
+
+## ADR-386：`.fh2m` 读入（`s0i`）
+
+**背景**：ADR-385 只做了写出；`Fh2mBaseMap.Read` 与 `Fh2mPayload.Read` 能拿到字节与结构，但没有一条路把它们变回编辑器能用的 `Mp2Map`。所以「打开一张 .fh2m」还做不到。
+
+**决定**：
+
+1. 新增 `Fh2mMapReader`：`Build(header)` 解尾段、逐格转换、拼出 `Mp2Map`；`ReadFile(path)` 是便利包装。
+2. **对象是反着查的**：写出时 `TryGetObjectIndex` 把「ICN + 帧号」换成「组 + 下标」，读入时 `GetObjectInfo(group, index)` 取回对象、再用它的**第一个地面部件**当瓦片上的图形。格式里一个对象只记一个地址，而主部件正是参考绘制的起点。
+3. MP2 的一格只有地面与顶层两层：第一个对象进地面（`ObjectName1`/`BottomIcnImageIndex`/`Level1ObjectUid`），第二个进顶层；第三个起丢弃并记警告。
+4. 地址无效（组号越界、下标越界）的对象**跳过并记警告**，这一格按空处理——坏文件不该让整张图打不开。
+5. 头部映射：名称/描述/创建者注记/难度/三种颜色/两个条件与参数/联盟/种族/宽高来自 `Fh2mBaseMap`；格式不带的字段（版本、语言、时间戳）沿用一份空白图模板的默认值。`HumanPlayers` 与 `ComputerPlayers` 都与 `AvailablePlayerColors` 求交——`.fh2m` 的三张表可以互相越界，MP2 的语义不允许。
+6. **宽度与瓦片数必须一致**：`payload.Tiles.Count != width * width` 直接 `InvalidDataException`。这是唯一能识别「尾段与头部不是一对」的判据。
+7. 城堡表、可占领物表、英雄与信息块**留空**：它们在 `.fh2m` 里是「瓦片上的对象 + 按 UID 的元数据」，要按对象组反推 MP2 那三张独立的表，见 `a7b`。读入的地图可以编辑地形与物件，但还没有城与英雄——写在这里，免得以后把「打开后没有城」当成 bug 查。
+
+**测试口径**：6 例——空白图往返（瓦片数、宽高、地形索引、无物件）、一只怪物回到原来的 ICN 与帧号且 UID 保留、头部七个字段往返（含 `CollectGold` 的「千金」数值原样写回）、瓦片数与宽度不符被拒、组号 200 的对象被跳过、地面 + 顶层的两对象都能回来。
+## ADR-387：城堡表与可占领物表的反推（`a7b.1`）
+
+**拆分**：`a7b` 开工清点确认两件事可分：城堡与可占领物都能从「瓦片上的对象」直接反推（入口瓦片的帧号编码种族与要塞位；可占领物看对象类型与矿的 `metadata[0]`），而信息块要逐字节重建 MP2 的块负载、写错一位地图就读不出来。按规则拆 `.1`（本条）与 `.2`（信息块）。
+
+**决定**：
+
+1. 两张表在 `Fh2mMapReader.Build` 的同一次瓦片循环里顺路收集——它们的信息全在瓦片上，再扫一遍尾段没有意义。
+2. **城堡靠帧号反解**：入口瓦片的 `OBJNTOWN` 帧号 = `13 + (要塞 ? 0 : 16) + 种族 × 32`（十六格城镇图里 `(0,0)` 是第 13 格），所以 `种族 = 帧号 / 32`、`要塞 = 帧号 % 32 < 16`，`RawType = 种族 | (要塞 ? 0x80 : 0)`。只有第 13 与第 29 格算城门，其余十五格是城堡的塔与山体，不进表。
+3. **随机城镇的种族记 `NONE`（6）**：`OBJNTWRD` 的帧号里没有种族，只有「第几格 + 要塞位」，与参考在这些瓦片上留 `Race::NONE` 一致。
+4. **可占领物看对象类型**：`Sawmill` 0x00、`AlchemistLab` 0x01、`Mine` 按 `metadata[0]` 的资源（Ore 0x02 / Sulfur 0x03 / Crystal 0x04 / Gems 0x05 / Gold 0x06）、`Lighthouse` 0x64、`DragonCity` 0x65、`AbandonedMine` 0x67——字节值取自 `world_loadmap.cpp:389-425` 的分派。类型用 `NonActionType` 归一，因为瓦片上存的是带动作位的那一个。
+5. 城堡**不进**可占领物表：参考在读完城堡表之后单独把每座城登记为可占领对象，那是运行期的事，文件里的表只装矿与类似物。
+
+**没做**：矿的 `metadata[0]` 认不出五种资源以外的东西时按 Ore 记（0x02）。参考在那里也是「TODO: should we verify the mine type by something?」，端口不额外造规则。
+
+**测试口径**：10 例——空图两张表都为空、骑士城无要塞（帧 13 → `RawType` 0，`HasFort` 假）、骑士城有要塞（帧 29 → 0x80）、五个种族各一例、矿场组第一项成为矿且字节与资源相符、锯木厂成为 0x00 且对象类型对得上。
+## ADR-388：英雄信息块的写出（`a7b.2.1`）
+
+**拆分**：`a7b.2` 开工清点发现端口只有 `Mp2HeroInfo` 一个信息块读端；路牌、瓶中信、事件、斯芬克斯在端口里**既无读端也无写端**，只能从参考的读取代码反推。前者字段齐全、可往返验证，后者是「逆推 + 同时补读端」。按规则拆 `.2.1`（本条）与 `.2.2`。
+
+**决定**：
+
+1. **没有参考写端可抄**：fheroes2 只写自家的 `.fh2m`，MP2 的信息块只有读端（`Heroes::LoadFromMP2`）。所以 `Mp2HeroInfo.ToBlock()` 是从读端逐偏移反推的：每个字节要么由某个字段决定，要么是读端明确忽略的三处（0、22、44）与尾部 15 字节，后者一律写 0。
+2. 名字字段走 `MapTextCodec.Encode`（与地图头同一套编码与截断规则）；`HasCustomName` 为假时整个字段留 0——读端只在那面旗帜非零时才解名字。
+3. 为写出把 `Mp2HeroInfo` 的 `private init` 放宽成 `init`、把私有无参构造改成公开：写端与测试都要能构造它，参考类型本来就是可读写的结构体。
+4. `Fh2mMapReader` 为每个英雄瓦片造块并填 `Mp2InfoBlocks`，再把 `ObjectId`（下标 + 1）拆回瓦片的 `Quantity1`（高 5 位）与 `Quantity2`（低 8 位）——那 13 位的 `quantity` 词就是参考的引用方式。
+5. **编号换算**：元数据表里的怪物/神器/副技编号从 1 起（引擎口径，`0` 表示「没有」），MP2 的块里从 0 起，所以写块时减一、负数钳到 0。
+6. 瓦片是英雄但元数据表里没有它时，仍然写一块**全零**的块并让瓦片引用它：参考对这种情况也只记一条警告然后按默认值建英雄，端口照做，免得地图少一位英雄。
+
+**没做**：路牌、瓶中信、事件、斯芬克斯四种块（`a7b.2.2`）。它们要连读端一起做，因为端口里连解析代码都没有。
+
+**测试口径**：7 例——块长 76、全部字段往返（含副技、巡逻、经验）、空块全零且读端照样接受、读端忽略的字节保持 0（三处单字节 + 尾部 15 字节）、英雄瓦片拿到块且 `Metadata` 能找回 `ObjectId`、无元数据的英雄瓦片拿全零块、无英雄时块表为空。
+## ADR-389：路牌、事件与斯芬克斯块（`a7b.2.2`）
+
+**背景**：端口既没有这四种块的读端也没有写端——只有英雄块有。所以要连读端一起补：布局只能从参考的 `LoadFromMP2` 注释与代码反推（`maps_objects.cpp:44-313`）。
+
+**决定**：
+
+1. 三个类型放在 **Assets 层**（`Mp2TextBlockInfo.cs`）：它们是纯 MP2 格式的东西，不依赖编辑器。
+2. **路牌/瓶中信**（`Mp2SignInfo`）：`1` + 八字节未用 + NUL 结尾文本。首字节必须是 `1`。
+3. **地面事件**（`Mp2EventInfo`）：`1` + 七个 `int32`（木/水银/矿/硫/水晶/宝石/金，可为负）+ `uint16` 神器号 + 「电脑也算」+ 「只发生一次」+ 十字节未用 + 六个颜色标志 + 文本。
+4. **斯芬克斯**（`Mp2SphinxInfo`）：首字节是 `0`（与另两种相反，参考靠它区分）、七个 `uint32` 资源、`uint16` 神器号、答案个数、八段各 13 字节的定长答案、谜题。答案按参考的规则只取前「答案个数」段、跳过空段、全部小写。
+5. **结尾的 NUL 一定要写**：参考的最短长度检查（`MP2_SIGN_STRUCTURE_MIN_SIZE = 10`）正好是「九个前缀字节 + 一个 NUL」。第一版把 NUL 省了，空文本的路牌块只有 9 字节，被自己的读端拒绝；事件块的 50 字节下限也差这一个字节。
+6. **资源用七个原始数字**而不是 Game 层的 `Funds`：Assets 不能引用 Game（依赖方向相反），而这些块本来就是「按字段顺序的七个 int32」。
+7. `Fh2mMapReader` 按对象类型分派：`Sign`/`Bottle` 查 `Signs` 表、`Event` 查 `AdventureMapEvents`、`Sphinx` 查 `Sphinxes`，找不到元数据就写一个空块（参考读到空块也只是不给奖励）。
+
+**没做**：瓶中信的「随机池」（参考在瓶中信为空时会从一组预置消息里挑一条）。那是运行期的表现，文件里存的仍是玩家看到的文本。
+
+**测试口径**：Assets 层 11 例——路牌往返与长度、空文本仍合法、首字节错被拒、事件往返（含七个资源、神器、两个标志、颜色）、事件块至少 50 字节、负资源、斯芬克斯往返（答案小写）、最多八段答案、无答案仍可读、首字节非 0 被拒、三种块对过短输入一律拒绝。Game 层 4 例——路牌/事件/斯芬克斯各走一遍完整往返（元数据 → 块 → 读端 → 字段），以及普通地图没有块。

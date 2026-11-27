@@ -230,7 +230,10 @@ public sealed class IconsPanel : BorderWindow
         EvilInterface = evilInterface;
         ShowIconsEnabled = Settings.Get().IsShowIcons;
 
+        // `_sfMarker.resize(); _sfMarker.reset();` — 整张先透明，之后只画那一圈框（interface_icons.cpp:330-334）。
+        // 少了 Reset，标记内部是不透明的黑，盖在肖像上就是一整块黑（选中的英雄显示成黑框）。
         _marker = new Sprite(CursorWidth, CursorHeight);
+        _marker.Reset();
         DrawSelectionFrame(_marker, EmptyButtons.GetColorId(0xA0, 0xE0, 0xE0));
 
         _heroesIcons = new HeroIcons(this, world, sprites, _marker);
@@ -537,7 +540,11 @@ public sealed class IconsPanel : BorderWindow
     /// Paints the cyan frame of the selected row, <c>fheroes2::DrawBorder( _sfMarker, color )</c>
     /// (<c>interface_icons.cpp:330-334</c>).
     /// </summary>
-    private static void DrawSelectionFrame(Sprite marker, byte color) => ImageOps.DrawBorder(marker.Image, color);
+    /// <remarks>
+    /// 画的是 <see cref="Sprite"/> 而不是它底下那一层：参考的 <c>DrawBorder()</c> 连 transform 一起清，框才可见，
+    /// 而 <c>Sprite</c> 已经先 <see cref="Sprite.Reset"/> 成全透明，内部不会盖住肖像。
+    /// </remarks>
+    private static void DrawSelectionFrame(Sprite marker, byte color) => ImageOps.DrawBorder(marker, color);
 
     /// <summary>Reads the border artwork of the panel, called from the base constructor initializer.</summary>
     /// <param name="sprites">The artwork source.</param>

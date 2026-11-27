@@ -523,7 +523,10 @@ public sealed class GameHost : IDisposable
 
         using (sequence)
         {
-            RunModal(new VideoModalScreen(
+            // 片子用自己的调色板出图，`using` 结束时（析构）换回游戏调色板——放完片头的主菜单必须重新
+            // 用 KB.PAL 解释索引，否则整屏是视频调色板下的彩色噪点（参考的 ScreenPaletteRestorer，
+            // game_video.cpp:111）。
+            using VideoModalScreen video = new(
                 sequence,
                 _audio,
                 _audio is not null,
@@ -533,13 +536,65 @@ public sealed class GameHost : IDisposable
                 subtitle,
                 CampaignSubtitleDelaySeconds,
                 CampaignSubtitlePosition,
-                VideoSubtitle.ReferenceWidth));
+                VideoSubtitle.ReferenceWidth,
+                _palette);
+
+            RunModal(video);
         }
 
         GameLog.Info($"Video '{fileName}' finished.");
 
         return true;
     }
+
+    /// <summary>
+    /// Shows the credits, <c>Game::ShowCredits( false )</c> (<c>game_credits.cpp:701-820</c>), the screen between the
+    /// last campaign scenario and its <c>WIN.SMK</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考在这屏里自己放胜利音乐并在结束时淡出整屏；端口不碰音乐（调用方在片尾时统一处理），淡出也省掉——
+    /// 关掉之后下一屏（片子或高分榜）自己会盖满全屏。
+    /// </para>
+    /// <para>
+    /// 页数取决于资料片是否可用（<c>Settings::isPriceOfLoyaltySupported()</c>，<c>:734-738</c>），端口读的是同一项设置。
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether the credits ran; <see langword="false"/> when the artwork or the fonts are missing.</returns>
+    public bool ShowCredits()
+    {
+        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } bodyFont)
+        {
+            GameLog.Warn("The credits need the game fonts, and they are missing.");
+
+            return false;
+        }
+
+        CreditsView? view = CreditsView.TryCreate(
+            Settings.Get().IsPriceOfLoyaltySupported, CreditsTitle, titleFont, bodyFont, _frame.Size);
+
+        if (view is null)
+        {
+            return false;
+        }
+
+        GameLog.Info($"Showing the credits ({view.Pages.Count} page(s)).");
+
+        RunModal(new CreditsModalScreen(view));
+
+        GameLog.Info("The credits finished.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Caption of the strip above the credits pages, <c>fheroes2 engine ( ENGINE_VERSION )</c> of
+    /// <c>game_credits.cpp:163</c>.
+    /// </summary>
+    public const string CreditsTitle = "fheroes2 engine (" + CreditsEngineVersion + ")";
+
+    /// <summary>Version string the credits caption shows, the <c>ENGINE_VERSION</c> of the reference.</summary>
+    private const string CreditsEngineVersion = "1.0.0";
 
     /// <summary>
     /// Finds a movie the way <c>Video::getVideoFilePath()</c> (<c>game_video.cpp:75-101</c>) does: the
@@ -2140,6 +2195,10 @@ public sealed class GameHost : IDisposable
                 OpenEditorMenu();
                 return;
 
+            case EditorLeaveRequest.StartMap:
+                StartMapFromEditor();
+                return;
+
             case EditorLeaveRequest.Quit:
                 // 参考的 QUIT_GAME 让主循环收摊；端口在这里直接停客户端，与主菜单的 Quit 同一处。
                 GameLog.Info("The editor asked to quit the client.");
@@ -2150,6 +2209,48 @@ public sealed class GameHost : IDisposable
             default:
                 return;
         }
+    }
+
+    /// <summary>
+    /// Plays the map the editor is editing, the <c>GameMode::NEW_STANDARD</c> the reference's editor loop returns
+    /// (<c>editor_interface.cpp:2137-2146</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 参考退回主循环后由 <c>NewStandard()</c> 读刚存下的那份地图开局；端口直接把编辑器内存里的地图交给
+    /// <see cref="AdventureMapScene.TryCreateFromMap"/>，省掉一次磁盘往返——两者的前提（已落盘、有人类玩家）
+    /// 已经由 <see cref="EditorScene.PrepareMapForGameplay"/> 在前一步验过。
+    /// </para>
+    /// <para>
+    /// 打开失败时回到编辑器主菜单而不是停在黑屏上：参考在这种情况下也是回菜单。
+    /// </para>
+    /// </remarks>
+    private void StartMapFromEditor()
+    {
+        if (_editor is not { } editor)
+        {
+            return;
+        }
+
+        // 与主菜单那条「开始标准游戏」同一处：玩法类型在开局前定成单图，存档扩展名与头里的类型都跟着它走。
+        Settings.Get().SetGameType(GameTypes.Standard);
+
+        Mp2Map map = editor.Map;
+
+        CloseEditor();
+
+        AdventureMapScene? scene = AdventureMapScene.TryCreateFromMap(_frame, _assets, _fonts, map, out string? error);
+
+        if (scene is null)
+        {
+            GameLog.Warn($"The edited map '{map.Info.Name}' cannot be started: {error}");
+            OpenEditorMenu();
+
+            return;
+        }
+
+        ShowAdventureScene(scene);
+        GameLog.Info($"Started the edited map '{map.Info.Name}' from the editor.");
     }
 
     /// <summary>
@@ -3600,6 +3701,13 @@ public sealed class GameHost : IDisposable
             GameLog.Info(
                 $"The campaign is over after {saveData.DaysPassed} days; the score is {score} and the rating "
                 + $"is '{CampaignEndingText.RatingName(score)}'.");
+
+            // game_campaign.cpp:1242-1272 的顺序：先放致谢屏，再放带评分字幕的 WIN.SMK。致谢屏缺图时只记一条警告，
+            // 直接往下走到片子与高分榜。
+            if (!ShowCredits())
+            {
+                GameLog.Warn("The credits cannot be shown; the campaign table follows without them.");
+            }
 
             if (!PlayVideo("WIN.SMK", loop: false, waitForKey: true, subtitle: rating))
             {

@@ -164,8 +164,8 @@ public sealed class EditorCastleDetailsAddTroopTests : IDisposable
     private void Draw(IModalScreen modal) => modal.Draw(_frame);
 
     /// <summary>
-    /// Feeds one click through the frame's event state, which is what the castle window, the army bar and the
-    /// creature list read.
+    /// Feeds one click through the frame's event state, which is what the castle window, the army bar, the creature
+    /// list and the number window read.
     /// </summary>
     /// <param name="modal">The window to feed.</param>
     /// <param name="area">The rectangle whose centre is clicked.</param>
@@ -187,20 +187,11 @@ public sealed class EditorCastleDetailsAddTroopTests : IDisposable
     }
 
     /// <summary>
-    /// Feeds one click through the cursor and the left button, which is what windows built on
-    /// <see cref="ButtonGroup"/> read.
+    /// Feeds one click through the frame's event state, which is what the number window reads: it walks the whole
+    /// input surface of the reference's loop (typing, the wheel, the held arrow), so it takes the events of the
+    /// frame rather than a boolean button transition.
     /// </summary>
     /// <param name="modal">The window to feed.</param>
     /// <param name="area">The rectangle whose centre is clicked.</param>
-    private void ClickWindow(IModalScreen modal, Rect area)
-    {
-        Point point = area.Center;
-
-        LocalEvent.Current.BeginFrame();
-        modal.SetCursor(point);
-        modal.SetLeftButton(true);
-        modal.SetLeftButton(false);
-
-        modal.Update(_frame, 0.016);
-    }
+    private void ClickWindow(IModalScreen modal, Rect area) => Click(modal, area.Center);
 }

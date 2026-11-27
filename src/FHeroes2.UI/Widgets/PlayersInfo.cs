@@ -318,9 +318,10 @@ public sealed class PlayersInfo : List<PlayerInfoEntry>
 
             if (CurrentSelectedPlayer is not null && ReferenceEquals(info.Player, CurrentSelectedPlayer))
             {
+                // 只留一圈框：先 Reset 成全透明再画，否则整张不透明的黑会盖住玩家图标。
                 Sprite selection = new(playerIcon.Width, playerIcon.Height);
-                selection.Image.Clear();
-                ImageOps.DrawBorder(selection.Image, SelectionBorderColor);
+                selection.Reset();
+                ImageOps.DrawBorder(selection, SelectionBorderColor);
                 ImageOps.BlitSprite(output, new Point(info.PlayerTypeRoi.X, info.PlayerTypeRoi.Y), selection);
             }
 

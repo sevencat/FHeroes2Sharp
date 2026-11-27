@@ -14,6 +14,7 @@ using FHeroes2.Game.Audio;
 using FHeroes2.Game.Army;
 using FHeroes2.Game.Artifacts;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.Heroes;
 using FHeroes2.Game.Monsters;
 using FHeroes2.Game.Resources;
 using FHeroes2.Game.Spells;
@@ -71,6 +72,11 @@ internal sealed class EditorSceneHost
     private IReadOnlyList<Sprite>? _spellIcons;
     private Mons32Sprites? _monsters;
     private ArtifactsBarArtwork? _artifactIcons;
+    private IColorCrestSprites? _crests;
+    private AutoPlaytestArtwork? _playtestArtwork;
+    private AutoPlaytestResultsArtwork? _resultsArtwork;
+    private SelectCountShortcuts? _countShortcuts;
+    private MonsterPlateArtwork? _monsterArtwork;
     private Sprite? _monsterPlate;
     private bool _monsterPlateLoaded;
 
@@ -1276,7 +1282,15 @@ internal sealed class EditorSceneHost
     /// <param name="initialValue">Number shown first, clamped into the range.</param>
     /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
-    public SelectCountModal? TryCreateSelectCount(SelectCountDialog dialog, int initialValue = 0)
+    /// <param name="initialValue">Number shown first, clamped into the range.</param>
+    /// <param name="topElement">
+    /// The widget the caller puts above the number, usually the creature plate of an add-troop window
+    /// (<c>MonsterDialogElement</c> in the reference); <see langword="null"/> for none.
+    /// </param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="dialog"/> is <see langword="null"/>.</exception>
+    public SelectCountModal? TryCreateSelectCount(SelectCountDialog dialog, int initialValue = 0,
+        DialogElement? topElement = null)
     {
         ArgumentNullException.ThrowIfNull(dialog);
 
@@ -1304,7 +1318,8 @@ internal sealed class EditorSceneHost
             return null;
         }
 
-        SelectCountView? view = SelectCountView.TryCreate(dialog, buttons, font, townwind.Sprites, initialValue);
+        SelectCountView? view = SelectCountView.TryCreate(dialog, buttons, font, townwind.Sprites, initialValue,
+            TryCreateCountShortcuts(), topElement: topElement);
 
         if (view is null)
         {
@@ -1313,7 +1328,49 @@ internal sealed class EditorSceneHost
             return null;
         }
 
-        return new SelectCountModal(view);
+        return new SelectCountModal(view, this);
+    }
+
+    /// <summary>
+    /// Builds the creature plate of an add-troop window, the <c>MonsterDialogElement( troop )</c> the reference
+    /// passes as <c>topUiElement</c> of <c>Dialog::SelectCount()</c> (<c>editor_interface.cpp:2294-2331</c>).
+    /// </summary>
+    /// <param name="monster">The creature the author is about to place.</param>
+    /// <returns>The element, or <see langword="null"/> with the reason in the log when <c>STRIP</c> is missing.</returns>
+    public MonsterDialogElement? TryCreateMonsterPlate(MonsterType monster)
+    {
+        _monsterArtwork ??= new MonsterPlateArtwork();
+
+        MonsterDialogElement? element = _monsterArtwork.TryCreate(monster);
+
+        if (element is null)
+        {
+            GameLog.Warn("The count window cannot draw the creature plate; it opens without it.");
+        }
+
+        return element;
+    }
+
+    /// <summary>
+    /// The MIN/MAX shortcut buttons of the count window, which the reference generates instead of reading them from
+    /// an <c>.ICN</c> (<c>game_assets.cpp:1261-1294</c>).
+    /// </summary>
+    /// <returns>The pair, or <see langword="null"/> with the reason in the log when the data is missing.</returns>
+    private SelectCountShortcuts? TryCreateCountShortcuts()
+    {
+        if (_countShortcuts is not null)
+        {
+            return _countShortcuts;
+        }
+
+        _countShortcuts = SelectCountShortcuts.TryCreate(Settings.Get().IsEvilInterfaceEnabled);
+
+        if (_countShortcuts is null)
+        {
+            GameLog.Warn("The count window cannot build its MIN/MAX buttons; it opens without them.");
+        }
+
+        return _countShortcuts;
     }
 
     /// <summary>
@@ -1647,6 +1704,253 @@ internal sealed class EditorSceneHost
     }
 
     /// <summary>
+    /// Builds the adventure map event editor, <c>Editor::openEventDetailsWindow()</c>
+    /// (<c>editor_event_details_window.cpp</c>).
+    /// </summary>
+    /// <param name="metadata">The event the window edits; the window keeps the same object.</param>
+    /// <param name="availableHumanColors">The colours a human player may be, <c>humanPlayerColors</c>.</param>
+    /// <param name="availableComputerColors">The colours a computer player may be, <c>computerPlayerColors</c>.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="metadata"/> is <see langword="null"/>.</exception>
+    public EditorEventDetailsModal? TryCreateEventDetails(AdventureMapEventMetadata metadata,
+        PlayerColor availableHumanColors, PlayerColor availableComputerColors)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        if (_fonts?.Yellow is not { } headerFont || _fonts.White is not { } bodyFont ||
+            _fonts.SmallWhite is not { } smallFont)
+        {
+            GameLog.Warn("The event details window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        EditorEventDetailsArtwork? artwork = EditorEventDetailsArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The event details window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        EditorEventDetailsWindow window = EditorEventDetailsWindow.Create(metadata, availableHumanColors,
+            availableComputerColors, artwork, Settings.Get().IsEvilInterfaceEnabled, ScreenBuffer.DefaultSize,
+            headerFont, bodyFont, smallFont);
+
+        return new EditorEventDetailsModal(window, this);
+    }
+
+    /// <summary>
+    /// Builds the sphinx editor, <c>Editor::openSphinxWindow()</c> (<c>editor_sphinx_window.cpp</c>).
+    /// </summary>
+    /// <param name="metadata">The sphinx the window edits; its fields are copied in.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="metadata"/> is <see langword="null"/>.</exception>
+    public EditorSphinxModal? TryCreateSphinx(SphinxMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        if (_fonts?.Yellow is not { } headerFont || _fonts.White is not { } bodyFont)
+        {
+            GameLog.Warn("The sphinx window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        EditorSphinxArtwork? artwork = EditorSphinxArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The sphinx window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        EditorSphinxWindow window = EditorSphinxWindow.Create(metadata, artwork, ScreenBuffer.DefaultSize,
+            headerFont, bodyFont);
+
+        return new EditorSphinxModal(window, this);
+    }
+
+    /// <summary>
+    /// Builds the colour picker of a capturable object, <c>Dialog::selectPlayerColor()</c>
+    /// (<c>dialog_selectitems.cpp:2109-2185</c>).
+    /// </summary>
+    /// <remarks>
+    /// 美术是 <c>BRCREST</c> 的 0..7 帧；「未选中」那个框是第 6 帧过「灰 + 变暗」两张调色板叠出来的，与参考
+    /// <c>PAL::CombinePalettes( GRAY, DARKENING )</c> 一致。
+    /// </remarks>
+    /// <param name="original">The colour the object owns now; CANCEL answers it.</param>
+    /// <param name="availableColors">The colours the map lets objects be owned by.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    public PlayerColorSelectionModal? TryCreatePlayerColorSelection(PlayerColor original, PlayerColor availableColors)
+    {
+        if (_fonts?.Yellow is not { } headerFont || _fonts.SmallWhite is not { } nameFont)
+        {
+            GameLog.Warn("The colour picker needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The colour picker needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        if (TryCreateCrests() is not { } crests)
+        {
+            return null;
+        }
+
+        PlayerColorSelectionWindow? window = PlayerColorSelectionWindow.TryCreate(original, availableColors, crests,
+            buttons, headerFont, nameFont);
+
+        if (window is null)
+        {
+            GameLog.Warn("The colour picker needs the BRCREST frames, and they are missing.");
+        }
+
+        return window is null ? null : new PlayerColorSelectionModal(window);
+    }
+
+    /// <summary>
+    /// The <c>BRCREST</c> plates and the two frames of the colour picker.
+    /// </summary>
+    /// <returns>The sprites, or <see langword="null"/> with the reason in the log when a frame is missing.</returns>
+    private IColorCrestSprites? TryCreateCrests()
+    {
+        if (_crests is not null)
+        {
+            return _crests;
+        }
+
+        string name = GameAssets.GetFileName(IcnType.Brcrest);
+        Sprite?[] crowns = new Sprite?[7];
+
+        for (int index = 0; index < crowns.Length; ++index)
+        {
+            crowns[index] = GameAssets.GetImage(name, index);
+        }
+
+        if (GameAssets.GetImage(name, 6) is not { } selectionFrame)
+        {
+            GameLog.Warn($"The colour picker needs frame 6 of '{name}', and it is missing.");
+
+            return null;
+        }
+
+        // 中立那一格是 BRCREST 第 7 帧；原版数据只有 0..6 七帧，缺就只画框和名字（参考缺图时也是空图）。
+        Sprite? neutralCrown = GameAssets.GetImage(name, 7);
+
+        if (neutralCrown is null)
+        {
+            GameLog.Warn($"'{name}' has no frame 7, so the neutral cell of the colour picker draws no plate.");
+        }
+
+        // 参考把「未选中」那个框过一遍「灰 + 变暗」的合成调色板（PAL::CombinePalettes( GRAY, DARKENING )）。
+        Sprite idleFrame = selectionFrame.Clone();
+        ImageOps.ApplyPalette(idleFrame.Image, PaletteId.Gray);
+        ImageOps.ApplyPalette(idleFrame.Image, PaletteId.Darkening);
+
+        return _crests = new CrestSprites(crowns, neutralCrown, selectionFrame, idleFrame);
+    }
+
+    /// <summary>
+    /// The <c>BRCREST</c> lookups the colour picker draws, read once per host.
+    /// </summary>
+    private sealed class CrestSprites : IColorCrestSprites
+    {
+        private readonly Sprite?[] _crowns;
+
+        public CrestSprites(Sprite?[] crowns, Sprite? neutralCrown, Sprite selectionFrame, Sprite idleFrame)
+        {
+            _crowns = crowns;
+            NeutralCrown = neutralCrown;
+            SelectionFrame = selectionFrame;
+            IdleFrame = idleFrame;
+        }
+
+        private Sprite? NeutralCrown { get; }
+
+        private Sprite SelectionFrame { get; }
+
+        private Sprite IdleFrame { get; }
+
+        /// <inheritdoc/>
+        public Sprite? GetCrown(PlayerColor color)
+        {
+            int index = color switch
+            {
+                PlayerColor.Blue => 0,
+                PlayerColor.Green => 1,
+                PlayerColor.Red => 2,
+                PlayerColor.Yellow => 3,
+                PlayerColor.Orange => 4,
+                PlayerColor.Purple => 5,
+                _ => -1,
+            };
+
+            return index >= 0 && index < _crowns.Length ? _crowns[index] : null;
+        }
+
+        /// <inheritdoc/>
+        public Sprite? GetNeutralCrown() => NeutralCrown;
+
+        /// <inheritdoc/>
+        public Sprite? GetSelectionFrame() => SelectionFrame;
+
+        /// <inheritdoc/>
+        public Sprite? GetIdleFrame() => IdleFrame;
+    }
+
+    /// <summary>
+    /// Builds the secondary skill picker, <c>Editor::openSecondarySkillSelectionWindow()</c>
+    /// (<c>editor_secondary_skill_selection.cpp</c>).
+    /// </summary>
+    /// <remarks>
+    /// 这扇窗是全屏的（640x448 活动区），美术是 <c>STONEBAK</c> + <c>SECSKILL</c> 第 15 帧 + 四颗按钮
+    /// （OKAY/CANCEL 取自归档，两颗 toggle 是合成的）。
+    /// </remarks>
+    /// <param name="title">The line above the grid; the callers pass the object name with a colon.</param>
+    /// <param name="level">The skill level the window starts at.</param>
+    /// <param name="selectedSkills">The skills already picked; an empty list means every one of them.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="title"/> or <paramref name="selectedSkills"/> is <see langword="null"/>.</exception>
+    public EditorSecondarySkillSelectionModal? TryCreateSecondarySkillSelection(string title, SkillLevel level,
+        IReadOnlyList<SecondarySkill> selectedSkills)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(selectedSkills);
+
+        if (_fonts?.Yellow is not { } titleFont || _fonts.White is not { } skillFont)
+        {
+            GameLog.Warn("The secondary skill picker needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        EditorSecondarySkillSelectionArtwork? artwork =
+            EditorSecondarySkillSelectionArtwork.TryCreate(Settings.Get().IsEvilInterfaceEnabled);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The secondary skill picker needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        EditorSecondarySkillSelectionWindow window = EditorSecondarySkillSelectionWindow.Create(artwork, title, level,
+            selectedSkills, titleFont, skillFont);
+
+        return new EditorSecondarySkillSelectionModal(window, new EditorSecondarySkillSelectionInput(window), this);
+    }
+
+    /// <summary>
     /// Builds the single-artifact picker, <c>Dialog::selectArtifact()</c> (<c>dialog_selectitems.cpp:1162-1194</c>).
     /// </summary>
     /// <param name="artifact">The artifact the list starts on, or <see cref="ArtifactType.Unknown"/> for the first row.</param>
@@ -1814,6 +2118,270 @@ internal sealed class EditorSceneHost
         fonts = _fonts;
 
         return _fonts is not null;
+    }
+
+    /// <summary>
+    /// Builds the auto playtest setup window, <c>openMapAutoPlayTest()</c>
+    /// (<c>game_auto_playtest.cpp:386-660</c>).
+    /// </summary>
+    /// <param name="players">The players of the map the playtest would run on.</param>
+    /// <param name="settings">Values the sliders and checkboxes start on.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="players"/> or <paramref name="settings"/> is <see langword="null"/>.</exception>
+    public AutoPlaytestModal? TryCreateAutoPlaytest(IReadOnlyList<AutoPlaytestPlayer> players,
+        PlaytestSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(players);
+        ArgumentNullException.ThrowIfNull(settings);
+
+        if (_fonts?.White is not { } bodyFont || _fonts.Yellow is not { } valueFont)
+        {
+            GameLog.Warn("The auto playtest window needs the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The auto playtest window needs the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        AutoPlaytestArtwork? artwork = TryCreateAutoPlaytestArtwork(buttons);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The auto playtest window needs its artwork, and it is missing.");
+
+            return null;
+        }
+
+        AutoPlaytestWindow? window = AutoPlaytestWindow.TryCreate(players, settings, null, artwork, bodyFont, bodyFont,
+            valueFont);
+
+        if (window is null)
+        {
+            GameLog.Warn("The auto playtest window could not be laid out.");
+
+            return null;
+        }
+
+        return new AutoPlaytestModal(window, this);
+    }
+
+    /// <summary>
+    /// Reads the four tables the auto playtest window is drawn from: the metallic title box, <c>TRADPOST</c>,
+    /// <c>CELLWIN</c> and <c>NGEXTRA</c>.
+    /// </summary>
+    /// <param name="buttons">The standard buttons, already built by the caller.</param>
+    /// <returns>The artwork, or <see langword="null"/> with the reason in the log when a table is missing.</returns>
+    private AutoPlaytestArtwork? TryCreateAutoPlaytestArtwork(SystemButtonArtwork buttons)
+    {
+        if (_playtestArtwork is not null)
+        {
+            return _playtestArtwork;
+        }
+
+        bool isEvil = Settings.Get().IsEvilInterfaceEnabled;
+
+        // 标题框是 generateDefaultImages() 造出来的两张表之一（game_assets.cpp:4043-4093），端口把同样的
+        // 裁切放在 ScenarioInfoIcons 里，与剧本信息屏共用。
+        string titleName = isEvil
+            ? FHeroes2.Game.Gui.ScenarioInfoIcons.MetallicTextboxEvilFileName
+            : FHeroes2.Game.Gui.ScenarioInfoIcons.MetallicTextboxGoodFileName;
+
+        Sprite? titleBox = GameAssets.GetImage(titleName, 0);
+        Sprite? checkboxBox = GameAssets.GetImage(GameAssets.GetFileName(IcnType.Cellwin), 1);
+
+        if (titleBox is null || checkboxBox is null)
+        {
+            return null;
+        }
+
+        IReadOnlyList<Sprite>? sliderFrames = TryReadPlaytestSliderSprites(isEvil);
+
+        if (sliderFrames is null)
+        {
+            return null;
+        }
+
+        // 勾帧缺失时仍然开窗（框照画、不显示勾），与玩家面板缺帧时的处理一致。
+        Sprite? checkboxTick = GameAssets.GetImage(GameAssets.GetFileName(IcnType.Cellwin), 2);
+
+        _playtestArtwork = new AutoPlaytestArtwork
+        {
+            TitleBoxFrames = [titleBox],
+            SliderFrames = sliderFrames,
+            CheckboxBox = checkboxBox,
+            CheckboxTick = checkboxTick,
+            PlayerIcons = new NgextraPlayerIcons(),
+            Buttons = buttons,
+        };
+
+        return _playtestArtwork;
+    }
+
+    /// <summary>Reads every frame of the slider table, <c>TRADPOST</c> or its evil twin.</summary>
+    /// <param name="isEvil">Whether the evil interface is in use.</param>
+    /// <returns>The frames, or <see langword="null"/> with the reason in the log.</returns>
+    private IReadOnlyList<Sprite>? TryReadPlaytestSliderSprites(bool isEvil)
+    {
+        if (_assets is null)
+        {
+            GameLog.Warn("The auto playtest window needs the archives, and they are missing.");
+
+            return null;
+        }
+
+        // 参考的原版数据只有好界面那一份，恶界面由 GOOD_TO_EVIL_INTERFACE 换色得到（game_assets.cpp 的
+        // loadICN 分支）。端口先找 TRADPOST，恶界面时把帧各拷一份换色，与 ScenarioInfoArtwork 的做法一致。
+        string fileName = GameAssets.GetFileName(IcnType.Tradpost);
+
+        try
+        {
+            if (_assets.TryReadIcn(fileName) is not { } file)
+            {
+                GameLog.Warn("The auto playtest window needs ICN::TRADPOST, and it is missing.");
+
+                return null;
+            }
+
+            if (!isEvil)
+            {
+                return file.Sprites;
+            }
+
+            List<Sprite> recoloured = [];
+
+            foreach (Sprite sprite in file.Sprites)
+            {
+                Sprite copy = sprite.Clone();
+                ImageOps.ApplyPalette(copy.Image, PaletteId.GoodToEvilInterface);
+                recoloured.Add(copy);
+            }
+
+            return recoloured;
+        }
+        catch (Exception exception) when (exception is System.IO.InvalidDataException or ArgumentException)
+        {
+            GameLog.Warn($"'{fileName}' could not be read: {exception.Message}");
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds the tally window of an auto playtest, <c>displayResults()</c> (<c>game_auto_playtest.cpp:107-256</c>).
+    /// </summary>
+    /// <param name="summary">The tally to show.</param>
+    /// <returns>The window, or <see langword="null"/> with the reason in the log.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="summary"/> is <see langword="null"/>.</exception>
+    public AutoPlaytestResultsModal? TryCreateAutoPlaytestResults(PlaytestSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+
+        if (_fonts?.White is not { } bodyFont || _fonts.Yellow is not { } valueFont)
+        {
+            GameLog.Warn("The auto playtest results need the game fonts, and they are missing.");
+
+            return null;
+        }
+
+        _buttons ??= SystemButtonArtwork.TryCreate(_assets);
+
+        if (_buttons is not { } buttons)
+        {
+            GameLog.Warn("The auto playtest results need the standard buttons, and they are missing.");
+
+            return null;
+        }
+
+        AutoPlaytestResultsArtwork? artwork = TryCreateAutoPlaytestResultsArtwork(buttons);
+
+        if (artwork is null)
+        {
+            GameLog.Warn("The auto playtest results need their artwork, and it is missing.");
+
+            return null;
+        }
+
+        AutoPlaytestResultsWindow? window = AutoPlaytestResultsWindow.TryCreate(summary, null, artwork, bodyFont,
+            bodyFont, valueFont);
+
+        if (window is null)
+        {
+            GameLog.Warn("The auto playtest results have nothing to show.");
+
+            return null;
+        }
+
+        return new AutoPlaytestResultsModal(window, this);
+    }
+
+    /// <summary>
+    /// Reads the two tables the results window is drawn from: the metallic title box and <c>NGEXTRA</c>.
+    /// </summary>
+    /// <param name="buttons">The standard buttons, already built by the caller.</param>
+    /// <returns>The artwork, or <see langword="null"/> with the reason in the log when a table is missing.</returns>
+    private AutoPlaytestResultsArtwork? TryCreateAutoPlaytestResultsArtwork(SystemButtonArtwork buttons)
+    {
+        if (_resultsArtwork is not null)
+        {
+            return _resultsArtwork;
+        }
+
+        string titleName = Settings.Get().IsEvilInterfaceEnabled
+            ? FHeroes2.Game.Gui.ScenarioInfoIcons.MetallicTextboxEvilFileName
+            : FHeroes2.Game.Gui.ScenarioInfoIcons.MetallicTextboxGoodFileName;
+
+        if (GameAssets.GetImage(titleName, 0) is not { } titleBox)
+        {
+            return null;
+        }
+
+        _resultsArtwork = new AutoPlaytestResultsArtwork
+        {
+            TitleBoxFrames = [titleBox],
+            PlayerIcons = new NgextraPlayerIcons(),
+            Buttons = buttons,
+        };
+
+        return _resultsArtwork;
+    }
+
+    /// <summary>
+    /// The <c>NGEXTRA</c> frames the auto playtest window draws: the colour plates (3…9), the class icons (51…58)
+    /// and the shadow (61).
+    /// </summary>
+    /// <remarks>
+    /// 参考每画一个图标都问一次 <c>Assets::getImage( ICN::NGEXTRA, n )</c>；端口按帧缓存，缺帧时退回第 0 帧——
+    /// 那份帧表由数据文件决定，不该让一张缺帧的图把整扇窗弄崩（参考在那里会越界）。
+    /// </remarks>
+    private sealed class NgextraPlayerIcons : IPlayersInfoArtwork
+    {
+        private readonly Dictionary<uint, Sprite> _frames = [];
+
+        /// <inheritdoc />
+        public Sprite GetIcon(uint frame)
+        {
+            if (_frames.TryGetValue(frame, out Sprite? cached))
+            {
+                return cached;
+            }
+
+            string fileName = GameAssets.GetFileName(IcnType.Ngextra);
+
+            Sprite icon = GameAssets.GetImage(fileName, (int)frame)
+                ?? GameAssets.GetImage(fileName, 0)
+                ?? new Sprite(1, 1);
+
+            _frames[frame] = icon;
+
+            return icon;
+        }
     }
 }
 

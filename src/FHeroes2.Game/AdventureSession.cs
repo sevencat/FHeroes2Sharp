@@ -96,8 +96,34 @@ public sealed class AdventureSession
     }
 
     /// <summary>
-    /// Picks a started game up where its save left off, <c>StartGame()</c>'s <c>isLoadedFromSave</c> branch
-    /// (<c>game_startgame.cpp:755-832</c>).
+    /// Starts a game with every player run by the computer, the automatic playtest of the editor
+    /// (<c>game_auto_playtest.cpp:280-360</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 与 <see cref="Start"/> 唯一的差别是「允许没有人类玩家」：试玩模式里没有人在键盘前，参考也是把所有色都交给
+    /// AI（<c>SetGameType( TYPE_AUTO_PLAYTEST )</c> 之后 AI 接管每一个王国）。轮转表因此全是电脑，逐个
+    /// <see cref="RunAiTurn"/> 即可。
+    /// </para>
+    /// <para>
+    /// 前提由调用方保证：地图里的王国**已经**被当成电脑建好（<see cref="World.LoadMap"/> 按
+    /// <c>ComputerColorsOf()</c> 决定）。若还有人类王国，它们不会被自动跑掉，试玩会停在那一位身上——所以
+    /// <see cref="MapPlaytest"/> 先把地图头的 <c>HumanPlayers</c> 清空再载入。
+    /// </para>
+    /// </remarks>
+    /// <param name="world">已经载入地图、建好王国与英雄的世界。</param>
+    /// <param name="info">该地图的文件头，用来建玩家槽位。</param>
+    /// <returns>The session, or <see langword="null"/> when the map has no player at all.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="world"/> or <paramref name="info"/> is <see langword="null"/>.
+    /// </exception>
+    public static AdventureSession? StartPlaytest(World world, Mp2FileInfo info)
+    {
+        return Create(world, info, null, loadedFromSave: false, allowNoHumans: true);
+    }
+
+    /// <summary>
+    /// Picks a started game up where its save left off, <c>StartGame()</c>'s <c>isLoadedFromSave</c> branch    /// (<c>game_startgame.cpp:755-832</c>).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -134,7 +160,8 @@ public sealed class AdventureSession
         return Create(world, info, host, loadedFromSave: true);
     }
 
-    private static AdventureSession? Create(World world, Mp2FileInfo info, IHeroActionHost? host, bool loadedFromSave)
+    private static AdventureSession? Create(World world, Mp2FileInfo info, IHeroActionHost? host, bool loadedFromSave,
+        bool allowNoHumans = false)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(info);
@@ -179,7 +206,7 @@ public sealed class AdventureSession
             (kingdom.IsControlHuman ? humans : computers).Add(color);
         }
 
-        if (humans.Count == 0)
+        if (humans.Count == 0 && !allowNoHumans)
         {
             return null;
         }
@@ -323,13 +350,21 @@ public sealed class AdventureSession
 
     /// <summary>Whether every human kingdom is out of the game, <c>Game::CheckGameOver()</c>.</summary>
     /// <remarks>
+    /// <para>
     /// 只看人类：电脑全部出局不等于这局结束，那正是玩家赢了。
+    /// </para>
+    /// <para>
+    /// <b>试玩里没有人类</b>（<see cref="StartPlaytest"/>）：这时改成看整张轮转表，一位都不剩才算结束，否则每一帧都
+    /// 会判定「已经结束」，<see cref="EndTurn"/> 立刻返回，试玩原地不动。
+    /// </para>
     /// </remarks>
     public bool IsGameOver
     {
         get
         {
-            foreach (PlayerColor color in _humans)
+            IReadOnlyList<PlayerColor> watched = _humans.Count > 0 ? _humans : _players;
+
+            foreach (PlayerColor color in watched)
             {
                 if (!_world.Kingdoms.GetKingdom(color).IsLoss)
                 {

@@ -266,6 +266,56 @@ public sealed class EditorArtifactEditorTests : IDisposable
         Assert.Null(scene.LastArtifactEditorTile);
     }
 
+    [Fact]
+    public void AnObeliskShowsHowManyThereAreAndWritesNothing()
+    {
+        EditorScene? scene = CreateScene(ObeliskTile());
+
+        if (scene is null)
+        {
+            return;
+        }
+
+        string? body = null;
+
+        scene.RunModal = screen =>
+        {
+            var box = (MessageBoxModal)screen;
+
+            body = box.Box.Body;
+            box.HotKey(ButtonHotKey.Okay);
+        };
+
+        Assert.True(scene.ShowObeliskCount(new Point(ObjectX, ObjectY)));
+        Assert.Equal(string.Format(EditorScene.ObeliskCountMessage, 1), body);
+
+        // 这一支不写任何元数据。
+        Assert.False(scene.Metadata.Artifacts.ContainsKey(ObjectUid));
+        Assert.False(scene.Metadata.Selections.ContainsKey(ObjectUid));
+    }
+
+    [Fact]
+    public void APlainTileIsNotAnObelisk()
+    {
+        EditorScene? scene = CreateScene(Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex).Tile(0, 0));
+
+        if (scene is null)
+        {
+            return;
+        }
+
+        scene.RunModal = _ => throw new InvalidOperationException("no window should open on plain ground");
+
+        Assert.False(scene.ShowObeliskCount(new Point(ObjectX, ObjectY)));
+    }
+
+    /// <summary>An obelisk on the object tile.</summary>
+    private static Mp2TileInfo ObeliskTile() => Mp2Map.CreateBlank(MapSize, MapGrounds.GrassStartImageIndex).Tile(0, 0)
+        with
+        {
+            ObjectType = Mp2ObjectType.ActionObelisk,
+        };
+
     /// <summary>A tile of one artifact object, its sprite frame naming the artifact.</summary>
     /// <param name="artifact">The artifact the sprite stands for; <see cref="ArtifactType.Unknown"/> for a random one.</param>
     /// <param name="type">The object type of the tile.</param>

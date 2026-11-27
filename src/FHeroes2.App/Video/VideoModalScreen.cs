@@ -28,15 +28,38 @@ namespace FHeroes2.App.Video;
 /// 等按键（<c>waitForKey</c>），字幕则在播到 <c>subtitleDelaySeconds</c> 之后才画出来
 /// （<c>Video::Subtitle</c> 的「第 5 秒起」）。
 /// </para>
+/// <para>
+/// <b>调色板</b>照 <c>Video::ShowVideo()</c> 的 <c>ScreenPaletteRestorer screenRestorer</c>（<c>game_video.cpp:111</c>）：
+/// 片子用自己的调色板出图，作用域结束时换回游戏调色板（析构 → <see cref="Dispose"/>）。少了这一步，放完片头的
+/// 主菜单会继续用片子最后一帧的调色板解释自己的索引，整屏变成彩色噪点。
+/// </para>
 /// </remarks>
-internal sealed class VideoModalScreen : IModalScreen
+internal sealed class VideoModalScreen : IModalScreen, IDisposable
 {
+    /// <summary>Bytes of one 256 entry RGB palette, the unit <see cref="SmkVideoSequence.Palette"/> is in.</summary>
+    private const int RawPaletteSize = Palette.ColorCount * 3;
+
     private readonly SmkVideoSequence _sequence;
     private readonly AudioPlayer? _audio;
     private readonly bool _playSound;
     private readonly bool _loop;
     private readonly bool _waitForKey;
+
+    /// <summary>The palette to go back to when the clip ends, <c>getGamePalette()</c>; <see langword="null"/> keeps the screen palette.</summary>
+    private readonly Palette? _gamePalette;
+
+    /// <summary>
+    /// The two palettes the clip alternates between, the <c>currPalette</c> / <c>prevPalette</c> of
+    /// <c>game_video.cpp:185</c>.
+    /// </summary>
     private readonly Palette _palette = new();
+    private readonly Palette _alternate = new();
+
+    /// <summary>Bytes of the palette currently on screen, compared with each frame's.</summary>
+    private readonly byte[] _shownPalette = new byte[RawPaletteSize];
+
+    private ScreenPaletteRestorer? _restorer;
+    private bool _hasShownPalette;
 
     private readonly IGlyphSource? _subtitleFont;
     private readonly string? _subtitleText;
@@ -59,7 +82,8 @@ internal sealed class VideoModalScreen : IModalScreen
         string? subtitleText = null,
         double subtitleDelaySeconds = 0,
         Point subtitlePosition = default,
-        int subtitleWidth = VideoSubtitle.ReferenceWidth)
+        int subtitleWidth = VideoSubtitle.ReferenceWidth,
+        Palette? gamePalette = null)
     {
         ArgumentNullException.ThrowIfNull(sequence);
 
@@ -73,6 +97,7 @@ internal sealed class VideoModalScreen : IModalScreen
         _subtitleDelaySeconds = subtitleDelaySeconds;
         _subtitlePosition = subtitlePosition;
         _subtitleWidth = subtitleWidth;
+        _gamePalette = gamePalette;
 
         IsFinished = _sequence.FrameCount == 0;
     }
@@ -177,10 +202,9 @@ internal sealed class VideoModalScreen : IModalScreen
 
         ReadOnlySpan<byte> palette = _sequence.Palette;
 
-        if (palette.Length >= 256 * 3)
+        if (palette.Length >= RawPaletteSize && NeedsPaletteSwap(palette))
         {
-            _palette.Load(palette);
-            frame.ChangePalette(_palette);
+            ShowPalette(frame, palette);
         }
 
         // 字幕压在片子上面，用的是画面自己的索引表；参考同样在贴完帧之后才写字。
@@ -194,6 +218,43 @@ internal sealed class VideoModalScreen : IModalScreen
         frame.InvalidateAll();
     }
 
+    /// <summary>Whether the frame came with a different palette than the one on screen.</summary>
+    /// <param name="palette">Palette of the current frame, 768 bytes.</param>
+    /// <remarks>参考：<c>game_video.cpp:273</c> 的 <c>if ( prevPalette != currPalette )</c>。</remarks>
+    private bool NeedsPaletteSwap(ReadOnlySpan<byte> palette) =>
+        !_hasShownPalette || !palette[..RawPaletteSize].SequenceEqual(_shownPalette);
+
+    /// <summary>
+    /// Shows the frame with <paramref name="palette"/>, through the game-palette scope guard so the screen goes
+    /// back to the game palette when the clip ends (<c>game_video.cpp:197</c> / <c>ui_tool.cpp:363-367</c>).
+    /// </summary>
+    /// <param name="frame">Frame the clip is drawn into.</param>
+    /// <param name="palette">Palette of the current frame, 768 bytes.</param>
+    /// <remarks>
+    /// 两个实例交替装填（参考的 <c>currPalette</c> / <c>prevPalette</c> 交换）：底层按引用判断「换没换」，
+    /// 同一份实例反复 <c>Load</c> 新颜色看不出来，所以每次都要换到另一个实例上。装填前挑的总是当前没在屏上的
+    /// 那一个，正在显示的调色板不会被改写。
+    /// </remarks>
+    private void ShowPalette(ScreenBuffer frame, ReadOnlySpan<byte> palette)
+    {
+        Palette target = ReferenceEquals(frame.Palette, _palette) ? _alternate : _palette;
+
+        target.Load(palette);
+        palette[..RawPaletteSize].CopyTo(_shownPalette);
+        _hasShownPalette = true;
+
+        _restorer ??= _gamePalette is null ? null : new ScreenPaletteRestorer(frame, _gamePalette);
+
+        if (_restorer is null)
+        {
+            frame.ChangePalette(target);
+        }
+        else
+        {
+            _restorer.ChangePalette(target);
+        }
+    }
+
     private void StartAudio()
     {
         if (!_playSound || _audio is null)
@@ -205,5 +266,12 @@ internal sealed class VideoModalScreen : IModalScreen
         {
             _audio.PlayWave(channel);
         }
+    }
+
+    /// <summary>Puts the game palette back, the destructor of <c>ScreenPaletteRestorer</c>.</summary>
+    public void Dispose()
+    {
+        _restorer?.Dispose();
+        _restorer = null;
     }
 }
