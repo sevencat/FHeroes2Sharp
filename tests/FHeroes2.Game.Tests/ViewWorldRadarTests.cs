@@ -29,11 +29,11 @@ public sealed class ViewWorldRadarTests
 
         radar.RedrawObjects(PlayerColor.None, ViewWorldMode.ViewAll);
 
-        Assert.Equal(Minimap.PanelSize, radar.Image.Width);
-        Assert.Equal(Minimap.PanelSize, radar.Image.Height);
-        Assert.Equal(Minimap.GrassColor, radar.ColorAt(0, 0));
-        Assert.Equal(Minimap.GrassColor, radar.Image[0, 0]);
-        Assert.Equal(Minimap.GrassColor, radar.Image[143, 143]);
+        Assert.Equal(MapFrame.PanelSize, radar.Image.Width);
+        Assert.Equal(MapFrame.PanelSize, radar.Image.Height);
+        Assert.Equal(RadarPanel.GrassColor, radar.ColorAt(0, 0));
+        Assert.Equal(RadarPanel.GrassColor, radar.Image[0, 0]);
+        Assert.Equal(RadarPanel.GrassColor, radar.Image[143, 143]);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public sealed class ViewWorldRadarTests
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.ViewAll);
 
-        Assert.Equal(Minimap.GrassColor, radar.ColorAt(0, 0));
+        Assert.Equal(RadarPanel.GrassColor, radar.ColorAt(0, 0));
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public sealed class ViewWorldRadarTests
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.OnlyVisible);
 
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(0, 0));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(0, 0));
     }
 
     [Fact]
@@ -67,8 +67,8 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.OnlyVisible);
 
-        Assert.Equal(Minimap.GrassColor, radar.ColorAt(2, 2));
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(3, 2));
+        Assert.Equal(RadarPanel.GrassColor, radar.ColorAt(2, 2));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(3, 2));
     }
 
     [Fact]
@@ -81,9 +81,9 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
         radar.RedrawObjects(PlayerColor.None, ViewWorldMode.ViewAll);
 
-        Assert.Equal((byte)(Minimap.GrassColor + 3), radar.ColorAt(1, 1));
-        Assert.Equal((byte)(Minimap.GrassColor + 3), radar.ColorAt(2, 2));
-        Assert.Equal(Minimap.GrassColor, radar.ColorAt(4, 4));
+        Assert.Equal((byte)(RadarPanel.GrassColor + 3), radar.ColorAt(1, 1));
+        Assert.Equal((byte)(RadarPanel.GrassColor + 3), radar.ColorAt(2, 2));
+        Assert.Equal(RadarPanel.GrassColor, radar.ColorAt(4, 4));
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.ViewMines);
 
-        Assert.Equal(Minimap.RedColor, radar.ColorAt(3, 3));
+        Assert.Equal(RadarPanel.RedColor, radar.ColorAt(3, 3));
     }
 
     [Fact]
@@ -111,10 +111,10 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.OnlyVisible);
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(3, 3));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(3, 3));
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.ViewTowns);
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(3, 3));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(3, 3));
     }
 
     [Fact]
@@ -130,8 +130,8 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
         radar.RedrawObjects(PlayerColor.None, ViewWorldMode.ViewAll);
 
-        Assert.Equal(Minimap.GrayColor, radar.ColorAt(1, 2));
-        Assert.Equal(Minimap.GrayColor, radar.ColorAt(2, 3));
+        Assert.Equal(RadarPanel.GrayColor, radar.ColorAt(1, 2));
+        Assert.Equal(RadarPanel.GrayColor, radar.ColorAt(2, 3));
     }
 
     [Fact]
@@ -147,10 +147,10 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.OnlyVisible);
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(4, 5));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(4, 5));
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.ViewHeroes);
-        Assert.Equal(Minimap.GreenColor, radar.ColorAt(4, 5));
+        Assert.Equal(RadarPanel.GreenColor, radar.ColorAt(4, 5));
     }
 
     [Fact]
@@ -160,12 +160,12 @@ public sealed class ViewWorldRadarTests
         var radar = new ViewWorldRadar(world);
 
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.OnlyVisible);
-        Assert.Equal(Minimap.BlackColor, radar.ColorAt(18, 18));
+        Assert.Equal(RadarPanel.BlackColor, radar.ColorAt(18, 18));
 
         // The map file gives the town no owner, which is the white seventh colour.
         radar.RedrawObjects(PlayerColor.Blue, ViewWorldMode.ViewTowns);
-        Assert.Equal(Minimap.WhiteColor, radar.ColorAt(18, 18));
-        Assert.Equal(Minimap.WhiteColor, radar.ColorAt(16, 16));
+        Assert.Equal(RadarPanel.WhiteColor, radar.ColorAt(18, 18));
+        Assert.Equal(RadarPanel.WhiteColor, radar.ColorAt(16, 16));
     }
 
     [Fact]
@@ -200,9 +200,9 @@ public sealed class ViewWorldRadarTests
 
         radar.Draw(target, new Point(10, 10), zoom.RoiInTiles);
 
-        Assert.Equal(Minimap.GrassColor, target[10, 10]);
-        Assert.Equal(Minimap.GrassColor, target[10 + 143, 10 + 143]);
-        Assert.Equal(Minimap.CursorColor, target[10 + 40, 10 + 40]);
+        Assert.Equal(RadarPanel.GrassColor, target[10, 10]);
+        Assert.Equal(RadarPanel.GrassColor, target[10 + 143, 10 + 143]);
+        Assert.Equal(RadarPanel.CursorColor, target[10 + 40, 10 + 40]);
         Assert.Equal(9, target[0, 0]);
     }
 

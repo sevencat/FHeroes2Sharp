@@ -252,6 +252,45 @@ public sealed class ScenarioInfoDialogTests
     };
 
     /// <summary>The palette indices of a sprite, for "is this the same picture" checks.</summary>
+    [Fact]
+    public void ThePlayerIcons_HaveTheStrayColumnRemoved()
+    {
+        using AssetBundle? assets = AssetLocator.Resolve() is { } directory ? AssetBundle.Open(directory) : null;
+        if (assets is null)
+        {
+            return;
+        }
+
+        GameAssets.Current = assets;
+        try
+        {
+            IcnSpriteFile archive = assets.TryReadIcn(NgExtraWideIcons.FileName)!;
+            ScenarioInfoArtwork artwork = new(isEvilInterface: false);
+
+            // 27-33「电脑控制玩家」、39-44「职业」：场景信息窗的玩家栏与冒险地图的玩家面板画的都是这两组，
+            // 参考在 loadICN() 里把第 58 列抄到第 59 列（game_assets.cpp:3948-3959）。
+            foreach (int frameId in new[] { 27, 33, 39, 44 })
+            {
+                Sprite icon = artwork.GetIcon((uint)frameId);
+                Sprite original = archive.Sprites[frameId];
+
+                Assert.Equal(original.Width, icon.Width);
+                Assert.Equal(original.Height, icon.Height);
+
+                for (int y = NgExtraWideIcons.FirstRow;
+                     y < NgExtraWideIcons.FirstRow + NgExtraWideIcons.RowCount;
+                     ++y)
+                {
+                    Assert.Equal(icon.Image[NgExtraWideIcons.SourceColumn, y], icon.Image[NgExtraWideIcons.TargetColumn, y]);
+                }
+            }
+        }
+        finally
+        {
+            GameAssets.Current = null;
+        }
+    }
+
     private static byte[] Pixels(Sprite sprite)
     {
         byte[] pixels = new byte[sprite.Width * sprite.Height];

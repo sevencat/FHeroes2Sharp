@@ -5464,3 +5464,339 @@ restore」的 bug，代价是每帧多画十几个精灵，而满屏窗本来就
 **没做**：绘制与事件循环（`a7l.3.5`）；参考里「禁止法术 / 禁止神器位图」是多选窗（`a7l.8` 的选择器），截图里的位图只是
 一张状态图，取值不在数据半。
 
+## ADR-304：物件弹窗接上显示层（`a7l.3.6`）
+
+`EditorObjectPopup` 的文字终于有了去处。参考的右键是 `mouseCursorAreaPressRight()` → `Editor::showPopupWindow()` 取文字、
+`displayStandardPopupWindow()` 开窗（`editor_interface.cpp:3080-3083`、`ui_map_interface.cpp:56-81`），后者自己 `while` 到松手。
+端口不能阻塞，于是拆成三块：
+
+| 件 | 职责 |
+|---|---|
+| `EditorObjectPopup`（已有） | 一格的字：名字、数量、归属、坐标 |
+| `EditorObjectPopupView.TryCreate` | 把字交给 `StandardPopupWindow`：`QWIKINFO.ICN` 底板 + 小号白字 + 摆放 |
+| `EditorScene` | 生命期：右键按下造，松手 / 拖动 / 点信息盒就收 |
+
+**界面区要换算，不能直接传视口**：`getPopupWindowPosition()` 拿的是鼠标的绝对坐标，只用界面区的**宽高**夹边（`:39-54`）。
+端口的视口是边框内的矩形（左上角 (16,16)），直接传会多减一次边框、弹窗往左上偏 16 像素；`InterfaceAreaOf()` 把它换成
+「从原点起、右下角与视口相同」的那块 (0,0,464,464)。
+
+**右键现在一心三用**：参考的平移在左键上（`interface_gamearea.cpp:1098`），端口左键要画画，平移只能让给右键。于是按下这一帧
+就弹窗（与参考同刻），指针拖过 `MapScrollController` 的阈值后收窗、交给平移，松手再按老规矩吸地形。拖动开始收窗这条写在
+`SetCursor` 里——弹窗留在屏幕上会指着一格指针已经离开的地方。
+
+**生命期给了 2 秒上限**：参考按住就一直画，端口没有「按住期间」可等，也就没有可靠的松手事件（焦点一丢就没了）。所以按下即造，
+`Update` 里倒计时，`ObjectPopupSeconds = 2.0` 到期自收；`ObjectPopupRemaining` 只是给日志看的。
+
+**验证**：新增 `EditorObjectPopupViewTests` 7 条（界面区换算、文字、位置 (17,49)、夹边、越界格、装不下的底板、空参）；
+`--scene editor --editor-new 36 --cursor 100,100 --editor-popup 3,4` 的真实数据截图里，弹窗落在指针右下、写着 `Grass [3; 4]`。
+全量 6852 通过（+7），构建 0 警告 0 错误。
+
+**没做**：信息盒（`I` 键）与弹窗还是两条路——参考只有弹窗，信息盒是端口为 MP2 的物件部件与数据字加的，等 `a7l.6` 把编辑器
+输入换成 `LocalEvent`、右键语义定案时再合。
+
+## ADR-305：NGEXTRA 两组宽图的杂边改在取帧处（`a7l.3.5.3.2.5`）
+
+原版 `NGEXTRA.ICN` 的 27-33（电脑控制玩家）与 39-44（职业）这两组 62×58 的宽图，右缘多一列 1 像素宽的杂边。参考在
+`loadICN()` 解完归档后**原位**改图：第 58 列第 44-54 行抄到第 59 列（`game_assets.cpp:3948-3959`），此后所有人拿到的都是改过的帧。
+
+端口的归档缓存（`IcnSpriteFile`）是整局共用、有「只读」约定的，写脏它会连累别的画法。所以新增
+`src/FHeroes2.Game/Gui/NgExtraWideIcons.cs`：`Patch(archiveFrames, frameId)` 回一份改过的新图，三个门与参考一致——表名
+`NGEXTRA.ICN`、正好 82 帧（`if ( images.size() != 82 ) break;`）、帧必须 62×58（两组里夹着 62×45 的窄图，参考只是跳过）。
+
+**两个取帧点各套一次**，因为这张表有两条路：
+
+| 调用点 | 谁在用 |
+|---|---|
+| `Assets.GetArchiveFrame` | 场景信息屏（`ScenarioInfoArtwork.GetIcon` → `GameAssets.GetImage`） |
+| `AdventureMapDialogs.NgextraArtwork.GetIcon` | 冒险地图的玩家面板——它直接读帧表，不经过 `Assets` |
+
+只改前者的话玩家面板那半边照旧多一列，正是 `a7l.3.5.3.2.4` 踩过的那类「两层素材」坑。
+
+**顺手改的既有断言**：`EditorPlayerIconsTests.TheArchivedFramesAreLeftAlone` 原来要求 0-81 逐帧与归档相等，现在这 13 帧本来
+就该不一样，跳过并把说明指向 `NgExtraWideIconsTests`。
+
+**验证**：新增 7 条 Game 测试（抄列范围与其它像素不动、归档不被写脏、两组都改、窄图跳过、帧数不对不碰、表名匹配、真实资材
+逐帧比对）+ 1 条 UI 测试（场景信息屏交付的图标列已对齐）。真实资材里断言至少有一帧真被改了，否则比对是空转；归档那 82 帧
+像素在取帧前后完全一致。全量 6860 通过（+8），构建 0 警告 0 错误。截图没做：场景信息屏要 `Settings` 里有地图目录才列得出剧本，
+这台机器上没有配。
+
+## ADR-306：数值控件的整帧输入与它要开的两扇窗（`a7l.3.5.3.2.7`）
+
+`ValueSelectionDialogElement::processEvents()`（`ui_dialog.cpp:986-1019`）一件事做四样：按下的箭头画成按下样、点击与按住
+重复加一步（`TimedEventValidator` 默认 500 ms 后开始、之后每 100 ms）、滚轮与上下键（只算落在数字框里，除非
+`setIgnoreMouseWheelEventRoiCheck()`）、点数字框开数字键盘、右键数字框出范围提示。
+
+端口的 `ValueSelectionElement` 原来只有「按下/松开」两步（`SetLeftButton`），调用方自己在外面判点击，于是没有重复、没有滚轮
+与按键。现在加 `ProcessEvents(LocalEvent)` 逐帧照抄参考的四样，返回 `ValueSelectionFrame(Changed, Request)`：值变没变，
+以及要开哪扇窗（`ValueSelectionRequest.Numpad` / `.Range`）。**窗本身不在这里开**——参考是在控件里阻塞跑
+`openVirtualNumpad()` 与 `showStandardTextMessage()`，端口按既有分工把窗交给宿主：范围与当前值从 `Minimum` / `Maximum` /
+`Value` 取，右键那段话就是 `RangeMessage`（`"The available values range from %{min} to %{max}."`）。
+
+**两种进法不许混用**：`SetLeftButton` 留着给只把按钮映射成布尔的宿主（`SelectCountView`），它在一次按下里只走一步；
+`ProcessEvents` 给拿得到整帧 `LocalEvent` 的调用方（`EditorMapSpecsInput` 的金币与天数、`RandomMapGeneratorView` 的种子，
+后者正是参考 `dialog_random_map_generator.cpp:243` 的写法）。同一个元素同时喂两条路会把一次点击算成两步。
+
+**宿主还没接**：`EditorMapSpecsInput` 现在会发 `EditorMapSpecsRequestKind.EditValue`（带 `ValueField` 指明是金币还是天数），
+宿主跑完键盘把数交给新增的 `ResolveValue(int?)` 写回元素与状态；`null` 等于 Escape，什么都不改。但没有哪个场景跑
+`EditorMapSpecsInput`，所以这条链和 `InputStringDialog` 一样停在契约上，等编辑器地图规格窗接进宿主时一起跑通。
+
+**验证**：+10 条控件测试（点击一步、按住 500 ms 与之后的 100 ms 节奏、松开停止、上下两个箭头、上下限、滚轮只在框内、
+关掉 ROI 检查、上下键、点框要键盘、右键要范围提示与文案、空参）+ 4 条地图规格测试（金币框要键盘并写回、天数框要键盘、
+右键出范围文案、键盘被取消则不改值）。全量 6874 通过（+14），构建 0 警告 0 错误。截图没做：没有场景跑这两个窗口。
+
+## ADR-307：编辑器的鼠标与滚轮改从 `LocalEvent` 读（`a7l.6.1`）
+
+这里说的「参考」是 `editor/` 目录自己那套输入：`Editor::processEvents` 每帧从 `LocalEvent`（`Interface::Basic` 之外的一份
+全局事件状态）里读指针、`MouseClickLeft/MouseClickRight` 与滚轮，编辑场景没有自己的 `Interface::AdventureMap` 去转发。
+
+端口的 `EditorScene` 原来只有四个「显式动作」入口——`SetCursor`、`SetLeftButton`、`SetRightButton`、`ScrollByWheel`，
+真实鼠标靠 `GameHost` 在 `PumpEvents` / `HandleMouseButton` 里一块块转进来，脚本靠 `ClickRadar` / `ClickPanel` 直接调。
+两个问题：一帧里「按下+松开」这类组合在宿主那层就被拆没了，手感与参考对不上；宿主与场景各留一半状态（按住的键、
+采样中的笔刷），谁先谁后写在宿主里，`a7l.6.3` 要搬的 `MapScrollController` 也卡在这层。
+
+所以 `EditorScene` 加了 `ProcessEvents(LocalEvent) → bool`（`Update` 开头读 `LocalEvent.Current`），四样一次读完：
+
+- **指针**：只在 `events.HasMouseMoved`、或者这一帧按钮状态有变化 / 有快击时才 `SetCursor`。**不能每帧无条件取**——
+  `LocalEvent` 一直记着最后一次位置，每帧取会把宿主「指针离开窗口」时置的 `null` 又填回旧位置，还会让边缘滚动在鼠标
+  没动过的时候一直生效（滚到地图角停不下来）。
+- **左键**：与上一帧的 `_leftHeld` 比出按下与松开；两者落在同一帧（`LocalEvent` 把一对首尾相接的鼠标事件合成一帧）时
+  状态没变，靠 `MouseClickLeft()` 补一次「按下+松开」——参考每帧看的就是 `MouseClickLeft`，一笔快击正好画一格。
+- **右键**：同法，新增 `_rightHeld` 字段；快击也要走完「按下弹物件框、松开取笔刷」两步。
+- **滚轮**：`LocalEvent` 原来只把滚轮偏移记在私有字段里没有出口，新增 `MouseWheelMovement` 属性；`ScrollByWheel(0, -y)`
+  沿用宿主原来的取负（向上滚 = 视图往地图上方走），高分辨率滚轮的半格仍被折成 0。
+
+**留下的两处不在场景里**，都是 `LocalEvent` 表达不了的窗口级事件：
+
+1. **指针离开窗口**：`PumpEvents` 的 `WindowMouseLeave` 仍然直接 `_editor.SetCursor(null)`（模态窗、城镇屏、编辑器菜单
+   同一条分支）。事件里没有「离开」这个概念，硬塞进去要把窗口生命周期混进输入状态。
+2. **键盘**：仍在 `GameHost.HandleEditorKey`。Esc 要开编辑器菜单、Ctrl+S 要存盘、信息盒的模态优先级都在宿主那一层；
+   `LocalEvent` 里也没有 `key.Repeat`（按住连发）与修饰键的可靠信息。
+
+宿主那边删掉的只有转发：`HandleMouseButton` 里编辑器那条变成 `return false`（只为别让按钮落到没关掉的编辑器菜单上），
+指针与滚轮分支留空并注明原因。三条日志（`Painted with ...`、`Picked the ... brush`、细节仪器取样）跟着搬进场景，
+它们原来是宿主在调完动作之后打的。`--left-click` 也补了一支：`ReplayScriptedInput` 原来没有编辑器，脚本点击会掉到菜单，
+现在照冒险地图的写法把「移动 + 按下 + 抬起」推进 `LocalEvent`，于是编辑场景里的脚本点击真的能画一格。
+
+**验证**：`EditorScene` 在 `FHeroes2.App`，四个测试工程都引用不到它，所以没加单测，改用脚本 A/B 对拍（同一份源码
+`git stash` 出改动前后两个构建，同参数跑）：`--editor-paint` + `--editor-panel-click`（四个面板格子）+ `--editor-radar-click`
+拖拽 + `--editor-data` + `--editor-popup` + `--editor-info` 一次跑完，截图与 `--editor-save` 出来的 `.mp2` **逐字节相同**；
+再拆成单动作与两两组合各跑一遍，也都相同（这份脚本本身是确定的：同参数连跑两次哈希一致）。新能力另测：`--editor-new 36
+--editor-paint 20,20,2,2,Snow --cursor 300,300 --left-click` 打出 `Painted with 'Snow'; 2 undoable strokes.`，说明脚本点击
+确实穿过了 `ProcessEvents`。全量 6874 通过，构建 0 警告 0 错误。
+
+## ADR-308：编辑器雷达独立成一份，`Minimap` 拆掉（`a7l.6.2`）
+
+参考里只有一份 `Radar`（`gui/interface_radar.cpp`，`fheroes2::radarWidthPx` = 144）：冒险地图与编辑器用的是同一个类，只是
+喂给它的 `world` 不同。端口里三份雷达各自长出来了——`UI/Interface/Radar`（冒险地图）、`Game/Kingdom/ViewWorldRadar`
+（世界视图）、`Game/AdventureMap/Minimap`（编辑器），后两份把调色板、`zoom` 放大与虚线框又抄了一遍，`Minimap` 还躺在
+模型层里却只有一个视图用户（`EditorScene`）。
+
+拆法：把「每格一个调色板下标 → 最近邻放大到 144 见方 → 虚线框」这半份抽出来，另一半归各自的着色规则。
+
+- **`MapFrame.PanelSize`**（原来是 `Minimap.PanelSize`）：边框的雷达湾、两份面板的边长、虚线框的坐标系都是它。
+  144 这个词也顺手替掉了 `MapFrame` 里的字面量注释。
+- **`Game/AdventureMap/RadarPanel`**：三个雷达共用的静态一半——18 个调色板下标、`GetGroundColor`、`GetKingdomColor`、
+  `ScaleColors`（含 `min(..., 宽-1)` 的钳位）、`CursorArea`（先裁到地图再缩放）、`DrawCursorFrame`（每六点留一点的虚线），
+  以及 `HillShadeOffset`——`ViewWorldRadar` 里原来写死的 `+ 3`。
+- **`UI/Interface/EditorRadar`**：编辑器那份——`Build(Mp2Map)`（地面按 `MapGrounds.FromTerrainImageIndex` 上色，山与树加亮
+  三档，道路用道路色，英雄按所属色盖在最后）、`Width/Height/Zoom/Image/ColorAt/TileAt/CursorArea/Draw/DrawCursor`。放在
+  UI 层是因为参考里雷达本来就在 `gui/`；`EditorScene`（App）是它唯一用户。读 `Mp2Map` 而不是 `World` 是这份雷达与另外两份
+  唯一的实质差别：编辑中的地图没有冒险地图那套模型。
+- 删掉 `Game/AdventureMap/Minimap.cs`；用例按归属拆开：地面表进 `MapGroundsTests`，调色板与虚线框进 `RadarPanelTests`
+  （都在 Game.Tests），MP2 上色、英雄盖章、面板几何与 `TileAt` 进 `EditorRadarTests`（UI.Tests，因为类型在 UI）。
+
+**验证**：把旧 `Minimap.cs` 临时放回去、`EditorScene` 改回旧类型，重建出「重构前」的二进制，与重构后同参数各跑一遍
+（`--editor-new 72` + `--editor-paint` + 四个 `--editor-panel-click` + `--editor-radar-click` 拖拽 + `--editor-data` +
+`--editor-popup` + `--editor-save`）：截图**逐字节相同**，`.mp2` 也**逐字节相同**。全量 6881 通过（UI +16、Game −9，净 +7），
+0 警告 0 错误。
+
+**踩到的坑（写下来免得再踩）**：`--editor-popup` 的窗口只活 `ObjectPopupSeconds`（2 s）并按每帧 `dt` 递减，`--smoke-frames 10`
+截出来的图取决于这一跑有多快——同一份源码不同构建能一个拍到窗口、一个拍不到。凡是要截图对拍的脚本都别带 `--editor-popup`，
+或者在 `--editor-popup` 之后立刻截。这次差点把它当成重构引入的回归，白查了一轮。
+
+## ADR-309：拖拽、边缘滚动、滚轮收进 `EditorScene`，删掉 `MapScrollController`（`a7l.6.3`）
+
+ADR-306 把指针的「两级坐标」留在了 `Game/AdventureMap/MapScrollController` 里：视口像素、拖拽阈值、边缘带、卷屏节拍全在
+一个只为编辑器服务的类里。`a7l.6.1` 之后输入已经整帧从 `LocalEvent` 读，那一层就只剩「上一格指针」的转手工作，于是把它并回
+场景：谁读事件，谁就管指针。
+
+搬过去的四个动作，逐条对着参考：
+
+- **`DragTo`（平移）**：按下的那点记作 `_panOrigin`，位移超过 `DragThreshold` 才算拖动，此后每步按 `anchor - current` 挪视图
+  （参考的 `SetCenterInPixels( center + last - current )`，地形跟着指针走），第一次位移从按下点算起，所以越过阈值的那段不丢。
+  `DragThreshold = 10` 是 `interface_gamearea.cpp:68` 的 `minimalRequiredDraggingMovement`，比较是严格的：正好十像素还是点击。
+- **`UpdateEdgeScroll`（边缘滚动）**：指针落在视口四边各 `BorderWidth`（16 px，`fheroes2::borderWidthPx`）以内，每
+  `EdgeScrollInterval` 挪一次 `EdgeScrollStep`；拖动中不滚（参考的 `assert( !isDragScroll() )`），贴边或 `IsScrollingPossible`
+  为假不累计，一帧最多补 4 步、补不上的余量丢掉。节拍沿用移植前的做法：按帧 `dt` 自己累计，不碰全局限时表。
+- **`ScrollByWheel`（滚轮）**：一格一块 tile，交给 `AdventureMapView.ScrollBy` 钳位。
+- **`SetPanButton`**：拖拽用右键，左键让给笔刷（E1 的定制，见 ADR-306）。
+
+**共享常量往哪儿放**。20 ms 这个数在参考里是 `game_delays.cpp:96` 的 `setDelay( DelayType::SCROLL_DELAY, 20 )`，所以它进了
+`GameDelays.ScrollDelayMilliseconds`，`InitAnimateDelays` 和 `EditorScene.EdgeScrollInterval` 都从它算，App 层不再出现字面量
+20；16 px 用场景里已有的 `BorderWidth`（`MapFrame.BorderWidth`）。`10` 和 `2 << 2` 是编辑器这一处独占的，留在 `EditorScene`
+的公开常量上，附参考出处。滚轮速度档端口还没有设置项，`2 << 2` 就是 `NORMAL` 档，注释写清。
+
+**顺带补的验证口子**：`--editor-drag <x1,y1,x2,y2>`（视口像素）与 `EditorScene.DragMap`。拖拽要「按住跨帧」，脚本合成的
+点击做不到，而这个动作恰恰是这次唯一换了家的手感，不给它一个脚本口子就只剩肉眼。日志直接报落点：
+`--editor-radar-click 40,30,90,80` 把视图推到 (1216; 1056)，再 `--editor-drag 120,140,60,100` 得 (1276; 1096)，正好 +60/+40；
+单独 `--editor-drag 100,100,60,100` 得 (968; 928)，从 (928; 928) 起正好 +40，方向与幅度都对；`100,100,108,100`（八像素）
+一步不挪，日志是「where it already was」，说明阈值和「松手不算拖动」都在。
+
+**边缘滚动的验证没法靠截图**：`--cursor` 设的合成指针会被 `LocalEvent` 里的真实指针顶掉（`ProcessEvents` 的
+`HasMouseMoved` 分支），滚几十帧后视图冻在原地，冻在哪儿取决于跑的时候鼠标在屏幕哪儿——不是这次的回归，是脚本本身的
+不确定。改用临时日志量了节拍：`dir=5`（左|上）、每步 8 px、约 20 ms 一步、`IsScrollingPossible` 为假就停，与移植前一致。
+
+**用例**：`MapScrollControllerTests` 的 13 条随类删除——`EditorScene` 在 `FHeroes2.App`，而四个测试工程都不引用它，没有地方
+可搬。全量 6868 通过（Game −13），0 警告 0 错误；另开 `a7l.6.4` 记一笔「App 层没有测试工程、编辑器场景的手感只能靠脚本」。
+
+## ADR-310：`Game/AdventureMap/ButtonsPanel` 只留数据，面板类删掉（`a7l.6.6`）
+
+epic 里写的是「`Game/AdventureMap/ButtonsPanel.cs` 零引用，直接删」，实测只对了一半：这个文件里躺着四个类型，其中只有
+**面板类**是死的。
+
+- **死的那一半**：`ButtonsPanel`（布局、`AreaOf`、`Draw`、帧号换算）。它的活全在 `UI/Interface/ButtonsPanel`——ADR-058 时
+  面板还只有布局与绘制，后来 UI 层长出了带 `BorderWindow`、点击、长按、拖动的完整版，模型层这份就没人实例化了。
+- **活的那一半**：`AdventureButton`、`HeroMovementIcon`、`AdventureButtonStatus`。UI 层 `using FHeroes2.Game.AdventureMap`
+  正是为了这三个：按钮的编号既算格子位置也算帧号（`2 * index`），`_setButtonStatus` 的结果就是那个 record struct。
+  这三个的语义属于冒险地图而不是某块砖，所以不跟着面板搬去 UI。
+
+于是把文件拆成两半：数据留在原目录的 `AdventureButtons.cs`（`git mv` 后重写，注释里点明「面板在 UI 层」），面板类删掉。
+同一个文件里的 `AssetName = "ADVBTNS.ICN"` 跟着它唯一的读者走，落到 `ButtonSpriteSet.AssetName`（`EvilAssetName` 无人引用，
+随类删除）；UI 层那两个 `GoodInterfaceAssetName` 一个字没动。
+
+**用例**：`Game.Tests/ButtonsPanelTests` 的 11 条测的都是被删的那个类，随类删除；其中真正守活的类型的只有「没有英雄时只剩
+五个按钮」与「运动按钮三种图标」两条——后者测的 `ButtonsPanel.ReleasedFrame(HeroMovementIcon)` 也随类没了（UI 层自己算帧号），
+所以只把那一条搬进新的 `AdventureButtonsTests`，另补一条守八个按钮的编号顺序（UI 的格子与帧号都吃这个数）。
+`UI.Tests/ButtonsPanelTests` 的 20 条不动。全量 6859 通过（Game −11 +2），0 警告 0 错误。
+
+## ADR-311：编辑器副技选择窗按 `SecondarySkillContainerUI` 摆格，开关按钮收进 `ButtonFactory`（`a7l.5.1`）
+
+`editor_secondary_skill_selection.cpp` 的窗口（`EditorSecondarySkillSelectionWindow`）与它里面的
+`SecondarySkillContainerUI` 拆成两块：格子在 `UI/Widgets/EditorSecondarySkillSelectionGrid`，窗口只管装配、按钮与回填，
+事件与弹窗请求在 `EditorSecondarySkillSelectionInput`——与法术选择窗（ADR 里那一刀）同一套分法。
+
+参考里几处看着像笔误、其实是行为的地方照抄：
+
+- **垂直居中用的是整数除法的行数**：`skillRowOffsetY * (size / columns)`（`editor_secondary_skill_selection.cpp:75`）。
+  十二个技能排四列只占三行，正好整除；末行不满时（如三个技能排两列）这一项仍只算整行，块会略微偏上。
+- **末行的判据是 `row == size / columns`，不是「最后一行」**（`:83`）。整除时这个下标不存在，也就不偏移。
+- **列的数目是最小的 `i` 使 `i * i >= size`，上限四**（`:67-72`），不是固定四列。
+
+**灰度**：参考对已经画进目标的那块区域调 `ApplyPalette( ..., GRAY )`（`:120-122`）。端口不二次扫像素，而是先把图标
+克隆一份过灰度、帧也预先做一份 `InactiveFrame`，再按「图标 → 帧」的顺序贴；帧的中间是透的，与参考的观感一致。
+
+**两个开关按钮**：参考把 `BUTTON_TOGGLE_ALL_ON/OFF` 都摆在 `BOTTOM_CENTER`、`{0,7}`（`:260-265`），两个框完全重叠，
+靠「后画的盖住先画的」达到只看见一个的效果。端口两个 `ButtonSprite` 也放在同一点，`Paint` 只画启用的那个。
+
+这两个按钮的图案不在归档里——`game_assets.cpp` 里它们是 86x25 空板子加 h2d 图案合成的，法术窗当时把这段合成抄进了自己的
+`CreateToggleButton`。这次收进 `ButtonFactory.MakeToggleAllButton`（尺寸常量 `ToggleAllButtonSize`），法术窗改调它，
+副技窗直接用，两处不再各写一份。
+
+**回填**：确定的返回值是全选的技能；全选折成空表（`:387-390`），因为游戏把空表读作「按默认」。OKAY 在所有技能都关掉时
+置灰（`:353-373`），此时点它无事发生——端口在 `EditorSecondarySkillSelectionInput` 里先问 `IsEnabled` 再认点击。
+
+**弹窗**：四个按钮的说明与技能说明（`SecondarySkillDialogElement`）按 `EditorSecondarySkillSelectionRequest` 交回宿主，
+与 `EditorMapSpecsInput`、`EditorSpellSelectionInput` 一致；`DEFAULT_OKAY/CANCEL` 热键（`:288`、`:292`）与法术窗一样留给宿主。
+
+**用例**：`UI.Tests/EditorSecondarySkillSelectionTests` 15 条——列数、末行居中、超量与空表的拒绝、初始全选、只保留元数据里
+的那几个、单格切换、全关后 OKAY 置灰、全开复位、确定/取消、关掉全部时点确定无事、右键技能出说明、右键全关出提示、
+关一格后画面与全选不同。全量 6874 通过（UI +15），0 警告 0 错误。
+
+## ADR-312：编辑器保存地图窗是 `ListBox<Mp2FileInfo>`，列表与写盘各管一段（`a7l.5.2`）
+
+`editor_save_map_window.cpp` 的 `mapSaveSelectFile()` 拆成 `Dialogs/EditorSaveMapWindow`（列表 + 输入 + 四个按钮）与
+`Dialogs/EditorSaveMapArtwork`，逐帧 `Process()` / `Draw()`，与编辑器其它窗一致。
+
+**尺寸照抄**：`listWidth = maxFileNameWidth + 9`、窗口宽 `listWidth + 75`、`listAreaOffsetY = 6`、
+`listAreaHeightDeduction = 8`、`listHeightDeduction = 129`；可见行 `clamp(地图数, 11, 22)`，行高是小字高 + 2，
+再受屏幕高度限制（480 高的屏只够 14 行，参考同样如此）。列表区在 `activeArea.x + 24, y + 54`，
+地图名一行在 `y + 28`、纵向 +4 左对齐。
+
+**列表**：`FileInfoListBox` 的每行是去掉扩展名的文件名加两张 `REQUESTS` 小图标——玩家人数从 19 起、地图大小从 25 起
+（宽度 / 36，`Maps::SMALL`）。图标缺席（`REQUESTS` 帧不够）就只画名字，不抛。
+
+**文件名**：固定后缀、输入上限 255、点列表某行就把文件名换成它、点输入框撤掉列表选中并把光标落到点上、
+按 `InsertKeySym` 插字符；`Delete` 在有选中行时是「删这个文件」的请求，没有选中行时是删字符。
+名字空了 OKAY 置灰（`:330-340`）。参考的虚拟键盘按钮（`BUTTON_VIRTUAL_KEYBOARD_*`）在归档里没有自己的 `.ICN`，
+`game_assets.cpp:5465-5498` 是空板子加 `keyboard_button_*` h2d 图案拼的——端口直接调
+`ButtonFactory.MakeVirtualKeyboardButton`（那个方法早就有），h2d 缺席时按钮整个不画。
+
+**偏差**：列表只列 `.mp2`（参考列它自家的 `.fh2m`，端口没有那种格式，编辑器写的就是 MP2）；参考的
+「触屏必开虚拟键盘时点输入框自动开键盘」没有对应判据（`System::isVirtualKeyboardSupported` 在端口里不存在），故不做。
+列表内容由调用方给（参考是 `getEditorMapFileInfos()` 扫目录、按文件名排序），窗口不扫盘。
+
+**写盘**：窗口只回 `FileName`；`EditorSaveMapWindow.SanitizeFileName` 去掉扩展名、把文件系统不认的字符换成 `_`，
+`ComposeFilePath` 拼 `目录/名字.mp2`，`SaveMap` 建目录并调 `Mp2MapWriter.Save(..., writeHeader: true)` 覆盖同名文件。
+参考把这段放在 `editor_interface.cpp:3238-3256`（`saveMapToFile`），端口等编辑器接口那块（`a7l.7`）再接。
+净化这一步是端口加的：参考直接把输入拼进路径，Windows 下会把 `:`、`/` 写进文件名。
+
+**弹窗**：CANCEL/OKAY/地图名/虚拟键盘四个按钮的说明与单行地图说明都按 `Popup` 交宿主。单行说明照 `:99-111` 写成
+「Map Type / Size / Description / Location」，其中 Map Type 写「Price of Loyalty」（列表只收 mp2，参考写它自己的
+「Resurrection」）；「Language」一行略去——`Mp2FileInfo.mainLanguage` 只是原始字节，端口还没有到 `SupportedLanguage`
+的映射。参考的分段字体（黄标白值）在端口一律是纯文本。
+
+**用例**：`UI.Tests/EditorSaveMapWindowTests` 21 条——默认名回填、255 截断、空名置灰 OKAY 且点它不生效、
+11/22 行两档高度、点行换名、同一行点两次即确定、CANCEL/OKAY、点地图名请求改名、无选中行时 Delete 删字符、
+有选中行时 Delete 请求删文件、删行后选中邻居、按名字选中（不分大小写）、右键单行/取消/虚拟键盘出说明、
+虚拟键盘点击请求、净化文件名、拼路径、空名字拒绝写盘、画一帧有变化。全量 6895 通过（UI +21），0 警告 0 错误。
+
+## ADR-313：编辑器传闻窗是一个 `ListBox<string>` 加一排 `CELLWIN` 小按钮（`a7l.4.1`）
+
+`editor_rumor_window.cpp` 的 `openRumorWindow()` 拆成 `Dialogs/EditorRumorWindow`（600×400 标准窗、列表、三个小按钮、
+OKAY/CANCEL）与 `Dialogs/EditorRumorArtwork`，逐帧 `Process()` / `Draw()`，与编辑器其它窗一致。
+
+**尺寸照抄**：活动区 `550+50` × `300+100`；标题离顶 9 像素居中，列表 `active.x + 9, y + 9 + 行高 + 9`，`550×300`；
+列表的可见区先砍掉底部 8 像素（`listAreaHeightDeduction`），`SetAreaMaxItems(10)`；滚动条在列表右侧 5 像素，
+上下按钮各 19 高、槽 `x+8, y+19, 10, h-38`；三个小按钮在 `列表底 + 5`，中间那个落在
+`( 550 - 3 * 按钮宽 ) / 2 + 按钮宽`。
+
+**列表**：`ListBox<string>`，行文本左/上各缩进 5 像素、`fitToOneRow(550 - 10)`，选中行黄字、其余白字。
+列表直接持有 `_rumors` 实例（参考传的是引用），所以增删就地生效、选中不丢。
+
+**增改删**：增/改都是宿主弹输入框（`InputStringDialog.Create(InputTitle, InputBody, LongestRumor, isMultiLine: true)`），
+窗口只发 `AddRequested` / `EditRequested` 并把结果吃进 `TryAddRumor` / `TryReplaceSelected`；重复时返回 `false` 并把
+「This rumor already exists in the list.」放进 `Popup`，由宿主显示。改写自己那行不算重复（参考
+`GetCurrent() != temp && count > 0`）。删除走 `RemoveSelected()`，选中自动落到邻居。
+
+**偏差**：参考的 `Text( rumor, font, language )` 多带一个语言参数，端口没有按语言的断行/整形，故 `Create` 不收 language；
+参考用 `ImageRestorer` 复原列表背景，端口在 `RedrawBackground` 里重刷阴影，效果一致；热键（`DEFAULT_OKAY`/`DEFAULT_CANCEL`）
+与输入框、提示框一样交宿主。
+
+**用例**：`UI.Tests/EditorRumorWindowTests` 24 条（19 个事实 + 5 个右键分例）——空传闻被丢掉、列表位置与尺寸、
+三个小按钮的摆法、点增加发请求、追加、重复拒绝、双击行请求改写、改写需选中、改写覆盖、改写重复拒绝、改写自己不变、
+无选中时改写不做事、删选中行并选中邻居、无选中时删除不做事、删空列表、CANCEL/OKAY、五个按钮的右键说明、
+`SetRumors` 换内容并清选中、画一帧有像素变化。全量 6919 通过（UI +24），0 警告 0 错误。
+（后续：ADR-314 把素材类改名为两个列表窗共用的 `EditorListArtwork`，结果枚举改名为 `EditorListOutcome`。）
+
+## ADR-314：每日事件列表窗是第二个 `ListBox` 窗口，素材与结果枚举抽成共用件（`a7l.4.2`）
+
+`editor_daily_events_window.cpp` 的 `openDailyEventsWindow()` 拆成 `Dialogs/EditorDailyEventsWindow`（550×415 标准窗、
+500×315 列表、三个小按钮、OKAY/CANCEL）与地图格式模型 `Game/Editor/MapDailyEvent`。
+
+**共用件**：传闻窗与事件窗要的素材完全一样（`SCROLL` 0..4 + `ADVBORD` 槽 + `SYSTEM` 1..4 + `CELLWIN` 13..18），
+`EditorRumorArtwork` 改名 `EditorListArtwork`、`EditorRumorOutcome` 改名 `EditorListOutcome` 并单独成文件，
+两个窗口共用；ADR-313 里那 24 条用例跟着改名后照跑。
+
+**尺寸照抄**：活动区 `500+50` × `315+100`；标题离顶 9 像素居中，列表 `active.x+9, y+9+行高+9`，`500×315`，
+可见区砍掉底部 8 像素，`SetAreaMaxItems(10)`；滚动条与三个小按钮的摆法和传闻窗一模一样，只是宽度基准换成 500。
+
+**模型**：老端口没有地图格式（`Maps::Map_Format`）这一层，于是新增 `MapDailyEvent`——`Message`、
+`HumanPlayerColors`、`ComputerPlayerColors`、`FirstOccurrenceDay`(默认 1)、`RepeatPeriodInDays`(0 表示不重复)、
+`Resources`(<c>Funds</c>)，默认值照 `map_format_info.h:297-311`。窗口收的是副本（`Clone()`），改窗口不动调用方的对象。
+
+**行文本**：参考用一个 `MultiFontText` 拼两段——「Day: N」（有消息时补一个开引号）按原样画，消息 + 闭引号按
+`500 - 10 - 日期宽` 截一行。端口没有多段文本，于是先 `Measure` 日期段，再紧接着画第二段，效果相同。
+
+**排序**：参考在增、改、删之后都对整个 vector 按 `firstOccurrenceDay` 调一次 `std::sort`（不稳定），端口用
+`List.Sort` 就地排同一份列表，所以列表始终按天递增；选中项不按对象重锚，和参考一样只保留行号。
+
+**偏差**：参考的 `Text( ..., language )` 与 `MultiFontText` 带语言整形，端口没有；`ImageRestorer` 换成
+`RedrawBackground` 重刷阴影；规格窗（`editor_daily_event_spec_window.cpp`，`a7l.4.3`）与热键都交宿主，
+窗口只发 `AddRequested` / `EditRequested`，再吃回 `AddEvent` / `ReplaceSelected`。
+
+**用例**：`UI.Tests/EditorDailyEventsWindowTests` 22 条（17 个事实 + 5 个右键分例）——建窗即按天排序、收副本、
+列表位置与尺寸、三个小按钮的摆法、点增加发请求、插入后仍有序、双击行请求改写、改写需选中、改写后重排、
+无选中时改写不做事、删选中行并选中邻居、无选中时删除不做事、删空列表、CANCEL/OKAY、五个按钮的右键说明、
+`SetEvents` 换内容并清选中、画一帧有像素变化。全量 6941 通过（UI +22），0 警告 0 错误。
+
+

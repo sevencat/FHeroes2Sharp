@@ -32,6 +32,12 @@ public sealed class MapFrame
     /// <summary>Width of the border between the frame edge and the map, <c>fheroes2::borderWidthPx</c>.</summary>
     public const int BorderWidth = 16;
 
+    /// <summary>
+    /// Edge length of the radar panel in pixels, <c>fheroes2::radarWidthPx</c>. The bay of the frame,
+    /// the panels both radars bake into it and the dot frames painted over it are all this size.
+    /// </summary>
+    public const int PanelSize = 144;
+
     /// <summary>Height of one brick of the panel background, 32 pixels.</summary>
     public const int PanelBrickHeight = 32;
 
@@ -52,21 +58,21 @@ public sealed class MapFrame
         Viewport = new Rect(
             BorderWidth,
             BorderWidth,
-            Math.Max(size.Width - Minimap.PanelSize - (3 * BorderWidth), 0),
+            Math.Max(size.Width - PanelSize - (3 * BorderWidth), 0),
             Math.Max(size.Height - (2 * BorderWidth), 0));
 
         Radar = new Rect(
-            size.Width - BorderWidth - Minimap.PanelSize,
+            size.Width - BorderWidth - PanelSize,
             BorderWidth,
-            Minimap.PanelSize,
-            Minimap.PanelSize);
+            PanelSize,
+            PanelSize);
 
         // The panel bay runs from the bottom of the radar to the frame edge and not to the border: the
         // system buttons of the reference sit on the last rows of the display.
         Panel = new Rect(
             Radar.X,
             Radar.Bottom,
-            Minimap.PanelSize,
+            PanelSize,
             Math.Max(size.Height - Radar.Bottom, 0));
 
         BottomBorder = new Rect(
@@ -125,7 +131,7 @@ public sealed class MapFrame
         // The icons of the reference start one border below the radar, so the brick begins at
         // radarWidthPx + 2 * borderWidthPx (176) while the bay itself starts at the radar bottom (160).
         int top = Panel.Y + BorderWidth;
-        Rect brick = new(Radar.X, top, Minimap.PanelSize / 2, PanelBrickHeight);
+        Rect brick = new(Radar.X, top, PanelSize / 2, PanelBrickHeight);
 
         for (int y = top; y < Panel.Bottom; y += PanelBrickHeight)
         {

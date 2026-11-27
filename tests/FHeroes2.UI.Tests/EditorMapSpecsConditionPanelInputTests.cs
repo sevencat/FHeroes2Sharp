@@ -129,6 +129,140 @@ public sealed class EditorMapSpecsConditionPanelInputTests : IDisposable
     }
 
     [Fact]
+    public void ClickingTheGoldBoxAsksForTheNumberPad()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        try
+        {
+            MapSpecsState state = input.Window.State;
+            state.VictoryCondition = MapVictoryCondition.CollectGold;
+            state.VictoryGoldInThousands = MapSpecsState.MinVictoryGoldInThousands;
+
+            input.Window.Paint(new PixelBuffer(640, 480));
+
+            ValueSelectionElement gold = input.Window.GoldValue!;
+
+            // 参考点数字框就开数字键盘（ui_dialog.cpp:1007），端口的元素只把请求交出来。
+            input.Process(Click(Center(gold.EditBox)));
+
+            Assert.Equal(EditorMapSpecsRequestKind.EditValue, input.Request.Kind);
+            Assert.Equal(EditorMapSpecsValueField.VictoryGold, input.Request.ValueField);
+            Assert.Equal(string.Empty, input.Request.Title);
+            Assert.Null(input.Request.Dialog);
+
+            // 宿主跑完键盘把数交回，写进元素也写进状态。
+            int typed = MapSpecsState.MinVictoryGoldInThousands + (3 * EditorMapSpecsWindow.VictoryGoldStepInThousands);
+
+            Assert.True(input.ResolveValue(typed));
+            Assert.Equal(typed, state.VictoryGoldInThousands);
+            Assert.Equal(typed, gold.Value);
+            Assert.True(input.Request.IsNone);
+        }
+        finally
+        {
+            Dispose();
+        }
+    }
+
+    [Fact]
+    public void RightClickingTheGoldBoxShowsTheRange()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        try
+        {
+            MapSpecsState state = input.Window.State;
+            state.VictoryCondition = MapVictoryCondition.CollectGold;
+
+            input.Window.Paint(new PixelBuffer(640, 480));
+
+            ValueSelectionElement gold = input.Window.GoldValue!;
+
+            // 参考在这里 showStandardTextMessage( {}, "The available values range from %{min} to %{max}." )。
+            input.Process(RightPress(Center(gold.EditBox)));
+
+            Assert.Equal(EditorMapSpecsRequestKind.ShowMessage, input.Request.Kind);
+            Assert.Equal(string.Empty, input.Request.Title);
+            Assert.Equal(
+                $"The available values range from {MapSpecsState.MinVictoryGoldInThousands} to {EditorMapSpecsWindow.MaxVictoryGoldInThousands}.",
+                input.Request.Body);
+        }
+        finally
+        {
+            Dispose();
+        }
+    }
+
+    [Fact]
+    public void TheDaysBoxAsksForTheNumberPadToo()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        try
+        {
+            MapSpecsState state = input.Window.State;
+            state.LossCondition = MapLossCondition.OutOfTime;
+            state.LossDays = 30;
+
+            input.Window.Paint(new PixelBuffer(640, 480));
+
+            ValueSelectionElement days = input.Window.DaysValue!;
+
+            input.Process(Click(Center(days.EditBox)));
+
+            Assert.Equal(EditorMapSpecsRequestKind.EditValue, input.Request.Kind);
+            Assert.Equal(EditorMapSpecsValueField.LossDays, input.Request.ValueField);
+
+            Assert.True(input.ResolveValue(90));
+            Assert.Equal(90, state.LossDays);
+            Assert.Equal(90, days.Value);
+        }
+        finally
+        {
+            Dispose();
+        }
+    }
+
+    [Fact]
+    public void ACancelledNumberPadChangesNothing()
+    {
+        if (!TryCreate(out EditorMapSpecsInput input))
+        {
+            return;
+        }
+
+        try
+        {
+            MapSpecsState state = input.Window.State;
+            state.LossCondition = MapLossCondition.OutOfTime;
+            state.LossDays = 30;
+
+            input.Window.Paint(new PixelBuffer(640, 480));
+
+            input.Process(Click(Center(input.Window.DaysValue!.EditBox)));
+
+            // Escape 关掉键盘：参考的 openVirtualNumpad 不改 _value。
+            Assert.False(input.ResolveValue(null));
+            Assert.Equal(30, state.LossDays);
+            Assert.True(input.Request.IsNone);
+        }
+        finally
+        {
+            Dispose();
+        }
+    }
+
+    [Fact]
     public void ClickingTheDayArrowRaisesTheDays()
     {
         if (!TryCreate(out EditorMapSpecsInput input))

@@ -1882,6 +1882,11 @@ if (dirty.IsEmpty)
 
 ## ADR-058：按钮面板照 `interface_buttons.cpp` 摆八格——禁用就套 `DARKENING`，缺帧就留空
 
+> **已被 ADR-310 取代一部分**：这条 ADR 落在 `FHeroes2.Game.AdventureMap.ButtonsPanel` 的那个类后来被
+> `FHeroes2.UI.Interface.ButtonsPanel`（带 `BorderWindow`、点击与长按的完整版）顶掉并删除；八格布局、`2i / 2i+1` 帧对、
+> `DARKENING` 禁用、缺帧留空这几条规则都还在，只是实现搬去了 UI 层。`AdventureButton` / `HeroMovementIcon` /
+> `AdventureButtonStatus` 三个数据类型留在 `Game/AdventureMap/AdventureButtons.cs`。
+
 **背景**：ADR-055 之后右侧面板只有图标条，按钮区（参考 `Interface::ButtonsPanel`）还是砖纹。
 参考里这块是八个 36×36 的 `Button`，两行四列，`ADVBTNS.ICN` 的 `2i / 2i+1` 帧对，外加一个只做
 拖动把手的 `BorderWindow`：

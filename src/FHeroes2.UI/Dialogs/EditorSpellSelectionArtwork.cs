@@ -30,7 +30,7 @@ namespace FHeroes2.UI.Dialogs;
 public sealed class EditorSpellSelectionArtwork
 {
     /// <summary>Size of the Toggle All buttons, <c>spellSelectionButtonSize</c> (<c>:1660</c> of <c>game_assets.cpp</c>).</summary>
-    public static readonly Size ToggleButtonSize = new(86, 25);
+    public static readonly Size ToggleButtonSize = ButtonFactory.ToggleAllButtonSize;
 
     /// <summary>Size of the level buttons, <c>spellButton</c> (<c>:1660</c> of <c>game_assets.cpp</c>).</summary>
     public static readonly Size LevelButtonSize = new(46, 25);
@@ -101,10 +101,8 @@ public sealed class EditorSpellSelectionArtwork
             InactiveScroll = inactiveScroll,
             Okay = okay.Value,
             Cancel = cancel.Value,
-            ToggleAllOn = CreateToggleButton(stone, isEvilInterface, "toggle-all-on-released.image",
-                "toggle-all-on-pressed.image"),
-            ToggleAllOff = CreateToggleButton(stone, isEvilInterface, "toggle-all-off-released.image",
-                "toggle-all-off-pressed.image"),
+            ToggleAllOn = ButtonFactory.MakeToggleAllButton(stone, isEvilInterface, enableAll: true),
+            ToggleAllOff = ButtonFactory.MakeToggleAllButton(stone, isEvilInterface, enableAll: false),
             LevelButtons = CreateLevelButtons(stone, isEvilInterface)
         };
     }
@@ -165,28 +163,4 @@ public sealed class EditorSpellSelectionArtwork
         return buttons;
     }
 
-    private static (Sprite Released, Sprite Pressed) CreateToggleButton(Sprite stone, bool isEvilInterface,
-        string releasedIcon, string pressedIcon)
-    {
-        (Sprite released, Sprite pressed) = ButtonFactory.MakeButtonSprites(string.Empty, ToggleButtonSize,
-            isEvilInterface, stone);
-
-        if (H2DResources.TryReadCurrentImage(releasedIcon, out Sprite? icon))
-        {
-            ImageOps.BlitSprite(
-                released.Image,
-                new Point((released.Width - icon.Width) / 2, (released.Height - icon.Height) / 2),
-                icon);
-        }
-
-        if (H2DResources.TryReadCurrentImage(pressedIcon, out Sprite? pressedImage))
-        {
-            ImageOps.BlitSprite(
-                pressed.Image,
-                new Point((pressed.Width - pressedImage.Width) / 2, ((pressed.Height - pressedImage.Height) / 2) + 1),
-                pressedImage);
-        }
-
-        return (released, pressed);
-    }
 }

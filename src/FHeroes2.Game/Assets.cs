@@ -255,8 +255,19 @@ public static class Assets
             return null;
         }
 
-        // 参考 loadICN() 解完归档还会补帧（game_assets.cpp:3940-3989），补出来的帧号超过归档帧数。
-        return frameId < file.Count ? file.Sprites[frameId] : Gui.EditorPlayerIcons.Build(file.Sprites, frameId);
+        // 参考 loadICN() 解完归档先原位改图、再补帧（game_assets.cpp:3948-3989）：补出来的帧号超过归档帧数，
+        // 两组 AI 玩家旗标（27-33、39-44）的杂边则是「原位」改的，所以归档帧也要过一遍。
+        if (frameId >= file.Count)
+        {
+            return Gui.EditorPlayerIcons.Build(file.Sprites, frameId);
+        }
+
+        if (Gui.NgExtraWideIcons.IsFileName(fileName))
+        {
+            return Gui.NgExtraWideIcons.Patch(file.Sprites, frameId) ?? file.Sprites[frameId];
+        }
+
+        return file.Sprites[frameId];
     }
 
     /// <summary>

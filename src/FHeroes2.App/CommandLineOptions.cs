@@ -22,8 +22,8 @@ namespace FHeroes2.App;
 ///                 [--town-window &lt;name&gt;] [--town-building &lt;name&gt;] [--town-hero &lt;0|1&gt;]
 ///                 [--editor-paint &lt;x,y,w,h,ground&gt;] [--editor-save &lt;file&gt;]
 ///                 [--editor-new &lt;36|72|108|144&gt;] [--editor-object &lt;name|n&gt;]
-///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;]
-///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;] [--editor-info &lt;x,y&gt;]
+///                 [--editor-place &lt;x,y[;x,y...]&gt;] [--editor-radar-click &lt;x,y&gt;] [--editor-drag &lt;x1,y1,x2,y2&gt;]
+///                 [--editor-panel-click &lt;x,y[;x,y...]&gt;] [--editor-info &lt;x,y&gt;] [--editor-popup &lt;x,y&gt;]
 ///                 [--editor-data &lt;x,y,value&gt;]
 ///                 [--no-audio] [--no-touch] [--play-sound &lt;name&gt;]
 ///                 [--video &lt;name&gt;] [--video-loop]
@@ -460,6 +460,14 @@ public sealed class CommandLineOptions
     public EditorRadarRequest? EditorRadarClick { get; private set; }
 
     /// <summary>
+    /// Drag of the map the editor performs when it opens (<c>--editor-drag &lt;x1,y1,x2,y2&gt;</c>,
+    /// viewport pixels): the right button goes down on the first point, the pointer moves to the
+    /// second and the button is released. It is the scripted counterpart of the pan, which otherwise
+    /// needs a mouse held and moved across frames.
+    /// </summary>
+    public EditorDragRequest? EditorDrag { get; private set; }
+
+    /// <summary>
     /// Points of the editor panel a click lands on when the editor opens (<c>--editor-panel-click
     /// &lt;x,y[;x,y...]&gt;</c>, panel coordinates from 0 to 143 by 0 to 319). Each click is the same one
     /// the left button produces, so the list can walk through controls in order — select an instrument
@@ -473,6 +481,13 @@ public sealed class CommandLineOptions
     /// and its coordinates.
     /// </summary>
     public Point? EditorInfoTile { get; private set; }
+
+    /// <summary>
+    /// Tile whose object popup the editor shows at start up (<c>--editor-popup &lt;x,y&gt;</c>), the
+    /// window a press of the right button opens: the frame of <c>QWIKINFO.ICN</c> next to the pointer
+    /// with the object of the tile in it.
+    /// </summary>
+    public Point? EditorPopupTile { get; private set; }
 
     /// <summary>
     /// Data word an editor tile receives at start up (<c>--editor-data &lt;x,y,value&gt;</c>), the
@@ -841,12 +856,20 @@ public sealed class CommandLineOptions
                     options.EditorRadarClick = ParseRadarClick(RequireValue(arguments, ref i, argument), argument);
                     break;
 
+                case "--editor-drag":
+                    options.EditorDrag = ParseEditorDrag(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
                 case "--editor-panel-click":
                     options.EditorPanelClicks = ParsePointList(RequireValue(arguments, ref i, argument), argument);
                     break;
 
                 case "--editor-info":
                     options.EditorInfoTile = ParsePoint(RequireValue(arguments, ref i, argument), argument);
+                    break;
+
+                case "--editor-popup":
+                    options.EditorPopupTile = ParsePoint(RequireValue(arguments, ref i, argument), argument);
                     break;
 
                 case "--editor-data":
@@ -963,10 +986,15 @@ public sealed class CommandLineOptions
         Console.WriteLine("  --editor-radar-click <x,y[,x2,y2]>  Presses that point of the 144x144 minimap when the");
         Console.WriteLine("                      editor opens, e.g. '20,20'; with a second point the press is dragged");
         Console.WriteLine("                      there first. The map centres on the tile under the pointer.");
+        Console.WriteLine("  --editor-drag <x1,y1,x2,y2>  Drags the map with the right button: down on the first");
+        Console.WriteLine("                      point of the viewport, move to the second, release. A drag needs a");
+        Console.WriteLine("                      held button across frames, which a scripted click cannot produce.");
         Console.WriteLine("  --editor-panel-click <x,y[;x,y...]>  Clicks those points of the 144x320 editor panel");
         Console.WriteLine("                      in order when the editor opens, e.g. '0,0' for the terrain button.");
         Console.WriteLine("  --editor-info <x,y>  Opens the information box of that tile, the box the I key shows;");
         Console.WriteLine("                      it lists the object, its parts, its data word and the coordinates.");
+        Console.WriteLine("  --editor-popup <x,y>  Opens the right button popup on that tile at the pointer set by");
+        Console.WriteLine("                      --cursor, the window the reference shows while the button is held.");
         Console.WriteLine("  --editor-data <x,y,value>  Writes that data word (0..8191) into the object on the tile");
         Console.WriteLine("                      when the editor opens, the scripted version of the [ and ] keys.");
         Console.WriteLine("  --no-audio          Keeps the client silent (no music device is opened).");
@@ -1132,6 +1160,28 @@ public sealed class CommandLineOptions
     }
 
     /// <summary>
+    /// Parses <c>--editor-drag</c>: <c>x1,y1,x2,y2</c>, where the press lands and where the pointer moves
+    /// to before the release, both in viewport pixels.
+    /// </summary>
+    /// <param name="value">The option value.</param>
+    /// <param name="option">Name of the option, for the error message.</param>
+    /// <returns>The drag of the map.</returns>
+    /// <exception cref="ArgumentException">The value is not four integers.</exception>
+    private static EditorDragRequest ParseEditorDrag(string value, string option)
+    {
+        string[] parts = value.Split(',', StringSplitOptions.TrimEntries);
+
+        if (parts.Length == 4 && parts.All(part => int.TryParse(part, out _)))
+        {
+            int[] numbers = parts.Select(int.Parse).ToArray();
+            return new EditorDragRequest(new Point(numbers[0], numbers[1]), new Point(numbers[2], numbers[3]));
+        }
+
+        throw new ArgumentException(
+            $"'{option}' expects '<x1>,<y1>,<x2>,<y2>' in viewport pixels, got '{value}'.");
+    }
+
+    /// <summary>
     /// Parses <c>--editor-data</c>: <c>x,y,value</c>, the data word the object on the tile receives.
     /// </summary>
     /// <param name="value">The option value.</param>
@@ -1221,6 +1271,14 @@ public readonly record struct EditorPaintRequest(Point Tile, int Width, int Heig
 /// <param name="Start">Point of the panel the press lands on.</param>
 /// <param name="DragTo">Point the pointer moves to while the button is held, or <see langword="null"/>.</param>
 public readonly record struct EditorRadarRequest(Point Start, Point? DragTo);
+
+/// <summary>
+/// The pan of <c>--editor-drag</c>: where the right button goes down and where the pointer moves to
+/// before it comes up, so that a drag across the map can be scripted.
+/// </summary>
+/// <param name="Start">Point of the viewport the press lands on.</param>
+/// <param name="End">Point the pointer moves to while the button is held.</param>
+public readonly record struct EditorDragRequest(Point Start, Point End);
 
 /// <summary>
 /// The data word of <c>--editor-data</c>: which tile gets which value when the editor opens, so a map

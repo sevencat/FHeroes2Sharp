@@ -109,9 +109,15 @@ public sealed class EditorPlayerIconsTests
         {
             IcnSpriteFile archive = assets.TryReadIcn(EditorPlayerIcons.FileName)!;
 
-            // 补帧只往后加，归档原有的 0-81 一帧都不动。
+            // 补帧只往后加，归档原有的 0-81 一帧都不动——除了 NgExtraWideIcons 那两组「原位改图」
+            // （27-33、39-44），它们本来就该跟归档不一样，另见 NgExtraWideIconsTests。
             for (int frameId = 0; frameId < EditorPlayerIcons.ArchiveFrameCount; ++frameId)
             {
+                if (NgExtraWideIcons.IsPatchedFrame(frameId))
+                {
+                    continue;
+                }
+
                 Sprite? served = Assets.GetImage(EditorPlayerIcons.FileName, frameId);
 
                 Assert.NotNull(served);

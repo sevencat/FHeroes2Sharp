@@ -991,6 +991,15 @@ public sealed class GameHost : IDisposable
                 _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
                 _le.OnMouseButton(isPressed: false, MouseButtonType.Left, click.Point);
             }
+            else if (_editor is not null)
+            {
+                // 编辑器也从 LocalEvent 里读指针与点击（EditorScene.ProcessEvents），脚本点击照冒险地图那样
+                // 推进去：按下与抬起落在同一帧是一次快击，正好画一格。原先脚本点击没有编辑器这一支，所以
+                // --left-click 在编辑场景里什么都点不到。
+                _le.OnMouseMotion(click.Point);
+                _le.OnMouseButton(isPressed: true, MouseButtonType.Left, click.Point);
+                _le.OnMouseButton(isPressed: false, MouseButtonType.Left, click.Point);
+            }
             else if (_menu is not null && _battle is null)
             {
                 _menu.SetCursor(click.Point);
@@ -1119,9 +1128,9 @@ public sealed class GameHost : IDisposable
         {
             editorMenu.SetCursor(logical);
         }
-        else if (_editor is { } editing)
+        else if (_editor is not null)
         {
-            editing.SetCursor(logical);
+            // 编辑器自己从 LocalEvent 里取指针（EditorScene.ProcessEvents），与下一支的冒险地图同一种写法。
         }
         else if (_adventure is { } moving)
         {
@@ -1311,9 +1320,10 @@ public sealed class GameHost : IDisposable
 
                         if (notches != 0)
                         {
-                            if (_editor is { } edited)
+                            if (_editor is not null)
                             {
-                                edited.ScrollByWheel(0, -notches);
+                                // 编辑器自己从 LocalEvent 里取滚轮（EditorScene.ProcessEvents），同样的
+                                // 「向上滚 = 视图往地图上方走」对应关系在那边也是取负。
                             }
                             else if (_adventure is { } scrolled)
                             {
@@ -1641,31 +1651,10 @@ public sealed class GameHost : IDisposable
     /// <summary>Handles a mouse button event; returns <see langword="true"/> when the client must stop.</summary>
     private bool HandleMouseButton(in SDL.MouseButtonEvent button)
     {
-        if (_editor is { } editor)
+        if (_editor is not null)
         {
-            if (!_syntheticCursor)
-            {
-                editor.SetCursor(ToLogical(button.X, button.Y));
-            }
-
-            // The editor paints with the left button and pans with the right one, the way the
-            // reference routes the left click to the active instrument and the right one to the
-            // map drag.
-            if (button.Button == LeftMouseButton)
-            {
-                if (editor.SetLeftButton(button.Down))
-                {
-                    GameLog.Info($"Painted with '{editor.Edits.Brush}'; {editor.Edits.UndoDepth} undoable strokes.");
-                }
-            }
-            else if (button.Button == RightMouseButton)
-            {
-                if (editor.SetRightButton(button.Down))
-                {
-                    GameLog.Info($"Picked the '{editor.Edits.Brush}' brush from the map.");
-                }
-            }
-
+            // 编辑器自己从 LocalEvent 里读指针与两个按钮（EditorScene.ProcessEvents），这里只剩「别让按钮
+            // 落到别的场景上」这件事：菜单在主循环里没有关掉，掉下去会点中它。
             return false;
         }
 
@@ -2538,6 +2527,18 @@ public sealed class GameHost : IDisposable
             }
         }
 
+        // --editor-drag is the scripted pan: the map only follows a held right button, so a click cannot
+        // show that the view keeps up with the pointer.
+        if (_options.EditorDrag is { } drag)
+        {
+            bool moved = scene.DragMap(drag.Start, drag.End);
+
+            GameLog.Info(
+                $"Dragged from ({drag.Start.X}; {drag.Start.Y}) to ({drag.End.X}; {drag.End.Y}) " +
+                $"and put the view at ({scene.View.Scroll.X}; {scene.View.Scroll.Y})" +
+                $"{(moved ? "." : ", where it already was.")}");
+        }
+
         // --editor-data writes the data word of one tile: the property of an object is a number in the
         // tile, and the information box below is the only way to see it, so the two belong together.
         if (_options.EditorData is { } data)
@@ -2561,6 +2562,16 @@ public sealed class GameHost : IDisposable
                 scene.ShowObjectInfo(infoTile)
                     ? $"Editor info: {scene.ObjectInfoSummary}."
                     : $"({infoTile.X}; {infoTile.Y}) is outside the map.");
+        }
+
+        // --editor-popup opens the window of the right button on one tile: it hangs next to the pointer,
+        // so the pointer has to be placed first (--cursor), and a screenshot shows what a real press shows.
+        if (_options.EditorPopupTile is { } popupTile)
+        {
+            GameLog.Info(
+                scene.ShowObjectPopup(popupTile)
+                    ? $"Editor popup on ({popupTile.X}; {popupTile.Y}), {scene.ObjectPopupRemaining:0.0} s to go."
+                    : $"No popup on ({popupTile.X}; {popupTile.Y}): outside the map, or no pointer set by --cursor.");
         }
 
         // --editor-panel-click clicks the controls of the editor panel in order: the panel is drawn from

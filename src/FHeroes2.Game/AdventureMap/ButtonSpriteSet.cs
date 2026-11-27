@@ -4,7 +4,7 @@ using FHeroes2.Core.Imaging;
 namespace FHeroes2.Game.AdventureMap;
 
 /// <summary>
-/// The frames of <see cref="ButtonsPanel"/>, looked up by frame index. <see cref="ButtonSpriteSet"/>
+/// The frames of the adventure map buttons, looked up by frame index. <see cref="ButtonSpriteSet"/>
 /// is the implementation backed by the archives; tests substitute their own.
 /// </summary>
 public interface IButtonSpriteSource
@@ -26,6 +26,9 @@ public interface IButtonSpriteSource
 /// </remarks>
 public sealed class ButtonSpriteSet : IButtonSpriteSource
 {
+    /// <summary>File that holds the button frames, <c>ICN::ADVBTNS</c>.</summary>
+    public const string AssetName = "ADVBTNS.ICN";
+
     private readonly IcnSpriteCache _cache;
     private readonly Dictionary<int, Sprite?> _disabled = [];
 
@@ -42,13 +45,13 @@ public sealed class ButtonSpriteSet : IButtonSpriteSource
 
     /// <summary>
     /// Creates the set for an archive bundle; <see langword="null"/> when there is no data, which
-    /// keeps <see cref="ButtonsPanel"/> from painting anything.
+    /// keeps the panel from painting anything.
     /// </summary>
     public static ButtonSpriteSet? TryCreate(AssetBundle? assets) =>
         assets is null ? null : new ButtonSpriteSet(new IcnSpriteCache(assets));
 
     /// <inheritdoc/>
-    public Sprite? GetReleased(int frame) => _cache.GetSprite(ButtonsPanel.AssetName, frame);
+    public Sprite? GetReleased(int frame) => _cache.GetSprite(AssetName, frame);
 
     /// <inheritdoc/>
     public Sprite? GetDisabled(int frame)

@@ -45,7 +45,7 @@ public sealed class ViewWorldRadar
 
         _world = world;
         _colors = new byte[world.Width * world.Height];
-        _image = new PixelBuffer(Minimap.PanelSize, Minimap.PanelSize);
+        _image = new PixelBuffer(MapFrame.PanelSize, MapFrame.PanelSize);
     }
 
     /// <summary>Width of the map in tiles.</summary>
@@ -82,7 +82,7 @@ public sealed class ViewWorldRadar
         bool revealResources = revealAll || mode == ViewWorldMode.ViewResources;
         bool revealOnlyVisible = revealAll || mode == ViewWorldMode.OnlyVisible;
 
-        Array.Fill(_colors, Minimap.BlackColor);
+        Array.Fill(_colors, RadarPanel.BlackColor);
 
         for (int y = 0; y < Height; ++y)
         {
@@ -91,7 +91,7 @@ public sealed class ViewWorldRadar
                 Tile tile = _world.GetTile(x, y);
                 bool visibleTile = revealAll || !tile.IsFog(friends);
 
-                byte fillColor = Minimap.BlackColor;
+                byte fillColor = RadarPanel.BlackColor;
 
                 // Only the "visible only" and hero modes look through a hero standing on the tile; the other
                 // modes want the hero itself, which is what the cached type holds.
@@ -107,7 +107,7 @@ public sealed class ViewWorldRadar
 
                         if (hero is not null)
                         {
-                            fillColor = Minimap.GetKingdomColor(hero.Color);
+                            fillColor = RadarPanel.GetKingdomColor(hero.Color);
                             break;
                         }
                     }
@@ -128,7 +128,7 @@ public sealed class ViewWorldRadar
 
                         if (mainTileIndex >= 0)
                         {
-                            fillColor = Minimap.GetKingdomColor(_world.ColorCapturedObject(mainTileIndex));
+                            fillColor = RadarPanel.GetKingdomColor(_world.ColorCapturedObject(mainTileIndex));
                             break;
                         }
                     }
@@ -138,7 +138,7 @@ public sealed class ViewWorldRadar
                 case Mp2ObjectType.Artifact:
                     if (visibleTile || revealArtifacts)
                     {
-                        fillColor = Minimap.GrayColor;
+                        fillColor = RadarPanel.GrayColor;
                         break;
                     }
 
@@ -147,7 +147,7 @@ public sealed class ViewWorldRadar
                 case Mp2ObjectType.Resource:
                     if (visibleTile || revealResources)
                     {
-                        fillColor = Minimap.GrayColor;
+                        fillColor = RadarPanel.GrayColor;
                         break;
                     }
 
@@ -162,19 +162,19 @@ public sealed class ViewWorldRadar
 
                         if (castle is not null)
                         {
-                            fillColor = Minimap.GetKingdomColor(castle.Color);
+                            fillColor = RadarPanel.GetKingdomColor(castle.Color);
                         }
                         else if (tile.IsRoad)
                         {
-                            fillColor = Minimap.RoadColor;
+                            fillColor = RadarPanel.RoadColor;
                         }
                         else
                         {
-                            fillColor = Minimap.GetGroundColor(tile.Ground);
+                            fillColor = RadarPanel.GetGroundColor(tile.Ground);
 
                             if (baseType is Mp2ObjectType.Mountains or Mp2ObjectType.Trees)
                             {
-                                fillColor = (byte)(fillColor + 3);
+                                fillColor = (byte)(fillColor + RadarPanel.HillShadeOffset);
                             }
                         }
                     }
@@ -184,7 +184,7 @@ public sealed class ViewWorldRadar
 
                         if (castle is not null)
                         {
-                            fillColor = Minimap.GetKingdomColor(castle.Color);
+                            fillColor = RadarPanel.GetKingdomColor(castle.Color);
                         }
                     }
                     else
@@ -200,7 +200,7 @@ public sealed class ViewWorldRadar
             }
         }
 
-        _image = Minimap.ScaleColors(_colors, Width, Height);
+        _image = RadarPanel.ScaleColors(_colors, Width, Height);
     }
 
     /// <summary>
@@ -209,7 +209,7 @@ public sealed class ViewWorldRadar
     /// </summary>
     /// <param name="visibleTiles">The tiles the window shows, in world tiles.</param>
     /// <returns>The frame, or an empty rectangle.</returns>
-    public Rect CursorArea(in Rect visibleTiles) => Minimap.CursorArea(visibleTiles, Width, Height);
+    public Rect CursorArea(in Rect visibleTiles) => RadarPanel.CursorArea(visibleTiles, Width, Height);
 
     /// <summary>
     /// Draws the panel at <paramref name="origin"/> followed by the frame of <paramref name="visibleTiles"/>,
@@ -228,7 +228,7 @@ public sealed class ViewWorldRadar
             return;
         }
 
-        Minimap.DrawCursorFrame(target, new Rect(origin.X + cursor.X, origin.Y + cursor.Y, cursor.Width, cursor.Height));
+        RadarPanel.DrawCursorFrame(target, new Rect(origin.X + cursor.X, origin.Y + cursor.Y, cursor.Width, cursor.Height));
     }
 
     /// <summary>
@@ -247,8 +247,8 @@ public sealed class ViewWorldRadar
         ArgumentNullException.ThrowIfNull(zoom);
 
         Point tile = new(
-            panelPoint.X * Width / Minimap.PanelSize,
-            panelPoint.Y * Height / Minimap.PanelSize);
+            panelPoint.X * Width / MapFrame.PanelSize,
+            panelPoint.Y * Height / MapFrame.PanelSize);
 
         const int halfTile = ViewWorldZoomLevels.TileWidthPx / 2;
 

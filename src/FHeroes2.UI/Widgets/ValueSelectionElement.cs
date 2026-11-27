@@ -2,6 +2,7 @@ using System.Globalization;
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
 
 namespace FHeroes2.UI.Widgets;
 
@@ -16,9 +17,13 @@ namespace FHeroes2.UI.Widgets;
 /// is drawn in white, centered in the box.
 /// </para>
 /// <para>
-/// The reference also auto-repeats a held arrow every 150 milliseconds (<c>TimedEventValidator</c>). The
-/// port has no frame clock in the widget layer and the callers that need the repeat drive it from their
-/// own loop, so a press here moves the value exactly once.
+/// <b>Two ways in.</b> <see cref="ProcessEvents"/> is the reference's <c>processEvents()</c> and the one to use:
+/// it takes the pressed look of both arrows from the frame's input, adds the step on a click, on a held arrow
+/// (a <see cref="TimedEventValidator"/> repeats it after 500 ms and then every 100 ms), on the wheel and on the
+/// up/down keys while the cursor is over the edit box, and reports the two dialogs the reference opens from
+/// here — the number pad on a click of the box and the range message on a right click of it. <see cref="SetLeftButton"/>
+/// is the older press/release pair for callers whose host only maps buttons to booleans; a caller uses one of the
+/// two, never both, or a click would step twice.
 /// </para>
 /// <para>
 /// A press that leaves the arrow before the button is released does not change the value, the
@@ -50,6 +55,12 @@ public sealed class ValueSelectionElement
 
     /// <summary>Gap between the two arrows.</summary>
     public const int ButtonGap = 5;
+
+    /// <summary>
+    /// Body of the message a right click on the edit box shows, <c>:1014</c>; <c>%{min}</c> and <c>%{max}</c> are
+    /// replaced with the range, which is what <see cref="RangeMessage"/> does.
+    /// </summary>
+    public const string RangeMessageFormat = "The available values range from %{min} to %{max}.";
 
     /// <summary>
     /// The size an element built from <paramref name="editBox"/> and <paramref name="upArrow"/> takes,
@@ -84,8 +95,8 @@ public sealed class ValueSelectionElement
     private readonly Rect _area;
     private readonly ButtonSprite _upButton;
     private readonly ButtonSprite _downButton;
-    private bool _upPressed;
-    private bool _downPressed;
+    private readonly TimedEventValidator _upRepeat;
+    private readonly TimedEventValidator _downRepeat;
     private int _value;
 
     /// <summary>
@@ -98,6 +109,10 @@ public sealed class ValueSelectionElement
     /// <param name="offset">Top left corner of the element.</param>
     /// <param name="font">Font of the number, <c>FontType::normalWhite()</c> in the reference.</param>
     /// <param name="frames">Frames of <c>TOWNWIND.ICN</c>, at least <see cref="RequiredFrameCount"/>.</param>
+    /// <param name="clockMs">
+    /// Monotonic clock the two repeat timers read, or <see langword="null"/> for the system clock; tests drive
+    /// the repeats with it.
+    /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="font"/> or <paramref name="frames"/> is <see langword="null"/>.
     /// </exception>
@@ -107,7 +122,7 @@ public sealed class ValueSelectionElement
     /// not positive.
     /// </exception>
     public ValueSelectionElement(int minimum, int maximum, int value, int step, Point offset,
-        IGlyphSource font, IReadOnlyList<Sprite> frames)
+        IGlyphSource font, IReadOnlyList<Sprite> frames, Func<long>? clockMs = null)
     {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentNullException.ThrowIfNull(frames);
@@ -146,6 +161,10 @@ public sealed class ValueSelectionElement
             frames[DownReleasedFrame], frames[DownPressedFrame],
             offsetX: _upButton.OffsetX,
             offsetY: _upButton.OffsetY + _upSprite.Height + ButtonGap);
+
+        // The reference subscribes the two validators to the buttons and keeps the default 500/100 ms.
+        _upRepeat = new TimedEventValidator(clockMs: clockMs);
+        _downRepeat = new TimedEventValidator(clockMs: clockMs);
     }
 
     /// <summary>Bounds of the whole element, <c>getArea()</c> of the reference.</summary>
@@ -170,30 +189,49 @@ public sealed class ValueSelectionElement
     /// <summary>Amount one press changes the value by.</summary>
     public int Step => _step;
 
-    /// <summary>Whether the up arrow is currently held down.</summary>
-    public bool IsUpPressed => _upPressed;
+    /// <summary>Smallest value the arrows stop at, <c>_minimum</c> of the reference.</summary>
+    public int Minimum => _minimum;
 
-    /// <summary>Whether the down arrow is currently held down.</summary>
-    public bool IsDownPressed => _downPressed;
+    /// <summary>Largest value the arrows stop at, <c>_maximum</c> of the reference.</summary>
+    public int Maximum => _maximum;
 
     /// <summary>
-    /// A left button transition over the element.
+    /// Whether the wheel and the up/down keys act on the element wherever the cursor is,
+    /// <c>setIgnoreMouseWheelEventRoiCheck()</c> of the reference.
+    /// </summary>
+    public bool IgnoreMouseWheelEventRoiCheck { get; set; }
+
+    /// <summary>
+    /// Body of the message a right click on the edit box shows, and the answer to the number pad's error,
+    /// <c>"The available values range from %{min} to %{max}."</c> with the range filled in.
+    /// </summary>
+    public string RangeMessage => RangeMessageFormat
+        .Replace("%{min}", _minimum.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+        .Replace("%{max}", _maximum.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+
+    /// <summary>Whether the up arrow is currently held down, <c>_buttonUp.isPressed()</c>.</summary>
+    public bool IsUpPressed => _upButton.IsPressed;
+
+    /// <summary>Whether the down arrow is currently held down, <c>_buttonDown.isPressed()</c>.</summary>
+    public bool IsDownPressed => _downButton.IsPressed;
+
+    /// <summary>
+    /// A left button transition over the element, for hosts that map buttons to booleans instead of handing
+    /// the frame's <see cref="LocalEvent"/> over to <see cref="ProcessEvents"/>.
     /// </summary>
     /// <param name="down">Whether the button went down.</param>
     /// <param name="point">Where the cursor is.</param>
     /// <returns><see langword="true"/> when the value changed.</returns>
+    /// <remarks>One press moves the value exactly once: the repeat lives in <see cref="ProcessEvents"/> only.</remarks>
     public bool SetLeftButton(bool down, Point point)
     {
         if (down)
         {
-            _upPressed = _upButton.Area.Contains(point);
-            _downPressed = _downButton.Area.Contains(point);
-
-            if (_upPressed)
+            if (_upButton.Area.Contains(point))
             {
                 _upButton.Press();
             }
-            else if (_downPressed)
+            else if (_downButton.Area.Contains(point))
             {
                 _downButton.Press();
             }
@@ -203,21 +241,74 @@ public sealed class ValueSelectionElement
 
         bool changed = false;
 
-        if (_upPressed && _upButton.Area.Contains(point))
+        if (_upButton.IsPressed && _upButton.Area.Contains(point))
         {
             changed = MoveBy(_step);
         }
-        else if (_downPressed && _downButton.Area.Contains(point))
+        else if (_downButton.IsPressed && _downButton.Area.Contains(point))
         {
             changed = MoveBy(-_step);
         }
 
-        _upPressed = false;
-        _downPressed = false;
         _upButton.Release();
         _downButton.Release();
 
         return changed;
+    }
+
+    /// <summary>
+    /// One frame of input, the reference's <c>processEvents()</c> (<c>ui_dialog.cpp:986-1019</c>).
+    /// </summary>
+    /// <param name="events">The events of this frame.</param>
+    /// <returns>
+    /// Whether the value changed, and which dialog the reference would have opened here: the number pad on a
+    /// click of the edit box, the range message on a right click of it.
+    /// </returns>
+    /// <remarks>
+    /// 参考在这里直接开窗（<c>openVirtualNumpad()</c> 与 <c>showStandardTextMessage()</c>），端口把窗口交回宿主：
+    /// 元素只说「要哪个」，范围与当前值由 <see cref="Minimum"/>、<see cref="Maximum"/>、<see cref="Value"/> 给出，
+    /// 右键那段话就是 <see cref="RangeMessage"/>。
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="events"/> is <see langword="null"/>.</exception>
+    public ValueSelectionFrame ProcessEvents(LocalEvent events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        // drawOnState( le.isMouseLeftButtonPressedAndHeldInArea( area() ) ) for both arrows.
+        _upButton.UpdatePressState(events);
+        _downButton.UpdatePressState(events);
+
+        if (_value + _step <= _maximum
+            && (events.MouseClickLeft(_upButton.Area)
+                || IsIncreaseValueEvent(events)
+                || _upRepeat.IsDelayPassed(IsUpPressed)))
+        {
+            _value += _step;
+
+            return new ValueSelectionFrame(true);
+        }
+
+        if (_value - _step >= _minimum
+            && (events.MouseClickLeft(_downButton.Area)
+                || IsDecreaseValueEvent(events)
+                || _downRepeat.IsDelayPassed(IsDownPressed)))
+        {
+            _value -= _step;
+
+            return new ValueSelectionFrame(true);
+        }
+
+        if (events.MouseClickLeft(_editBox))
+        {
+            return new ValueSelectionFrame(false, ValueSelectionRequest.Numpad);
+        }
+
+        if (events.IsMouseRightButtonPressedInArea(_editBox))
+        {
+            return new ValueSelectionFrame(false, ValueSelectionRequest.Range);
+        }
+
+        return default;
     }
 
     /// <summary>Draws the edit box, the number and both arrows.</summary>
@@ -244,6 +335,24 @@ public sealed class ValueSelectionElement
         _downButton.Draw(target);
     }
 
+    /// <summary>
+    /// Whether this frame asks for a bigger value: the wheel up or the up key, the reference's
+    /// <c>_isIncreaseValueEvent</c> (<c>:971-983</c>).
+    /// </summary>
+    /// <remarks>
+    /// 参考问的是 <c>Game::HotKeyPressEvent( DEFAULT_UP )</c>，默认绑定就是上方向键；键位表还没接进来，端口直接认上键。
+    /// 滚轮与按键只算落在数字框上，除非 <see cref="IgnoreMouseWheelEventRoiCheck"/> 把这条检查关掉。
+    /// </remarks>
+    private bool IsIncreaseValueEvent(LocalEvent events) =>
+        IsValueEventArea(events) && (events.IsMouseWheelUp || events.IsKeyPressed(Key.Up));
+
+    /// <summary>Whether this frame asks for a smaller value, the down half of <c>_isDecreaseValueEvent</c>.</summary>
+    private bool IsDecreaseValueEvent(LocalEvent events) =>
+        IsValueEventArea(events) && (events.IsMouseWheelDown || events.IsKeyPressed(Key.Down));
+
+    private bool IsValueEventArea(LocalEvent events) =>
+        IgnoreMouseWheelEventRoiCheck || events.IsMouseCursorPosInArea(_editBox);
+
     private bool MoveBy(int delta)
     {
         int previous = _value;
@@ -252,3 +361,25 @@ public sealed class ValueSelectionElement
         return _value != previous;
     }
 }
+
+/// <summary>
+/// The dialog the reference opens from <c>ValueSelectionDialogElement::processEvents()</c> and the port leaves to
+/// its host.
+/// </summary>
+public enum ValueSelectionRequest
+{
+    /// <summary>Nothing to open.</summary>
+    None,
+
+    /// <summary>The number pad of a click on the edit box, <c>openVirtualNumpad()</c>, <c>ui_dialog.cpp:1007</c>.</summary>
+    Numpad,
+
+    /// <summary>The range message of a right click on the edit box, <c>:1013-1016</c>.</summary>
+    Range
+}
+
+/// <summary>What one frame of <see cref="ValueSelectionElement.ProcessEvents"/> asks its owner to do.</summary>
+/// <param name="Changed">Whether the value changed, i.e. whether the window has to be repainted.</param>
+/// <param name="Request">The dialog to open, or <see cref="ValueSelectionRequest.None"/>.</param>
+public readonly record struct ValueSelectionFrame(
+    bool Changed, ValueSelectionRequest Request = ValueSelectionRequest.None);

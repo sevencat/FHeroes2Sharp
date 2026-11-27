@@ -27,7 +27,26 @@ public enum EditorMapSpecsRequestKind
     EditMapDescription,
 
     /// <summary>Pick a town or a hero on the map for the open condition, <c>:1252-1264</c>.</summary>
-    PickConditionTarget
+    PickConditionTarget,
+
+    /// <summary>
+    /// Type a number into one of the two number elements, the number pad the element opens on a click of its edit
+    /// box (<c>ui_dialog.cpp:1007</c>); the host answers it through <see cref="EditorMapSpecsInput.ResolveValue"/>.
+    /// </summary>
+    EditValue
+}
+
+/// <summary>Which of the two number elements of the map specifications window a request is about.</summary>
+public enum EditorMapSpecsValueField
+{
+    /// <summary>Nothing.</summary>
+    None,
+
+    /// <summary>The accumulated gold of the victory condition, <c>_goldAccumulationValue</c>, <c>:1409</c>.</summary>
+    VictoryGold,
+
+    /// <summary>The days of the "lose after a time" loss condition, <c>_outOfTimeValue</c>, <c>:1854</c>.</summary>
+    LossDays
 }
 
 /// <summary>
@@ -67,8 +86,13 @@ public enum EditorMapSpecsTargetKind
 /// What to pick on the map when <see cref="Kind"/> is <see cref="EditorMapSpecsRequestKind.PickConditionTarget"/>;
 /// the host answers it through <see cref="EditorMapSpecsInput.ResolveTarget"/>.
 /// </param>
+/// <param name="ValueField">
+/// Which number element the number pad belongs to when <see cref="Kind"/> is
+/// <see cref="EditorMapSpecsRequestKind.EditValue"/>.
+/// </param>
 public readonly record struct EditorMapSpecsRequest(EditorMapSpecsRequestKind Kind, string Title, string Body,
-    InputStringDialog? Dialog, EditorMapSpecsTargetKind Target = EditorMapSpecsTargetKind.None)
+    InputStringDialog? Dialog, EditorMapSpecsTargetKind Target = EditorMapSpecsTargetKind.None,
+    EditorMapSpecsValueField ValueField = EditorMapSpecsValueField.None)
 {
     /// <summary>Nothing to do.</summary>
     public static EditorMapSpecsRequest None => new(EditorMapSpecsRequestKind.None, string.Empty, string.Empty, null);
@@ -222,6 +246,7 @@ public sealed class EditorMapSpecsInput
 
     private EditorMapSpecsRequestKind _pendingEdit = EditorMapSpecsRequestKind.None;
     private EditorMapSpecsTargetKind _pendingTarget = EditorMapSpecsTargetKind.None;
+    private EditorMapSpecsValueField _pendingValue = EditorMapSpecsValueField.None;
 
     /// <summary>
     /// Wires the handling to a window.
@@ -454,6 +479,49 @@ public sealed class EditorMapSpecsInput
     }
 
     /// <summary>
+    /// Answers the number pad the host was asked to run, the write-back half of
+    /// <c>openVirtualNumpad( _value, _minimum, _maximum )</c>.
+    /// </summary>
+    /// <param name="value">The number typed, or <see langword="null"/> when the pad was cancelled.</param>
+    /// <returns>Whether the state changed and the page has to be repainted.</returns>
+    /// <remarks>元素自己会把值夹在范围内，这里再夹一次，免得宿主的输入框给了个越界的数。</remarks>
+    public bool ResolveValue(int? value)
+    {
+        EditorMapSpecsValueField field = _pendingValue;
+        _pendingValue = EditorMapSpecsValueField.None;
+        Request = EditorMapSpecsRequest.None;
+
+        if (value is not int typed)
+        {
+            return false;
+        }
+
+        switch (field)
+        {
+            case EditorMapSpecsValueField.VictoryGold:
+                if (_window.GoldValue is { } gold)
+                {
+                    gold.Value = typed;
+                    _window.State.VictoryGoldInThousands = gold.Value;
+                }
+
+                return true;
+
+            case EditorMapSpecsValueField.LossDays:
+                if (_window.DaysValue is { } days)
+                {
+                    days.Value = typed;
+                    _window.State.LossDays = days.Value;
+                }
+
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Answers the map pick the host was asked to run, the write-back half of the
     /// <c>SelectMapObject</c> calls (<c>editor_map_specs_window.cpp:1252-1264</c> and the three siblings).
     /// </summary>
@@ -612,7 +680,8 @@ public sealed class EditorMapSpecsInput
                 return ProcessAlliances(events, panel, state);
 
             case MapVictoryCondition.CollectGold:
-                if (ProcessValue(events, _window.GoldValue, value => state.VictoryGoldInThousands = value))
+                if (ProcessValue(events, _window.GoldValue, value => state.VictoryGoldInThousands = value,
+                        EditorMapSpecsValueField.VictoryGold))
                 {
                     return true;
                 }
@@ -685,7 +754,8 @@ public sealed class EditorMapSpecsInput
                 return false;
 
             case MapLossCondition.OutOfTime:
-                return ProcessValue(events, _window.DaysValue, value => state.LossDays = value);
+                return ProcessValue(events, _window.DaysValue, value => state.LossDays = value,
+                    EditorMapSpecsValueField.LossDays);
 
             default:
                 // Everything 没有界面（:1674-1677）。
@@ -694,69 +764,53 @@ public sealed class EditorMapSpecsInput
     }
 
     /// <summary>
-    /// Feeds a click of the two arrows of a number element and writes the new value back, the
+    /// Feeds one frame to a number element and writes the new value back, the
     /// <c>_goldAccumulationValue.processEvents()</c> / <c>_outOfTimeValue.processEvents()</c> calls of the reference.
     /// </summary>
     /// <param name="events">The events of this frame.</param>
     /// <param name="element">The element of the panel, <see langword="null"/> when the window has no font.</param>
     /// <param name="apply">Writes the new value into the state.</param>
+    /// <param name="field">Which element this is, so that the number pad's answer finds it again.</param>
     /// <returns><see langword="true"/> when the element took the event.</returns>
     /// <remarks>
-    /// 参考的元素自己在 <c>processEvents()</c> 里改值并返回是否变了（<c>ui_dialog.cpp:986-1019</c>）。端口的
-    /// <see cref="ValueSelectionElement"/> 只认按下与松开两步（<c>SetLeftButton</c>），于是这里按住时把按下交进去、
-    /// 松开时取回结果。
+    /// 参考的元素自己在 <c>processEvents()</c> 里改值、开数字键盘、出范围提示（<c>ui_dialog.cpp:986-1019</c>）；
+    /// 端口的 <see cref="ValueSelectionElement.ProcessEvents"/> 只回「变没变」与「要开哪个窗」，窗由宿主跑，
+    /// 结果走 <see cref="ResolveValue"/>。按住时也算「吃了事件」，因为箭头要重画成按下的样子。
     /// </remarks>
-    private static bool ProcessValue(LocalEvent events, ValueSelectionElement? element, Action<int> apply)
+    private bool ProcessValue(LocalEvent events, ValueSelectionElement? element, Action<int> apply,
+        EditorMapSpecsValueField field)
     {
         if (element is null)
         {
             return false;
         }
 
-        Rect up = element.UpButton.Area;
-        Rect down = element.DownButton.Area;
+        ValueSelectionFrame frame = element.ProcessEvents(events);
 
-        if (events.MouseClickLeft(up))
-        {
-            return Step(element, up.Position, apply);
-        }
-
-        if (events.MouseClickLeft(down))
-        {
-            return Step(element, down.Position, apply);
-        }
-
-        if (events.IsMouseLeftButtonPressedInArea(up) || events.IsMouseLeftButtonPressedInArea(down))
-        {
-            element.SetLeftButton(true, events.CursorPosition);
-
-            return true;
-        }
-
-        if (events.IsMouseLeftButtonReleasedInArea(up) || events.IsMouseLeftButtonReleasedInArea(down))
-        {
-            if (element.SetLeftButton(false, events.CursorPosition))
-            {
-                apply(element.Value);
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>One full press and release of an arrow, so that a click and a held button behave the same.</summary>
-    private static bool Step(ValueSelectionElement element, Point point, Action<int> apply)
-    {
-        element.SetLeftButton(true, point);
-
-        if (element.SetLeftButton(false, point))
+        if (frame.Changed)
         {
             apply(element.Value);
+
+            return true;
         }
 
-        return true;
+        switch (frame.Request)
+        {
+            case ValueSelectionRequest.Range:
+                Request = ShowMessage(string.Empty, element.RangeMessage);
+
+                return true;
+
+            case ValueSelectionRequest.Numpad:
+                _pendingValue = field;
+                Request = new EditorMapSpecsRequest(EditorMapSpecsRequestKind.EditValue, string.Empty, string.Empty,
+                    null, EditorMapSpecsTargetKind.None, field);
+
+                return true;
+
+            default:
+                return element.IsUpPressed || element.IsDownPressed;
+        }
     }
 
     /// <summary>The "allow this condition also for AI" checkbox, <c>:1072</c> and <c>:1409-1420</c>.</summary>

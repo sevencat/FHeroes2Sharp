@@ -8,7 +8,11 @@ using FHeroes2.Core.Imaging;
 using FHeroes2.Core.Io;
 using FHeroes2.Game.AdventureMap;
 using FHeroes2.Game.Editor;
+using FHeroes2.Game.System;
 using FHeroes2.UI.Dialogs;
+using FHeroes2.UI.Editor;
+using FHeroes2.UI.Input;
+using FHeroes2.UI.Interface;
 
 namespace FHeroes2.App.Scenes;
 
@@ -74,7 +78,45 @@ public sealed class EditorScene : IScene
     /// <summary>File of the interface frame, the <c>ADVBORD</c> of the reference.</summary>
     public const string FrameFileName = MapFrame.AssetName;
 
+    /// <summary>
+    /// Distance in pixels a press must travel before it drags the map instead of clicking it,
+    /// <c>minimalRequiredDraggingMovement</c> of <c>interface_gamearea.cpp:68</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的比较是严格的（<c>&gt; minimalRequiredDraggingMovement</c>），正好十个像素还是点击。参考把这个数放在
+    /// <c>interface_gamearea.cpp</c> 的匿名命名空间里，全文件只此一份；端口只有编辑器拖地图，所以它也是本类的一份常量。
+    /// </remarks>
+    public const int DragThreshold = 10;
+
+    /// <summary>
+    /// Seconds between two edge scroll steps, <see cref="GameDelays.ScrollDelayMilliseconds"/>.
+    /// </summary>
+    /// <remarks>
+    /// 参考每帧问 <c>Game::validateAnimationDelay( DelayType::SCROLL_DELAY )</c>，那个格子由
+    /// <see cref="GameDelays.InitAnimateDelays"/> 装成二十毫秒。编辑器这一层没有阻塞循环，一帧一步，所以拿同一个数字自己
+    /// 累计 <c>dt</c>：既避开全局节拍表的静态状态，也不会让 20 这个数在 App 层再出现一次。
+    /// </remarks>
+    public const double EdgeScrollInterval = GameDelays.ScrollDelayMilliseconds / 1000.0;
+
+    /// <summary>Pixels an edge scroll step moves, <c>2 &lt;&lt; scrollSpeed</c> at the <c>NORMAL</c> speed.</summary>
+    /// <remarks>
+    /// 参考从 <c>Settings</c> 读速度档（<c>scrollSpeed</c>），端口的设置还没有这一项，所以照 <c>NORMAL</c> 档写死：
+    /// 一步八个像素，与移植前的 <c>MapScrollController.EdgeScrollStep</c> 相同。
+    /// </remarks>
+    public const int EdgeScrollStep = 2 << 2;
+
     private const int Padding = 6;
+
+    /// <summary>
+    /// Most edge scroll steps applied in one frame. A stalled main loop can hand in a large
+    /// <c>elapsedSeconds</c>; without a cap the view would jump across the whole map at once.
+    /// </summary>
+    private const int MaxEdgeStepsPerUpdate = 4;
+
+    private const int ScrollLeft = 1;
+    private const int ScrollRight = 2;
+    private const int ScrollTop = 4;
+    private const int ScrollBottom = 8;
 
     /// <summary>Height of the decorated header of the panel bay in <c>ADVBORD.ICN</c>.</summary>
     private const int PanelHeaderHeight = 16;
@@ -82,11 +124,20 @@ public sealed class EditorScene : IScene
     /// <summary>How long the panel shows "saved" after a successful save, in seconds.</summary>
     private const double SavedFlashSeconds = 2.0;
 
+    /// <summary>
+    /// How long the object popup of the right button stays at most, in seconds.
+    /// </summary>
+    /// <remarks>
+    /// 参考的弹窗是阻塞循环，按住右键就一直画，松手才收（<c>ui_map_interface.cpp:75-77</c>）。端口一帧一步，
+    /// 没有「按住期间」这个状态可等：右键在本场景里还兼着平移与吸地形，弹窗是按下的那一帧造出来的，
+    /// 所以给它一个上限——按住不放也不会在屏幕上留一辈子，丢了松手事件也不会。
+    /// </remarks>
+    private const double ObjectPopupSeconds = 2.0;
+
     private readonly ScreenBuffer _frame;
     private readonly GameFonts? _fonts;
     private readonly MapEditorView _editor;
     private readonly MapEditSession _edits;
-    private readonly MapScrollController _mouse;
     private readonly MapFrame _mapFrame;
     private readonly Rect _viewport;
     private readonly PixelBuffer _viewportPixels;
@@ -97,11 +148,23 @@ public sealed class EditorScene : IScene
     /// <summary>Whether the archive can provide the message frame of the information box.</summary>
     private readonly bool _hasInfoFrame;
 
+    /// <summary>The <c>QWIKINFO.ICN</c> frame of the right button popup, <see langword="null"/> without the archives.</summary>
+    private readonly Sprite? _popupFrame;
+
+    /// <summary>
+    /// What the popup needs besides the tile: the per-object tables of the map.
+    /// </summary>
+    /// <remarks>
+    /// MP2 的物件记录里没有参考那九本表（数量、归属、名字），这里是一份空表：<see cref="EditorObjectPopup"/>
+    /// 缺表时只报名字，与参考在表里查不到时退回类型名的做法一致。
+    /// </remarks>
+    private readonly MapObjectMetadataStore _metadata = new();
+
     private readonly byte _dark;
     private readonly byte _bright;
 
     /// <summary>Baked colours of the map; rebuilt after a stroke because it does not read the tiles.</summary>
-    private Minimap _minimap;
+    private EditorRadar _minimap;
 
     /// <summary>The information box the <c>I</c> key opens, kept between frames and rebuilt when stale.</summary>
     private MessageBox? _info;
@@ -115,11 +178,35 @@ public sealed class EditorScene : IScene
     /// <summary>Whether the left button is held anywhere in the window.</summary>
     private bool _leftHeld;
 
+    /// <summary>
+    /// Whether the right button is held, kept so that <see cref="ProcessEvents"/> can tell the edge of a press
+    /// from a button that is simply still down.
+    /// </summary>
+    private bool _rightHeld;
+
     /// <summary>Whether the press started on the minimap, which owns the pointer until it is released.</summary>
     private bool _radarGrabbed;
 
     /// <summary>The pointer in logical pixels, which the radar and the frame are laid out in.</summary>
     private Point? _screenCursor;
+
+    /// <summary>The pointer in viewport pixels, the coordinates the drag and the edge scroll work in.</summary>
+    private Point? _panCursor;
+
+    /// <summary>Where the pan button went down, <see langword="null"/> while it is not held.</summary>
+    private Point? _panOrigin;
+
+    /// <summary>Pointer position of the previous drag step, the anchor of the next shift.</summary>
+    private Point _panAnchor;
+
+    /// <summary>Whether the pan button is held anywhere in the window.</summary>
+    private bool _panHeld;
+
+    /// <summary>Whether the press already travelled <see cref="DragThreshold"/> pixels, i.e. it pans.</summary>
+    private bool _panning;
+
+    /// <summary>Seconds accumulated towards the next edge scroll step.</summary>
+    private double _edgeElapsed;
 
     /// <summary>Seconds left of the "saved" note in the status bar.</summary>
     private double _savedFlash;
@@ -127,26 +214,35 @@ public sealed class EditorScene : IScene
     /// <summary>The tile the information box describes, <see langword="null"/> when it is closed.</summary>
     private Point? _infoTile;
 
+    /// <summary>The popup the right button shows, <see langword="null"/> when it is closed.</summary>
+    private StandardPopupWindow? _objectPopup;
+
+    /// <summary>Seconds left of the object popup, i.e. what of <see cref="ObjectPopupSeconds"/> is unused.</summary>
+    private double _objectPopupLeft;
+
+    /// <summary>The tile the object popup was built for, the log names it.</summary>
+    private Point? _objectPopupTile;
+
     private EditorScene(
         ScreenBuffer frame,
         GameFonts? fonts,
         MapEditorView editor,
         MapEditSession edits,
-        Minimap minimap,
-        MapScrollController mouse,
+        EditorRadar minimap,
         MapFrame mapFrame,
         EditorPanel? panelView,
-        bool hasInfoFrame)
+        bool hasInfoFrame,
+        Sprite? popupFrame)
     {
         _frame = frame;
         _fonts = fonts;
         _editor = editor;
         _edits = edits;
         _minimap = minimap;
-        _mouse = mouse;
         _mapFrame = mapFrame;
         _panelView = panelView;
         _hasInfoFrame = hasInfoFrame;
+        _popupFrame = popupFrame;
 
         // The layout of Interface::EditorInterface::reset(): the map gets the area between the border
         // and the radar column, the radar sits in the top right corner, and the editor panel fills the
@@ -259,6 +355,61 @@ public sealed class EditorScene : IScene
     {
         _infoTile = null;
         _info = null;
+    }
+
+    /// <summary>Whether the popup of the right button is on screen.</summary>
+    public bool IsObjectPopupOpen => _objectPopup is not null;
+
+    /// <summary>Seconds left before the popup of the right button takes itself down.</summary>
+    public double ObjectPopupRemaining => _objectPopupLeft;
+
+    /// <summary>The tile the popup of the right button describes, <see langword="null"/> when it is closed.</summary>
+    public Point? ObjectPopupTile => _objectPopupTile;
+
+    /// <summary>
+    /// Shows the popup of the right button on one tile, <c>EditorInterface::mouseCursorAreaPressRight()</c>
+    /// (<c>src/fheroes2/editor/editor_interface.cpp:3080-3083</c>).
+    /// </summary>
+    /// <param name="tile">Tile to describe, in map tiles.</param>
+    /// <returns>
+    /// Whether the popup opened; <see langword="false"/> without the <c>QWIKINFO.ICN</c> frame, without the
+    /// fonts, without a pointer position or with a tile outside the map.
+    /// </returns>
+    public bool ShowObjectPopup(Point tile)
+    {
+        HideObjectPopup();
+
+        if (_popupFrame is null || _fonts is null || _screenCursor is not { } cursor)
+        {
+            return false;
+        }
+
+        // 参考用的是鼠标的绝对坐标与地图区（含边框）的宽高，端口照它传给 StandardPopupWindow。
+        _objectPopup = EditorObjectPopupView.TryCreate(
+            Map,
+            tile,
+            _metadata,
+            _popupFrame,
+            _fonts.SmallWhite,
+            cursor,
+            EditorObjectPopupView.InterfaceAreaOf(_viewport));
+
+        if (_objectPopup is null)
+        {
+            return false;
+        }
+
+        _objectPopupTile = tile;
+        _objectPopupLeft = ObjectPopupSeconds;
+        return true;
+    }
+
+    /// <summary>Closes the popup of the right button, a release of the button or a drag across the map.</summary>
+    public void HideObjectPopup()
+    {
+        _objectPopup = null;
+        _objectPopupTile = null;
+        _objectPopupLeft = 0.0;
     }
 
     /// <summary>
@@ -450,11 +601,11 @@ public sealed class EditorScene : IScene
             fonts,
             editor,
             edits,
-            Minimap.Build(map),
-            new MapScrollController(view),
+            EditorRadar.Build(map),
             mapFrame,
             EditorPanel.TryCreate(mapFrame.Panel, assets),
-            HasInfoFrame(assets));
+            HasInfoFrame(assets),
+            QuickInfoArtwork.TryCreate(assets));
     }
 
     /// <summary>
@@ -477,10 +628,108 @@ public sealed class EditorScene : IScene
     }
 
     /// <summary>Advances the edge scroll of the mouse; the terrain itself does not animate yet.</summary>
+    /// <remarks>
+    /// The object popup of the right button counts down here: the reference waits for the button to be
+    /// released inside <c>displayStandardPopupWindow()</c>, and the port cannot wait, so the popup has
+    /// <see cref="ObjectPopupSeconds"/> at most.
+    /// </remarks>
     public void Update(double elapsedSeconds)
     {
-        _mouse.Update(elapsedSeconds);
+        ProcessEvents(LocalEvent.Current);
+
+        UpdateEdgeScroll(elapsedSeconds);
         _savedFlash = Math.Max(0.0, _savedFlash - elapsedSeconds);
+
+        if (_objectPopup is not null)
+        {
+            _objectPopupLeft -= elapsedSeconds;
+
+            if (_objectPopupLeft <= 0.0)
+            {
+                HideObjectPopup();
+            }
+        }
+    }
+
+    /// <summary>
+    /// One frame of input, read out of the frame's <see cref="LocalEvent"/> the way the reference reads it.
+    /// </summary>
+    /// <param name="events">The events the host pumped during this frame.</param>
+    /// <returns>Whether anything the run log reports happened: a stroke was closed or a brush was taken.</returns>
+    /// <remarks>
+    /// <para>
+    /// 参考的编辑界面（<c>editor_interface.cpp</c>）没有「按下/松开」回调，它每帧在 <c>processEvents()</c> 里问
+    /// <c>LocalEvent</c>：指针在哪、左键按着没有、滚轮滚了多远。端口原来由宿主把 SDL 事件翻成
+    /// <see cref="SetCursor"/> / <see cref="SetLeftButton"/> / <see cref="SetRightButton"/> / <see cref="ScrollByWheel"/>
+    /// 逐个喂进来，一个动作要在宿主里拆成两处代码，加一个手势就要改两个文件。这里照冒险地图
+    /// （<c>AdventureMapScene.cs:570</c>）的写法，把整帧事件交给场景自己分。
+    /// </para>
+    /// <para>
+    /// 那四个方法留着，是因为 <c>--editor-paint</c> 之类的脚本动作和 <c>--cursor</c> 合成的指针都要走它们；
+    /// 真实的鼠标不再经过宿主，一个动作只剩一条路径。
+    /// </para>
+    /// <para>
+    /// 键盘仍在宿主（<c>GameHost.HandleEditorKey</c>）：Esc 要开编辑器菜单、Ctrl+S 要存盘，它们和菜单、模态窗
+    /// 的优先级绑在一起，搬过来要把优先级一起搬；键位重复（<c>key.Repeat</c>）与修饰键在 <see cref="LocalEvent"/>
+    /// 里也还只能拿到「这一帧按下过」，撑不住按住连发。另见 <c>a7l.6.1</c> 的说明。
+    /// </para>
+    /// </remarks>
+    public bool ProcessEvents(LocalEvent events)
+    {
+        ArgumentNullException.ThrowIfNull(events);
+
+        bool leftHeld = events.IsMouseLeftButtonPressed;
+        bool rightHeld = events.IsMouseRightButtonPressed;
+
+        // 点击状态会边读边被消耗，所以先读出来再用。
+        bool leftClicked = events.MouseClickLeft();
+        bool rightClicked = events.MouseClickRight();
+
+        // 指针：LocalEvent 一直记着最后一次位置，但这里只有真的动了、或者这一帧有按钮动作时才同步给
+        // SetCursor。无条件每帧取一次有两个后果——指针离开窗口后宿主置的 null 会被又填回旧位置，边缘滚动
+        // 会在鼠标没动过的时候一直生效（滚到地图角上停不下来）。
+        if (events.HasMouseMoved || leftHeld != _leftHeld || rightHeld != _rightHeld || leftClicked ||
+            rightClicked)
+        {
+            SetCursor(events.CursorPosition);
+        }
+
+        bool changed = false;
+
+        // 左键：跨帧按住时按前后状态比出按下与松开这两根边；按下与松开落在同一帧（宿主把一对鼠标事件合进
+        // 一个首尾相接的 LocalEvent）时状态没变化，只能靠 MouseClickLeft 补一次按下+松开——参考的
+        // processEvents 每帧看的就是 MouseClickLeft，一笔快击正好画一格。
+        if (leftHeld != _leftHeld)
+        {
+            changed |= SetLeftButton(leftHeld);
+        }
+        else if (leftClicked && !_leftHeld)
+        {
+            SetLeftButton(true);
+            changed |= SetLeftButton(false);
+        }
+
+        // 右键同理：按下弹物件框、松开取笔刷，快击也要走完这两步。
+        if (rightHeld != _rightHeld)
+        {
+            changed |= SetRightButton(rightHeld);
+        }
+        else if (rightClicked && !_rightHeld)
+        {
+            SetRightButton(true);
+            changed |= SetRightButton(false);
+        }
+
+        // 滚轮：宿主原来把 SDL 的整格数取负交给 ScrollByWheel，这里原样搬过来，高分辨率滚轮的半格仍会被
+        // 折成 0（ScrollByWheel 只认整格）。
+        int rows = -events.MouseWheelMovement.Y;
+
+        if (rows != 0)
+        {
+            ScrollByWheel(0, rows);
+        }
+
+        return changed;
     }
 
     /// <summary>Paints the terrain, the grid, the highlighted tile, the minimap and both bars.</summary>
@@ -504,7 +753,14 @@ public sealed class EditorScene : IScene
         DrawMinimap();
         DrawPanel();
         DrawObjectInfo();
+        DrawObjectPopup();
     }
+
+    /// <summary>
+    /// Draws the popup of the right button last, the way the reference draws it over everything else
+    /// (<c>displayStandardPopupWindow()</c> blits it straight onto the display).
+    /// </summary>
+    private void DrawObjectPopup() => _objectPopup?.Draw(_frame.Pixels);
 
     /// <summary>
     /// Draws the information box of the tile the <c>I</c> key named, over the panel like the reference
@@ -624,7 +880,18 @@ public sealed class EditorScene : IScene
         // The map view and its scroll work in viewport pixels: a pointer over the border, the radar or
         // the panel is outside the map, which is what Interface::EditorInterface reports as no tile.
         _editor.SetCursor(cursor is { } screen ? ViewportCursor(screen) : null);
-        _mouse.SetCursor(cursor is { } inside ? ViewportCursor(inside) : null);
+
+        // 拖动在指针定完格子之后才挪视图：参考的 GameArea 也是先认格子再拖（interface_gamearea.cpp:360 一带），
+        // 先拖会让这一次的格子按新位置算，跟手差的是一整格。
+        DragTo(cursor is { } inside ? ViewportCursor(inside) : null);
+
+        // A pan that started takes the popup down: the reference pans with the left button and only ever
+        // holds the popup still with the right one, while this scene drags the map with the right button,
+        // so a popup left behind would name a tile the pointer has left.
+        if (_panning)
+        {
+            HideObjectPopup();
+        }
 
         if (_radarGrabbed && _leftHeld)
         {
@@ -718,6 +985,11 @@ public sealed class EditorScene : IScene
         }
 
         RebuildMinimap();
+
+        // 日志在这一层打：真实鼠标（ProcessEvents）与脚本动作（--editor-paint）都从这个出口过，宿主再打一遍
+        // 就会重复，漏一处又会少一行。
+        GameLog.Info($"Painted with '{_edits.Brush}'; {_edits.UndoDepth} undoable strokes.");
+
         return true;
     }
 
@@ -764,21 +1036,36 @@ public sealed class EditorScene : IScene
         }
 
         RebuildMinimap();
+
+        // 细节仪器的移动与复制同样是一笔画，日志与颜料笔共用一行。
+        GameLog.Info($"Painted with '{_edits.Brush}'; {_edits.UndoDepth} undoable strokes.");
+
         return true;
     }
 
     /// <summary>
-    /// Records the right button: dragging it pans the map, a click without a drag samples the ground
-    /// under the pointer as the brush.
+    /// Records the right button: a press describes the tile under the pointer in the object popup,
+    /// dragging it pans the map, and a click without a drag samples the ground under the pointer as
+    /// the brush.
     /// </summary>
     /// <remarks>
-    /// The minimap takes neither: the reference shows its "World Map" hint there, and an eyedropper or
+    /// <para>
+    /// 参考的右键只有一个用途：<c>GameArea::QueueEventProcessing()</c> 在右键按下时调
+    /// <c>mouseCursorAreaPressRight()</c>，编辑器把它接到物件弹窗（<c>interface_gamearea.cpp:1145-1147</c>）；
+    /// 平移在左键上。端口的左键要画画，平移只能让给右键，于是右键两头都要顾：按下这一帧就弹窗（与参考同刻），
+    /// 指针拖过阈值后 <see cref="SetCursor"/> 把弹窗收掉、交给平移，松手时再按老规矩吸地形。
+    /// </para>
+    /// <para>
+    /// The minimap takes none of them: the reference shows its "World Map" hint there, and an eyedropper or
     /// a pan that started on the panel would describe a tile the user did not point at.
+    /// </para>
     /// </remarks>
     /// <param name="down">Whether the right button is now held.</param>
     /// <returns>Whether the release took the brush from the map.</returns>
     public bool SetRightButton(bool down)
     {
+        _rightHeld = down;
+
         bool onRadar = _screenCursor is { } cursor && _radar.Contains(cursor);
 
         if (down)
@@ -791,22 +1078,36 @@ public sealed class EditorScene : IScene
 
             if (!onRadar)
             {
-                _mouse.SetPanButton(true);
+                if (_editor.HoverTile is { } tile)
+                {
+                    ShowObjectPopup(tile);
+                }
+
+                SetPanButton(true);
             }
 
             return false;
         }
 
+        HideObjectPopup();
+
         // A release after a drag is the end of a pan, not an eyedropper click.
-        if (_mouse.IsDragging)
+        if (_panning)
         {
-            _mouse.SetPanButton(false);
+            SetPanButton(false);
             return false;
         }
 
-        _mouse.SetPanButton(false);
+        SetPanButton(false);
 
-        return !onRadar && _edits.SampleBrush(_editor.HoverTile);
+        if (onRadar || !_edits.SampleBrush(_editor.HoverTile))
+        {
+            return false;
+        }
+
+        GameLog.Info($"Picked the '{_edits.Brush}' brush from the map.");
+
+        return true;
     }
 
     /// <summary>
@@ -831,6 +1132,30 @@ public sealed class EditorScene : IScene
         }
 
         SetLeftButton(false);
+
+        return _editor.Map.Scroll != before;
+    }
+
+    /// <summary>
+    /// Drags the map with the right button, the scripted version of a pan that a mouse would do across
+    /// several frames: the press lands on <paramref name="from"/>, the pointer jumps to <paramref name="to"/>
+    /// and the button is released.
+    /// </summary>
+    /// <param name="from">Where the press lands, in viewport pixels.</param>
+    /// <param name="to">Where the pointer moves to while the button is held.</param>
+    /// <returns>Whether the view moved.</returns>
+    /// <remarks>
+    /// 两个点都在视口坐标里，与 <see cref="AdventureMapView"/> 的滚动同一套。按下会先弹物件窗（右键的老规矩），
+    /// 指针越过阈值后 <see cref="DragTo"/> 把它收掉，所以一次真正的拖动不会留下那个 2 秒窗。
+    /// </remarks>
+    public bool DragMap(Point from, Point to)
+    {
+        Point before = _editor.Map.Scroll;
+
+        SetCursor(new Point(_viewport.X + from.X, _viewport.Y + from.Y));
+        SetRightButton(true);
+        SetCursor(new Point(_viewport.X + to.X, _viewport.Y + to.Y));
+        SetRightButton(false);
 
         return _editor.Map.Scroll != before;
     }
@@ -1110,7 +1435,154 @@ public sealed class EditorScene : IScene
     /// <summary>Rolls the map with the wheel by whole tiles, one tile per notch.</summary>
     /// <param name="columns">Tiles to scroll right; negative scrolls left.</param>
     /// <param name="rows">Tiles to scroll down; negative scrolls up.</param>
-    public void ScrollByWheel(int columns, int rows) => _mouse.ScrollByWheel(columns, rows);
+    /// <remarks>
+    /// The wheel is the only scroll the reference moves by whole tiles (<c>GameArea::ProcessMouseWheel</c>), so
+    /// the step is a tile side and the clamp of <see cref="AdventureMapView.ScrollBy"/> does the rest.
+    /// </remarks>
+    public void ScrollByWheel(int columns, int rows) =>
+        _editor.Map.ScrollBy(
+            columns * _editor.Map.Tiles.TileWidth, rows * _editor.Map.Tiles.TileHeight);
+
+    /// <summary>
+    /// Starts or ends a press of the button that pans the map, the <c>mouseCursorAreaPressRight()</c> path of
+    /// <c>GameArea::QueueEventProcessing</c>. The editor pans with the right button because the left one paints.
+    /// </summary>
+    /// <param name="down">Whether the button is now held.</param>
+    private void SetPanButton(bool down)
+    {
+        if (down)
+        {
+            if (_panHeld)
+            {
+                return;
+            }
+
+            // 按下的那一点既是拖动的起点，也是「这是点击还是拖动」的基准；按下时清零累计，免得边滚的余量带进来。
+            _panHeld = true;
+            _panOrigin = _panCursor;
+            _panning = false;
+            _edgeElapsed = 0;
+            return;
+        }
+
+        _panHeld = false;
+        _panning = false;
+        _panOrigin = null;
+    }
+
+    /// <summary>
+    /// Moves the map with the pointer while the pan button is held; the shift is <c>last - current</c>, the
+    /// direction of <c>SetCenterInPixels( center + last - current )</c>, so the terrain follows the pointer.
+    /// </summary>
+    /// <param name="cursor">Pointer in viewport pixels, or <see langword="null"/> outside the viewport.</param>
+    private void DragTo(Point? cursor)
+    {
+        if (_panCursor == cursor)
+        {
+            return;
+        }
+
+        _panCursor = cursor;
+
+        if (!_panHeld || cursor is not { } point)
+        {
+            return;
+        }
+
+        if (!_panning)
+        {
+            if (_panOrigin is not { } origin
+                || (Math.Abs(origin.X - point.X) <= DragThreshold && Math.Abs(origin.Y - point.Y) <= DragThreshold))
+            {
+                return;
+            }
+
+            // The reference starts the drag from the press position, so the movement that crossed the
+            // threshold is part of the first shift instead of being swallowed.
+            _panning = true;
+            _panAnchor = origin;
+        }
+
+        _editor.Map.ScrollBy(_panAnchor.X - point.X, _panAnchor.Y - point.Y);
+        _panAnchor = point;
+    }
+
+    /// <summary>
+    /// Rolls the map while the pointer sits in the <see cref="BorderWidth"/> pixels along an edge of the
+    /// viewport, one <see cref="EdgeScrollStep"/> every <see cref="EdgeScrollInterval"/> seconds.
+    /// </summary>
+    /// <param name="elapsedSeconds">Time since the last frame.</param>
+    /// <remarks>
+    /// 参考的边滚在 <c>GameArea::SetScroll</c> 里，条件是指针落在边框内、且没有在拖（<c>assert( !isDragScroll() )</c>）；
+    /// 节拍来自全局限时表（<c>validateAnimationDelay( SCROLL_DELAY )</c>），这里按帧的 <c>dt</c> 自己累计，
+    /// 用的是同一个 20 ms，见 <see cref="EdgeScrollInterval"/>。
+    /// </remarks>
+    private void UpdateEdgeScroll(double elapsedSeconds)
+    {
+        if (_panning || _panCursor is not { } cursor)
+        {
+            _edgeElapsed = 0;
+            return;
+        }
+
+        int direction = EdgeDirectionAt(cursor);
+
+        // 已经贴到地图边上的方向不消耗节拍：参考的 GameArea 在 SetScroll 里被钳住，也不累计。
+        if (direction == 0 || !_editor.Map.IsScrollingPossible)
+        {
+            _edgeElapsed = 0;
+            return;
+        }
+
+        _edgeElapsed += elapsedSeconds;
+
+        for (int steps = 0; steps < MaxEdgeStepsPerUpdate && _edgeElapsed >= EdgeScrollInterval; ++steps)
+        {
+            _edgeElapsed -= EdgeScrollInterval;
+            ScrollOneStep(direction);
+        }
+
+        // Drop the backlog of a long frame instead of turning it into a burst on the next ones.
+        _edgeElapsed = Math.Min(_edgeElapsed, EdgeScrollInterval);
+    }
+
+    /// <summary>Bits of the directions whose scroll region contains <paramref name="cursor"/>.</summary>
+    /// <param name="cursor">Pointer in viewport pixels.</param>
+    /// <returns>Any of <see cref="ScrollLeft"/>, <see cref="ScrollRight"/>, <see cref="ScrollTop"/>, <see cref="ScrollBottom"/>.</returns>
+    private int EdgeDirectionAt(Point cursor)
+    {
+        Size viewport = _editor.Map.Viewport;
+        int direction = 0;
+
+        if (cursor.X < BorderWidth)
+        {
+            direction |= ScrollLeft;
+        }
+
+        if (cursor.X >= viewport.Width - BorderWidth)
+        {
+            direction |= ScrollRight;
+        }
+
+        if (cursor.Y < BorderWidth)
+        {
+            direction |= ScrollTop;
+        }
+
+        if (cursor.Y >= viewport.Height - BorderWidth)
+        {
+            direction |= ScrollBottom;
+        }
+
+        return direction;
+    }
+
+    /// <summary>Applies one edge scroll step of <see cref="EdgeScrollStep"/> pixels.</summary>
+    /// <param name="direction">Directions to move in, bits from <see cref="EdgeDirectionAt"/>.</param>
+    private void ScrollOneStep(int direction) =>
+        _editor.Map.ScrollBy(
+            (direction & ScrollLeft) != 0 ? -EdgeScrollStep : (direction & ScrollRight) != 0 ? EdgeScrollStep : 0,
+            (direction & ScrollTop) != 0 ? -EdgeScrollStep : (direction & ScrollBottom) != 0 ? EdgeScrollStep : 0);
 
     /// <summary>
     /// Paints the interface frame: the <c>ADVBORD</c> image when the archive has it, flat borders
@@ -1188,7 +1660,7 @@ public sealed class EditorScene : IScene
     /// Re-bakes the minimap after the tiles changed. It is the one cache in the editor: the map view
     /// reads the tiles on every frame, the minimap keeps one colour per tile from <c>Build</c>.
     /// </summary>
-    private void RebuildMinimap() => _minimap = Minimap.Build(Map);
+    private void RebuildMinimap() => _minimap = EditorRadar.Build(Map);
 
     /// <summary>
     /// Draws the bay below the radar: the instrument panel of the reference when its artwork is in the

@@ -137,6 +137,17 @@ public enum DelayType : byte
 public static class GameDelays
 {
     /// <summary>
+    /// Milliseconds between two edge scroll steps, the <c>setDelay( DelayType::SCROLL_DELAY, 20 )</c> of
+    /// <c>game_delays.cpp:96</c>.
+    /// </summary>
+    /// <remarks>
+    /// 参考的卷屏是按这张表节拍的（<c>Game::validateAnimationDelay( SCROLL_DELAY )</c>），表里那一格就是从这里装进去的。
+    /// 谁的界面不按全局节拍走（编辑器按帧的 <c>dt</c> 自己累计，见 <c>EditorScene.EdgeScrollInterval</c>），至少也要用
+    /// 同一个数字，别在视图层再抄一个 20。
+    /// </remarks>
+    public const int ScrollDelayMilliseconds = 20;
+
+    /// <summary>
     /// <c>battleSpeedAdjustment</c> of <c>game_delays.cpp:38</c>: one step of the battle speed scale, chosen so that
     /// speed 1 takes six times as long as speed 10.
     /// </summary>
@@ -185,8 +196,8 @@ public static class GameDelays
     /// </remarks>
     public static void InitAnimateDelays()
     {
-        SetDelay(DelayType.ScrollDelay, 20);
-        SetDelay(DelayType.ScrollStartDelay, 20);
+        SetDelay(DelayType.ScrollDelay, ScrollDelayMilliseconds);
+        SetDelay(DelayType.ScrollStartDelay, ScrollDelayMilliseconds);
         SetDelay(DelayType.CursorBlinkDelay, 440);
         SetDelay(DelayType.MainMenuDelay, 250);
         SetDelay(DelayType.MapsDelay, 250);

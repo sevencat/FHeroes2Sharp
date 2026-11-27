@@ -2207,8 +2207,14 @@ public sealed class AdventureMapDialogs
         internal NgextraArtwork(IcnSpriteFile extra) => _extra = extra;
 
         /// <inheritdoc />
+        /// <remarks>
+        /// 27-33 与 39-44 这两组宽图要被 <see cref="NgExtraWideIcons.Patch"/> 改过才画得对；参考是
+        /// <c>loadICN()</c> 里原位改的（<c>game_assets.cpp:3948-3959</c>），端口不改共享的帧表，改在取帧处。
+        /// </remarks>
         public Sprite GetIcon(uint frame) =>
-            frame < _extra.Count ? _extra.Sprites[(int)frame] : _extra.Sprites[0];
+            frame < _extra.Count
+                ? NgExtraWideIcons.Patch(_extra.Sprites, (int)frame) ?? _extra.Sprites[(int)frame]
+                : _extra.Sprites[0];
     }
 
     /// <summary>

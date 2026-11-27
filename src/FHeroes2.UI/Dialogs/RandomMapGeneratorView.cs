@@ -429,7 +429,9 @@ public sealed class RandomMapGeneratorView
             return false;
         }
 
-        if (_seed.SetLeftButton(events.IsMouseLeftButtonPressed, events.CursorPosition))
+        // :243-248 —— 种子控件的整帧输入：点击、按住重复、滚轮与上下键都由它自己算。
+        // 参考在它里面还会开数字键盘与范围提示（ui_dialog.cpp:1007-1016），这个视图没有跑窗的宿主，请求先丢掉。
+        if (_seed.ProcessEvents(events).Changed)
         {
             _dialog.SetSeed(_seed.Value);
         }

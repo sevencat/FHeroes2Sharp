@@ -1,6 +1,7 @@
 using FHeroes2.Assets.Fonts;
 using FHeroes2.Core.Geometry;
 using FHeroes2.Core.Imaging;
+using FHeroes2.UI.Input;
 using FHeroes2.UI.Widgets;
 
 namespace FHeroes2.UI.Tests;
@@ -174,6 +175,173 @@ public sealed class ValueSelectionElementTests
         Assert.Throws<ArgumentNullException>(() => CreateElement().Draw(null!));
     }
 
+    [Fact]
+    public void ProcessEvents_ClickingAnArrowStepsOnce()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+        Point up = Center(element.UpButton.Area);
+
+        ValueSelectionFrame frame = element.ProcessEvents(Click(up));
+
+        Assert.True(frame.Changed);
+        Assert.Equal(ValueSelectionRequest.None, frame.Request);
+        Assert.Equal(4, element.Value);
+
+        // 一次点击只走一步：参考的 processEvents 也只用 MouseClickLeft 计数。
+        Assert.False(element.ProcessEvents(PointerAt(up)).Changed);
+        Assert.Equal(4, element.Value);
+
+        Assert.True(element.ProcessEvents(Click(Center(element.DownButton.Area))).Changed);
+        Assert.Equal(3, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_HoldingAnArrowRepeatsAfterTheDelays()
+    {
+        long now = 0;
+        ValueSelectionElement element = CreateElement(value: 2, clockMs: () => now);
+        Point up = Center(element.UpButton.Area);
+
+        // 参考的两个默认值是按住 500 ms 之后开始，之后每 100 ms 一步。
+        Assert.False(element.ProcessEvents(Press(up)).Changed);
+        Assert.True(element.IsUpPressed);
+
+        now = 499;
+        Assert.False(element.ProcessEvents(Press(up)).Changed);
+        Assert.Equal(2, element.Value);
+
+        now = 500;
+        Assert.True(element.ProcessEvents(Press(up)).Changed);
+        Assert.Equal(3, element.Value);
+
+        now = 599;
+        Assert.False(element.ProcessEvents(Press(up)).Changed);
+
+        now = 600;
+        Assert.True(element.ProcessEvents(Press(up)).Changed);
+        Assert.Equal(4, element.Value);
+
+        // 松开之后不再重复，按下的样子也收掉。
+        Assert.False(element.ProcessEvents(Release(up)).Changed);
+        Assert.False(element.IsUpPressed);
+
+        now = 5000;
+        Assert.False(element.ProcessEvents(PointerAt(up)).Changed);
+        Assert.Equal(4, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_HoldingTheDownArrowRepeatsToo()
+    {
+        long now = 0;
+        ValueSelectionElement element = CreateElement(value: 4, clockMs: () => now);
+        Point down = Center(element.DownButton.Area);
+
+        Assert.False(element.ProcessEvents(Press(down)).Changed);
+        Assert.True(element.IsDownPressed);
+
+        now = 500;
+        Assert.True(element.ProcessEvents(Press(down)).Changed);
+        Assert.Equal(3, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_StopsAtTheBounds()
+    {
+        ValueSelectionElement element = CreateElement(value: 5);
+        Point up = Center(element.UpButton.Area);
+
+        Assert.False(element.ProcessEvents(Click(up)).Changed);
+        Assert.Equal(5, element.Value);
+
+        ValueSelectionElement low = CreateElement(value: 1);
+        Assert.False(low.ProcessEvents(Click(Center(low.DownButton.Area))).Changed);
+        Assert.Equal(1, low.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_WheelCountsOverTheEditBoxOnly()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+        Point box = Center(element.EditBox);
+        Point arrow = Center(element.UpButton.Area);
+
+        // 参考的 _isIncreaseValueEvent 先看指针在不在数字框里。
+        Assert.False(element.ProcessEvents(Wheel(arrow, 1)).Changed);
+        Assert.Equal(3, element.Value);
+
+        Assert.True(element.ProcessEvents(Wheel(box, 1)).Changed);
+        Assert.Equal(4, element.Value);
+
+        Assert.True(element.ProcessEvents(Wheel(box, -1)).Changed);
+        Assert.Equal(3, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_WheelCheckCanBeSwitchedOff()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+        element.IgnoreMouseWheelEventRoiCheck = true;
+
+        // setIgnoreMouseWheelEventRoiCheck() 之后哪儿滚都算。
+        Assert.True(element.ProcessEvents(Wheel(Center(element.UpButton.Area), 1)).Changed);
+        Assert.Equal(4, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_ArrowKeysStepInsideTheBoxOnly()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+        Point box = Center(element.EditBox);
+
+        Assert.True(element.ProcessEvents(KeyAt(box, Key.Up)).Changed);
+        Assert.Equal(4, element.Value);
+
+        Assert.True(element.ProcessEvents(KeyAt(box, Key.Down)).Changed);
+        Assert.Equal(3, element.Value);
+
+        // 指针不在数字框上时上下键不算。
+        Assert.False(element.ProcessEvents(KeyAt(Center(element.UpButton.Area), Key.Up)).Changed);
+        Assert.Equal(3, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_ClickingTheEditBoxAsksForTheNumberPad()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+
+        ValueSelectionFrame frame = element.ProcessEvents(Click(Center(element.EditBox)));
+
+        Assert.False(frame.Changed);
+        Assert.Equal(ValueSelectionRequest.Numpad, frame.Request);
+        Assert.Equal(3, element.Value);
+    }
+
+    [Fact]
+    public void ProcessEvents_RightClickingTheEditBoxAsksForTheRange()
+    {
+        ValueSelectionElement element = CreateElement(value: 3);
+
+        ValueSelectionFrame frame = element.ProcessEvents(RightPress(Center(element.EditBox)));
+
+        Assert.False(frame.Changed);
+        Assert.Equal(ValueSelectionRequest.Range, frame.Request);
+
+        Assert.Equal("The available values range from 1 to 5.", element.RangeMessage);
+        Assert.Equal(1, element.Minimum);
+        Assert.Equal(5, element.Maximum);
+
+        // 右键落在别处不算。
+        Assert.Equal(ValueSelectionRequest.None,
+            element.ProcessEvents(RightPress(Center(element.UpButton.Area))).Request);
+    }
+
+    [Fact]
+    public void ProcessEvents_RejectsMissingEvents()
+    {
+        Assert.Throws<ArgumentNullException>(() => CreateElement().ProcessEvents(null!));
+    }
+
     private static IEnumerable<byte> EnumerateColors(PixelBuffer target)
     {
         for (int y = 0; y < target.Height; ++y)
@@ -187,8 +355,66 @@ public sealed class ValueSelectionElementTests
 
     private static Point Center(Rect area) => new(area.X + (area.Width / 2), area.Y + (area.Height / 2));
 
-    private static ValueSelectionElement CreateElement(Point? offset = null, int value = 3) =>
-        new(1, 5, value, 1, offset ?? new Point(0, 0), CreateFont(), CreateFrames());
+    private static ValueSelectionElement CreateElement(Point? offset = null, int value = 3,
+        Func<long>? clockMs = null) =>
+        new(1, 5, value, 1, offset ?? new Point(0, 0), CreateFont(), CreateFrames(), clockMs);
+
+    private static LocalEvent PointerAt(Point cursor)
+    {
+        LocalEvent events = new(() => 0);
+        events.OnMouseMotion(cursor);
+
+        return events;
+    }
+
+    private static LocalEvent Click(Point cursor)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnMouseButton(true, MouseButtonType.Left, cursor);
+        events.OnMouseButton(false, MouseButtonType.Left, cursor);
+
+        return events;
+    }
+
+    private static LocalEvent Press(Point cursor)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnMouseButton(true, MouseButtonType.Left, cursor);
+
+        return events;
+    }
+
+    private static LocalEvent Release(Point cursor)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnMouseButton(false, MouseButtonType.Left, cursor);
+
+        return events;
+    }
+
+    private static LocalEvent RightPress(Point cursor)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnMouseButton(true, MouseButtonType.Right, cursor);
+
+        return events;
+    }
+
+    private static LocalEvent Wheel(Point cursor, int direction)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnMouseWheel(new Point(0, direction));
+
+        return events;
+    }
+
+    private static LocalEvent KeyAt(Point cursor, Key key)
+    {
+        LocalEvent events = PointerAt(cursor);
+        events.OnKeyboard(key, KeyModifier.None, KeyboardEventState.Down);
+
+        return events;
+    }
 
     private static IGlyphSource CreateFont() => new BlockGlyphSource(Glyph);
 

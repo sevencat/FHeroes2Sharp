@@ -97,6 +97,53 @@ public static class ButtonFactory
     }
 
     /// <summary>
+    /// Size of the "enable all"/"disable all" buttons, <c>spellSelectionButton</c> of <c>game_assets.cpp</c>.
+    /// </summary>
+    public static readonly Size ToggleAllButtonSize = new(86, 25);
+
+    /// <summary>
+    /// Builds the "enable all"/"disable all" button of the selection windows, the <c>BUTTON_TOGGLE_ALL_*</c>
+    /// entries of <c>game_assets.cpp</c> that hold no <c>.ICN</c> of their own: an empty 86x25 plate with the two
+    /// arrows of the h2d resources on it.
+    /// </summary>
+    /// <param name="background">Texture the transparent corners are filled with, usually <c>STONEBAK</c>.</param>
+    /// <param name="isEvilInterface">Whether the gray plate is used.</param>
+    /// <param name="enableAll">Whether the "enable all" arrows are used instead of the "disable all" ones.</param>
+    /// <returns>The two sprites of the button, released first.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="background"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// h2d 图标缺席时（没有装 <c>res</c> 那份资源）按钮退化成没有图案的空板子，尺寸与位置都不变。
+    /// </remarks>
+    public static (Sprite Released, Sprite Pressed) MakeToggleAllButton(Sprite background, bool isEvilInterface,
+        bool enableAll)
+    {
+        ArgumentNullException.ThrowIfNull(background);
+
+        (Sprite released, Sprite pressed) = MakeButtonSprites(string.Empty, ToggleAllButtonSize, isEvilInterface,
+            background);
+
+        string name = enableAll ? "toggle-all-on" : "toggle-all-off";
+
+        if (H2DResources.TryReadCurrentImage($"{name}-released.image", out Sprite? icon))
+        {
+            ImageOps.BlitSprite(
+                released.Image,
+                new Point((released.Width - icon.Width) / 2, (released.Height - icon.Height) / 2),
+                icon);
+        }
+
+        if (H2DResources.TryReadCurrentImage($"{name}-pressed.image", out Sprite? pressedIcon))
+        {
+            ImageOps.BlitSprite(
+                pressed.Image,
+                new Point((pressed.Width - pressedIcon.Width) / 2, ((pressed.Height - pressedIcon.Height) / 2) + 1),
+                pressedIcon);
+        }
+
+        return (released, pressed);
+    }
+
+    /// <summary>
     /// Stretches the empty plate of <paramref name="textAreaSize"/> and returns the offsets its label
     /// has to be drawn at, <c>getCustomNormalButton()</c>.
     /// </summary>

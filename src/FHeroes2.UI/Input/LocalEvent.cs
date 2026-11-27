@@ -600,6 +600,17 @@ public sealed class LocalEvent
     /// <summary>Whether the wheel turned down this frame, <c>isMouseWheelDown()</c>.</summary>
     public bool IsMouseWheelDown => (_actionStates & ActionStates.MouseWheel) != 0 && _wheelMovementOffset.Y < 0;
 
+    /// <summary>
+    /// How far the wheel turned this frame, <c>getWheelMovement()</c>: <c>y</c> positive turns away from the
+    /// user, <c>x</c> is a horizontal wheel or a touchpad swipe.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IsMouseWheelUp"/> only says which way it went; a high resolution wheel reports fractions of a
+    /// notch and a fast flick reports several at once, and a caller that scrolls by whole tiles needs the count.
+    /// </remarks>
+    public Point MouseWheelMovement =>
+        (_actionStates & ActionStates.MouseWheel) != 0 ? _wheelMovementOffset : default;
+
     /// <summary>Whether the left button is held down, <c>isMouseLeftButtonPressed()</c>.</summary>
     public bool IsMouseLeftButtonPressed =>
         (_actionStates & ActionStates.MousePressed) != 0 && _currentButton == MouseButtonType.Left;
